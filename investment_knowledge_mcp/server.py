@@ -73,6 +73,24 @@ def link_stock_to_sector(
 
 
 @mcp.tool()
+def add_source(
+    source_type: str,
+    title: str | None = None,
+    url: str | None = None,
+    publisher: str | None = None,
+    published_at: str | None = None,
+) -> dict[str, Any]:
+    """Add a source record for factual knowledge."""
+    return repository.add_source(
+        source_type=source_type,
+        title=title,
+        url=url,
+        publisher=publisher,
+        published_at=published_at,
+    )
+
+
+@mcp.tool()
 def add_knowledge_item(
     target_type: str,
     target_id: int | None,
@@ -111,6 +129,18 @@ def add_user_insight(
         insight=insight,
         normalized_summary=normalized_summary,
         tags=tags,
+    )
+
+
+@mcp.tool()
+def import_stock_research_draft(
+    draft: dict[str, Any],
+    confirmed_by_user: bool = False,
+) -> dict[str, Any]:
+    """Import a user-confirmed stock research draft into the knowledge base."""
+    return repository.import_stock_research_draft(
+        draft=draft,
+        confirmed_by_user=confirmed_by_user,
     )
 
 

@@ -119,6 +119,22 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
 }
 ```
 
+### add_source
+
+写入资料来源。
+
+输入：
+
+```json
+{
+  "source_type": "web",
+  "title": "公司公告",
+  "url": "https://example.com",
+  "publisher": "交易所",
+  "published_at": "2026-05-16T00:00:00+08:00"
+}
+```
+
 ### add_user_insight
 
 写入用户心得。
@@ -134,6 +150,38 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
   "tags": ["股性", "短线", "高波动"]
 }
 ```
+
+### import_stock_research_draft
+
+把用户确认后的个股研究草稿一次性入库。
+
+输入：
+
+```json
+{
+  "draft": {
+    "stock": {
+      "symbol": "00700",
+      "market": "HK",
+      "name": "腾讯控股"
+    },
+    "sources": [],
+    "sectors": [],
+    "knowledge_items": [],
+    "user_insights": []
+  },
+  "confirmed_by_user": true
+}
+```
+
+行为：
+
+- 创建或更新股票画像。
+- 创建或复用多级板块树。
+- 建立股票和板块关系。
+- 写入来源和事实知识。
+- 写入用户心得。
+- 返回导入结果和 `search_stock` 查询结果。
 
 ### get_portfolio_summary
 
@@ -215,4 +263,3 @@ Futu MCP 获取持仓
   -> add_knowledge_item 写入待确认知识
   -> create_review_report
 ```
-

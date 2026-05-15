@@ -1,0 +1,58 @@
+{
+  "stock": {
+    "symbol": "00700",
+    "market": "HK",
+    "name": "腾讯控股",
+    "core_business": "互联网增值服务、金融科技及企业服务、网络广告。",
+    "equity_structure": "第一版样例暂不写入细分股权结构，等待后续联网研究和用户确认。",
+    "stock_character": "港股互联网核心权重，流动性好，受监管预期、平台经济情绪、游戏及广告周期影响明显。",
+    "notable_history": "长期作为港股互联网龙头和恒生科技指数重要权重股。"
+  },
+  "sources": [
+    {
+      "key": "model_draft",
+      "source_type": "model",
+      "title": "本地样例研究草稿",
+      "publisher": "InvestmentKnowledge MCP"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["互联网", "平台经济", "游戏"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "model_draft",
+      "description": "以互联网平台和游戏业务为核心的细分板块。",
+      "recent_status": "关注版号、广告复苏、金融科技业务韧性和 AI 应用落地。"
+    },
+    {
+      "path": ["AI", "应用层", "互联网应用"],
+      "relation_type": "theme",
+      "confidence": 0.65,
+      "source_key": "model_draft",
+      "description": "互联网公司将 AI 能力嵌入内容、广告、办公和云服务场景。",
+      "recent_status": "第一版样例仅记录为主题关联，后续需要公告和财报验证。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "腾讯的核心业务包含游戏、社交网络、网络广告、金融科技及企业服务。",
+      "source_key": "model_draft",
+      "confidence": 0.8
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "腾讯估值和股价容易受到互联网监管预期、港股流动性、游戏流水和广告景气度影响。",
+      "source_key": "model_draft",
+      "confidence": 0.7
+    }
+  ],
+  "user_insights": [
+    {
+      "insight": "腾讯更适合看中长期基本面和港股互联网情绪修复，不适合只看一天波动。",
+      "normalized_summary": "用户倾向将腾讯作为中长期基本面和情绪修复标的观察。",
+      "tags": ["中长期", "港股互联网", "情绪修复"]
+    }
+  ]
+}

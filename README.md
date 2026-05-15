@@ -30,6 +30,12 @@ python scripts/init_db.py
 python scripts/smoke_test.py
 ```
 
+导入个股研究草稿样例：
+
+```bash
+python scripts/import_research_draft.py examples/tencent_research_draft.json --confirmed
+```
+
 启动 MCP Server：
 
 ```bash
@@ -52,5 +58,7 @@ postgresql://postgres:postgres@localhost:55432/investment_kg
 - `upsert_stock_profile`
 - `upsert_sector_tree`
 - `link_stock_to_sector`
+- `add_source`
 - `add_knowledge_item`
 - `add_user_insight`
+- `import_stock_research_draft`
