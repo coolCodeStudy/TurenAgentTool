@@ -1,0 +1,2 @@
+"""InvestmentKnowledge MCP server package."""
+
