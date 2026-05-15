@@ -1,0 +1,118 @@
+{
+  "stock": {
+    "symbol": "000660",
+    "market": "KR",
+    "name": "SK海力士",
+    "core_business": "韩国存储半导体龙头，核心业务是DRAM、NAND Flash、企业级SSD，以及面向AI服务器和数据中心的HBM等高价值存储产品。",
+    "equity_structure": "截至2026-04-07，SK Square及相关方合计持股约20.5%；截至2025-12-31，韩国国民年金持股约7.9%；Capital Research and Management Company与BlackRock Fund Advisors分别接近或略高于5%。",
+    "stock_character": "强周期半导体股，但当前股性高度受AI算力资本开支、HBM供需、英伟达等核心客户预期、DRAM/NAND价格周期和韩股外资风险偏好驱动。业绩弹性大，估值容易随存储周期和AI叙事快速重估。",
+    "notable_history": "2012年并入SK集团并更名为SK hynix；2021年完成收购Intel NAND业务第一阶段；2024年量产12层HBM3E和321层NAND；2025年率先出货12层HBM4样品；2025年创历史最佳年度业绩。"
+  },
+  "sources": [
+    {
+      "key": "fact_sheet",
+      "source_type": "web",
+      "title": "SK hynix Fact Sheet",
+      "url": "https://news.skhynix.com/corporate/fact-sheet/",
+      "publisher": "SK hynix Newsroom"
+    },
+    {
+      "key": "ownership",
+      "source_type": "web",
+      "title": "SK hynix Ownership Structure",
+      "url": "https://www.skhynix.com/ir/UI-FR-IR04/",
+      "publisher": "SK hynix IR"
+    },
+    {
+      "key": "fy25_results",
+      "source_type": "web",
+      "title": "SK hynix Announces FY25 Financial Results",
+      "url": "https://news.skhynix.com/sk-hynix-announces-fy25-financial-results/",
+      "publisher": "SK hynix Newsroom",
+      "published_at": "2026-01-28T00:00:00+08:00"
+    },
+    {
+      "key": "gtc_2026",
+      "source_type": "web",
+      "title": "SK hynix Reaffirms Partnership With NVIDIA at GTC 2026",
+      "url": "https://news.skhynix.com/gtc-2026-exhibition-booth/",
+      "publisher": "SK hynix Newsroom",
+      "published_at": "2026-03-16T00:00:00+08:00"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["半导体", "存储芯片", "DRAM"],
+      "relation_type": "main",
+      "confidence": 0.95,
+      "source_key": "fact_sheet",
+      "description": "DRAM是SK海力士核心业务之一，覆盖移动、服务器和高性能计算等需求场景。",
+      "recent_status": "AI服务器、传统服务器内存升级和先进制程迁移共同影响DRAM价格和利润弹性。"
+    },
+    {
+      "path": ["半导体", "存储芯片", "NAND Flash"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "fact_sheet",
+      "description": "NAND Flash和SSD是SK海力士另一条核心产品线，包含企业级、客户端和消费级存储。",
+      "recent_status": "AI数据中心存储需求和321层NAND技术迁移是后续观察重点。"
+    },
+    {
+      "path": ["AI基础设施", "AI内存", "HBM"],
+      "relation_type": "theme",
+      "confidence": 0.95,
+      "source_key": "fy25_results",
+      "description": "HBM是AI加速器关键内存产品，SK海力士在HBM3E和HBM4上处于行业领先位置。",
+      "recent_status": "AI训练和推理需求推动HBM持续扩产，HBM4量产、客户验证和供需价格是核心变量。"
+    },
+    {
+      "path": ["AI基础设施", "英伟达产业链", "HBM供应商"],
+      "relation_type": "theme",
+      "confidence": 0.8,
+      "source_key": "gtc_2026",
+      "description": "SK海力士在GTC 2026展示了与NVIDIA平台相关的HBM3E、HBM4、LPDDR5X和SOCAMM2产品。",
+      "recent_status": "市场会重点关注其与NVIDIA等AI芯片客户的供货节奏和产品代际切换。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "SK海力士主营DRAM、NAND Flash和SSD，并将HBM、eSSD等AI内存和数据中心产品作为高价值增长方向。",
+      "source_key": "fact_sheet",
+      "confidence": 0.9
+    },
+    {
+      "knowledge_type": "equity_structure",
+      "content": "SK Square是SK海力士第一大股东；官方IR页面显示其及相关方截至2026-04-07合计持股约20.5%，韩国国民年金截至2025-12-31持股约7.9%。",
+      "source_key": "ownership",
+      "confidence": 0.95,
+      "stale_after": "2026-08-16T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "history",
+      "content": "SK海力士在2025年实现历史最佳年度业绩，FY2025收入97.1467万亿韩元、营业利润47.2063万亿韩元、净利润42.9479万亿韩元，主要受AI内存竞争力和HBM等高附加值产品推动。",
+      "source_key": "fy25_results",
+      "confidence": 0.95,
+      "stale_after": "2026-08-16T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "SK海力士的主要风险包括存储芯片价格周期反转、HBM客户集中度、AI资本开支放缓、先进封装和HBM4良率爬坡、韩元汇率、韩国市场外资流动和中美半导体限制。",
+      "source_key": "fy25_results",
+      "confidence": 0.8
+    },
+    {
+      "knowledge_type": "watch_item",
+      "content": "后续跟踪重点：HBM4量产和客户认证节奏、NVIDIA/主要AI客户订单、M15X和Yongin产能建设、传统DRAM/NAND价格、eSSD需求、资本开支与股东回报平衡。",
+      "source_key": "fy25_results",
+      "confidence": 0.85
+    }
+  ],
+  "user_insights": [
+    {
+      "insight": "首次录入时先把SK海力士作为AI内存/HBM核心标的跟踪，而不是单纯当传统存储周期股看。",
+      "normalized_summary": "用户希望优先从AI内存和HBM主线理解SK海力士。",
+      "tags": ["AI内存", "HBM", "存储周期", "核心标的"]
+    }
+  ]
+}
