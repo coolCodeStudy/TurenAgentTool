@@ -116,6 +116,12 @@ python scripts/research_stock.py 000660 KR \
 python scripts/build_analysis_context.py 000660 KR --output drafts/000660_KR_analysis_context.md
 ```
 
+记录用户心得：
+
+```bash
+python scripts/record_user_insight.py stock "我的心得原文" --symbol 000660 --market KR --tag HBM
+```
+
 启动 MCP Server：
 
 ```bash
