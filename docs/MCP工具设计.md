@@ -139,6 +139,8 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
 
 写入用户心得。
 
+心得可以指向不同对象：`stock` 表示个股，`sector` 表示板块，`portfolio` 表示整体组合或仓位管理，`strategy` 表示长期交易纪律。`portfolio` 和 `strategy` 这类全局心得可以暂时使用 `target_id: null`。
+
 输入：
 
 ```json
@@ -148,6 +150,18 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
   "insight": "我觉得这个票股性很妖，适合短线不适合长拿。",
   "normalized_summary": "用户认为该股波动和情绪属性较强，更适合短线交易。",
   "tags": ["股性", "短线", "高波动"]
+}
+```
+
+仓位管理心得示例：
+
+```json
+{
+  "target_type": "portfolio",
+  "target_id": null,
+  "insight": "AI 主线涨幅很大时，我不希望单一主题仓位超过组合的一半。",
+  "normalized_summary": "用户希望控制单一高拥挤主题的组合占比，避免主题风险过度集中。",
+  "tags": ["仓位管理", "主题拥挤", "风险控制"]
 }
 ```
 
