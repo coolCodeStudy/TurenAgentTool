@@ -68,6 +68,9 @@ local.properties
 *.log
 logs/
 
+# Generated research prompts
+drafts/*.prompt.md
+
 # Runtime data
 pids
 *.pid

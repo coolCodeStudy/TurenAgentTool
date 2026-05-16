@@ -70,6 +70,7 @@
 - `research_providers` 抽象。
 - 手工资料来源 provider。
 - 研究草稿骨架生成脚本。
+- 研究草稿补全 prompt 模板和生成脚本。
 
 ## 阶段 3：持仓复盘
 

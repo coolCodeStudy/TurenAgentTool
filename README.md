@@ -43,6 +43,12 @@ python scripts/create_research_draft.py 000660 KR \
   --manual-source-file examples/manual_sources/sk_hynix_sources.json
 ```
 
+从草稿骨架生成大模型补全 prompt：
+
+```bash
+python scripts/build_research_prompt.py drafts/000660_KR_research_draft.json
+```
+
 启动 MCP Server：
 
 ```bash
