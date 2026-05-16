@@ -324,33 +324,16 @@ def record_user_insight(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     target_type = target_type.strip().lower()
-    resolved_target_id = target_id
 
     with transaction() as conn:
-        if target_type == "stock":
-            if resolved_target_id is None:
-                if not symbol or not market:
-                    raise ValueError("symbol and market are required when target_type is stock")
-                stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
-                if stock is None:
-                    raise ValueError(f"stock not found: {symbol} {market}")
-                resolved_target_id = stock["id"]
-        elif target_type == "sector":
-            if resolved_target_id is None:
-                if not sector_path:
-                    raise ValueError("sector_path is required when target_type is sector")
-                sector = _get_sector_by_path_in_conn(conn, sector_path)
-                if sector is None:
-                    raise ValueError(f"sector path not found: {' > '.join(sector_path)}")
-                resolved_target_id = sector["id"]
-        elif target_type in {"portfolio", "strategy"}:
-            resolved_target_id = None
-        elif resolved_target_id is None:
-            raise ValueError(
-                "target_id is required for custom target types; known target types are "
-                "stock, sector, portfolio, and strategy"
-            )
-
+        resolved_target_id = _resolve_insight_target_in_conn(
+            conn=conn,
+            target_type=target_type,
+            target_id=target_id,
+            symbol=symbol,
+            market=market,
+            sector_path=sector_path,
+        )
         row = _add_user_insight_in_conn(
             conn=conn,
             target_type=target_type,
@@ -361,6 +344,147 @@ def record_user_insight(
         )
 
     return to_jsonable(row)
+
+
+def propose_candidate_insight(
+    target_type: str,
+    insight: str,
+    target_id: int | None = None,
+    symbol: str | None = None,
+    market: str | None = None,
+    sector_path: list[str] | None = None,
+    normalized_summary: str | None = None,
+    tags: list[str] | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    target_type = target_type.strip().lower()
+
+    with transaction() as conn:
+        resolved_target_id = _resolve_insight_target_in_conn(
+            conn=conn,
+            target_type=target_type,
+            target_id=target_id,
+            symbol=symbol,
+            market=market,
+            sector_path=sector_path,
+        )
+        row = _upsert_candidate_insight_in_conn(
+            conn=conn,
+            target_type=target_type,
+            target_id=resolved_target_id,
+            insight=insight,
+            normalized_summary=normalized_summary,
+            tags=tags,
+            reason=reason,
+        )
+
+    return to_jsonable(row)
+
+
+def list_candidate_insights(
+    status: str | None = "pending",
+    target_type: str | None = None,
+) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM candidate_insights
+            WHERE (%s::text IS NULL OR status = %s)
+              AND (%s::text IS NULL OR target_type = %s)
+            ORDER BY created_at DESC
+            """,
+            (status, status, target_type, target_type),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
+def confirm_candidate_insight(candidate_id: int) -> dict[str, Any]:
+    with transaction() as conn:
+        candidate = _get_candidate_insight_in_conn(conn, candidate_id)
+        if candidate is None:
+            raise ValueError(f"candidate insight not found: {candidate_id}")
+
+        insight = _add_user_insight_in_conn(
+            conn=conn,
+            target_type=candidate["target_type"],
+            target_id=candidate["target_id"],
+            insight=candidate["insight"],
+            normalized_summary=candidate.get("normalized_summary"),
+            tags=candidate.get("tags") or [],
+        )
+        updated_candidate = conn.execute(
+            """
+            UPDATE candidate_insights SET
+              status = 'confirmed',
+              confirmed_insight_id = %s,
+              updated_at = now(),
+              decided_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (insight["id"], candidate_id),
+        ).fetchone()
+
+    return to_jsonable({"candidate": updated_candidate, "user_insight": insight})
+
+
+def reject_candidate_insight(candidate_id: int) -> dict[str, Any]:
+    with transaction() as conn:
+        candidate = _get_candidate_insight_in_conn(conn, candidate_id)
+        if candidate is None:
+            raise ValueError(f"candidate insight not found: {candidate_id}")
+        row = conn.execute(
+            """
+            UPDATE candidate_insights SET
+              status = 'rejected',
+              updated_at = now(),
+              decided_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (candidate_id,),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def _resolve_insight_target_in_conn(
+    conn: Connection,
+    target_type: str,
+    target_id: int | None = None,
+    symbol: str | None = None,
+    market: str | None = None,
+    sector_path: list[str] | None = None,
+) -> int | None:
+    if target_type == "stock":
+        if target_id is not None:
+            return target_id
+        if not symbol or not market:
+            raise ValueError("symbol and market are required when target_type is stock")
+        stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
+        if stock is None:
+            raise ValueError(f"stock not found: {symbol} {market}")
+        return stock["id"]
+
+    if target_type == "sector":
+        if target_id is not None:
+            return target_id
+        if not sector_path:
+            raise ValueError("sector_path is required when target_type is sector")
+        sector = _get_sector_by_path_in_conn(conn, sector_path)
+        if sector is None:
+            raise ValueError(f"sector path not found: {' > '.join(sector_path)}")
+        return sector["id"]
+
+    if target_type in {"portfolio", "strategy"}:
+        return None
+
+    if target_id is None:
+        raise ValueError(
+            "target_id is required for custom target types; known target types are "
+            "stock, sector, portfolio, and strategy"
+        )
+    return target_id
 
 
 def import_stock_research_draft(
@@ -714,6 +838,77 @@ def _add_user_insight_in_conn(
     ).fetchone()
 
 
+def _upsert_candidate_insight_in_conn(
+    conn: Connection,
+    target_type: str,
+    target_id: int | None,
+    insight: str,
+    normalized_summary: str | None = None,
+    tags: list[str] | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    target_type = target_type.strip()
+    insight = insight.strip()
+    normalized_summary = _clean_optional_text(normalized_summary)
+    reason = _clean_optional_text(reason)
+    tags = tags or []
+
+    existing = conn.execute(
+        """
+        SELECT *
+        FROM candidate_insights
+        WHERE target_type = %s
+          AND target_id IS NOT DISTINCT FROM %s
+          AND insight = %s
+          AND status = 'pending'
+        ORDER BY id
+        LIMIT 1
+        """,
+        (target_type, target_id, insight),
+    ).fetchone()
+    if existing is not None:
+        return conn.execute(
+            """
+            UPDATE candidate_insights SET
+              normalized_summary = COALESCE(candidate_insights.normalized_summary, %s),
+              tags = CASE
+                WHEN candidate_insights.tags = '[]'::jsonb THEN %s
+                ELSE candidate_insights.tags
+              END,
+              reason = COALESCE(candidate_insights.reason, %s),
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (normalized_summary, Jsonb(tags), reason, existing["id"]),
+        ).fetchone()
+
+    return conn.execute(
+        """
+        INSERT INTO candidate_insights (
+          target_type, target_id, insight, normalized_summary, tags, reason
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (target_type, target_id, insight, normalized_summary, Jsonb(tags), reason),
+    ).fetchone()
+
+
+def _get_candidate_insight_in_conn(
+    conn: Connection,
+    candidate_id: int,
+) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT *
+        FROM candidate_insights
+        WHERE id = %s
+        """,
+        (candidate_id,),
+    ).fetchone()
+
+
 def search_stock(symbol: str, market: str) -> dict[str, Any]:
     with transaction() as conn:
         stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
@@ -781,9 +976,12 @@ def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
                 "sectors": [],
                 "stock_knowledge": [],
                 "stock_insights": [],
+                "stock_candidate_insights": [],
                 "sector_knowledge": [],
                 "sector_insights": [],
+                "sector_candidate_insights": [],
                 "global_insights": [],
+                "global_candidate_insights": [],
                 "sources": [],
             }
 
@@ -801,6 +999,11 @@ def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
             target_type="stock",
             target_ids=[stock["id"]],
         )
+        stock_candidate_insights = _get_candidate_insights_for_target_in_conn(
+            conn=conn,
+            target_type="stock",
+            target_ids=[stock["id"]],
+        )
         sector_knowledge = _get_knowledge_for_target_in_conn(
             conn=conn,
             target_type="sector",
@@ -811,7 +1014,13 @@ def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
             target_type="sector",
             target_ids=expanded_sector_ids,
         )
+        sector_candidate_insights = _get_candidate_insights_for_target_in_conn(
+            conn=conn,
+            target_type="sector",
+            target_ids=expanded_sector_ids,
+        )
         global_insights = _get_global_user_insights_in_conn(conn)
+        global_candidate_insights = _get_global_candidate_insights_in_conn(conn)
         sources = _get_sources_for_context_in_conn(
             conn=conn,
             source_ids=[
@@ -827,9 +1036,12 @@ def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
             "sectors": sectors,
             "stock_knowledge": stock_knowledge,
             "stock_insights": stock_insights,
+            "stock_candidate_insights": stock_candidate_insights,
             "sector_knowledge": sector_knowledge,
             "sector_insights": sector_insights,
+            "sector_candidate_insights": sector_candidate_insights,
             "global_insights": global_insights,
+            "global_candidate_insights": global_candidate_insights,
             "sources": sources,
         }
     )
@@ -848,7 +1060,9 @@ def get_sector_context(
                 "linked_stocks": [],
                 "sector_knowledge": [],
                 "sector_insights": [],
+                "sector_candidate_insights": [],
                 "global_insights": [],
+                "global_candidate_insights": [],
                 "sources": [],
             }
 
@@ -865,7 +1079,13 @@ def get_sector_context(
             target_type="sector",
             target_ids=descendant_sector_ids,
         )
+        sector_candidate_insights = _get_candidate_insights_for_target_in_conn(
+            conn=conn,
+            target_type="sector",
+            target_ids=descendant_sector_ids,
+        )
         global_insights = _get_global_user_insights_in_conn(conn)
+        global_candidate_insights = _get_global_candidate_insights_in_conn(conn)
         sources = _get_sources_for_context_in_conn(
             conn=conn,
             source_ids=[
@@ -882,7 +1102,9 @@ def get_sector_context(
             "linked_stocks": linked_stocks,
             "sector_knowledge": sector_knowledge,
             "sector_insights": sector_insights,
+            "sector_candidate_insights": sector_candidate_insights,
             "global_insights": global_insights,
+            "global_candidate_insights": global_candidate_insights,
             "sources": sources,
         }
     )
@@ -1119,12 +1341,44 @@ def _get_user_insights_for_target_in_conn(
     ).fetchall()
 
 
+def _get_candidate_insights_for_target_in_conn(
+    conn: Connection,
+    target_type: str,
+    target_ids: list[int],
+) -> list[dict[str, Any]]:
+    if not target_ids:
+        return []
+    return conn.execute(
+        """
+        SELECT *
+        FROM candidate_insights
+        WHERE target_type = %s
+          AND target_id = ANY(%s)
+          AND status = 'pending'
+        ORDER BY created_at DESC
+        """,
+        (target_type, target_ids),
+    ).fetchall()
+
+
 def _get_global_user_insights_in_conn(conn: Connection) -> list[dict[str, Any]]:
     return conn.execute(
         """
         SELECT *
         FROM user_insights
         WHERE target_type IN ('portfolio', 'strategy')
+        ORDER BY created_at DESC
+        """
+    ).fetchall()
+
+
+def _get_global_candidate_insights_in_conn(conn: Connection) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM candidate_insights
+        WHERE target_type IN ('portfolio', 'strategy')
+          AND status = 'pending'
         ORDER BY created_at DESC
         """
     ).fetchall()

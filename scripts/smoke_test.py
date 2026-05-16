@@ -9,11 +9,15 @@ from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.repository import (
     add_knowledge_item,
     add_source,
+    confirm_candidate_insight,
     add_user_insight,
     get_sector_context,
     get_stock_context,
+    list_candidate_insights,
     link_stock_to_sector,
+    propose_candidate_insight,
     record_user_insight,
+    reject_candidate_insight,
     search_stock,
     upsert_sector_tree,
     upsert_stock_profile,
@@ -26,6 +30,8 @@ SMOKE_SECTOR_ROOT = "__smoke_test__"
 SMOKE_STOCK_INSIGHT = "Smoke test verifies idempotent user insight insertion."
 SMOKE_SECTOR_INSIGHT = "Smoke test verifies sector-level user memory retrieval."
 SMOKE_PORTFOLIO_INSIGHT = "Smoke test verifies portfolio-level user memory retrieval."
+SMOKE_REJECTED_CANDIDATE = "Smoke test verifies candidate insight rejection."
+SMOKE_CONFIRMED_CANDIDATE = "Smoke test verifies candidate insight confirmation."
 
 
 def cleanup_smoke_data() -> None:
@@ -35,7 +41,22 @@ def cleanup_smoke_data() -> None:
             DELETE FROM user_insights
             WHERE insight = ANY(%s)
             """,
-            ([SMOKE_STOCK_INSIGHT, SMOKE_SECTOR_INSIGHT, SMOKE_PORTFOLIO_INSIGHT],),
+            (
+                [
+                    SMOKE_STOCK_INSIGHT,
+                    SMOKE_SECTOR_INSIGHT,
+                    SMOKE_PORTFOLIO_INSIGHT,
+                    SMOKE_REJECTED_CANDIDATE,
+                    SMOKE_CONFIRMED_CANDIDATE,
+                ],
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM candidate_insights
+            WHERE insight = ANY(%s)
+            """,
+            ([SMOKE_REJECTED_CANDIDATE, SMOKE_CONFIRMED_CANDIDATE],),
         )
         stock = conn.execute(
             """
@@ -164,6 +185,26 @@ def main() -> None:
             normalized_summary="Smoke test portfolio insight should appear as global context.",
             tags=["smoke-test", "portfolio"],
         )
+        rejected_candidate = propose_candidate_insight(
+            target_type="sector",
+            sector_path=[SMOKE_SECTOR_ROOT, "链路验证"],
+            insight=SMOKE_REJECTED_CANDIDATE,
+            normalized_summary="Smoke test candidate should be rejected.",
+            tags=["smoke-test", "candidate"],
+            reason="Smoke test exercises candidate rejection.",
+        )
+        confirmed_candidate = propose_candidate_insight(
+            target_type="stock",
+            symbol=SMOKE_SYMBOL,
+            market=SMOKE_MARKET,
+            insight=SMOKE_CONFIRMED_CANDIDATE,
+            normalized_summary="Smoke test candidate should be promoted into user insights.",
+            tags=["smoke-test", "candidate"],
+            reason="Smoke test exercises candidate confirmation.",
+        )
+        pending_candidates = list_candidate_insights(status="pending")
+        rejected_candidate = reject_candidate_insight(rejected_candidate["id"])
+        confirmed_result = confirm_candidate_insight(confirmed_candidate["id"])
         result = search_stock(symbol=SMOKE_SYMBOL, market=SMOKE_MARKET)
         stock_context = get_stock_context(symbol=SMOKE_SYMBOL, market=SMOKE_MARKET)
         sector_context = get_sector_context(path=[SMOKE_SECTOR_ROOT, "链路验证"])
@@ -173,12 +214,17 @@ def main() -> None:
         assert repeated_insight["id"] == insight["id"]
         assert sector_insight["target_type"] == "sector"
         assert portfolio_insight["target_type"] == "portfolio"
+        assert any(item["id"] == rejected_candidate["id"] for item in pending_candidates)
+        assert rejected_candidate["status"] == "rejected"
+        assert confirmed_result["candidate"]["status"] == "confirmed"
+        assert confirmed_result["user_insight"]["insight"] == SMOKE_CONFIRMED_CANDIDATE
         assert result["stock"]["id"] == stock["id"]
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
-        assert len(result["user_insights"]) == 1
+        assert len(result["user_insights"]) == 2
         assert stock_context["stock"]["id"] == stock["id"]
         assert len(stock_context["sector_insights"]) == 1
+        assert stock_context["sector_candidate_insights"] == []
         assert any(
             item["insight"] == SMOKE_PORTFOLIO_INSIGHT
             for item in stock_context["global_insights"]
@@ -196,6 +242,7 @@ def main() -> None:
                 "insight_count": len(result["user_insights"]),
                 "context_sector_insight_count": len(stock_context["sector_insights"]),
                 "context_global_insight_count": len(stock_context["global_insights"]),
+                "confirmed_candidate_id": confirmed_result["candidate"]["id"],
             }
         )
     finally:

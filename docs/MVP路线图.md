@@ -87,13 +87,15 @@
 1. 扩展个股查询，返回板块路径、来源、板块知识和用户记忆。
 2. 增加板块上下文查询，支持按板块路径查看相关股票和板块记忆。
 3. 增加用户心得便利写入工具，支持个股、板块、组合、策略级心得。
-4. 输出 Markdown 分析上下文，供大模型或人工复盘直接使用。
+4. 增加候选心得机制，把系统推断和用户确认过的观点隔离。
+5. 输出 Markdown 分析上下文，供大模型或人工复盘直接使用。
 
 验收标准：
 
 - 输入 `000660 KR` 可以生成一份可读的海力士分析上下文。
 - 上下文包含个股画像、板块归属、事实知识、用户心得和来源。
 - 用户写入板块或组合级心得后，相关个股上下文可以自动带出。
+- 系统推断出的心得先进入候选区，确认后才进入正式用户心得。
 
 当前状态：已完成第一版。
 
@@ -102,7 +104,13 @@
 - `get_stock_context`
 - `get_sector_context`
 - `record_user_insight`
+- `propose_candidate_insight`
+- `list_candidate_insights`
+- `confirm_candidate_insight`
+- `reject_candidate_insight`
 - `scripts/build_analysis_context.py`
+- `scripts/propose_candidate_insight.py`
+- `scripts/candidate_insights.py`
 - smoke test 覆盖个股 context、板块 context 和全局用户偏好检索。
 
 ## 阶段 3：持仓复盘

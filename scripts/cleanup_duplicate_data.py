@@ -30,6 +30,23 @@ def main() -> None:
             """
         ).fetchall()
 
+        duplicate_candidate_insights = conn.execute(
+            """
+            WITH ranked AS (
+              SELECT
+                id,
+                row_number() OVER (
+                  PARTITION BY target_type, target_id, insight, status
+                  ORDER BY id
+                ) AS rank
+              FROM candidate_insights
+            )
+            DELETE FROM candidate_insights
+            WHERE id IN (SELECT id FROM ranked WHERE rank > 1)
+            RETURNING id
+            """
+        ).fetchall()
+
         conn.execute(
             """
             WITH grouped AS (
@@ -165,6 +182,7 @@ def main() -> None:
     print(
         {
             "duplicate_user_insights_deleted": len(duplicate_insights),
+            "duplicate_candidate_insights_deleted": len(duplicate_candidate_insights),
             "duplicate_knowledge_items_deleted": len(duplicate_knowledge),
             "duplicate_sources_deleted": len(duplicate_sources),
             "orphan_sources_deleted": len(orphan_sources),

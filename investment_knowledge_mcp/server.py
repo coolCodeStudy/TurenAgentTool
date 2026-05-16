@@ -179,6 +179,53 @@ def record_user_insight(
 
 
 @mcp.tool()
+def propose_candidate_insight(
+    target_type: str,
+    insight: str,
+    target_id: int | None = None,
+    symbol: str | None = None,
+    market: str | None = None,
+    sector_path: list[str] | None = None,
+    normalized_summary: str | None = None,
+    tags: list[str] | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Propose an inferred user insight for later user confirmation."""
+    return repository.propose_candidate_insight(
+        target_type=target_type,
+        insight=insight,
+        target_id=target_id,
+        symbol=symbol,
+        market=market,
+        sector_path=sector_path,
+        normalized_summary=normalized_summary,
+        tags=tags,
+        reason=reason,
+    )
+
+
+@mcp.tool()
+def list_candidate_insights(
+    status: str | None = "pending",
+    target_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """List candidate insights waiting for confirmation or review."""
+    return repository.list_candidate_insights(status=status, target_type=target_type)
+
+
+@mcp.tool()
+def confirm_candidate_insight(candidate_id: int) -> dict[str, Any]:
+    """Confirm a candidate insight and promote it into user_insights."""
+    return repository.confirm_candidate_insight(candidate_id=candidate_id)
+
+
+@mcp.tool()
+def reject_candidate_insight(candidate_id: int) -> dict[str, Any]:
+    """Reject a candidate insight so it is not treated as user memory."""
+    return repository.reject_candidate_insight(candidate_id=candidate_id)
+
+
+@mcp.tool()
 def import_stock_research_draft(
     draft: dict[str, Any],
     confirmed_by_user: bool = False,

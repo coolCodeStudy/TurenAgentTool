@@ -24,10 +24,10 @@
 
 ## 个股事实知识
 
-- `announcement` confidence=0.950, confirmed=True, source=[5] SK hynix Announces FY25 Financial Results
-  - 公司 2025 年实现收入 97.1467 万亿韩元、营业利润 47.2063 万亿韩元、净利润 42.9479 万亿韩元，均为历史高位；4Q25 收入 32.8267 万亿韩元、营业利润 19.1696 万亿韩元。
 - `equity_structure` confidence=0.950, confirmed=True, source=[8] SK hynix Ownership Structure
   - 截至 2026-04-07，SK Square 及关联方合计持股 20.5%；5% 以上股东还包括韩国国民年金 7.9%、Capital Research and Management Company 5.1%、BlackRock Fund Advisors 5.0%。
+- `announcement` confidence=0.950, confirmed=True, source=[5] SK hynix Announces FY25 Financial Results
+  - 公司 2025 年实现收入 97.1467 万亿韩元、营业利润 47.2063 万亿韩元、净利润 42.9479 万亿韩元，均为历史高位；4Q25 收入 32.8267 万亿韩元、营业利润 19.1696 万亿韩元。
 - `business` confidence=0.900, confirmed=True, source=[3] SK hynix Fact Sheet
   - SK hynix 官方 Fact Sheet 将公司定位为 global AI memory 行业先行者，业务覆盖 HBM、eSSD、DRAM、NAND Flash 和 SSD。
 - `announcement` confidence=0.900, confirmed=True, source=[12] SK hynix Begins Supply of 321-layer QLC NAND cSSD
@@ -52,21 +52,35 @@
   - 原文：首次录入时先把SK海力士作为AI内存/HBM核心标的跟踪，而不是单纯当传统存储周期股看。
   - 摘要：用户希望优先从AI内存和HBM主线理解SK海力士。
 
+## 待确认个股候选心得
+
+- 暂无
+
 ## 相关板块知识
 
 - 暂无
 
 ## 相关板块心得
 
-- `sector` tags=['HBM', '高带宽内存', 'AI基础设施', '拥挤度', '追高风险']
-  - 原文：HBM/高带宽内存方向可以作为 AI 基础设施的重要主线跟踪，但如果市场交易过于拥挤，不适合无脑追高，需要结合订单兑现、估值和仓位一起判断。
+- 暂无
+
+## 待确认板块候选心得
+
+- [6] `sector` tags=['HBM', '高带宽内存', 'AI基础设施', '拥挤度', '追高风险']
+  - 候选：HBM/高带宽内存方向可以作为 AI 基础设施的重要主线跟踪，但如果市场交易过于拥挤，不适合无脑追高，需要结合订单兑现、估值和仓位一起判断。
   - 摘要：用户认可 HBM/高带宽内存作为 AI 基础设施主线，但希望在交易拥挤时避免无脑追高。
+  - 提出原因：此前助手演示时推断生成，需用户明确确认后才能转为正式心得。
 
 ## 组合/策略级用户偏好
 
-- `portfolio` tags=['仓位管理', '主题集中度', '拥挤交易', '风险控制']
-  - 原文：单一热门主题即使基本面很强，也不应该在组合里过度集中；主题越拥挤，越需要控制仓位和留出调整空间。
+- 暂无
+
+## 待确认组合/策略候选心得
+
+- [5] `portfolio` tags=['仓位管理', '主题集中度', '拥挤交易', '风险控制']
+  - 候选：单一热门主题即使基本面很强，也不应该在组合里过度集中；主题越拥挤，越需要控制仓位和留出调整空间。
   - 摘要：用户希望控制单一热门主题的组合集中度，尤其在交易拥挤时保留仓位弹性。
+  - 提出原因：此前助手演示时推断生成，需用户明确确认后才能转为正式心得。
 
 ## 来源
 

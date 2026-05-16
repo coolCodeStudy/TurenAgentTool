@@ -122,6 +122,21 @@ python scripts/build_analysis_context.py 000660 KR --output drafts/000660_KR_ana
 python scripts/record_user_insight.py stock "我的心得原文" --symbol 000660 --market KR --tag HBM
 ```
 
+提出待确认候选心得：
+
+```bash
+python scripts/propose_candidate_insight.py sector "系统推断出的候选心得" \
+  --sector-path AI基础设施 AI服务器供应链 高带宽内存 --tag HBM
+```
+
+查看并处理候选心得：
+
+```bash
+python scripts/candidate_insights.py list
+python scripts/candidate_insights.py confirm 1
+python scripts/candidate_insights.py reject 1
+```
+
 启动 MCP Server：
 
 ```bash
@@ -156,6 +171,10 @@ postgresql://postgres:postgres@localhost:55432/investment_kg
 - `add_knowledge_item`
 - `add_user_insight`
 - `record_user_insight`
+- `propose_candidate_insight`
+- `list_candidate_insights`
+- `confirm_candidate_insight`
+- `reject_candidate_insight`
 - `import_stock_research_draft`
 
 ## 云端部署

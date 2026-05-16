@@ -85,14 +85,23 @@ def render_stock_context(context: dict[str, Any]) -> str:
     lines.extend(["", "## 个股用户心得", ""])
     _append_insights(lines, context.get("stock_insights") or [])
 
+    lines.extend(["", "## 待确认个股候选心得", ""])
+    _append_candidate_insights(lines, context.get("stock_candidate_insights") or [])
+
     lines.extend(["", "## 相关板块知识", ""])
     _append_knowledge(lines, context.get("sector_knowledge") or [])
 
     lines.extend(["", "## 相关板块心得", ""])
     _append_insights(lines, context.get("sector_insights") or [])
 
+    lines.extend(["", "## 待确认板块候选心得", ""])
+    _append_candidate_insights(lines, context.get("sector_candidate_insights") or [])
+
     lines.extend(["", "## 组合/策略级用户偏好", ""])
     _append_insights(lines, context.get("global_insights") or [])
+
+    lines.extend(["", "## 待确认组合/策略候选心得", ""])
+    _append_candidate_insights(lines, context.get("global_candidate_insights") or [])
 
     lines.extend(["", "## 来源", ""])
     sources = context.get("sources") or []
@@ -136,6 +145,21 @@ def _append_insights(lines: list[str], items: list[dict[str, Any]]) -> None:
         lines.append(f"  - 原文：{item.get('insight')}")
         if item.get("normalized_summary"):
             lines.append(f"  - 摘要：{item['normalized_summary']}")
+
+
+def _append_candidate_insights(lines: list[str], items: list[dict[str, Any]]) -> None:
+    if not items:
+        lines.append("- 暂无")
+        return
+    for item in items:
+        tags = item.get("tags") or []
+        tag_suffix = f" tags={tags}" if tags else ""
+        lines.append(f"- [{item['id']}] `{item.get('target_type')}`{tag_suffix}")
+        lines.append(f"  - 候选：{item.get('insight')}")
+        if item.get("normalized_summary"):
+            lines.append(f"  - 摘要：{item['normalized_summary']}")
+        if item.get("reason"):
+            lines.append(f"  - 提出原因：{item['reason']}")
 
 
 def _format_source_suffix(item: dict[str, Any]) -> str:

@@ -107,6 +107,22 @@ CREATE TABLE IF NOT EXISTS user_insights (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS candidate_insights (
+  id BIGSERIAL PRIMARY KEY,
+  target_type TEXT NOT NULL,
+  target_id BIGINT,
+  insight TEXT NOT NULL,
+  normalized_summary TEXT,
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  confirmed_insight_id BIGINT REFERENCES user_insights(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ,
+  CHECK (status IN ('pending', 'confirmed', 'rejected'))
+);
+
 CREATE TABLE IF NOT EXISTS review_reports (
   id BIGSERIAL PRIMARY KEY,
   report_date DATE NOT NULL UNIQUE,
@@ -126,4 +142,5 @@ CREATE INDEX IF NOT EXISTS idx_positions_stock_id ON positions(stock_id);
 CREATE INDEX IF NOT EXISTS idx_trade_events_stock_id_happened_at ON trade_events(stock_id, happened_at DESC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_target ON knowledge_items(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_user_insights_target ON user_insights(target_type, target_id);
-
+CREATE INDEX IF NOT EXISTS idx_candidate_insights_status ON candidate_insights(status);
+CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(target_type, target_id);

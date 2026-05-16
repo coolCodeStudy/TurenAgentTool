@@ -201,7 +201,7 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
 
 ### record_user_insight
 
-按自然对象写入用户心得。它是 `add_user_insight` 的便利层，会先把股票代码或板块路径解析成内部 `target_id`，再写入 `user_insights`。
+按自然对象写入用户明确确认过的心得。它是 `add_user_insight` 的便利层，会先把股票代码或板块路径解析成内部 `target_id`，再写入 `user_insights`。
 
 个股心得示例：
 
@@ -225,6 +225,60 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
   "insight": "HBM 很强，但太拥挤时不要追太满。",
   "normalized_summary": "用户认可 HBM 主线强度，但希望避免在拥挤阶段追高过度。",
   "tags": ["HBM", "拥挤度", "仓位管理"]
+}
+```
+
+### propose_candidate_insight
+
+提出待确认候选心得。适用于系统根据分析、复盘或对话推断出来，但用户还没有明确确认的观点。候选心得不会作为正式用户偏好参与分析，只会出现在待确认区。
+
+输入：
+
+```json
+{
+  "target_type": "sector",
+  "sector_path": ["AI基础设施", "AI服务器供应链", "高带宽内存"],
+  "insight": "HBM 很强，但拥挤时不要无脑追高。",
+  "normalized_summary": "系统推断用户可能希望在 HBM 拥挤交易阶段控制追高风险。",
+  "tags": ["HBM", "拥挤度", "候选"],
+  "reason": "来自一次海力士分析后的系统提炼，需要用户确认。"
+}
+```
+
+### list_candidate_insights
+
+查看候选心得。
+
+输入：
+
+```json
+{
+  "status": "pending",
+  "target_type": null
+}
+```
+
+### confirm_candidate_insight
+
+确认候选心得。确认后会创建或复用一条正式 `user_insights`，并把候选状态标记为 `confirmed`。
+
+输入：
+
+```json
+{
+  "candidate_id": 1
+}
+```
+
+### reject_candidate_insight
+
+拒绝候选心得。拒绝后候选状态标记为 `rejected`，不会进入正式用户记忆。
+
+输入：
+
+```json
+{
+  "candidate_id": 1
 }
 ```
 
