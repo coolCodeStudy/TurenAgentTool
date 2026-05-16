@@ -62,6 +62,12 @@ python scripts/build_research_prompt.py drafts/000660_KR_research_draft.json
 python scripts/validate_research_draft.py examples/sk_hynix_research_draft.json
 ```
 
+使用模型 provider 补全草稿。第一版先用 `mock` 跑通流程：
+
+```bash
+python scripts/enrich_research_draft.py drafts/000660_KR_research_draft.json --provider mock
+```
+
 一键准备研究工作流：
 
 ```bash
