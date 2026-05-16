@@ -163,6 +163,21 @@ python -m investment_knowledge_mcp.server
 MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m investment_knowledge_mcp.server
 ```
 
+启动 Command API：
+
+```bash
+COMMAND_API_TOKEN=dev-token python -m investment_knowledge_mcp.command_api
+```
+
+调用示例：
+
+```bash
+curl -s http://localhost:8001/command \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"查看候选心得","sender":"local","source":"curl"}'
+```
+
 ## 配置
 
 默认数据库连接：

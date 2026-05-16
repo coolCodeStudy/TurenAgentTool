@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS review_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS command_events (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT,
+  sender TEXT,
+  command TEXT NOT NULL,
+  ok BOOLEAN NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_stocks_symbol_market ON stocks(symbol, market);
 CREATE INDEX IF NOT EXISTS idx_sectors_parent_id ON sectors(parent_id);
 CREATE INDEX IF NOT EXISTS idx_stock_sector_stock_id ON stock_sector_relations(stock_id);
@@ -144,3 +154,4 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_target ON knowledge_items(target_type, 
 CREATE INDEX IF NOT EXISTS idx_user_insights_target ON user_insights(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_status ON candidate_insights(status);
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_command_events_created_at ON command_events(created_at DESC);

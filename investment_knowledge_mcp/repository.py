@@ -448,6 +448,25 @@ def reject_candidate_insight(candidate_id: int) -> dict[str, Any]:
     return to_jsonable(row)
 
 
+def record_command_event(
+    command: str,
+    ok: bool,
+    message: str,
+    source: str | None = None,
+    sender: str | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO command_events (source, sender, command, ok, message)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (source, sender, command, ok, message),
+        ).fetchone()
+    return to_jsonable(row)
+
+
 def _resolve_insight_target_in_conn(
     conn: Connection,
     target_type: str,

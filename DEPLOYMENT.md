@@ -61,6 +61,10 @@ MCP_HOST=0.0.0.0
 MCP_PORT=8000
 MCP_HOST_PORT=8000
 MCP_PATH=/mcp
+COMMAND_API_HOST=0.0.0.0
+COMMAND_API_PORT=8001
+COMMAND_API_HOST_PORT=8001
+COMMAND_API_TOKEN=<strong-command-token>
 ```
 
 启动：
@@ -77,6 +81,12 @@ MCP endpoint：
 http://<ecs-public-ip>:8000/mcp
 ```
 
+Command API endpoint：
+
+```text
+http://<ecs-public-ip>:8001/command
+```
+
 基础连通性检查：
 
 ```bash
@@ -84,6 +94,16 @@ curl -i http://localhost:8000/mcp
 ```
 
 普通 `curl` 没有 MCP 客户端所需的请求头，返回 `406 Not Acceptable` 且提示需要 `text/event-stream` 时，说明 HTTP 服务和路由已经可达。
+
+Command API 检查：
+
+```bash
+curl -i http://localhost:8001/health
+curl -s http://localhost:8001/command \
+  -H "Authorization: Bearer $COMMAND_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"查看候选心得","sender":"deploy-check","source":"curl"}'
+```
 
 生产环境建议放到反向代理和 HTTPS 后面，再暴露给客户端。
 
@@ -137,6 +157,7 @@ sudo systemctl restart investment-knowledge
 - MCP `/mcp` 不直接公网裸奔，生产环境应放到 HTTPS 和认证之后。
 - 数据库 volume 有备份策略。
 - `scripts/ikg.py "分析 000660 KR"` 在服务器上能跑通。
+- `/command` 带 `COMMAND_API_TOKEN` 能跑通，未带 token 会返回 `401`。
 - `scripts/candidate_insights.py list` 能看到待确认候选心得。
 - 写入类入口区分正式心得和候选心得，系统推断不能直接写入 `user_insights`。
 

@@ -33,6 +33,9 @@ class AppConfig:
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000
     mcp_path: str = "/mcp"
+    command_api_host: str = "127.0.0.1"
+    command_api_port: int = 8001
+    command_api_token: str | None = None
 
 
 def get_config() -> AppConfig:
@@ -47,4 +50,7 @@ def get_config() -> AppConfig:
         mcp_host=os.getenv("MCP_HOST", "127.0.0.1"),
         mcp_port=int(os.getenv("MCP_PORT", "8000")),
         mcp_path=os.getenv("MCP_PATH", "/mcp"),
+        command_api_host=os.getenv("COMMAND_API_HOST", "127.0.0.1"),
+        command_api_port=int(os.getenv("COMMAND_API_PORT", "8001")),
+        command_api_token=os.getenv("COMMAND_API_TOKEN") or None,
     )

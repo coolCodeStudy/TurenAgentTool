@@ -31,5 +31,21 @@ services:
       - "${MCP_HOST_PORT:-8000}:${MCP_PORT:-8000}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.server"]
 
+  command-api:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      COMMAND_API_HOST: ${COMMAND_API_HOST:-0.0.0.0}
+      COMMAND_API_PORT: ${COMMAND_API_PORT:-8001}
+      COMMAND_API_TOKEN: ${COMMAND_API_TOKEN:?COMMAND_API_TOKEN is required}
+    ports:
+      - "${COMMAND_API_HOST_PORT:-8001}:${COMMAND_API_PORT:-8001}"
+    command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
+
 volumes:
   postgres_prod_data:
