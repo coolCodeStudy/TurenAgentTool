@@ -38,6 +38,14 @@ python scripts/init_db.py
 python scripts/smoke_test.py
 ```
 
+Smoke test 使用 `SMOKE001/TEST` 临时数据，运行结束会自动清理，不应污染正式库。
+
+清理开发阶段重复数据：
+
+```bash
+python scripts/cleanup_duplicate_data.py
+```
+
 导入个股研究草稿样例：
 
 ```bash

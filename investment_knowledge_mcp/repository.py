@@ -154,7 +154,7 @@ def add_source(
     published_at: str | None = None,
 ) -> dict[str, Any]:
     with transaction() as conn:
-        row = _insert_source(
+        row = _upsert_source(
             conn=conn,
             source_type=source_type,
             title=title,
@@ -165,7 +165,14 @@ def add_source(
     return to_jsonable(row)
 
 
-def _insert_source(
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _upsert_source(
     conn: Connection,
     source_type: str,
     title: str | None = None,
@@ -173,6 +180,31 @@ def _insert_source(
     publisher: str | None = None,
     published_at: str | None = None,
 ) -> dict[str, Any]:
+    source_type = source_type.strip()
+    title = _clean_optional_text(title)
+    url = _clean_optional_text(url)
+    publisher = _clean_optional_text(publisher)
+
+    existing = _find_source(
+        conn=conn,
+        source_type=source_type,
+        title=title,
+        url=url,
+        publisher=publisher,
+    )
+    if existing is not None:
+        return conn.execute(
+            """
+            UPDATE sources SET
+              title = COALESCE(sources.title, %s),
+              publisher = COALESCE(sources.publisher, %s),
+              published_at = COALESCE(sources.published_at, %s)
+            WHERE id = %s
+            RETURNING *
+            """,
+            (title, publisher, published_at, existing["id"]),
+        ).fetchone()
+
     return conn.execute(
         """
         INSERT INTO sources (source_type, title, url, publisher, published_at)
@@ -181,6 +213,42 @@ def _insert_source(
         """,
         (source_type, title, url, publisher, published_at),
     ).fetchone()
+
+
+def _find_source(
+    conn: Connection,
+    source_type: str,
+    title: str | None,
+    url: str | None,
+    publisher: str | None,
+) -> dict[str, Any] | None:
+    if url:
+        return conn.execute(
+            """
+            SELECT *
+            FROM sources
+            WHERE url = %s
+            ORDER BY id
+            LIMIT 1
+            """,
+            (url,),
+        ).fetchone()
+
+    if title:
+        return conn.execute(
+            """
+            SELECT *
+            FROM sources
+            WHERE source_type = %s
+              AND title = %s
+              AND publisher IS NOT DISTINCT FROM %s
+            ORDER BY id
+            LIMIT 1
+            """,
+            (source_type, title, publisher),
+        ).fetchone()
+
+    return None
 
 
 def add_knowledge_item(
@@ -194,26 +262,17 @@ def add_knowledge_item(
     stale_after: str | None = None,
 ) -> dict[str, Any]:
     with transaction() as conn:
-        row = conn.execute(
-            """
-            INSERT INTO knowledge_items (
-              target_type, target_id, knowledge_type, content, source_id,
-              confidence, confirmed_by_user, stale_after
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
-            """,
-            (
-                target_type,
-                target_id,
-                knowledge_type,
-                content,
-                source_id,
-                confidence,
-                confirmed_by_user,
-                stale_after,
-            ),
-        ).fetchone()
+        row = _add_knowledge_item_in_conn(
+            conn=conn,
+            target_type=target_type,
+            target_id=target_id,
+            knowledge_type=knowledge_type,
+            content=content,
+            source_id=source_id,
+            confidence=confidence,
+            confirmed_by_user=confirmed_by_user,
+            stale_after=stale_after,
+        )
     return to_jsonable(row)
 
 
@@ -225,16 +284,14 @@ def add_user_insight(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     with transaction() as conn:
-        row = conn.execute(
-            """
-            INSERT INTO user_insights (
-              target_type, target_id, insight, normalized_summary, tags
-            )
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING *
-            """,
-            (target_type, target_id, insight, normalized_summary, Jsonb(tags or [])),
-        ).fetchone()
+        row = _add_user_insight_in_conn(
+            conn=conn,
+            target_type=target_type,
+            target_id=target_id,
+            insight=insight,
+            normalized_summary=normalized_summary,
+            tags=tags,
+        )
     return to_jsonable(row)
 
 
@@ -264,7 +321,7 @@ def import_stock_research_draft(
 
         sources: list[dict[str, Any]] = []
         for index, source_input in enumerate(draft.get("sources") or []):
-            source = _insert_source(
+            source = _upsert_source(
                 conn=conn,
                 source_type=source_input.get("source_type", "model"),
                 title=source_input.get("title"),
@@ -472,6 +529,38 @@ def _add_knowledge_item_in_conn(
     confirmed_by_user: bool = False,
     stale_after: str | None = None,
 ) -> dict[str, Any]:
+    target_type = target_type.strip()
+    knowledge_type = knowledge_type.strip()
+    content = content.strip()
+
+    existing = conn.execute(
+        """
+        SELECT *
+        FROM knowledge_items
+        WHERE target_type = %s
+          AND target_id IS NOT DISTINCT FROM %s
+          AND knowledge_type = %s
+          AND content = %s
+        ORDER BY id
+        LIMIT 1
+        """,
+        (target_type, target_id, knowledge_type, content),
+    ).fetchone()
+    if existing is not None:
+        return conn.execute(
+            """
+            UPDATE knowledge_items SET
+              source_id = COALESCE(knowledge_items.source_id, %s),
+              confidence = GREATEST(knowledge_items.confidence, %s),
+              confirmed_by_user = knowledge_items.confirmed_by_user OR %s,
+              stale_after = COALESCE(knowledge_items.stale_after, %s),
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (source_id, confidence, confirmed_by_user, stale_after, existing["id"]),
+        ).fetchone()
+
     return conn.execute(
         """
         INSERT INTO knowledge_items (
@@ -502,6 +591,38 @@ def _add_user_insight_in_conn(
     normalized_summary: str | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
+    target_type = target_type.strip()
+    insight = insight.strip()
+    normalized_summary = _clean_optional_text(normalized_summary)
+    tags = tags or []
+
+    existing = conn.execute(
+        """
+        SELECT *
+        FROM user_insights
+        WHERE target_type = %s
+          AND target_id IS NOT DISTINCT FROM %s
+          AND insight = %s
+        ORDER BY id
+        LIMIT 1
+        """,
+        (target_type, target_id, insight),
+    ).fetchone()
+    if existing is not None:
+        return conn.execute(
+            """
+            UPDATE user_insights SET
+              normalized_summary = COALESCE(user_insights.normalized_summary, %s),
+              tags = CASE
+                WHEN user_insights.tags = '[]'::jsonb THEN %s
+                ELSE user_insights.tags
+              END
+            WHERE id = %s
+            RETURNING *
+            """,
+            (normalized_summary, Jsonb(tags), existing["id"]),
+        ).fetchone()
+
     return conn.execute(
         """
         INSERT INTO user_insights (
