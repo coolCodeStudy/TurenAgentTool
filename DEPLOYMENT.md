@@ -126,6 +126,35 @@ sudo systemctl restart investment-knowledge
 - MCP HTTP 服务第一版可以只对自己的 IP 开安全组；后续接反向代理、HTTPS 和认证。
 - 资料查询 provider 的 API key 统一放 `.env` 或云端 secret，不写进代码。
 
+## 部署前检查清单
+
+第一版上云前至少确认：
+
+- 已设置强 `POSTGRES_PASSWORD`。
+- 已设置 OpenAI 等外部 provider key，且不提交到 git。
+- PostgreSQL 只在 Docker 网络内访问，不暴露公网端口。
+- ECS 安全组只开放 SSH、HTTP/HTTPS 或必要端口。
+- MCP `/mcp` 不直接公网裸奔，生产环境应放到 HTTPS 和认证之后。
+- 数据库 volume 有备份策略。
+- `scripts/ikg.py "分析 000660 KR"` 在服务器上能跑通。
+- `scripts/candidate_insights.py list` 能看到待确认候选心得。
+- 写入类入口区分正式心得和候选心得，系统推断不能直接写入 `user_insights`。
+
+## 消息入口
+
+消息入口设计见 [docs/消息入口设计.md](docs/消息入口设计.md)。
+
+建议第一版不要让钉钉、Hermes、OpenClaw 直接访问数据库。推荐路径：
+
+```text
+钉钉 / Web API / Agent 外壳
+  -> command_router.handle_command()
+    -> repository / MCP tools
+      -> PostgreSQL
+```
+
+这样可以统一处理鉴权、审计、候选确认和写入边界。
+
 ## 和本地开发的区别
 
 本地默认：
