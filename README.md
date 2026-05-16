@@ -42,6 +42,12 @@ python scripts/import_research_draft.py examples/tencent_research_draft.json --c
 python -m investment_knowledge_mcp.server
 ```
 
+本地默认使用 `stdio` transport。云端部署时使用 `streamable-http`：
+
+```bash
+MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m investment_knowledge_mcp.server
+```
+
 ## 配置
 
 默认数据库连接：
@@ -62,3 +68,11 @@ postgresql://postgres:postgres@localhost:55432/investment_kg
 - `add_knowledge_item`
 - `add_user_insight`
 - `import_stock_research_draft`
+
+## 云端部署
+
+阿里云/ECS 部署见 [DEPLOYMENT.md](DEPLOYMENT.md)。生产环境推荐使用：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```

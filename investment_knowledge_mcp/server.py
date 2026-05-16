@@ -5,9 +5,16 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.config import get_config
 
 
-mcp = FastMCP("InvestmentKnowledge")
+config = get_config()
+mcp = FastMCP(
+    "InvestmentKnowledge",
+    host=config.mcp_host,
+    port=config.mcp_port,
+    streamable_http_path=config.mcp_path,
+)
 
 
 @mcp.tool()
@@ -144,5 +151,9 @@ def import_stock_research_draft(
     )
 
 
+def main() -> None:
+    mcp.run(transport=config.mcp_transport)
+
+
 if __name__ == "__main__":
-    mcp.run()
+    main()

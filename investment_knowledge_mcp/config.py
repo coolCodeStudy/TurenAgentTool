@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 
 DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:55432/investment_kg"
@@ -28,8 +29,22 @@ def load_env_file(path: Path | None = None) -> None:
 @dataclass(frozen=True)
 class AppConfig:
     database_url: str = DEFAULT_DATABASE_URL
+    mcp_transport: Literal["stdio", "sse", "streamable-http"] = "stdio"
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8000
+    mcp_path: str = "/mcp"
 
 
 def get_config() -> AppConfig:
     load_env_file()
-    return AppConfig(database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    if transport not in {"stdio", "sse", "streamable-http"}:
+        raise ValueError("MCP_TRANSPORT must be one of: stdio, sse, streamable-http")
+
+    return AppConfig(
+        database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
+        mcp_transport=transport,  # type: ignore[arg-type]
+        mcp_host=os.getenv("MCP_HOST", "127.0.0.1"),
+        mcp_port=int(os.getenv("MCP_PORT", "8000")),
+        mcp_path=os.getenv("MCP_PATH", "/mcp"),
+    )
