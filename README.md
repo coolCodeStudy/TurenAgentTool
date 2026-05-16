@@ -2,6 +2,14 @@
 
 InvestmentKnowledge MCP 是投资知识图谱系统的第一阶段后端骨架。当前目标是跑通股票画像、板块树、知识项、用户心得的写入和查询闭环。
 
+## 文档入口
+
+- 原始需求：[我的需求.md](我的需求.md)
+- 当前工程状态：[docs/当前工程状态.md](docs/当前工程状态.md)
+- 个股录入工作流：[docs/个股录入工作流.md](docs/个股录入工作流.md)
+- MVP 路线图：[docs/MVP路线图.md](docs/MVP路线图.md)
+- 阿里云部署：[DEPLOYMENT.md](DEPLOYMENT.md)
+
 ## 本地启动
 
 创建虚拟环境并安装依赖：
