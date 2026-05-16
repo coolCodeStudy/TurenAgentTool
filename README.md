@@ -49,6 +49,12 @@ python scripts/create_research_draft.py 000660 KR \
 python scripts/build_research_prompt.py drafts/000660_KR_research_draft.json
 ```
 
+校验补全后的研究草稿：
+
+```bash
+python scripts/validate_research_draft.py examples/sk_hynix_research_draft.json
+```
+
 启动 MCP Server：
 
 ```bash
