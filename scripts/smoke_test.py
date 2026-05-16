@@ -10,7 +10,10 @@ from investment_knowledge_mcp.repository import (
     add_knowledge_item,
     add_source,
     add_user_insight,
+    get_sector_context,
+    get_stock_context,
     link_stock_to_sector,
+    record_user_insight,
     search_stock,
     upsert_sector_tree,
     upsert_stock_profile,
@@ -20,10 +23,20 @@ SMOKE_SYMBOL = "SMOKE001"
 SMOKE_MARKET = "TEST"
 SMOKE_SOURCE_URL = "https://example.invalid/investment-knowledge-smoke-test"
 SMOKE_SECTOR_ROOT = "__smoke_test__"
+SMOKE_STOCK_INSIGHT = "Smoke test verifies idempotent user insight insertion."
+SMOKE_SECTOR_INSIGHT = "Smoke test verifies sector-level user memory retrieval."
+SMOKE_PORTFOLIO_INSIGHT = "Smoke test verifies portfolio-level user memory retrieval."
 
 
 def cleanup_smoke_data() -> None:
     with transaction() as conn:
+        conn.execute(
+            """
+            DELETE FROM user_insights
+            WHERE insight = ANY(%s)
+            """,
+            ([SMOKE_STOCK_INSIGHT, SMOKE_SECTOR_INSIGHT, SMOKE_PORTFOLIO_INSIGHT],),
+        )
         stock = conn.execute(
             """
             SELECT id
@@ -127,26 +140,49 @@ def main() -> None:
         insight = add_user_insight(
             target_type="stock",
             target_id=stock["id"],
-            insight="Smoke test verifies idempotent user insight insertion.",
+            insight=SMOKE_STOCK_INSIGHT,
             normalized_summary="Smoke test insight should not duplicate.",
             tags=["smoke-test"],
         )
         repeated_insight = add_user_insight(
             target_type="stock",
             target_id=stock["id"],
-            insight="Smoke test verifies idempotent user insight insertion.",
+            insight=SMOKE_STOCK_INSIGHT,
             normalized_summary="Smoke test insight should not duplicate.",
             tags=["smoke-test"],
         )
+        sector_insight = record_user_insight(
+            target_type="sector",
+            sector_path=[SMOKE_SECTOR_ROOT, "链路验证"],
+            insight=SMOKE_SECTOR_INSIGHT,
+            normalized_summary="Smoke test sector insight should appear in stock and sector context.",
+            tags=["smoke-test", "sector"],
+        )
+        portfolio_insight = record_user_insight(
+            target_type="portfolio",
+            insight=SMOKE_PORTFOLIO_INSIGHT,
+            normalized_summary="Smoke test portfolio insight should appear as global context.",
+            tags=["smoke-test", "portfolio"],
+        )
         result = search_stock(symbol=SMOKE_SYMBOL, market=SMOKE_MARKET)
+        stock_context = get_stock_context(symbol=SMOKE_SYMBOL, market=SMOKE_MARKET)
+        sector_context = get_sector_context(path=[SMOKE_SECTOR_ROOT, "链路验证"])
 
         assert repeated_source["id"] == source["id"]
         assert repeated_knowledge["id"] == knowledge["id"]
         assert repeated_insight["id"] == insight["id"]
+        assert sector_insight["target_type"] == "sector"
+        assert portfolio_insight["target_type"] == "portfolio"
         assert result["stock"]["id"] == stock["id"]
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
         assert len(result["user_insights"]) == 1
+        assert stock_context["stock"]["id"] == stock["id"]
+        assert len(stock_context["sector_insights"]) == 1
+        assert len(stock_context["global_insights"]) == 1
+        assert sector_context["sector"]["sector_id"] == sector_tree["leaf"]["id"]
+        assert len(sector_context["linked_stocks"]) == 1
+        assert len(sector_context["sector_insights"]) == 1
 
         print("Smoke test passed.")
         print(
@@ -155,6 +191,8 @@ def main() -> None:
                 "sector_count": len(result["sectors"]),
                 "knowledge_count": len(result["knowledge_items"]),
                 "insight_count": len(result["user_insights"]),
+                "context_sector_insight_count": len(stock_context["sector_insights"]),
+                "context_global_insight_count": len(stock_context["global_insights"]),
             }
         )
     finally:

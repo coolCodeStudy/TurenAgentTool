@@ -37,6 +37,40 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
 }
 ```
 
+### get_stock_context
+
+构建个股分析上下文。它比 `search_stock` 更适合给大模型分析使用，会同时返回：
+
+- 个股画像。
+- 个股所属板块路径。
+- 个股事实知识和来源。
+- 个股用户心得。
+- 相关板块知识和板块心得。
+- `portfolio` / `strategy` 级用户偏好。
+
+输入：
+
+```json
+{
+  "symbol": "000660",
+  "market": "KR"
+}
+```
+
+### get_sector_context
+
+构建板块分析上下文，可按板块路径或 `sector_id` 查询。
+
+输入：
+
+```json
+{
+  "path": ["科技", "半导体", "存储芯片", "DRAM/HBM"]
+}
+```
+
+输出包含当前板块及子板块、相关股票、板块知识、板块心得和组合/策略级用户偏好。
+
 ### upsert_stock_profile
 
 创建或更新股票画像。
@@ -162,6 +196,35 @@ MCP Server 是大模型和本地知识库之间的边界。大模型负责研究
   "insight": "AI 主线涨幅很大时，我不希望单一主题仓位超过组合的一半。",
   "normalized_summary": "用户希望控制单一高拥挤主题的组合占比，避免主题风险过度集中。",
   "tags": ["仓位管理", "主题拥挤", "风险控制"]
+}
+```
+
+### record_user_insight
+
+按自然对象写入用户心得。它是 `add_user_insight` 的便利层，会先把股票代码或板块路径解析成内部 `target_id`，再写入 `user_insights`。
+
+个股心得示例：
+
+```json
+{
+  "target_type": "stock",
+  "symbol": "000660",
+  "market": "KR",
+  "insight": "海力士要优先按 AI 内存/HBM 主线理解。",
+  "normalized_summary": "用户认为 SK 海力士的核心观察框架是 AI 内存和 HBM，而非单纯传统存储周期。",
+  "tags": ["AI内存", "HBM", "个股框架"]
+}
+```
+
+板块心得示例：
+
+```json
+{
+  "target_type": "sector",
+  "sector_path": ["AI基础设施", "AI服务器供应链", "高带宽内存"],
+  "insight": "HBM 很强，但太拥挤时不要追太满。",
+  "normalized_summary": "用户认可 HBM 主线强度，但希望避免在拥挤阶段追高过度。",
+  "tags": ["HBM", "拥挤度", "仓位管理"]
 }
 ```
 

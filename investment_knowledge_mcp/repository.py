@@ -120,6 +120,24 @@ def _get_sector(conn: Connection, name: str, parent_id: int | None) -> dict[str,
     ).fetchone()
 
 
+def _get_sector_by_path_in_conn(
+    conn: Connection,
+    path: list[str],
+) -> dict[str, Any] | None:
+    cleaned_path = [item.strip() for item in path if item and item.strip()]
+    if not cleaned_path:
+        raise ValueError("sector path must contain at least one non-empty sector name")
+
+    parent_id: int | None = None
+    row: dict[str, Any] | None = None
+    for name in cleaned_path:
+        row = _get_sector(conn, name, parent_id)
+        if row is None:
+            return None
+        parent_id = row["id"]
+    return row
+
+
 def link_stock_to_sector(
     stock_id: int,
     sector_id: int,
@@ -295,6 +313,56 @@ def add_user_insight(
     return to_jsonable(row)
 
 
+def record_user_insight(
+    target_type: str,
+    insight: str,
+    target_id: int | None = None,
+    symbol: str | None = None,
+    market: str | None = None,
+    sector_path: list[str] | None = None,
+    normalized_summary: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    target_type = target_type.strip().lower()
+    resolved_target_id = target_id
+
+    with transaction() as conn:
+        if target_type == "stock":
+            if resolved_target_id is None:
+                if not symbol or not market:
+                    raise ValueError("symbol and market are required when target_type is stock")
+                stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
+                if stock is None:
+                    raise ValueError(f"stock not found: {symbol} {market}")
+                resolved_target_id = stock["id"]
+        elif target_type == "sector":
+            if resolved_target_id is None:
+                if not sector_path:
+                    raise ValueError("sector_path is required when target_type is sector")
+                sector = _get_sector_by_path_in_conn(conn, sector_path)
+                if sector is None:
+                    raise ValueError(f"sector path not found: {' > '.join(sector_path)}")
+                resolved_target_id = sector["id"]
+        elif target_type in {"portfolio", "strategy"}:
+            resolved_target_id = None
+        elif resolved_target_id is None:
+            raise ValueError(
+                "target_id is required for custom target types; known target types are "
+                "stock, sector, portfolio, and strategy"
+            )
+
+        row = _add_user_insight_in_conn(
+            conn=conn,
+            target_type=target_type,
+            target_id=resolved_target_id,
+            insight=insight,
+            normalized_summary=normalized_summary,
+            tags=tags,
+        )
+
+    return to_jsonable(row)
+
+
 def import_stock_research_draft(
     draft: dict[str, Any],
     confirmed_by_user: bool = False,
@@ -441,6 +509,17 @@ def _upsert_stock_profile_in_conn(
             stock_character,
             notable_history,
         ),
+    ).fetchone()
+
+
+def _get_stock_in_conn(conn: Connection, symbol: str, market: str) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT *
+        FROM stocks
+        WHERE symbol = %s AND market = %s
+        """,
+        (_normalize_symbol(symbol), _normalize_market(market)),
     ).fetchone()
 
 
@@ -637,14 +716,7 @@ def _add_user_insight_in_conn(
 
 def search_stock(symbol: str, market: str) -> dict[str, Any]:
     with transaction() as conn:
-        stock = conn.execute(
-            """
-            SELECT *
-            FROM stocks
-            WHERE symbol = %s AND market = %s
-            """,
-            (_normalize_symbol(symbol), _normalize_market(market)),
-        ).fetchone()
+        stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
 
         if stock is None:
             return {"stock": None, "sectors": [], "knowledge_items": [], "user_insights": []}
@@ -698,3 +770,426 @@ def search_stock(symbol: str, market: str) -> dict[str, Any]:
             "user_insights": user_insights,
         }
     )
+
+
+def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
+    with transaction() as conn:
+        stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
+        if stock is None:
+            return {
+                "stock": None,
+                "sectors": [],
+                "stock_knowledge": [],
+                "stock_insights": [],
+                "sector_knowledge": [],
+                "sector_insights": [],
+                "global_insights": [],
+                "sources": [],
+            }
+
+        sectors = _get_stock_sector_context_in_conn(conn, stock_id=stock["id"])
+        sector_ids = [sector["sector_id"] for sector in sectors]
+        expanded_sector_ids = _expand_sector_ids_with_ancestors(conn, sector_ids)
+
+        stock_knowledge = _get_knowledge_for_target_in_conn(
+            conn=conn,
+            target_type="stock",
+            target_ids=[stock["id"]],
+        )
+        stock_insights = _get_user_insights_for_target_in_conn(
+            conn=conn,
+            target_type="stock",
+            target_ids=[stock["id"]],
+        )
+        sector_knowledge = _get_knowledge_for_target_in_conn(
+            conn=conn,
+            target_type="sector",
+            target_ids=expanded_sector_ids,
+        )
+        sector_insights = _get_user_insights_for_target_in_conn(
+            conn=conn,
+            target_type="sector",
+            target_ids=expanded_sector_ids,
+        )
+        global_insights = _get_global_user_insights_in_conn(conn)
+        sources = _get_sources_for_context_in_conn(
+            conn=conn,
+            source_ids=[
+                item["source_id"]
+                for item in [*stock_knowledge, *sector_knowledge, *sectors]
+                if item.get("source_id") is not None
+            ],
+        )
+
+    return to_jsonable(
+        {
+            "stock": stock,
+            "sectors": sectors,
+            "stock_knowledge": stock_knowledge,
+            "stock_insights": stock_insights,
+            "sector_knowledge": sector_knowledge,
+            "sector_insights": sector_insights,
+            "global_insights": global_insights,
+            "sources": sources,
+        }
+    )
+
+
+def get_sector_context(
+    path: list[str] | None = None,
+    sector_id: int | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        sector = _resolve_sector_in_conn(conn, path=path, sector_id=sector_id)
+        if sector is None:
+            return {
+                "sector": None,
+                "descendant_sectors": [],
+                "linked_stocks": [],
+                "sector_knowledge": [],
+                "sector_insights": [],
+                "global_insights": [],
+                "sources": [],
+            }
+
+        descendant_sectors = _get_descendant_sector_context_in_conn(conn, sector_id=sector["sector_id"])
+        descendant_sector_ids = [item["sector_id"] for item in descendant_sectors]
+        linked_stocks = _get_stocks_linked_to_sectors_in_conn(conn, sector_ids=descendant_sector_ids)
+        sector_knowledge = _get_knowledge_for_target_in_conn(
+            conn=conn,
+            target_type="sector",
+            target_ids=descendant_sector_ids,
+        )
+        sector_insights = _get_user_insights_for_target_in_conn(
+            conn=conn,
+            target_type="sector",
+            target_ids=descendant_sector_ids,
+        )
+        global_insights = _get_global_user_insights_in_conn(conn)
+        sources = _get_sources_for_context_in_conn(
+            conn=conn,
+            source_ids=[
+                item["source_id"]
+                for item in [*sector_knowledge, *linked_stocks]
+                if item.get("source_id") is not None
+            ],
+        )
+
+    return to_jsonable(
+        {
+            "sector": sector,
+            "descendant_sectors": descendant_sectors,
+            "linked_stocks": linked_stocks,
+            "sector_knowledge": sector_knowledge,
+            "sector_insights": sector_insights,
+            "global_insights": global_insights,
+            "sources": sources,
+        }
+    )
+
+
+def _resolve_sector_in_conn(
+    conn: Connection,
+    path: list[str] | None,
+    sector_id: int | None,
+) -> dict[str, Any] | None:
+    if sector_id is not None:
+        return _get_sector_context_by_id_in_conn(conn, sector_id=sector_id)
+    if path:
+        sector = _get_sector_by_path_in_conn(conn, path)
+        if sector is None:
+            return None
+        return _get_sector_context_by_id_in_conn(conn, sector_id=sector["id"])
+    raise ValueError("path or sector_id is required")
+
+
+def _get_stock_sector_context_in_conn(
+    conn: Connection,
+    stock_id: int,
+) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        WITH RECURSIVE sector_paths AS (
+          SELECT
+            id,
+            name,
+            parent_id,
+            name::text AS path,
+            description,
+            recent_status
+          FROM sectors
+          WHERE parent_id IS NULL
+          UNION ALL
+          SELECT
+            s.id,
+            s.name,
+            s.parent_id,
+            sp.path || ' > ' || s.name,
+            s.description,
+            s.recent_status
+          FROM sectors s
+          JOIN sector_paths sp ON s.parent_id = sp.id
+        )
+        SELECT
+          ssr.id AS relation_id,
+          ssr.stock_id,
+          ssr.sector_id,
+          ssr.relation_type,
+          ssr.confidence,
+          ssr.source_id,
+          ssr.confirmed_by_user,
+          sp.name,
+          sp.parent_id,
+          sp.path,
+          sp.description,
+          sp.recent_status
+        FROM stock_sector_relations ssr
+        JOIN sector_paths sp ON sp.id = ssr.sector_id
+        WHERE ssr.stock_id = %s
+        ORDER BY ssr.relation_type, ssr.confidence DESC, sp.path
+        """,
+        (stock_id,),
+    ).fetchall()
+
+
+def _get_sector_context_by_id_in_conn(
+    conn: Connection,
+    sector_id: int,
+) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        WITH RECURSIVE sector_paths AS (
+          SELECT
+            id,
+            name,
+            parent_id,
+            name::text AS path,
+            description,
+            recent_status,
+            created_at,
+            updated_at
+          FROM sectors
+          WHERE parent_id IS NULL
+          UNION ALL
+          SELECT
+            s.id,
+            s.name,
+            s.parent_id,
+            sp.path || ' > ' || s.name,
+            s.description,
+            s.recent_status,
+            s.created_at,
+            s.updated_at
+          FROM sectors s
+          JOIN sector_paths sp ON s.parent_id = sp.id
+        )
+        SELECT
+          id AS sector_id,
+          name,
+          parent_id,
+          path,
+          description,
+          recent_status,
+          created_at,
+          updated_at
+        FROM sector_paths
+        WHERE id = %s
+        """,
+        (sector_id,),
+    ).fetchone()
+
+
+def _get_descendant_sector_context_in_conn(
+    conn: Connection,
+    sector_id: int,
+) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        WITH RECURSIVE descendants AS (
+          SELECT id
+          FROM sectors
+          WHERE id = %s
+          UNION ALL
+          SELECT s.id
+          FROM sectors s
+          JOIN descendants d ON s.parent_id = d.id
+        ),
+        sector_paths AS (
+          SELECT
+            id,
+            name,
+            parent_id,
+            name::text AS path,
+            description,
+            recent_status
+          FROM sectors
+          WHERE parent_id IS NULL
+          UNION ALL
+          SELECT
+            s.id,
+            s.name,
+            s.parent_id,
+            sp.path || ' > ' || s.name,
+            s.description,
+            s.recent_status
+          FROM sectors s
+          JOIN sector_paths sp ON s.parent_id = sp.id
+        )
+        SELECT
+          sp.id AS sector_id,
+          sp.name,
+          sp.parent_id,
+          sp.path,
+          sp.description,
+          sp.recent_status
+        FROM sector_paths sp
+        JOIN descendants d ON d.id = sp.id
+        ORDER BY sp.path
+        """,
+        (sector_id,),
+    ).fetchall()
+
+
+def _expand_sector_ids_with_ancestors(
+    conn: Connection,
+    sector_ids: list[int],
+) -> list[int]:
+    if not sector_ids:
+        return []
+    rows = conn.execute(
+        """
+        WITH RECURSIVE ancestors AS (
+          SELECT id, parent_id
+          FROM sectors
+          WHERE id = ANY(%s)
+          UNION
+          SELECT s.id, s.parent_id
+          FROM sectors s
+          JOIN ancestors a ON a.parent_id = s.id
+        )
+        SELECT DISTINCT id
+        FROM ancestors
+        """,
+        (sector_ids,),
+    ).fetchall()
+    return [row["id"] for row in rows]
+
+
+def _get_knowledge_for_target_in_conn(
+    conn: Connection,
+    target_type: str,
+    target_ids: list[int],
+) -> list[dict[str, Any]]:
+    if not target_ids:
+        return []
+    return conn.execute(
+        """
+        SELECT
+          k.*,
+          s.title AS source_title,
+          s.url AS source_url,
+          s.publisher AS source_publisher,
+          s.published_at AS source_published_at
+        FROM knowledge_items k
+        LEFT JOIN sources s ON s.id = k.source_id
+        WHERE k.target_type = %s
+          AND k.target_id = ANY(%s)
+        ORDER BY k.confirmed_by_user DESC, k.confidence DESC, k.created_at DESC
+        """,
+        (target_type, target_ids),
+    ).fetchall()
+
+
+def _get_user_insights_for_target_in_conn(
+    conn: Connection,
+    target_type: str,
+    target_ids: list[int],
+) -> list[dict[str, Any]]:
+    if not target_ids:
+        return []
+    return conn.execute(
+        """
+        SELECT *
+        FROM user_insights
+        WHERE target_type = %s
+          AND target_id = ANY(%s)
+        ORDER BY created_at DESC
+        """,
+        (target_type, target_ids),
+    ).fetchall()
+
+
+def _get_global_user_insights_in_conn(conn: Connection) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM user_insights
+        WHERE target_type IN ('portfolio', 'strategy')
+        ORDER BY created_at DESC
+        """
+    ).fetchall()
+
+
+def _get_stocks_linked_to_sectors_in_conn(
+    conn: Connection,
+    sector_ids: list[int],
+) -> list[dict[str, Any]]:
+    if not sector_ids:
+        return []
+    return conn.execute(
+        """
+        WITH RECURSIVE sector_paths AS (
+          SELECT
+            id,
+            name,
+            parent_id,
+            name::text AS path
+          FROM sectors
+          WHERE parent_id IS NULL
+          UNION ALL
+          SELECT
+            s.id,
+            s.name,
+            s.parent_id,
+            sp.path || ' > ' || s.name
+          FROM sectors s
+          JOIN sector_paths sp ON s.parent_id = sp.id
+        )
+        SELECT
+          st.id AS stock_id,
+          st.symbol,
+          st.market,
+          st.name AS stock_name,
+          ssr.id AS relation_id,
+          ssr.sector_id,
+          ssr.relation_type,
+          ssr.confidence,
+          ssr.source_id,
+          ssr.confirmed_by_user,
+          sp.path AS sector_path
+        FROM stock_sector_relations ssr
+        JOIN stocks st ON st.id = ssr.stock_id
+        JOIN sector_paths sp ON sp.id = ssr.sector_id
+        WHERE ssr.sector_id = ANY(%s)
+        ORDER BY ssr.confidence DESC, st.market, st.symbol
+        """,
+        (sector_ids,),
+    ).fetchall()
+
+
+def _get_sources_for_context_in_conn(
+    conn: Connection,
+    source_ids: list[int],
+) -> list[dict[str, Any]]:
+    unique_source_ids = sorted({source_id for source_id in source_ids if source_id is not None})
+    if not unique_source_ids:
+        return []
+    return conn.execute(
+        """
+        SELECT *
+        FROM sources
+        WHERE id = ANY(%s)
+        ORDER BY id
+        """,
+        (unique_source_ids,),
+    ).fetchall()

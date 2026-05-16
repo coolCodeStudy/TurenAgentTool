@@ -110,6 +110,12 @@ python scripts/research_stock.py 000660 KR \
   --manual-source-file examples/manual_sources/sk_hynix_sources.json
 ```
 
+生成个股分析上下文：
+
+```bash
+python scripts/build_analysis_context.py 000660 KR --output drafts/000660_KR_analysis_context.md
+```
+
 启动 MCP Server：
 
 ```bash
@@ -135,12 +141,15 @@ postgresql://postgres:postgres@localhost:55432/investment_kg
 ## 当前 MCP 工具
 
 - `search_stock`
+- `get_stock_context`
+- `get_sector_context`
 - `upsert_stock_profile`
 - `upsert_sector_tree`
 - `link_stock_to_sector`
 - `add_source`
 - `add_knowledge_item`
 - `add_user_insight`
+- `record_user_insight`
 - `import_stock_research_draft`
 
 ## 云端部署

@@ -24,6 +24,21 @@ def search_stock(symbol: str, market: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
+    """Build analysis context for a stock, including sectors and relevant user memory."""
+    return repository.get_stock_context(symbol=symbol, market=market)
+
+
+@mcp.tool()
+def get_sector_context(
+    path: list[str] | None = None,
+    sector_id: int | None = None,
+) -> dict[str, Any]:
+    """Build analysis context for a sector path or sector id."""
+    return repository.get_sector_context(path=path, sector_id=sector_id)
+
+
+@mcp.tool()
 def upsert_stock_profile(
     symbol: str,
     market: str,
@@ -134,6 +149,30 @@ def add_user_insight(
         target_type=target_type,
         target_id=target_id,
         insight=insight,
+        normalized_summary=normalized_summary,
+        tags=tags,
+    )
+
+
+@mcp.tool()
+def record_user_insight(
+    target_type: str,
+    insight: str,
+    target_id: int | None = None,
+    symbol: str | None = None,
+    market: str | None = None,
+    sector_path: list[str] | None = None,
+    normalized_summary: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Record user memory by resolving stock, sector, portfolio, or strategy targets."""
+    return repository.record_user_insight(
+        target_type=target_type,
+        insight=insight,
+        target_id=target_id,
+        symbol=symbol,
+        market=market,
+        sector_path=sector_path,
         normalized_summary=normalized_summary,
         tags=tags,
     )
