@@ -76,6 +76,7 @@
 - 公开网页抓取 provider。
 - 模型补全 provider 抽象和 mock provider。
 - OpenAI Responses API 补全 provider。
+- 研究草稿人工确认审阅稿。
 
 ## 阶段 3：持仓复盘
 

@@ -81,6 +81,12 @@ OPENAI_MODEL=gpt-5.2
 python scripts/enrich_research_draft.py drafts/000660_KR_research_draft.json --provider openai
 ```
 
+生成给用户确认的审阅稿：
+
+```bash
+python scripts/review_research_draft.py examples/sk_hynix_research_draft.json
+```
+
 一键准备研究工作流：
 
 ```bash
