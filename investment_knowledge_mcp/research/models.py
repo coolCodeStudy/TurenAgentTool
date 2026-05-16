@@ -13,6 +13,7 @@ class SourceDocument:
     publisher: str | None = None
     published_at: str | None = None
     notes: str | None = None
+    content_excerpt: str | None = None
 
     def to_draft_source(self) -> dict[str, Any]:
         source: dict[str, Any] = {
@@ -26,6 +27,10 @@ class SourceDocument:
             source["publisher"] = self.publisher
         if self.published_at:
             source["published_at"] = self.published_at
+        if self.notes:
+            source["notes"] = self.notes
+        if self.content_excerpt:
+            source["content_excerpt"] = self.content_excerpt
         return source
 
 
@@ -37,3 +42,21 @@ class ResearchBundle:
     sources: list[SourceDocument] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
+
+def merge_research_bundles(primary: ResearchBundle, *others: ResearchBundle) -> ResearchBundle:
+    sources = list(primary.sources)
+    notes = list(primary.notes)
+    company_name = primary.company_name
+
+    for bundle in others:
+        sources.extend(bundle.sources)
+        notes.extend(bundle.notes)
+        company_name = company_name or bundle.company_name
+
+    return ResearchBundle(
+        symbol=primary.symbol,
+        market=primary.market,
+        company_name=company_name,
+        sources=sources,
+        notes=notes,
+    )

@@ -43,6 +43,13 @@ python scripts/create_research_draft.py 000660 KR \
   --manual-source-file examples/manual_sources/sk_hynix_sources.json
 ```
 
+也可以直接加入公开网页来源：
+
+```bash
+python scripts/create_research_draft.py 000660 KR --name SK海力士 \
+  --source-url fact_sheet=https://news.skhynix.com/corporate/fact-sheet/
+```
+
 从草稿骨架生成大模型补全 prompt：
 
 ```bash

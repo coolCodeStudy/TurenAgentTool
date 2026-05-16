@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from investment_knowledge_mcp.research.draft_builder import build_stock_research_draft
-from investment_knowledge_mcp.research.providers import EmptyResearchProvider, ManualResearchProvider
+from investment_knowledge_mcp.research.providers import collect_with_optional_providers
 
 
 def default_output_path(symbol: str, market: str) -> Path:
@@ -29,18 +29,25 @@ def main() -> None:
         help="Optional JSON file containing curated source documents.",
     )
     parser.add_argument(
+        "--source-url",
+        action="append",
+        default=[],
+        help="Optional public webpage source as KEY=URL. Can be repeated.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Output draft JSON path. Defaults to drafts/<SYMBOL>_<MARKET>_research_draft.json.",
     )
     args = parser.parse_args()
 
-    provider = (
-        ManualResearchProvider(args.manual_source_file)
-        if args.manual_source_file
-        else EmptyResearchProvider()
+    bundle = collect_with_optional_providers(
+        symbol=args.symbol,
+        market=args.market,
+        company_name=args.name,
+        manual_source_file=args.manual_source_file,
+        source_urls=args.source_url,
     )
-    bundle = provider.collect(symbol=args.symbol, market=args.market, company_name=args.name)
     draft = build_stock_research_draft(bundle)
 
     output_path = args.output or default_output_path(bundle.symbol, bundle.market)
