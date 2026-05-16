@@ -196,6 +196,15 @@ curl -s http://localhost:8002/dingtalk/webhook \
 
 默认只允许查询类指令，例如 `分析 000660 KR`、`查看候选心得`、`帮助`。如需接入真实钉钉 outgoing 机器人，可设置 `DINGTALK_OUTGOING_SECRET` 开启签名校验。
 
+准生产自检：
+
+```bash
+COMMAND_API_TOKEN=dev-token python scripts/prod_check.py --start-prod --down-after
+```
+
+这会检查生产 compose 配置、Command API 鉴权、钉钉查询入口和写入类指令保护。
+如果目标环境已经导入海力士数据，可以追加 `--analysis-command "怎么看海力士"` 检查自然语言分析。
+
 ## 配置
 
 默认数据库连接：

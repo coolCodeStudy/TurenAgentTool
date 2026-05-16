@@ -80,6 +80,27 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f mcp
 ```
 
+本地或服务器上可先运行准生产自检：
+
+```bash
+COMMAND_API_TOKEN=<strong-command-token> python scripts/prod_check.py --start-prod
+```
+
+自检脚本默认使用独立 Docker Compose project：`investment-kg-prod-check`，避免影响本地开发数据库。
+如果只是本机临时演练，可以追加 `--down-after`，检查结束后自动关闭自检栈。
+
+导入股票数据后，可以额外检查自然语言分析：
+
+```bash
+COMMAND_API_TOKEN=<strong-command-token> python scripts/prod_check.py --analysis-command "怎么看海力士"
+```
+
+如果只是检查已经运行中的服务：
+
+```bash
+COMMAND_API_TOKEN=<strong-command-token> python scripts/prod_check.py
+```
+
 MCP endpoint：
 
 ```text
@@ -177,6 +198,7 @@ sudo systemctl restart investment-knowledge
 - MCP `/mcp` 不直接公网裸奔，生产环境应放到 HTTPS 和认证之后。
 - 数据库 volume 有备份策略。
 - `scripts/ikg.py "分析 000660 KR"` 在服务器上能跑通。
+- `scripts/prod_check.py --start-prod` 能完整通过。
 - `/command` 带 `COMMAND_API_TOKEN` 能跑通，未带 token 会返回 `401`。
 - `/dingtalk/webhook` 能处理文本消息，且真实接入时设置了 `DINGTALK_OUTGOING_SECRET`。
 - `scripts/candidate_insights.py list` 能看到待确认候选心得。
