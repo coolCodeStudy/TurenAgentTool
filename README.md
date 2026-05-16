@@ -68,6 +68,19 @@ python scripts/validate_research_draft.py examples/sk_hynix_research_draft.json
 python scripts/enrich_research_draft.py drafts/000660_KR_research_draft.json --provider mock
 ```
 
+使用 OpenAI provider 前，请在本地 `.env` 中配置：
+
+```text
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.2
+```
+
+然后运行：
+
+```bash
+python scripts/enrich_research_draft.py drafts/000660_KR_research_draft.json --provider openai
+```
+
 一键准备研究工作流：
 
 ```bash

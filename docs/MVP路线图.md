@@ -75,6 +75,7 @@
 - 个股研究一键准备脚本。
 - 公开网页抓取 provider。
 - 模型补全 provider 抽象和 mock provider。
+- OpenAI Responses API 补全 provider。
 
 ## 阶段 3：持仓复盘
 
