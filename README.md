@@ -178,6 +178,22 @@ curl -s http://localhost:8001/command \
   -d '{"text":"查看候选心得","sender":"local","source":"curl"}'
 ```
 
+启动钉钉机器人入口：
+
+```bash
+python -m investment_knowledge_mcp.dingtalk_api
+```
+
+本地模拟钉钉文本消息：
+
+```bash
+curl -s http://localhost:8002/dingtalk/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"msgtype":"text","text":{"content":"查看候选心得"},"senderNick":"local"}'
+```
+
+默认只允许查询类指令，例如 `分析 000660 KR`、`查看候选心得`、`帮助`。如需接入真实钉钉 outgoing 机器人，可设置 `DINGTALK_OUTGOING_SECRET` 开启签名校验。
+
 ## 配置
 
 默认数据库连接：

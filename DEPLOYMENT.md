@@ -65,6 +65,11 @@ COMMAND_API_HOST=0.0.0.0
 COMMAND_API_PORT=8001
 COMMAND_API_HOST_PORT=8001
 COMMAND_API_TOKEN=<strong-command-token>
+DINGTALK_API_HOST=0.0.0.0
+DINGTALK_API_PORT=8002
+DINGTALK_API_HOST_PORT=8002
+DINGTALK_OUTGOING_SECRET=<dingtalk-outgoing-secret>
+DINGTALK_ALLOW_WRITE_COMMANDS=false
 ```
 
 启动：
@@ -87,6 +92,12 @@ Command API endpoint：
 http://<ecs-public-ip>:8001/command
 ```
 
+DingTalk webhook endpoint：
+
+```text
+http://<ecs-public-ip>:8002/dingtalk/webhook
+```
+
 基础连通性检查：
 
 ```bash
@@ -103,6 +114,15 @@ curl -s http://localhost:8001/command \
   -H "Authorization: Bearer $COMMAND_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"text":"查看候选心得","sender":"deploy-check","source":"curl"}'
+```
+
+DingTalk adapter 检查：
+
+```bash
+curl -i http://localhost:8002/health
+curl -s http://localhost:8002/dingtalk/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"msgtype":"text","text":{"content":"查看候选心得"},"senderNick":"deploy-check"}'
 ```
 
 生产环境建议放到反向代理和 HTTPS 后面，再暴露给客户端。
@@ -158,6 +178,7 @@ sudo systemctl restart investment-knowledge
 - 数据库 volume 有备份策略。
 - `scripts/ikg.py "分析 000660 KR"` 在服务器上能跑通。
 - `/command` 带 `COMMAND_API_TOKEN` 能跑通，未带 token 会返回 `401`。
+- `/dingtalk/webhook` 能处理文本消息，且真实接入时设置了 `DINGTALK_OUTGOING_SECRET`。
 - `scripts/candidate_insights.py list` 能看到待确认候选心得。
 - 写入类入口区分正式心得和候选心得，系统推断不能直接写入 `user_insights`。
 
@@ -169,6 +190,7 @@ sudo systemctl restart investment-knowledge
 
 ```text
 钉钉 / Web API / Agent 外壳
+  -> dingtalk_api / command_api
   -> command_router.handle_command()
     -> repository / MCP tools
       -> PostgreSQL

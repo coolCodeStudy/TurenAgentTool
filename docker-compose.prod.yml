@@ -47,5 +47,22 @@ services:
       - "${COMMAND_API_HOST_PORT:-8001}:${COMMAND_API_PORT:-8001}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
 
+  dingtalk-api:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      DINGTALK_API_HOST: ${DINGTALK_API_HOST:-0.0.0.0}
+      DINGTALK_API_PORT: ${DINGTALK_API_PORT:-8002}
+      DINGTALK_OUTGOING_SECRET: ${DINGTALK_OUTGOING_SECRET:-}
+      DINGTALK_ALLOW_WRITE_COMMANDS: ${DINGTALK_ALLOW_WRITE_COMMANDS:-false}
+    ports:
+      - "${DINGTALK_API_HOST_PORT:-8002}:${DINGTALK_API_PORT:-8002}"
+    command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.dingtalk_api"]
+
 volumes:
   postgres_prod_data:

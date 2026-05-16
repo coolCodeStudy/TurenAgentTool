@@ -36,6 +36,10 @@ class AppConfig:
     command_api_host: str = "127.0.0.1"
     command_api_port: int = 8001
     command_api_token: str | None = None
+    dingtalk_api_host: str = "127.0.0.1"
+    dingtalk_api_port: int = 8002
+    dingtalk_outgoing_secret: str | None = None
+    dingtalk_allow_write_commands: bool = False
 
 
 def get_config() -> AppConfig:
@@ -53,4 +57,15 @@ def get_config() -> AppConfig:
         command_api_host=os.getenv("COMMAND_API_HOST", "127.0.0.1"),
         command_api_port=int(os.getenv("COMMAND_API_PORT", "8001")),
         command_api_token=os.getenv("COMMAND_API_TOKEN") or None,
+        dingtalk_api_host=os.getenv("DINGTALK_API_HOST", "127.0.0.1"),
+        dingtalk_api_port=int(os.getenv("DINGTALK_API_PORT", "8002")),
+        dingtalk_outgoing_secret=os.getenv("DINGTALK_OUTGOING_SECRET") or None,
+        dingtalk_allow_write_commands=_get_bool("DINGTALK_ALLOW_WRITE_COMMANDS", default=False),
     )
+
+
+def _get_bool(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
