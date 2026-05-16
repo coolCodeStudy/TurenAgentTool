@@ -111,7 +111,28 @@
 - `scripts/build_analysis_context.py`
 - `scripts/propose_candidate_insight.py`
 - `scripts/candidate_insights.py`
+- `scripts/ikg.py`
+- `investment_knowledge_mcp.command_router`
 - smoke test 覆盖个股 context、板块 context 和全局用户偏好检索。
+
+## 阶段 2.6：统一指令入口
+
+目标：把底层工具收敛成可由本地 CLI、钉钉机器人、Web API 或 agent 外壳复用的统一命令层。
+
+任务：
+
+1. 支持 `分析 000660 KR`。
+2. 支持 `查看候选心得`。
+3. 支持 `确认候选心得 6` / `拒绝候选心得 5`。
+4. 支持 `记录心得 000660 KR ...`。
+5. 支持 `提出个股候选心得 000660 KR ...`。
+
+验收标准：
+
+- 本地 `scripts/ikg.py` 可以跑通核心指令。
+- handler 不依赖命令行，后续消息机器人可以直接复用。
+
+当前状态：已完成第一版。
 
 ## 阶段 3：持仓复盘
 

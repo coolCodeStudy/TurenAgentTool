@@ -1,9 +1,11 @@
 from pathlib import Path
 import sys
+import tempfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.repository import (
@@ -32,6 +34,8 @@ SMOKE_SECTOR_INSIGHT = "Smoke test verifies sector-level user memory retrieval."
 SMOKE_PORTFOLIO_INSIGHT = "Smoke test verifies portfolio-level user memory retrieval."
 SMOKE_REJECTED_CANDIDATE = "Smoke test verifies candidate insight rejection."
 SMOKE_CONFIRMED_CANDIDATE = "Smoke test verifies candidate insight confirmation."
+SMOKE_ROUTER_INSIGHT = "Smoke test verifies command router formal insight recording."
+SMOKE_ROUTER_CANDIDATE = "Smoke test verifies command router candidate proposal."
 
 
 def cleanup_smoke_data() -> None:
@@ -48,6 +52,8 @@ def cleanup_smoke_data() -> None:
                     SMOKE_PORTFOLIO_INSIGHT,
                     SMOKE_REJECTED_CANDIDATE,
                     SMOKE_CONFIRMED_CANDIDATE,
+                    SMOKE_ROUTER_INSIGHT,
+                    SMOKE_ROUTER_CANDIDATE,
                 ],
             ),
         )
@@ -56,7 +62,7 @@ def cleanup_smoke_data() -> None:
             DELETE FROM candidate_insights
             WHERE insight = ANY(%s)
             """,
-            ([SMOKE_REJECTED_CANDIDATE, SMOKE_CONFIRMED_CANDIDATE],),
+            ([SMOKE_REJECTED_CANDIDATE, SMOKE_CONFIRMED_CANDIDATE, SMOKE_ROUTER_CANDIDATE],),
         )
         stock = conn.execute(
             """
@@ -208,6 +214,21 @@ def main() -> None:
         result = search_stock(symbol=SMOKE_SYMBOL, market=SMOKE_MARKET)
         stock_context = get_stock_context(symbol=SMOKE_SYMBOL, market=SMOKE_MARKET)
         sector_context = get_sector_context(path=[SMOKE_SECTOR_ROOT, "链路验证"])
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            analyze_result = handle_command(
+                f"分析 {SMOKE_SYMBOL} {SMOKE_MARKET}",
+                output_dir=Path(tmp_dir),
+            )
+            assert analyze_result.ok
+            assert (Path(tmp_dir) / f"{SMOKE_SYMBOL}_{SMOKE_MARKET}_analysis_context.md").exists()
+
+        router_insight_result = handle_command(
+            f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
+        )
+        router_candidate_result = handle_command(
+            f"提出个股候选心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_CANDIDATE}"
+        )
+        router_candidates_result = handle_command("查看候选心得")
 
         assert repeated_source["id"] == source["id"]
         assert repeated_knowledge["id"] == knowledge["id"]
@@ -219,6 +240,10 @@ def main() -> None:
         assert confirmed_result["candidate"]["status"] == "confirmed"
         assert confirmed_result["user_insight"]["insight"] == SMOKE_CONFIRMED_CANDIDATE
         assert result["stock"]["id"] == stock["id"]
+        assert router_insight_result.ok
+        assert router_candidate_result.ok
+        assert router_candidates_result.ok
+        assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
         assert len(result["user_insights"]) == 2
