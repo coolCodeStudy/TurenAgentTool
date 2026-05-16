@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from investment_knowledge_mcp.research.draft_builder import build_stock_research_draft
+from investment_knowledge_mcp.research.providers import EmptyResearchProvider, ManualResearchProvider
+
+
+def default_output_path(symbol: str, market: str) -> Path:
+    safe_symbol = symbol.strip().replace("/", "_").replace(".", "_").upper()
+    safe_market = market.strip().replace("/", "_").replace(".", "_").upper()
+    return PROJECT_ROOT / "drafts" / f"{safe_symbol}_{safe_market}_research_draft.json"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Create a stock research draft skeleton.")
+    parser.add_argument("symbol", help="Stock symbol, for example 000660.")
+    parser.add_argument("market", help="Market code, for example KR, HK, US, SH, SZ.")
+    parser.add_argument("--name", help="Company display name.")
+    parser.add_argument(
+        "--manual-source-file",
+        type=Path,
+        help="Optional JSON file containing curated source documents.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Output draft JSON path. Defaults to drafts/<SYMBOL>_<MARKET>_research_draft.json.",
+    )
+    args = parser.parse_args()
+
+    provider = (
+        ManualResearchProvider(args.manual_source_file)
+        if args.manual_source_file
+        else EmptyResearchProvider()
+    )
+    bundle = provider.collect(symbol=args.symbol, market=args.market, company_name=args.name)
+    draft = build_stock_research_draft(bundle)
+
+    output_path = args.output or default_output_path(bundle.symbol, bundle.market)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"Research draft skeleton written to {output_path}")
+
+
+if __name__ == "__main__":
+    main()

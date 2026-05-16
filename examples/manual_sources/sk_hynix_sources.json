@@ -1,0 +1,47 @@
+{
+  "stock": {
+    "symbol": "000660",
+    "market": "KR",
+    "name": "SK海力士"
+  },
+  "sources": [
+    {
+      "key": "fact_sheet",
+      "source_type": "web",
+      "title": "SK hynix Fact Sheet",
+      "url": "https://news.skhynix.com/corporate/fact-sheet/",
+      "publisher": "SK hynix Newsroom",
+      "notes": "官方公司事实页，可用于提取主营业务、产品线和公司历史。"
+    },
+    {
+      "key": "ownership",
+      "source_type": "web",
+      "title": "SK hynix Ownership Structure",
+      "url": "https://www.skhynix.com/ir/UI-FR-IR04/",
+      "publisher": "SK hynix IR",
+      "notes": "官方股权结构页面，可用于提取第一大股东和主要机构持股。"
+    },
+    {
+      "key": "fy25_results",
+      "source_type": "web",
+      "title": "SK hynix Announces FY25 Financial Results",
+      "url": "https://news.skhynix.com/sk-hynix-announces-fy25-financial-results/",
+      "publisher": "SK hynix Newsroom",
+      "published_at": "2026-01-28T00:00:00+08:00",
+      "notes": "官方 FY2025 业绩新闻稿，可用于提取近期经营表现、HBM 需求和管理层表述。"
+    },
+    {
+      "key": "gtc_2026",
+      "source_type": "web",
+      "title": "SK hynix Reaffirms Partnership With NVIDIA at GTC 2026",
+      "url": "https://news.skhynix.com/gtc-2026-exhibition-booth/",
+      "publisher": "SK hynix Newsroom",
+      "published_at": "2026-03-16T00:00:00+08:00",
+      "notes": "官方 GTC 2026 新闻稿，可用于提取 NVIDIA 产业链、HBM3E/HBM4 和 AI 内存产品信息。"
+    }
+  ],
+  "notes": [
+    "第一版 provider 只负责收集资料来源，不自动声称已完成事实提炼。",
+    "后续应由大模型读取来源内容并输出完整 research_draft.json，再给用户确认。"
+  ]
+}

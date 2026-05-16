@@ -36,6 +36,13 @@ python scripts/smoke_test.py
 python scripts/import_research_draft.py examples/tencent_research_draft.json --confirmed
 ```
 
+从资料来源生成研究草稿骨架：
+
+```bash
+python scripts/create_research_draft.py 000660 KR \
+  --manual-source-file examples/manual_sources/sk_hynix_sources.json
+```
+
 启动 MCP Server：
 
 ```bash

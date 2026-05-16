@@ -1,0 +1,58 @@
+{
+  "stock": {
+    "symbol": "000660",
+    "market": "KR",
+    "name": "SK海力士",
+    "core_business": "",
+    "equity_structure": "",
+    "stock_character": "",
+    "notable_history": ""
+  },
+  "sources": [
+    {
+      "key": "fact_sheet",
+      "source_type": "web",
+      "title": "SK hynix Fact Sheet",
+      "url": "https://news.skhynix.com/corporate/fact-sheet/",
+      "publisher": "SK hynix Newsroom"
+    },
+    {
+      "key": "ownership",
+      "source_type": "web",
+      "title": "SK hynix Ownership Structure",
+      "url": "https://www.skhynix.com/ir/UI-FR-IR04/",
+      "publisher": "SK hynix IR"
+    },
+    {
+      "key": "fy25_results",
+      "source_type": "web",
+      "title": "SK hynix Announces FY25 Financial Results",
+      "url": "https://news.skhynix.com/sk-hynix-announces-fy25-financial-results/",
+      "publisher": "SK hynix Newsroom",
+      "published_at": "2026-01-28T00:00:00+08:00"
+    },
+    {
+      "key": "gtc_2026",
+      "source_type": "web",
+      "title": "SK hynix Reaffirms Partnership With NVIDIA at GTC 2026",
+      "url": "https://news.skhynix.com/gtc-2026-exhibition-booth/",
+      "publisher": "SK hynix Newsroom",
+      "published_at": "2026-03-16T00:00:00+08:00"
+    }
+  ],
+  "sectors": [],
+  "knowledge_items": [
+    {
+      "knowledge_type": "research_source",
+      "content": "已收集 SK海力士 的候选研究来源，需由大模型或用户提炼为事实知识。",
+      "confidence": 0.3,
+      "source_key": "fact_sheet"
+    }
+  ],
+  "user_insights": [],
+  "draft_status": "needs_model_or_user_completion",
+  "research_notes": [
+    "第一版 provider 只负责收集资料来源，不自动声称已完成事实提炼。",
+    "后续应由大模型读取来源内容并输出完整 research_draft.json，再给用户确认。"
+  ]
+}
