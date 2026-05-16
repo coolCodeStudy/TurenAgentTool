@@ -55,6 +55,13 @@ python scripts/build_research_prompt.py drafts/000660_KR_research_draft.json
 python scripts/validate_research_draft.py examples/sk_hynix_research_draft.json
 ```
 
+一键准备研究工作流：
+
+```bash
+python scripts/research_stock.py 000660 KR \
+  --manual-source-file examples/manual_sources/sk_hynix_sources.json
+```
+
 启动 MCP Server：
 
 ```bash
