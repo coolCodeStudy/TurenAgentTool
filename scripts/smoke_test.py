@@ -179,7 +179,10 @@ def main() -> None:
         assert len(result["user_insights"]) == 1
         assert stock_context["stock"]["id"] == stock["id"]
         assert len(stock_context["sector_insights"]) == 1
-        assert len(stock_context["global_insights"]) == 1
+        assert any(
+            item["insight"] == SMOKE_PORTFOLIO_INSIGHT
+            for item in stock_context["global_insights"]
+        )
         assert sector_context["sector"]["sector_id"] == sector_tree["leaf"]["id"]
         assert len(sector_context["linked_stocks"]) == 1
         assert len(sector_context["sector_insights"]) == 1
