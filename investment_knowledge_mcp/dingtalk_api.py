@@ -10,7 +10,7 @@ import re
 from typing import Any
 from urllib.parse import unquote
 
-from investment_knowledge_mcp.command_router import handle_command
+from investment_knowledge_mcp.command_router import handle_command, is_query_command
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
@@ -53,14 +53,21 @@ class DingTalkRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, _text_reply("目前只支持文本消息，例如：分析 000660 KR"))
             return
 
-        if not config.dingtalk_allow_write_commands and not _is_query_command(command):
+        try:
+            run_schema()
+        except Exception as exc:
+            message = f"数据库初始化失败：{exc}"
+            _record_event(command=command, ok=False, message=message, sender=sender)
+            self._write_json(HTTPStatus.OK, _text_reply(message))
+            return
+
+        if not config.dingtalk_allow_write_commands and not is_query_command(command):
             message = "钉钉入口当前只开放查询类指令：分析 000660 KR、查看候选心得、帮助。写入和确认类指令请先走本地 CLI。"
             _record_event(command=command, ok=False, message=message, sender=sender)
             self._write_json(HTTPStatus.OK, _text_reply(message))
             return
 
         try:
-            run_schema()
             result = handle_command(command)
             _record_event(command=command, ok=result.ok, message=result.message, sender=sender)
         except Exception as exc:
@@ -150,14 +157,6 @@ def _extract_sender(payload: dict[str, Any]) -> str | None:
         if value:
             return str(value).strip()
     return None
-
-
-def _is_query_command(command: str) -> bool:
-    cleaned = command.strip()
-    return bool(
-        re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", cleaned, flags=re.IGNORECASE)
-        or cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates", "帮助", "help", "?"}
-    )
 
 
 def _record_event(command: str, ok: bool, message: str, sender: str | None) -> None:

@@ -19,6 +19,7 @@ from investment_knowledge_mcp.repository import (
     link_stock_to_sector,
     propose_candidate_insight,
     record_user_insight,
+    resolve_stock_reference,
     reject_candidate_insight,
     search_stock,
     upsert_sector_tree,
@@ -220,7 +221,15 @@ def main() -> None:
                 output_dir=Path(tmp_dir),
             )
             assert analyze_result.ok
+            assert "核心判断" in analyze_result.message
             assert (Path(tmp_dir) / f"{SMOKE_SYMBOL}_{SMOKE_MARKET}_analysis_context.md").exists()
+
+            natural_analyze_result = handle_command(
+                "怎么看 Smoke Test Stock",
+                output_dir=Path(tmp_dir),
+            )
+            assert natural_analyze_result.ok
+            assert "Smoke Test Stock" in natural_analyze_result.message
 
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
@@ -240,6 +249,7 @@ def main() -> None:
         assert confirmed_result["candidate"]["status"] == "confirmed"
         assert confirmed_result["user_insight"]["insight"] == SMOKE_CONFIRMED_CANDIDATE
         assert result["stock"]["id"] == stock["id"]
+        assert resolve_stock_reference("Smoke Test Stock")[0]["id"] == stock["id"]
         assert router_insight_result.ok
         assert router_candidate_result.ok
         assert router_candidates_result.ok

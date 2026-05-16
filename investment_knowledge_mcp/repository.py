@@ -986,6 +986,34 @@ def search_stock(symbol: str, market: str) -> dict[str, Any]:
     )
 
 
+def resolve_stock_reference(query: str) -> list[dict[str, Any]]:
+    cleaned = query.strip()
+    if not cleaned:
+        return []
+
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM stocks
+            WHERE upper(symbol) = upper(%s)
+               OR lower(coalesce(name, '')) = lower(%s)
+               OR name ILIKE %s
+            ORDER BY
+              CASE
+                WHEN upper(symbol) = upper(%s) THEN 0
+                WHEN lower(coalesce(name, '')) = lower(%s) THEN 1
+                ELSE 2
+              END,
+              market,
+              symbol
+            LIMIT 5
+            """,
+            (cleaned, cleaned, f"%{cleaned}%", cleaned, cleaned),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
 def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
     with transaction() as conn:
         stock = _get_stock_in_conn(conn, symbol=symbol, market=market)

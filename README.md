@@ -142,6 +142,8 @@ python scripts/candidate_insights.py reject 1
 
 ```bash
 python scripts/ikg.py "分析 000660 KR"
+python scripts/ikg.py "怎么看海力士"
+python scripts/ikg.py "分析一下腾讯"
 python scripts/ikg.py "查看候选心得"
 python scripts/ikg.py "确认候选心得 6"
 python scripts/ikg.py "拒绝候选心得 5"
@@ -149,7 +151,7 @@ python scripts/ikg.py "记录心得 000660 KR 这里写你的正式心得"
 python scripts/ikg.py "提出个股候选心得 000660 KR 这里写系统推断出的候选心得"
 ```
 
-`investment_knowledge_mcp.command_router` 是统一指令入口的核心 handler，后续钉钉机器人、Web API 或其他 agent 外壳可以复用它。
+`investment_knowledge_mcp.command_router` 是统一指令入口的核心 handler，钉钉机器人、Web API 或其他 agent 外壳可以复用它。当前已支持按股票名称解析入库股票，并对分析类指令直接返回一版简短分析。
 
 启动 MCP Server：
 
