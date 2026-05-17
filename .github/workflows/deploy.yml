@@ -257,4 +257,7 @@ jobs:
             $DOCKER_COMPOSE -f docker-compose.prod.yml config
             $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
+            sleep 20
+            $DOCKER_COMPOSE -f docker-compose.prod.yml ps
+            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 dingtalk-stream-bot || true
+            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 postgres || true

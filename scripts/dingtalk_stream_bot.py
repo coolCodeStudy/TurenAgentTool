@@ -20,6 +20,7 @@ from investment_knowledge_mcp.db import run_schema
 
 def main() -> None:
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    logger = _setup_logger()
 
     parser = argparse.ArgumentParser(description="Run InvestmentKnowledge as a DingTalk Stream Mode bot.")
     parser.add_argument("--allow-write", action="store_true", help="Allow write commands from DingTalk.")
@@ -35,8 +36,15 @@ def main() -> None:
     if not config.dingtalk_stream_client_id or not config.dingtalk_stream_client_secret:
         raise SystemExit("DINGTALK_STREAM_CLIENT_ID and DINGTALK_STREAM_CLIENT_SECRET are required.")
 
+    logger.info(
+        "DingTalk Stream config loaded: client_id_present=%s, client_secret_present=%s, allow_write=%s",
+        bool(config.dingtalk_stream_client_id),
+        bool(config.dingtalk_stream_client_secret),
+        args.allow_write,
+    )
+    logger.info("Initializing database schema")
     run_schema()
-    logger = _setup_logger()
+    logger.info("Database schema ready")
 
     class InvestmentKnowledgeHandler(dingtalk_stream.ChatbotHandler):
         async def process(self, callback: dingtalk_stream.CallbackMessage):
