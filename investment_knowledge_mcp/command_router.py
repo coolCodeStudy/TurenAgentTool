@@ -16,7 +16,11 @@ class CommandResult:
     message: str
 
 
-def handle_command(command: str, output_dir: Path | None = None) -> CommandResult:
+def handle_command(
+    command: str,
+    output_dir: Path | None = None,
+    include_artifact_path: bool = True,
+) -> CommandResult:
     cleaned = command.strip()
     if not cleaned:
         return CommandResult(ok=False, message=_help_text())
@@ -25,7 +29,11 @@ def handle_command(command: str, output_dir: Path | None = None) -> CommandResul
 
     normalized = _normalize_natural_command(cleaned)
     if normalized != cleaned:
-        return handle_command(normalized, output_dir=output_dir)
+        return handle_command(
+            normalized,
+            output_dir=output_dir,
+            include_artifact_path=include_artifact_path,
+        )
 
     ambiguous_match = re.fullmatch(r"__AMBIGUOUS_STOCK__\s+(.+)", cleaned)
     if ambiguous_match:
@@ -34,7 +42,12 @@ def handle_command(command: str, output_dir: Path | None = None) -> CommandResul
     stock_match = re.fullmatch(r"(?:分析|analyze)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
     if stock_match:
         symbol, market = stock_match.groups()
-        return _handle_analyze_stock(symbol=symbol, market=market, output_dir=output_dir)
+        return _handle_analyze_stock(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            include_artifact_path=include_artifact_path,
+        )
 
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
@@ -85,7 +98,12 @@ def is_query_command(command: str) -> bool:
     )
 
 
-def _handle_analyze_stock(symbol: str, market: str, output_dir: Path) -> CommandResult:
+def _handle_analyze_stock(
+    symbol: str,
+    market: str,
+    output_dir: Path,
+    include_artifact_path: bool,
+) -> CommandResult:
     context = repository.get_stock_context(symbol=symbol, market=market)
     if not context.get("stock"):
         return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
@@ -96,17 +114,29 @@ def _handle_analyze_stock(symbol: str, market: str, output_dir: Path) -> Command
 
     fallback_analysis = _render_stock_brief_analysis(context)
     analysis = _generate_stock_analysis(context=context, fallback=fallback_analysis)
+    footer = _analysis_footer(
+        context=context,
+        output_path=output_path,
+        include_artifact_path=include_artifact_path,
+    )
     return CommandResult(
         ok=True,
-        message=(
-            analysis
-            + "\n\n"
-            + f"分析上下文已更新：{output_path}\n"
-            + f"数据覆盖：个股知识 {len(context.get('stock_knowledge') or [])} 条，"
-            + f"个股心得 {len(context.get('stock_insights') or [])} 条，"
-            + f"待确认候选 {_candidate_count(context)} 条。"
-        ),
+        message=analysis + "\n\n" + footer,
     )
+
+
+def _analysis_footer(context: dict[str, Any], output_path: Path, include_artifact_path: bool) -> str:
+    lines = []
+    if include_artifact_path:
+        lines.append(f"分析上下文已更新：{output_path}")
+    else:
+        lines.append("分析上下文已更新。")
+    lines.append(
+        f"数据覆盖：个股知识 {len(context.get('stock_knowledge') or [])} 条，"
+        f"个股心得 {len(context.get('stock_insights') or [])} 条，"
+        f"待确认候选 {_candidate_count(context)} 条。"
+    )
+    return "\n".join(lines)
 
 
 def _generate_stock_analysis(context: dict[str, Any], fallback: str) -> str:

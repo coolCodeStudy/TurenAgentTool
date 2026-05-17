@@ -58,7 +58,11 @@ def main() -> None:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: handle_command(command, output_dir=PROJECT_ROOT / "drafts"),
+                lambda: handle_command(
+                    command,
+                    output_dir=PROJECT_ROOT / "drafts",
+                    include_artifact_path=False,
+                ),
             )
             self.reply_text(result.message, incoming_message)
             return AckMessage.STATUS_OK, "OK"

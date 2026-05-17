@@ -22,7 +22,11 @@ def main() -> None:
 
     if args.command:
         run_schema()
-        result = handle_command(args.command, output_dir=PROJECT_ROOT / "drafts")
+        result = handle_command(
+            args.command,
+            output_dir=PROJECT_ROOT / "drafts",
+            include_artifact_path=False,
+        )
         content = result.message
         if not result.ok:
             raise SystemExit(content)
