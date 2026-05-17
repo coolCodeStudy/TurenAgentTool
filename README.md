@@ -235,7 +235,15 @@ postgresql://postgres:postgres@localhost:55432/investment_kg
 
 ## 云端部署
 
-阿里云/ECS 部署见 [DEPLOYMENT.md](DEPLOYMENT.md)。生产环境推荐使用：
+阿里云/ECS 部署见 [DEPLOYMENT.md](DEPLOYMENT.md)，第一次部署可以按 [docs/阿里云最小部署清单.md](docs/阿里云最小部署清单.md) 走最小闭环。
+
+生成生产 `.env`：
+
+```bash
+python scripts/generate_prod_env.py --output .env.prod.local
+```
+
+生产环境推荐使用：
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build

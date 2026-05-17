@@ -2,6 +2,8 @@
 
 这套系统的长期运行环境建议放在阿里云 ECS。个人 Mac 只作为开发入口，不承担数据库、定时任务和资料查询的长期运行职责。
 
+第一次部署可先按 [docs/阿里云最小部署清单.md](docs/阿里云最小部署清单.md) 走最小闭环。
+
 ## 推荐架构
 
 ```text
@@ -49,10 +51,16 @@ sudo mkdir -p /opt/investment-knowledge
 sudo chown -R "$USER":"$USER" /opt/investment-knowledge
 git clone <your-repo-url> /opt/investment-knowledge
 cd /opt/investment-knowledge
+python scripts/generate_prod_env.py --output .env
+```
+
+也可以手工复制模板：
+
+```bash
 cp .env.prod.example .env
 ```
 
-编辑 `.env`：
+编辑 `.env`，至少确认：
 
 ```text
 POSTGRES_PASSWORD=<strong-password>
@@ -71,6 +79,8 @@ DINGTALK_API_HOST_PORT=8002
 DINGTALK_OUTGOING_SECRET=<dingtalk-outgoing-secret>
 DINGTALK_ALLOW_WRITE_COMMANDS=false
 ```
+
+`scripts/generate_prod_env.py` 会自动生成强 `POSTGRES_PASSWORD` 和 `COMMAND_API_TOKEN`，但仍需人工确认是否要填 `OPENAI_API_KEY` 和 `DINGTALK_OUTGOING_SECRET`。
 
 启动：
 

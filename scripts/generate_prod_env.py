@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import secrets
+import string
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate a production .env file template with strong secrets.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=PROJECT_ROOT / ".env.prod.local",
+        help="Output path. Defaults to .env.prod.local.",
+    )
+    parser.add_argument("--force", action="store_true", help="Overwrite output file if it already exists.")
+    parser.add_argument("--openai-api-key", default="", help="Optional OpenAI API key.")
+    parser.add_argument("--openai-model", default="gpt-5.2", help="OpenAI model name.")
+    parser.add_argument("--dingtalk-secret", default="", help="Optional DingTalk outgoing robot secret.")
+    parser.add_argument("--postgres-user", default="postgres")
+    parser.add_argument("--postgres-db", default="investment_kg")
+    args = parser.parse_args()
+
+    output_path = args.output
+    if output_path.exists() and not args.force:
+        raise SystemExit(f"{output_path} already exists. Use --force to overwrite.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        _render_env(
+            postgres_user=args.postgres_user,
+            postgres_password=_secret(32),
+            postgres_db=args.postgres_db,
+            command_api_token=_secret(40),
+            dingtalk_secret=args.dingtalk_secret,
+            openai_api_key=args.openai_api_key,
+            openai_model=args.openai_model,
+        ),
+        encoding="utf-8",
+    )
+    print(f"Production env written to {output_path}")
+    print("Review it, then copy it to .env on the server.")
+
+
+def _render_env(
+    *,
+    postgres_user: str,
+    postgres_password: str,
+    postgres_db: str,
+    command_api_token: str,
+    dingtalk_secret: str,
+    openai_api_key: str,
+    openai_model: str,
+) -> str:
+    return f"""POSTGRES_USER={postgres_user}
+POSTGRES_PASSWORD={postgres_password}
+POSTGRES_DB={postgres_db}
+
+MCP_TRANSPORT=streamable-http
+MCP_HOST=0.0.0.0
+MCP_PORT=8000
+MCP_HOST_PORT=8000
+MCP_PATH=/mcp
+
+COMMAND_API_HOST=0.0.0.0
+COMMAND_API_PORT=8001
+COMMAND_API_HOST_PORT=8001
+COMMAND_API_TOKEN={command_api_token}
+
+DINGTALK_API_HOST=0.0.0.0
+DINGTALK_API_PORT=8002
+DINGTALK_API_HOST_PORT=8002
+DINGTALK_OUTGOING_SECRET={dingtalk_secret}
+DINGTALK_ALLOW_WRITE_COMMANDS=false
+
+OPENAI_API_KEY={openai_api_key}
+OPENAI_MODEL={openai_model}
+"""
+
+
+def _secret(length: int) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+if __name__ == "__main__":
+    main()
