@@ -42,6 +42,8 @@ class AppConfig:
     dingtalk_allow_write_commands: bool = False
     dingtalk_send_webhook: str | None = None
     dingtalk_send_secret: str | None = None
+    dingtalk_stream_client_id: str | None = None
+    dingtalk_stream_client_secret: str | None = None
 
 
 def get_config() -> AppConfig:
@@ -65,6 +67,8 @@ def get_config() -> AppConfig:
         dingtalk_allow_write_commands=_get_bool("DINGTALK_ALLOW_WRITE_COMMANDS", default=False),
         dingtalk_send_webhook=os.getenv("DINGTALK_SEND_WEBHOOK") or None,
         dingtalk_send_secret=os.getenv("DINGTALK_SEND_SECRET") or None,
+        dingtalk_stream_client_id=os.getenv("DINGTALK_STREAM_CLIENT_ID") or None,
+        dingtalk_stream_client_secret=os.getenv("DINGTALK_STREAM_CLIENT_SECRET") or None,
     )
 
 

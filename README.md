@@ -210,6 +210,16 @@ python scripts/send_dingtalk_message.py --message "InvestmentKnowledge online"
 python scripts/send_dingtalk_message.py --command "怎么看海力士"
 ```
 
+钉钉 Stream 模式机器人：
+
+```bash
+DINGTALK_STREAM_CLIENT_ID=...
+DINGTALK_STREAM_CLIENT_SECRET=...
+.venv/bin/python scripts/dingtalk_stream_bot.py
+```
+
+Stream 模式不需要公网 HTTPS。程序会主动和钉钉建立长连接，适合先在本地验证“群里发消息 -> 程序回复”；上云后再把同一脚本作为长期服务运行。
+
 准生产自检：
 
 ```bash
