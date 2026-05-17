@@ -27,6 +27,9 @@ services:
       MCP_HOST: ${MCP_HOST:-0.0.0.0}
       MCP_PORT: ${MCP_PORT:-8000}
       MCP_PATH: ${MCP_PATH:-/mcp}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
+      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
     ports:
       - "${MCP_HOST_PORT:-8000}:${MCP_PORT:-8000}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.server"]
@@ -43,6 +46,9 @@ services:
       COMMAND_API_HOST: ${COMMAND_API_HOST:-0.0.0.0}
       COMMAND_API_PORT: ${COMMAND_API_PORT:-8001}
       COMMAND_API_TOKEN: ${COMMAND_API_TOKEN:?COMMAND_API_TOKEN is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
+      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
     ports:
       - "${COMMAND_API_HOST_PORT:-8001}:${COMMAND_API_PORT:-8001}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
@@ -60,9 +66,39 @@ services:
       DINGTALK_API_PORT: ${DINGTALK_API_PORT:-8002}
       DINGTALK_OUTGOING_SECRET: ${DINGTALK_OUTGOING_SECRET:-}
       DINGTALK_ALLOW_WRITE_COMMANDS: ${DINGTALK_ALLOW_WRITE_COMMANDS:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
+      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
     ports:
       - "${DINGTALK_API_HOST_PORT:-8002}:${DINGTALK_API_PORT:-8002}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.dingtalk_api"]
+
+  dingtalk-stream-bot:
+    profiles: ["stream"]
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      DINGTALK_STREAM_CLIENT_ID: ${DINGTALK_STREAM_CLIENT_ID:?DINGTALK_STREAM_CLIENT_ID is required}
+      DINGTALK_STREAM_CLIENT_SECRET: ${DINGTALK_STREAM_CLIENT_SECRET:?DINGTALK_STREAM_CLIENT_SECRET is required}
+      DINGTALK_STREAM_ALLOW_WRITE: ${DINGTALK_STREAM_ALLOW_WRITE:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
+      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+    command:
+      - sh
+      - -c
+      - >
+        python scripts/init_db.py &&
+        if [ "$$DINGTALK_STREAM_ALLOW_WRITE" = "true" ]; then
+          python scripts/dingtalk_stream_bot.py --allow-write;
+        else
+          python scripts/dingtalk_stream_bot.py;
+        fi
 
 volumes:
   postgres_prod_data:

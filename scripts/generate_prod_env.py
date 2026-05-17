@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--dingtalk-send-secret", default="", help="Optional DingTalk custom robot send secret.")
     parser.add_argument("--dingtalk-stream-client-id", default="", help="Optional DingTalk Stream Mode client id.")
     parser.add_argument("--dingtalk-stream-client-secret", default="", help="Optional DingTalk Stream Mode secret.")
+    parser.add_argument("--allow-dingtalk-stream-write", action="store_true", help="Allow write commands in Stream Mode.")
     parser.add_argument("--postgres-user", default="postgres")
     parser.add_argument("--postgres-db", default="investment_kg")
     args = parser.parse_args()
@@ -45,6 +46,7 @@ def main() -> None:
             dingtalk_send_secret=args.dingtalk_send_secret,
             dingtalk_stream_client_id=args.dingtalk_stream_client_id,
             dingtalk_stream_client_secret=args.dingtalk_stream_client_secret,
+            dingtalk_stream_allow_write=args.allow_dingtalk_stream_write,
             openai_api_key=args.openai_api_key,
             openai_model=args.openai_model,
         ),
@@ -65,10 +67,14 @@ def _render_env(
     dingtalk_send_secret: str,
     dingtalk_stream_client_id: str,
     dingtalk_stream_client_secret: str,
+    dingtalk_stream_allow_write: bool,
     openai_api_key: str,
     openai_model: str,
 ) -> str:
-    return f"""POSTGRES_USER={postgres_user}
+    return f"""COMPOSE_PROJECT_NAME=turenagenttool_prod
+COMPOSE_PROFILES=stream
+
+POSTGRES_USER={postgres_user}
 POSTGRES_PASSWORD={postgres_password}
 POSTGRES_DB={postgres_db}
 
@@ -92,6 +98,7 @@ DINGTALK_SEND_WEBHOOK={dingtalk_send_webhook}
 DINGTALK_SEND_SECRET={dingtalk_send_secret}
 DINGTALK_STREAM_CLIENT_ID={dingtalk_stream_client_id}
 DINGTALK_STREAM_CLIENT_SECRET={dingtalk_stream_client_secret}
+DINGTALK_STREAM_ALLOW_WRITE={str(dingtalk_stream_allow_write).lower()}
 
 OPENAI_API_KEY={openai_api_key}
 OPENAI_MODEL={openai_model}

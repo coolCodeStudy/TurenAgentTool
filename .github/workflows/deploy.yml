@@ -1,0 +1,82 @@
+name: Deploy to Alibaba Cloud ECS
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          command_timeout: 20m
+          script: |
+            set -e
+
+            APP_DIR=/opt/investment-knowledge
+            REPO_URL=https://github.com/${{ github.repository }}.git
+            BRANCH=${{ github.ref_name }}
+            SHA=${{ github.sha }}
+
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R "$USER":"$USER" "$APP_DIR"
+
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+            fi
+
+            cd "$APP_DIR"
+            git fetch origin "$BRANCH"
+            git reset --hard "$SHA"
+
+            cat > .env <<'ENV'
+            COMPOSE_PROJECT_NAME=turenagenttool_prod
+            COMPOSE_PROFILES=stream
+
+            POSTGRES_USER=postgres
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            POSTGRES_DB=investment_kg
+
+            MCP_TRANSPORT=streamable-http
+            MCP_HOST=0.0.0.0
+            MCP_PORT=8000
+            MCP_HOST_PORT=8000
+            MCP_PATH=/mcp
+
+            COMMAND_API_HOST=0.0.0.0
+            COMMAND_API_PORT=8001
+            COMMAND_API_HOST_PORT=8001
+            COMMAND_API_TOKEN=${{ secrets.COMMAND_API_TOKEN }}
+
+            DINGTALK_API_HOST=0.0.0.0
+            DINGTALK_API_PORT=8002
+            DINGTALK_API_HOST_PORT=8002
+            DINGTALK_OUTGOING_SECRET=${{ secrets.DINGTALK_OUTGOING_SECRET }}
+            DINGTALK_ALLOW_WRITE_COMMANDS=false
+            DINGTALK_SEND_WEBHOOK=${{ secrets.DINGTALK_SEND_WEBHOOK }}
+            DINGTALK_SEND_SECRET=${{ secrets.DINGTALK_SEND_SECRET }}
+            DINGTALK_STREAM_CLIENT_ID=${{ secrets.DINGTALK_STREAM_CLIENT_ID }}
+            DINGTALK_STREAM_CLIENT_SECRET=${{ secrets.DINGTALK_STREAM_CLIENT_SECRET }}
+            DINGTALK_STREAM_ALLOW_WRITE=false
+
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            OPENAI_MODEL=${{ vars.OPENAI_MODEL || 'gpt-5.2' }}
+            OPENAI_ANALYSIS_ENABLED=true
+            ENV
+
+            sed -i 's/^            //' .env
+            chmod 600 .env
+
+            docker compose -f docker-compose.prod.yml config >/dev/null
+            docker compose -f docker-compose.prod.yml up -d --build
+            docker compose -f docker-compose.prod.yml ps

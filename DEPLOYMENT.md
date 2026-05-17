@@ -19,6 +19,8 @@ ChatGPT / Codex / Web UI
 
 - `postgres`: `pgvector/pgvector:pg16`
 - `mcp`: Python FastMCP 服务，生产 transport 使用 `streamable-http`
+- `command-api`: 给自动化、脚本和未来 Agent 外壳调用的 HTTP 指令入口
+- `dingtalk-stream-bot`: 钉钉 Stream Mode 长连接机器人，不需要公网回调地址
 
 ## ECS 准备
 
@@ -80,9 +82,23 @@ DINGTALK_OUTGOING_SECRET=<dingtalk-outgoing-secret>
 DINGTALK_ALLOW_WRITE_COMMANDS=false
 DINGTALK_SEND_WEBHOOK=<dingtalk-custom-robot-webhook>
 DINGTALK_SEND_SECRET=<dingtalk-custom-robot-secret>
+DINGTALK_STREAM_CLIENT_ID=<dingtalk-stream-client-id>
+DINGTALK_STREAM_CLIENT_SECRET=<dingtalk-stream-client-secret>
+DINGTALK_STREAM_ALLOW_WRITE=false
+OPENAI_API_KEY=<openai-api-key>
 ```
 
-`scripts/generate_prod_env.py` 会自动生成强 `POSTGRES_PASSWORD` 和 `COMMAND_API_TOKEN`，但仍需人工确认是否要填 `OPENAI_API_KEY` 和 `DINGTALK_OUTGOING_SECRET`。
+`scripts/generate_prod_env.py` 会自动生成强 `POSTGRES_PASSWORD` 和 `COMMAND_API_TOKEN`，但仍需人工确认是否要填 `OPENAI_API_KEY`、`DINGTALK_STREAM_CLIENT_ID` 和 `DINGTALK_STREAM_CLIENT_SECRET`。
+
+如果第一版只使用钉钉 Stream Mode，可以保留：
+
+```text
+COMPOSE_PROFILES=stream
+DINGTALK_ALLOW_WRITE_COMMANDS=false
+DINGTALK_STREAM_ALLOW_WRITE=false
+```
+
+这样服务器不需要暴露钉钉回调端口给公网；机器人会从 ECS 主动连到钉钉。
 
 启动：
 
@@ -158,6 +174,14 @@ curl -s http://localhost:8002/dingtalk/webhook \
   -d '{"msgtype":"text","text":{"content":"查看候选心得"},"senderNick":"deploy-check"}'
 ```
 
+DingTalk Stream Mode 检查：
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f dingtalk-stream-bot
+```
+
+看到 `DingTalk Stream bot starting` 且钉钉群里 `@机器人 怎么看海力士` 有回复，即表示长连接入口已经可用。
+
 DingTalk 发送侧检查：
 
 ```bash
@@ -199,11 +223,52 @@ docker compose -f docker-compose.prod.yml up -d --build
 sudo systemctl restart investment-knowledge
 ```
 
+## GitHub Actions 自动部署
+
+本仓库内置 `.github/workflows/deploy.yml`，参考了 ReportingSystem 的 ECS 部署方式，但部署目标改成 Docker Compose。
+
+需要在 GitHub 仓库 `coolCodeStudy/TurenAgentTool` 配置这些 secrets：
+
+```text
+ECS_HOST
+ECS_USERNAME
+ECS_PASSWORD
+POSTGRES_PASSWORD
+COMMAND_API_TOKEN
+OPENAI_API_KEY
+DINGTALK_STREAM_CLIENT_ID
+DINGTALK_STREAM_CLIENT_SECRET
+```
+
+可选 secrets：
+
+```text
+DINGTALK_OUTGOING_SECRET
+DINGTALK_SEND_WEBHOOK
+DINGTALK_SEND_SECRET
+```
+
+可选 repository variable：
+
+```text
+OPENAI_MODEL
+```
+
+workflow 会在 ECS 上使用 `/opt/investment-knowledge`，拉取当前提交，生成服务器 `.env`，然后执行：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+第一次运行前，ECS 仍然需要预装 `git`、Docker Engine 和 Docker Compose plugin。
+
 ## 安全原则
 
 - 不提交 `.env`。
+- 不把 OpenAI、钉钉、ECS 密码写入仓库；统一放 GitHub Secrets 或服务器 `.env`。
 - PostgreSQL 不对公网开放，只在 Docker 网络内给 MCP Server 使用。
-- MCP HTTP 服务第一版可以只对自己的 IP 开安全组；后续接反向代理、HTTPS 和认证。
+- 如果只用 DingTalk Stream Mode，第一版安全组可以只开放 SSH；MCP/Command API/DingTalk webhook 端口先不对公网开放。
+- MCP HTTP 服务如果要公网访问，应放到 HTTPS 和认证之后。
 - 资料查询 provider 的 API key 统一放 `.env` 或云端 secret，不写进代码。
 
 ## 部署前检查清单
