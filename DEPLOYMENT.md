@@ -262,6 +262,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 第一次运行前，ECS 仍然需要预装 `git`、Docker Engine 和 Docker Compose plugin。
+如果 ECS 是干净系统，workflow 会先尝试自动安装 `git`、Docker Engine 和 Docker Compose plugin；自动安装支持 Ubuntu/Debian、CentOS/RHEL 系系统。
 
 ## 安全原则
 

@@ -53,13 +53,86 @@ jobs:
           script: |
             set -e
 
+            install_base_tools() {
+              if command -v git >/dev/null 2>&1; then
+                return
+              fi
+
+              echo "Installing base tools: git, curl, ca-certificates"
+              if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y git curl ca-certificates
+              elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y git curl ca-certificates
+              elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y git curl ca-certificates
+              else
+                echo "Unsupported Linux distribution: cannot install git automatically."
+                exit 1
+              fi
+            }
+
+            install_docker() {
+              if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+                return
+              fi
+              if command -v docker >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1; then
+                return
+              fi
+
+              echo "Installing Docker Engine and Docker Compose plugin"
+              if command -v apt-get >/dev/null 2>&1; then
+                . /etc/os-release
+                sudo apt-get update
+                sudo apt-get install -y ca-certificates curl
+                sudo install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL "https://download.docker.com/linux/${ID}/gpg" | sudo tee /etc/apt/keyrings/docker.asc >/dev/null
+                sudo chmod a+r /etc/apt/keyrings/docker.asc
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+                sudo apt-get update
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y yum-utils
+                sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+                sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y dnf-plugins-core
+                sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+                sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              else
+                echo "Unsupported Linux distribution: cannot install Docker automatically."
+                exit 1
+              fi
+            }
+
+            start_docker() {
+              sudo systemctl enable docker >/dev/null 2>&1 || true
+              sudo systemctl start docker >/dev/null 2>&1 || sudo service docker start
+            }
+
+            resolve_compose_command() {
+              if docker compose version >/dev/null 2>&1; then
+                DOCKER_COMPOSE="docker compose"
+              elif sudo docker compose version >/dev/null 2>&1; then
+                DOCKER_COMPOSE="sudo docker compose"
+              else
+                echo "Docker Compose plugin is not available after installation."
+                exit 1
+              fi
+            }
+
+            install_base_tools
+            install_docker
+            start_docker
+            resolve_compose_command
+
             APP_DIR=/opt/investment-knowledge
             REPO_URL=https://github.com/${{ github.repository }}.git
             BRANCH=${{ github.ref_name }}
             SHA=${{ github.sha }}
 
             sudo mkdir -p "$APP_DIR"
-            sudo chown -R "$USER":"$USER" "$APP_DIR"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_DIR"
 
             if [ ! -d "$APP_DIR/.git" ]; then
               git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
@@ -107,6 +180,6 @@ jobs:
             sed -i 's/^            //' .env
             chmod 600 .env
 
-            docker compose -f docker-compose.prod.yml config >/dev/null
-            docker compose -f docker-compose.prod.yml up -d --build
-            docker compose -f docker-compose.prod.yml ps
+            $DOCKER_COMPOSE -f docker-compose.prod.yml config >/dev/null
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --build
+            $DOCKER_COMPOSE -f docker-compose.prod.yml ps
