@@ -61,9 +61,7 @@ def main() -> None:
             checks.append(("compose up", True, "prod stack started"))
 
         if not args.skip_mcp:
-            status, _ = _http_get(f"http://{args.host}:{args.mcp_port}/mcp")
-            if status not in {200, 400, 404, 405, 406}:
-                raise CheckFailed(f"unexpected MCP status: {status}")
+            status = _check_mcp_endpoint(f"http://{args.host}:{args.mcp_port}/mcp")
             checks.append(("mcp endpoint", True, f"reachable with HTTP {status}"))
 
         _expect_json(
@@ -179,6 +177,22 @@ def _wait_for_http(url: str, timeout_seconds: int = 60) -> None:
     raise CheckFailed(f"timed out waiting for {url}: {last_error}")
 
 
+def _check_mcp_endpoint(url: str, timeout_seconds: int = 30) -> int:
+    expected_statuses = {200, 400, 404, 405, 406}
+    deadline = time.time() + timeout_seconds
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            status, _ = _http_get(url, timeout_seconds=3)
+            if status in expected_statuses:
+                return status
+            last_error = CheckFailed(f"unexpected MCP status: {status}")
+        except Exception as exc:
+            last_error = exc
+        time.sleep(1)
+    raise CheckFailed(f"MCP endpoint was not ready: {last_error}")
+
+
 def _http_get_json(url: str) -> tuple[int, dict[str, Any]]:
     status, body = _http_get(url)
     return status, _decode_json(body)
@@ -209,6 +223,8 @@ def _open(request: Request, timeout_seconds: int = 10) -> tuple[int, str]:
         return exc.code, exc.read().decode("utf-8")
     except URLError as exc:
         raise CheckFailed(f"{request.full_url} unreachable: {exc}") from exc
+    except OSError as exc:
+        raise CheckFailed(f"{request.full_url} connection failed: {exc}") from exc
 
 
 def _decode_json(body: str) -> dict[str, Any]:

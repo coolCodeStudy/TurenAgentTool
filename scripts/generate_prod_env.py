@@ -79,6 +79,7 @@ DINGTALK_ALLOW_WRITE_COMMANDS=false
 
 OPENAI_API_KEY={openai_api_key}
 OPENAI_MODEL={openai_model}
+OPENAI_ANALYSIS_ENABLED=true
 """
 
 

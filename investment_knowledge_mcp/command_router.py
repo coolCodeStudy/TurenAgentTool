@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.analysis_provider import generate_stock_analysis_with_openai
 from scripts.build_analysis_context import render_stock_context
 
 
@@ -93,11 +94,12 @@ def _handle_analyze_stock(symbol: str, market: str, output_dir: Path) -> Command
     output_path = output_dir / f"{symbol.upper()}_{market.upper()}_analysis_context.md"
     output_path.write_text(render_stock_context(context) + "\n", encoding="utf-8")
 
-    stock = context["stock"]
+    fallback_analysis = _render_stock_brief_analysis(context)
+    analysis = _generate_stock_analysis(context=context, fallback=fallback_analysis)
     return CommandResult(
         ok=True,
         message=(
-            _render_stock_brief_analysis(context)
+            analysis
             + "\n\n"
             + f"分析上下文已更新：{output_path}\n"
             + f"数据覆盖：个股知识 {len(context.get('stock_knowledge') or [])} 条，"
@@ -105,6 +107,16 @@ def _handle_analyze_stock(symbol: str, market: str, output_dir: Path) -> Command
             + f"待确认候选 {_candidate_count(context)} 条。"
         ),
     )
+
+
+def _generate_stock_analysis(context: dict[str, Any], fallback: str) -> str:
+    try:
+        analysis = generate_stock_analysis_with_openai(context)
+    except Exception as exc:
+        return fallback + f"\n\nOpenAI 分析暂时不可用，已使用本地模板分析。错误：{exc}"
+    if not analysis:
+        return fallback
+    return analysis
 
 
 def _handle_list_candidates() -> CommandResult:

@@ -139,6 +139,7 @@
 - 已支持自然问法，例如 `怎么看海力士`、`分析一下腾讯`。
 - 已支持按股票名称解析入库股票。
 - `分析` 类指令会直接返回简短分析，并同步生成 Markdown 分析上下文。
+- 已支持 OpenAI 分析增强；未配置 key 时回退到本地模板。
 - 已实现 HTTP `/command` 和钉钉 outgoing webhook adapter。
 - 已增加 `command_events` 审计记录。
 

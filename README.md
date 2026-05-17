@@ -205,6 +205,16 @@ COMMAND_API_TOKEN=dev-token python scripts/prod_check.py --start-prod --down-aft
 这会检查生产 compose 配置、Command API 鉴权、钉钉查询入口和写入类指令保护。
 如果目标环境已经导入海力士数据，可以追加 `--analysis-command "怎么看海力士"` 检查自然语言分析。
 
+OpenAI 分析：
+
+```bash
+OPENAI_API_KEY=... 
+OPENAI_MODEL=gpt-5.2
+OPENAI_ANALYSIS_ENABLED=true
+```
+
+配置后，`分析 000660 KR`、`怎么看海力士` 会优先调用 OpenAI 基于知识库上下文生成分析；未配置 key 或调用失败时，会自动回退到本地模板分析。
+
 ## 配置
 
 默认数据库连接：

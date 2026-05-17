@@ -1,9 +1,11 @@
 from pathlib import Path
+import os
 import sys
 import tempfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+os.environ["OPENAI_ANALYSIS_ENABLED"] = "false"
 
 from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.db import run_schema
