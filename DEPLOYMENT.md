@@ -255,14 +255,15 @@ DINGTALK_SEND_SECRET
 OPENAI_MODEL
 ```
 
-workflow 会在 ECS 上使用 `/opt/investment-knowledge`，拉取当前提交，生成服务器 `.env`，然后执行：
+workflow 会在 GitHub Actions runner 上打包当前提交，通过 SCP 上传到 ECS 的 `/tmp/investment-knowledge-release.tar.gz`，再解压到 `/opt/investment-knowledge`，生成服务器 `.env`，然后执行：
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-第一次运行前，ECS 仍然需要预装 `git`、Docker Engine 和 Docker Compose plugin。
-如果 ECS 是干净系统，workflow 会先尝试自动安装 `git`、Docker Engine 和 Docker Compose plugin；自动安装支持 Ubuntu/Debian、CentOS/RHEL 系系统。
+第一次运行前，ECS 仍然需要预装 Docker Engine 和 Docker Compose plugin。
+如果 ECS 是干净系统，workflow 会先尝试自动安装基础工具、Docker Engine 和 Docker Compose plugin；自动安装支持 Ubuntu/Debian、CentOS/RHEL 系系统。
+ECS 不再需要访问 GitHub；代码由 GitHub Actions 通过 SCP 上传。
 
 ## 安全原则
 

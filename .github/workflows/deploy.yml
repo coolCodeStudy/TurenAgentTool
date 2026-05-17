@@ -42,7 +42,23 @@ jobs:
           done
           echo "Required deployment secrets are present."
 
-      - name: Deploy via SSH
+      - name: Create deployment bundle
+        run: |
+          set -e
+          mkdir -p dist
+          tar \
+            --exclude='./.git' \
+            --exclude='./.venv' \
+            --exclude='./dist' \
+            --exclude='./.env' \
+            --exclude='./.env.test' \
+            --exclude='./.env.production' \
+            --exclude='./__pycache__' \
+            --exclude='*/__pycache__' \
+            --exclude='*.pyc' \
+            -czf dist/investment-knowledge-release.tar.gz .
+
+      - name: Prepare ECS dependencies
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.ECS_HOST }}
@@ -54,20 +70,20 @@ jobs:
             set -e
 
             install_base_tools() {
-              if command -v git >/dev/null 2>&1; then
+              if command -v tar >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
                 return
               fi
 
-              echo "Installing base tools: git, curl, ca-certificates"
+              echo "Installing base tools: tar, curl, ca-certificates"
               if command -v apt-get >/dev/null 2>&1; then
                 sudo apt-get update
-                sudo apt-get install -y git curl ca-certificates
+                sudo apt-get install -y tar curl ca-certificates
               elif command -v yum >/dev/null 2>&1; then
-                sudo yum install -y git curl ca-certificates
+                sudo yum install -y tar curl ca-certificates
               elif command -v dnf >/dev/null 2>&1; then
-                sudo dnf install -y git curl ca-certificates
+                sudo dnf install -y tar curl ca-certificates
               else
-                echo "Unsupported Linux distribution: cannot install git automatically."
+                echo "Unsupported Linux distribution: cannot install base tools automatically."
                 exit 1
               fi
             }
@@ -126,21 +142,59 @@ jobs:
             start_docker
             resolve_compose_command
 
+            echo "ECS dependencies are ready."
+
+      - name: Upload deployment bundle
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          source: "dist/investment-knowledge-release.tar.gz"
+          target: "/tmp"
+          strip_components: 1
+          overwrite: true
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 20m
+          script: |
+            set -e
+
+            resolve_compose_command() {
+              if docker compose version >/dev/null 2>&1; then
+                DOCKER_COMPOSE="docker compose"
+              elif sudo docker compose version >/dev/null 2>&1; then
+                DOCKER_COMPOSE="sudo docker compose"
+              else
+                echo "Docker Compose plugin is not available."
+                exit 1
+              fi
+            }
+
+            resolve_compose_command
+
             APP_DIR=/opt/investment-knowledge
-            REPO_URL=https://github.com/${{ github.repository }}.git
-            BRANCH=${{ github.ref_name }}
-            SHA=${{ github.sha }}
+            RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
+            RELEASE_DIR=/tmp/investment-knowledge-release
+
+            test -f "$RELEASE_TAR"
+            rm -rf "$RELEASE_DIR"
+            mkdir -p "$RELEASE_DIR"
+            tar -xzf "$RELEASE_TAR" -C "$RELEASE_DIR"
 
             sudo mkdir -p "$APP_DIR"
             sudo chown -R "$(id -un)":"$(id -gn)" "$APP_DIR"
 
-            if [ ! -d "$APP_DIR/.git" ]; then
-              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
-            fi
-
+            find "$APP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+            cp -a "$RELEASE_DIR"/. "$APP_DIR"/
             cd "$APP_DIR"
-            git fetch origin "$BRANCH"
-            git reset --hard "$SHA"
 
             cat > .env <<'ENV'
             COMPOSE_PROJECT_NAME=turenagenttool_prod
