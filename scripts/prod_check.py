@@ -143,6 +143,7 @@ def _compose_env(command_token: str) -> dict[str, str]:
     env.setdefault("POSTGRES_PASSWORD", "postgres")
     env.setdefault("POSTGRES_DB", "investment_kg")
     env.setdefault("POSTGRES_USER", "postgres")
+    env.setdefault("COMPOSE_PROFILES", "http")
     return env
 
 

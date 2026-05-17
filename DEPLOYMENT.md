@@ -22,6 +22,12 @@ ChatGPT / Codex / Web UI
 - `command-api`: 给自动化、脚本和未来 Agent 外壳调用的 HTTP 指令入口
 - `dingtalk-stream-bot`: 钉钉 Stream Mode 长连接机器人，不需要公网回调地址
 
+生产默认 `COMPOSE_PROFILES=stream`，只启动 `postgres` 和 `dingtalk-stream-bot`，适合 2GB 内存左右的小规格 ECS。需要 HTTP/MCP 入口时再改成：
+
+```text
+COMPOSE_PROFILES=stream,http
+```
+
 ## ECS 准备
 
 建议最低配置：
@@ -96,6 +102,7 @@ OPENAI_API_KEY=<openai-api-key>
 COMPOSE_PROFILES=stream
 DINGTALK_ALLOW_WRITE_COMMANDS=false
 DINGTALK_STREAM_ALLOW_WRITE=false
+PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ```
 
 这样服务器不需要暴露钉钉回调端口给公网；机器人会从 ECS 主动连到钉钉。
@@ -273,6 +280,7 @@ ECS 不再需要访问 GitHub；代码由 GitHub Actions 通过 SCP 上传。
 - 如果只用 DingTalk Stream Mode，第一版安全组可以只开放 SSH；MCP/Command API/DingTalk webhook 端口先不对公网开放。
 - MCP HTTP 服务如果要公网访问，应放到 HTTPS 和认证之后。
 - 资料查询 provider 的 API key 统一放 `.env` 或云端 secret，不写进代码。
+- 中国大陆 ECS 构建 Python 镜像时建议使用 `PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/`。
 
 ## 部署前检查清单
 

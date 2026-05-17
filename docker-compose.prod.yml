@@ -15,8 +15,12 @@ services:
       retries: 20
 
   mcp:
+    profiles: ["http"]
+    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
     build:
       context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -35,8 +39,12 @@ services:
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.server"]
 
   command-api:
+    profiles: ["http"]
+    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
     build:
       context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -54,8 +62,12 @@ services:
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
 
   dingtalk-api:
+    profiles: ["http"]
+    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
     build:
       context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -75,8 +87,11 @@ services:
 
   dingtalk-stream-bot:
     profiles: ["stream"]
+    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
     build:
       context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     depends_on:
       postgres:

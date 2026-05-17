@@ -20,6 +20,7 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Overwrite output file if it already exists.")
     parser.add_argument("--openai-api-key", default="", help="Optional OpenAI API key.")
     parser.add_argument("--openai-model", default="gpt-5.2", help="OpenAI model name.")
+    parser.add_argument("--pip-index-url", default="https://mirrors.aliyun.com/pypi/simple/", help="Python package index URL.")
     parser.add_argument("--dingtalk-secret", default="", help="Optional DingTalk outgoing robot secret.")
     parser.add_argument("--dingtalk-send-webhook", default="", help="Optional DingTalk custom robot send webhook.")
     parser.add_argument("--dingtalk-send-secret", default="", help="Optional DingTalk custom robot send secret.")
@@ -49,6 +50,7 @@ def main() -> None:
             dingtalk_stream_allow_write=args.allow_dingtalk_stream_write,
             openai_api_key=args.openai_api_key,
             openai_model=args.openai_model,
+            pip_index_url=args.pip_index_url,
         ),
         encoding="utf-8",
     )
@@ -70,9 +72,12 @@ def _render_env(
     dingtalk_stream_allow_write: bool,
     openai_api_key: str,
     openai_model: str,
+    pip_index_url: str,
 ) -> str:
     return f"""COMPOSE_PROJECT_NAME=turenagenttool_prod
 COMPOSE_PROFILES=stream
+APP_IMAGE_TAG=prod
+PIP_INDEX_URL={pip_index_url}
 
 POSTGRES_USER={postgres_user}
 POSTGRES_PASSWORD={postgres_password}

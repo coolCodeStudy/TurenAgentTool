@@ -65,7 +65,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          command_timeout: 20m
+          command_timeout: 40m
           script: |
             set -e
 
@@ -163,7 +163,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          command_timeout: 20m
+          command_timeout: 60m
           script: |
             set -e
 
@@ -199,6 +199,8 @@ jobs:
             cat > .env <<'ENV'
             COMPOSE_PROJECT_NAME=turenagenttool_prod
             COMPOSE_PROFILES=stream
+            APP_IMAGE_TAG=prod
+            PIP_INDEX_URL=${{ vars.PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple/' }}
 
             POSTGRES_USER=postgres
             POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
@@ -234,6 +236,10 @@ jobs:
             sed -i 's/^            //' .env
             chmod 600 .env
 
-            $DOCKER_COMPOSE -f docker-compose.prod.yml config >/dev/null
-            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --build
+            $DOCKER_COMPOSE -f docker-compose.prod.yml config
+            docker pull pgvector/pgvector:pg16 || true
+            docker pull python:3.11-slim || true
+            $DOCKER_COMPOSE -f docker-compose.prod.yml build dingtalk-stream-bot
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d postgres dingtalk-stream-bot
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
+            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
