@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 from pathlib import Path
 import sys
+
+import certifi
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +19,8 @@ from investment_knowledge_mcp.db import run_schema
 
 
 def main() -> None:
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+
     parser = argparse.ArgumentParser(description="Run InvestmentKnowledge as a DingTalk Stream Mode bot.")
     parser.add_argument("--allow-write", action="store_true", help="Allow write commands from DingTalk.")
     args = parser.parse_args()
