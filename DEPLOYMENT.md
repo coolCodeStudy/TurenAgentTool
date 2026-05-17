@@ -262,15 +262,20 @@ DINGTALK_SEND_SECRET
 OPENAI_MODEL
 ```
 
-workflow 会在 GitHub Actions runner 上打包当前提交，通过 SCP 上传到 ECS 的 `/tmp/investment-knowledge-release.tar.gz`，再解压到 `/opt/investment-knowledge`，生成服务器 `.env`，然后执行：
+workflow 会在 GitHub Actions runner 上打包当前提交，并构建/保存生产镜像：
+
+- `/tmp/investment-knowledge-release.tar.gz`
+- `/tmp/investment-knowledge-images.tar.gz`
+
+两个包会通过 SCP 上传到 ECS；ECS 解压代码到 `/opt/investment-knowledge`，执行 `docker load` 导入镜像，生成服务器 `.env`，然后执行：
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
 ```
 
 第一次运行前，ECS 仍然需要预装 Docker Engine 和 Docker Compose plugin。
 如果 ECS 是干净系统，workflow 会先尝试自动安装基础工具、Docker Engine 和 Docker Compose plugin；自动安装支持 Ubuntu/Debian、CentOS/RHEL 系系统。
-ECS 不再需要访问 GitHub；代码由 GitHub Actions 通过 SCP 上传。
+ECS 不再需要访问 GitHub，也不需要访问 Docker Hub 拉应用基础镜像；代码和镜像都由 GitHub Actions 通过 SCP 上传。
 
 ## 安全原则
 

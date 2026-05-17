@@ -58,6 +58,17 @@ jobs:
             --exclude='*.pyc' \
             -czf dist/investment-knowledge-release.tar.gz .
 
+      - name: Build deployment images
+        run: |
+          set -e
+          docker build \
+            --build-arg PIP_INDEX_URL="${{ vars.PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple/' }}" \
+            -t investment-knowledge-app:prod \
+            .
+          docker pull pgvector/pgvector:pg16
+          docker save investment-knowledge-app:prod pgvector/pgvector:pg16 | gzip > dist/investment-knowledge-images.tar.gz
+          ls -lh dist/investment-knowledge-release.tar.gz dist/investment-knowledge-images.tar.gz
+
       - name: Prepare ECS dependencies
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -127,9 +138,11 @@ jobs:
             }
 
             resolve_compose_command() {
-              if docker compose version >/dev/null 2>&1; then
+              if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+                DOCKER="docker"
                 DOCKER_COMPOSE="docker compose"
               elif sudo docker compose version >/dev/null 2>&1; then
+                DOCKER="sudo docker"
                 DOCKER_COMPOSE="sudo docker compose"
               else
                 echo "Docker Compose plugin is not available after installation."
@@ -151,7 +164,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          source: "dist/investment-knowledge-release.tar.gz"
+          source: "dist/investment-knowledge-release.tar.gz,dist/investment-knowledge-images.tar.gz"
           target: "/tmp"
           strip_components: 1
           overwrite: true
@@ -168,9 +181,11 @@ jobs:
             set -e
 
             resolve_compose_command() {
-              if docker compose version >/dev/null 2>&1; then
+              if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+                DOCKER="docker"
                 DOCKER_COMPOSE="docker compose"
               elif sudo docker compose version >/dev/null 2>&1; then
+                DOCKER="sudo docker"
                 DOCKER_COMPOSE="sudo docker compose"
               else
                 echo "Docker Compose plugin is not available."
@@ -182,9 +197,11 @@ jobs:
 
             APP_DIR=/opt/investment-knowledge
             RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
+            IMAGE_TAR=/tmp/investment-knowledge-images.tar.gz
             RELEASE_DIR=/tmp/investment-knowledge-release
 
             test -f "$RELEASE_TAR"
+            test -f "$IMAGE_TAR"
             rm -rf "$RELEASE_DIR"
             mkdir -p "$RELEASE_DIR"
             tar -xzf "$RELEASE_TAR" -C "$RELEASE_DIR"
@@ -236,10 +253,8 @@ jobs:
             sed -i 's/^            //' .env
             chmod 600 .env
 
+            gzip -dc "$IMAGE_TAR" | $DOCKER load
             $DOCKER_COMPOSE -f docker-compose.prod.yml config
-            docker pull pgvector/pgvector:pg16 || true
-            docker pull python:3.11-slim || true
-            $DOCKER_COMPOSE -f docker-compose.prod.yml build dingtalk-stream-bot
-            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d postgres dingtalk-stream-bot
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
