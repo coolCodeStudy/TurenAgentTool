@@ -78,6 +78,8 @@ DINGTALK_API_PORT=8002
 DINGTALK_API_HOST_PORT=8002
 DINGTALK_OUTGOING_SECRET=<dingtalk-outgoing-secret>
 DINGTALK_ALLOW_WRITE_COMMANDS=false
+DINGTALK_SEND_WEBHOOK=<dingtalk-custom-robot-webhook>
+DINGTALK_SEND_SECRET=<dingtalk-custom-robot-secret>
 ```
 
 `scripts/generate_prod_env.py` 会自动生成强 `POSTGRES_PASSWORD` 和 `COMMAND_API_TOKEN`，但仍需人工确认是否要填 `OPENAI_API_KEY` 和 `DINGTALK_OUTGOING_SECRET`。
@@ -154,6 +156,13 @@ curl -i http://localhost:8002/health
 curl -s http://localhost:8002/dingtalk/webhook \
   -H "Content-Type: application/json" \
   -d '{"msgtype":"text","text":{"content":"查看候选心得"},"senderNick":"deploy-check"}'
+```
+
+DingTalk 发送侧检查：
+
+```bash
+python scripts/send_dingtalk_message.py --message "InvestmentKnowledge online"
+python scripts/send_dingtalk_message.py --command "怎么看海力士"
 ```
 
 生产环境建议放到反向代理和 HTTPS 后面，再暴露给客户端。

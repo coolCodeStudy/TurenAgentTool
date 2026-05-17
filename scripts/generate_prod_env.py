@@ -21,6 +21,8 @@ def main() -> None:
     parser.add_argument("--openai-api-key", default="", help="Optional OpenAI API key.")
     parser.add_argument("--openai-model", default="gpt-5.2", help="OpenAI model name.")
     parser.add_argument("--dingtalk-secret", default="", help="Optional DingTalk outgoing robot secret.")
+    parser.add_argument("--dingtalk-send-webhook", default="", help="Optional DingTalk custom robot send webhook.")
+    parser.add_argument("--dingtalk-send-secret", default="", help="Optional DingTalk custom robot send secret.")
     parser.add_argument("--postgres-user", default="postgres")
     parser.add_argument("--postgres-db", default="investment_kg")
     args = parser.parse_args()
@@ -37,6 +39,8 @@ def main() -> None:
             postgres_db=args.postgres_db,
             command_api_token=_secret(40),
             dingtalk_secret=args.dingtalk_secret,
+            dingtalk_send_webhook=args.dingtalk_send_webhook,
+            dingtalk_send_secret=args.dingtalk_send_secret,
             openai_api_key=args.openai_api_key,
             openai_model=args.openai_model,
         ),
@@ -53,6 +57,8 @@ def _render_env(
     postgres_db: str,
     command_api_token: str,
     dingtalk_secret: str,
+    dingtalk_send_webhook: str,
+    dingtalk_send_secret: str,
     openai_api_key: str,
     openai_model: str,
 ) -> str:
@@ -76,6 +82,8 @@ DINGTALK_API_PORT=8002
 DINGTALK_API_HOST_PORT=8002
 DINGTALK_OUTGOING_SECRET={dingtalk_secret}
 DINGTALK_ALLOW_WRITE_COMMANDS=false
+DINGTALK_SEND_WEBHOOK={dingtalk_send_webhook}
+DINGTALK_SEND_SECRET={dingtalk_send_secret}
 
 OPENAI_API_KEY={openai_api_key}
 OPENAI_MODEL={openai_model}

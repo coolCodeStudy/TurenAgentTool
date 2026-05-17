@@ -40,6 +40,8 @@ class AppConfig:
     dingtalk_api_port: int = 8002
     dingtalk_outgoing_secret: str | None = None
     dingtalk_allow_write_commands: bool = False
+    dingtalk_send_webhook: str | None = None
+    dingtalk_send_secret: str | None = None
 
 
 def get_config() -> AppConfig:
@@ -61,6 +63,8 @@ def get_config() -> AppConfig:
         dingtalk_api_port=int(os.getenv("DINGTALK_API_PORT", "8002")),
         dingtalk_outgoing_secret=os.getenv("DINGTALK_OUTGOING_SECRET") or None,
         dingtalk_allow_write_commands=_get_bool("DINGTALK_ALLOW_WRITE_COMMANDS", default=False),
+        dingtalk_send_webhook=os.getenv("DINGTALK_SEND_WEBHOOK") or None,
+        dingtalk_send_secret=os.getenv("DINGTALK_SEND_SECRET") or None,
     )
 
 

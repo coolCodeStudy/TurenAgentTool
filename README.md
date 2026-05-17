@@ -196,6 +196,20 @@ curl -s http://localhost:8002/dingtalk/webhook \
 
 默认只允许查询类指令，例如 `分析 000660 KR`、`查看候选心得`、`帮助`。如需接入真实钉钉 outgoing 机器人，可设置 `DINGTALK_OUTGOING_SECRET` 开启签名校验。
 
+发送消息到钉钉自定义机器人：
+
+```bash
+DINGTALK_SEND_WEBHOOK=...
+DINGTALK_SEND_SECRET=...
+```
+
+配置后可以发送普通文本，或把分析结果推送到钉钉：
+
+```bash
+python scripts/send_dingtalk_message.py --message "InvestmentKnowledge online"
+python scripts/send_dingtalk_message.py --command "怎么看海力士"
+```
+
 准生产自检：
 
 ```bash
