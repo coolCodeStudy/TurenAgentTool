@@ -1,5 +1,6 @@
 certifi>=2026.4.22
 dingtalk-stream>=0.24.3
+futu-api>=9.4.5408
 httpx>=0.27.1
 mcp>=1.2.0
 psycopg[binary]>=3.2.0

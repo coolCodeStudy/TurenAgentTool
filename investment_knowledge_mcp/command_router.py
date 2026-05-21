@@ -7,6 +7,7 @@ from typing import Any
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.analysis_provider import generate_stock_analysis_with_openai
+from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions
 from scripts.build_analysis_context import render_stock_context
 
 
@@ -52,6 +53,9 @@ def handle_command(
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
 
+    if cleaned in {"我的持仓", "我的仓位", "当前持仓", "当前仓位", "持仓", "仓位", "portfolio", "positions"}:
+        return _handle_portfolio_positions()
+
     confirm_match = re.fullmatch(r"(?:确认候选心得|confirm candidate)\s+(\d+)", cleaned, flags=re.IGNORECASE)
     if confirm_match:
         return _handle_confirm_candidate(int(confirm_match.group(1)))
@@ -92,7 +96,24 @@ def is_query_command(command: str) -> bool:
     normalized = _normalize_natural_command(cleaned)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
-        or normalized in {"查看候选心得", "候选心得", "list candidates", "candidates", "帮助", "help", "?"}
+        or normalized
+        in {
+            "查看候选心得",
+            "候选心得",
+            "list candidates",
+            "candidates",
+            "帮助",
+            "help",
+            "?",
+            "我的持仓",
+            "我的仓位",
+            "当前持仓",
+            "当前仓位",
+            "持仓",
+            "仓位",
+            "portfolio",
+            "positions",
+        }
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
     )
@@ -161,6 +182,24 @@ def _handle_list_candidates() -> CommandResult:
             f"{candidate['insight']}"
         )
     return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_portfolio_positions() -> CommandResult:
+    try:
+        snapshot = get_futu_positions()
+    except FutuProviderError as exc:
+        return CommandResult(
+            ok=False,
+            message=(
+                "暂时读取不到富途持仓。\n"
+                f"原因：{exc}\n\n"
+                "需要确认云端 OpenD 已启动、已登录富途账号，且只在 ECS 本机开放端口。"
+            ),
+        )
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取富途持仓失败：{exc}")
+
+    return CommandResult(ok=True, message=_render_portfolio_positions(snapshot))
 
 
 def _handle_confirm_candidate(candidate_id: int) -> CommandResult:
@@ -261,6 +300,65 @@ def _clean_stock_query(value: str) -> str:
 
 def _strip_trailing_punctuation(value: str) -> str:
     return value.strip().strip("？?。.!！,， ")
+
+
+def _render_portfolio_positions(snapshot: Any) -> str:
+    positions = snapshot.positions
+    fetched_at = snapshot.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    if not positions:
+        return f"当前富途持仓为空。\n数据时间：{fetched_at}"
+
+    total_market_value = sum(_number(item.get("market_val")) for item in positions)
+    total_pl = sum(_number(item.get("pl_val")) for item in positions)
+    sorted_positions = sorted(
+        positions,
+        key=lambda item: _number(item.get("market_val")),
+        reverse=True,
+    )
+
+    lines = [
+        "富途实时持仓：",
+        f"- 持仓数量：{len(positions)}",
+        f"- 总市值：{_fmt_money(total_market_value)}",
+        f"- 浮动盈亏：{_fmt_money(total_pl)}",
+        f"- 数据时间：{fetched_at}" + ("（短缓存）" if snapshot.cached else ""),
+        "",
+        "主要持仓：",
+    ]
+    for item in sorted_positions[:10]:
+        name = item.get("stock_name") or item.get("code") or "unknown"
+        code = item.get("code") or ""
+        market_val = _number(item.get("market_val"))
+        weight = market_val / total_market_value * 100 if total_market_value else 0
+        pl_ratio = _number(item.get("pl_ratio"))
+        lines.append(
+            f"- {name} {code}: 市值 {_fmt_money(market_val)}, "
+            f"占比 {weight:.1f}%, 盈亏 {_fmt_percent(pl_ratio)}"
+        )
+    if len(sorted_positions) > 10:
+        lines.append(f"- 其余 {len(sorted_positions) - 10} 个持仓已省略。")
+    lines.append("")
+    lines.append("注：当前只读持仓，不会下单或修改账户。")
+    return "\n".join(lines)
+
+
+def _number(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_money(value: float) -> str:
+    return f"{value:,.2f}"
+
+
+def _fmt_percent(value: float) -> str:
+    if abs(value) <= 1:
+        value *= 100
+    return f"{value:.2f}%"
 
 
 def _render_stock_brief_analysis(context: dict[str, Any]) -> str:
@@ -364,6 +462,7 @@ def _dedupe(items: list[str]) -> list[str]:
 
 def _help_text() -> str:
     return """支持的指令：
+- 我的持仓
 - 分析 000660 KR
 - 怎么看海力士
 - 分析一下腾讯

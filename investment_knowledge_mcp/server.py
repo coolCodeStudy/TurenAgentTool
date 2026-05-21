@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.config import get_config
+from investment_knowledge_mcp.futu_provider import get_futu_positions
 
 
 config = get_config()
@@ -223,6 +224,18 @@ def confirm_candidate_insight(candidate_id: int) -> dict[str, Any]:
 def reject_candidate_insight(candidate_id: int) -> dict[str, Any]:
     """Reject a candidate insight so it is not treated as user memory."""
     return repository.reject_candidate_insight(candidate_id=candidate_id)
+
+
+@mcp.tool()
+def get_realtime_portfolio_positions() -> dict[str, Any]:
+    """Read current portfolio positions from Futu OpenD. This is read-only and never trades."""
+    snapshot = get_futu_positions()
+    return {
+        "source": snapshot.source,
+        "cached": snapshot.cached,
+        "fetched_at": snapshot.fetched_at.isoformat(),
+        "positions": snapshot.positions,
+    }
 
 
 @mcp.tool()

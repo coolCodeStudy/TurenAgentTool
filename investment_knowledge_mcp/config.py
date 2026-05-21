@@ -54,6 +54,15 @@ class AppConfig:
     dingtalk_stream_client_id: str | None = None
     dingtalk_stream_client_secret: str | None = None
     dingtalk_stream_write_allowed_senders: tuple[str, ...] = ()
+    futu_opend_host: str = "127.0.0.1"
+    futu_opend_port: int = 11111
+    futu_security_firm: str = "FUTUSECURITIES"
+    futu_trade_market: str = "HK"
+    futu_trade_env: str = "REAL"
+    futu_account_id: int = 0
+    futu_account_index: int = 0
+    futu_position_cache_seconds: int = 20
+    futu_position_refresh_cache: bool = True
 
 
 def get_config() -> AppConfig:
@@ -85,6 +94,15 @@ def get_config() -> AppConfig:
         dingtalk_stream_client_id=os.getenv("DINGTALK_STREAM_CLIENT_ID") or None,
         dingtalk_stream_client_secret=os.getenv("DINGTALK_STREAM_CLIENT_SECRET") or None,
         dingtalk_stream_write_allowed_senders=_get_csv("DINGTALK_STREAM_WRITE_ALLOWED_SENDERS"),
+        futu_opend_host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+        futu_opend_port=int(os.getenv("FUTU_OPEND_PORT", "11111")),
+        futu_security_firm=os.getenv("FUTU_SECURITY_FIRM", "FUTUSECURITIES"),
+        futu_trade_market=os.getenv("FUTU_TRADE_MARKET", "HK"),
+        futu_trade_env=os.getenv("FUTU_TRADE_ENV", "REAL"),
+        futu_account_id=int(os.getenv("FUTU_ACCOUNT_ID", "0")),
+        futu_account_index=int(os.getenv("FUTU_ACCOUNT_INDEX", "0")),
+        futu_position_cache_seconds=int(os.getenv("FUTU_POSITION_CACHE_SECONDS", "20")),
+        futu_position_refresh_cache=_get_bool("FUTU_POSITION_REFRESH_CACHE", default=True),
     )
 
 

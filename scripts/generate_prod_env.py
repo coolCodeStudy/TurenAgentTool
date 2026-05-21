@@ -32,6 +32,15 @@ def main() -> None:
         help="Comma-separated DingTalk sender ids allowed to run write commands.",
     )
     parser.add_argument("--allow-dingtalk-stream-write", action="store_true", help="Allow write commands in Stream Mode.")
+    parser.add_argument("--futu-opend-host", default="127.0.0.1")
+    parser.add_argument("--futu-opend-port", default="11111")
+    parser.add_argument("--futu-security-firm", default="FUTUSECURITIES")
+    parser.add_argument("--futu-trade-market", default="HK")
+    parser.add_argument("--futu-trade-env", default="REAL")
+    parser.add_argument("--futu-account-id", default="0")
+    parser.add_argument("--futu-account-index", default="0")
+    parser.add_argument("--futu-position-cache-seconds", default="20")
+    parser.add_argument("--futu-position-refresh-cache", default="true")
     parser.add_argument("--postgres-user", default="postgres")
     parser.add_argument("--postgres-db", default="investment_kg")
     args = parser.parse_args()
@@ -54,6 +63,15 @@ def main() -> None:
             dingtalk_stream_client_secret=args.dingtalk_stream_client_secret,
             dingtalk_stream_write_allowed_senders=args.dingtalk_stream_write_allowed_senders,
             dingtalk_stream_allow_write=args.allow_dingtalk_stream_write,
+            futu_opend_host=args.futu_opend_host,
+            futu_opend_port=args.futu_opend_port,
+            futu_security_firm=args.futu_security_firm,
+            futu_trade_market=args.futu_trade_market,
+            futu_trade_env=args.futu_trade_env,
+            futu_account_id=args.futu_account_id,
+            futu_account_index=args.futu_account_index,
+            futu_position_cache_seconds=args.futu_position_cache_seconds,
+            futu_position_refresh_cache=args.futu_position_refresh_cache,
             openai_api_key=args.openai_api_key,
             openai_model=args.openai_model,
             pip_index_url=args.pip_index_url,
@@ -77,6 +95,15 @@ def _render_env(
     dingtalk_stream_client_secret: str,
     dingtalk_stream_write_allowed_senders: str,
     dingtalk_stream_allow_write: bool,
+    futu_opend_host: str,
+    futu_opend_port: str,
+    futu_security_firm: str,
+    futu_trade_market: str,
+    futu_trade_env: str,
+    futu_account_id: str,
+    futu_account_index: str,
+    futu_position_cache_seconds: str,
+    futu_position_refresh_cache: str,
     openai_api_key: str,
     openai_model: str,
     pip_index_url: str,
@@ -112,6 +139,16 @@ DINGTALK_STREAM_CLIENT_ID={dingtalk_stream_client_id}
 DINGTALK_STREAM_CLIENT_SECRET={dingtalk_stream_client_secret}
 DINGTALK_STREAM_ALLOW_WRITE={str(dingtalk_stream_allow_write).lower()}
 DINGTALK_STREAM_WRITE_ALLOWED_SENDERS={dingtalk_stream_write_allowed_senders}
+
+FUTU_OPEND_HOST={futu_opend_host}
+FUTU_OPEND_PORT={futu_opend_port}
+FUTU_SECURITY_FIRM={futu_security_firm}
+FUTU_TRADE_MARKET={futu_trade_market}
+FUTU_TRADE_ENV={futu_trade_env}
+FUTU_ACCOUNT_ID={futu_account_id}
+FUTU_ACCOUNT_INDEX={futu_account_index}
+FUTU_POSITION_CACHE_SECONDS={futu_position_cache_seconds}
+FUTU_POSITION_REFRESH_CACHE={futu_position_refresh_cache}
 
 OPENAI_API_KEY={openai_api_key}
 OPENAI_MODEL={openai_model}

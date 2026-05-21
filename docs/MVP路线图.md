@@ -149,7 +149,7 @@
 
 任务：
 
-1. 接入 Futu MCP 获取持仓。
+1. 接入云端 OpenD / Futu OpenAPI 获取持仓。
 2. 同步 positions。
 3. 接入同花顺 MCP 获取公告、新闻、板块近况。
 4. 生成每日复盘报告。
