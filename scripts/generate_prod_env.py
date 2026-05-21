@@ -26,6 +26,11 @@ def main() -> None:
     parser.add_argument("--dingtalk-send-secret", default="", help="Optional DingTalk custom robot send secret.")
     parser.add_argument("--dingtalk-stream-client-id", default="", help="Optional DingTalk Stream Mode client id.")
     parser.add_argument("--dingtalk-stream-client-secret", default="", help="Optional DingTalk Stream Mode secret.")
+    parser.add_argument(
+        "--dingtalk-stream-write-allowed-senders",
+        default="",
+        help="Comma-separated DingTalk sender ids allowed to run write commands.",
+    )
     parser.add_argument("--allow-dingtalk-stream-write", action="store_true", help="Allow write commands in Stream Mode.")
     parser.add_argument("--postgres-user", default="postgres")
     parser.add_argument("--postgres-db", default="investment_kg")
@@ -47,6 +52,7 @@ def main() -> None:
             dingtalk_send_secret=args.dingtalk_send_secret,
             dingtalk_stream_client_id=args.dingtalk_stream_client_id,
             dingtalk_stream_client_secret=args.dingtalk_stream_client_secret,
+            dingtalk_stream_write_allowed_senders=args.dingtalk_stream_write_allowed_senders,
             dingtalk_stream_allow_write=args.allow_dingtalk_stream_write,
             openai_api_key=args.openai_api_key,
             openai_model=args.openai_model,
@@ -69,6 +75,7 @@ def _render_env(
     dingtalk_send_secret: str,
     dingtalk_stream_client_id: str,
     dingtalk_stream_client_secret: str,
+    dingtalk_stream_write_allowed_senders: str,
     dingtalk_stream_allow_write: bool,
     openai_api_key: str,
     openai_model: str,
@@ -104,6 +111,7 @@ DINGTALK_SEND_SECRET={dingtalk_send_secret}
 DINGTALK_STREAM_CLIENT_ID={dingtalk_stream_client_id}
 DINGTALK_STREAM_CLIENT_SECRET={dingtalk_stream_client_secret}
 DINGTALK_STREAM_ALLOW_WRITE={str(dingtalk_stream_allow_write).lower()}
+DINGTALK_STREAM_WRITE_ALLOWED_SENDERS={dingtalk_stream_write_allowed_senders}
 
 OPENAI_API_KEY={openai_api_key}
 OPENAI_MODEL={openai_model}

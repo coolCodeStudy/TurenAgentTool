@@ -91,6 +91,7 @@ DINGTALK_SEND_SECRET=<dingtalk-custom-robot-secret>
 DINGTALK_STREAM_CLIENT_ID=<dingtalk-stream-client-id>
 DINGTALK_STREAM_CLIENT_SECRET=<dingtalk-stream-client-secret>
 DINGTALK_STREAM_ALLOW_WRITE=false
+DINGTALK_STREAM_WRITE_ALLOWED_SENDERS=<senderStaffId-or-senderId>
 OPENAI_API_KEY=<openai-api-key>
 ```
 
@@ -102,10 +103,12 @@ OPENAI_API_KEY=<openai-api-key>
 COMPOSE_PROFILES=stream
 DINGTALK_ALLOW_WRITE_COMMANDS=false
 DINGTALK_STREAM_ALLOW_WRITE=false
+DINGTALK_STREAM_WRITE_ALLOWED_SENDERS=
 PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ```
 
 这样服务器不需要暴露钉钉回调端口给公网；机器人会从 ECS 主动连到钉钉。
+如果后续要允许钉钉写入，先把 `DINGTALK_STREAM_ALLOW_WRITE` 改成 `true`，再把日志里的 `sender_staff_id` 或 `sender_id` 填入 `DINGTALK_STREAM_WRITE_ALLOWED_SENDERS`。没有进入白名单的群成员只能查询，不能确认候选心得或记录心得。
 
 启动：
 
@@ -254,12 +257,14 @@ ECS_PORT
 DINGTALK_OUTGOING_SECRET
 DINGTALK_SEND_WEBHOOK
 DINGTALK_SEND_SECRET
+DINGTALK_STREAM_WRITE_ALLOWED_SENDERS
 ```
 
 可选 repository variable：
 
 ```text
 OPENAI_MODEL
+DINGTALK_STREAM_ALLOW_WRITE
 ```
 
 workflow 会在 GitHub Actions runner 上打包当前提交，并构建/保存生产镜像：

@@ -53,6 +53,7 @@ class AppConfig:
     dingtalk_send_secret: str | None = None
     dingtalk_stream_client_id: str | None = None
     dingtalk_stream_client_secret: str | None = None
+    dingtalk_stream_write_allowed_senders: tuple[str, ...] = ()
 
 
 def get_config() -> AppConfig:
@@ -83,6 +84,7 @@ def get_config() -> AppConfig:
         dingtalk_send_secret=os.getenv("DINGTALK_SEND_SECRET") or None,
         dingtalk_stream_client_id=os.getenv("DINGTALK_STREAM_CLIENT_ID") or None,
         dingtalk_stream_client_secret=os.getenv("DINGTALK_STREAM_CLIENT_SECRET") or None,
+        dingtalk_stream_write_allowed_senders=_get_csv("DINGTALK_STREAM_WRITE_ALLOWED_SENDERS"),
     )
 
 
@@ -91,3 +93,10 @@ def _get_bool(key: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _get_csv(key: str) -> tuple[str, ...]:
+    value = os.getenv(key)
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
