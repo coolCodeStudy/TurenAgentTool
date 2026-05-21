@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Literal
 
 
-DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:55432/investment_kg"
+DEFAULT_POSTGRES_HOST = "localhost"
+DEFAULT_POSTGRES_PORT = 55432
+DEFAULT_POSTGRES_USER = "postgres"
+DEFAULT_POSTGRES_PASSWORD = "postgres"
+DEFAULT_POSTGRES_DB = "investment_kg"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -28,7 +32,12 @@ def load_env_file(path: Path | None = None) -> None:
 
 @dataclass(frozen=True)
 class AppConfig:
-    database_url: str = DEFAULT_DATABASE_URL
+    database_url: str | None = None
+    postgres_host: str = DEFAULT_POSTGRES_HOST
+    postgres_port: int = DEFAULT_POSTGRES_PORT
+    postgres_user: str = DEFAULT_POSTGRES_USER
+    postgres_password: str = DEFAULT_POSTGRES_PASSWORD
+    postgres_db: str = DEFAULT_POSTGRES_DB
     mcp_transport: Literal["stdio", "sse", "streamable-http"] = "stdio"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000
@@ -53,7 +62,12 @@ def get_config() -> AppConfig:
         raise ValueError("MCP_TRANSPORT must be one of: stdio, sse, streamable-http")
 
     return AppConfig(
-        database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
+        database_url=os.getenv("DATABASE_URL") or None,
+        postgres_host=os.getenv("POSTGRES_HOST", DEFAULT_POSTGRES_HOST),
+        postgres_port=int(os.getenv("POSTGRES_PORT", str(DEFAULT_POSTGRES_PORT))),
+        postgres_user=os.getenv("POSTGRES_USER", DEFAULT_POSTGRES_USER),
+        postgres_password=os.getenv("POSTGRES_PASSWORD", DEFAULT_POSTGRES_PASSWORD),
+        postgres_db=os.getenv("POSTGRES_DB", DEFAULT_POSTGRES_DB),
         mcp_transport=transport,  # type: ignore[arg-type]
         mcp_host=os.getenv("MCP_HOST", "127.0.0.1"),
         mcp_port=int(os.getenv("MCP_PORT", "8000")),

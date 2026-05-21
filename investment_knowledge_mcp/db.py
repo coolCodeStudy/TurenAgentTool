@@ -15,7 +15,18 @@ SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
 
 
 def connect() -> Connection:
-    return psycopg.connect(get_config().database_url, row_factory=dict_row)
+    config = get_config()
+    if config.database_url:
+        return psycopg.connect(config.database_url, row_factory=dict_row)
+
+    return psycopg.connect(
+        host=config.postgres_host,
+        port=config.postgres_port,
+        dbname=config.postgres_db,
+        user=config.postgres_user,
+        password=config.postgres_password,
+        row_factory=dict_row,
+    )
 
 
 @contextmanager

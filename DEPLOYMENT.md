@@ -333,7 +333,11 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:55432/investment_kg
 
 ```text
 MCP_TRANSPORT=streamable-http
-DATABASE_URL=postgresql://postgres:<password>@postgres:5432/investment_kg
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<password>
+POSTGRES_DB=investment_kg
 ```
 
 `MCP_PORT` 是容器内 FastMCP 服务监听端口；`MCP_HOST_PORT` 是 ECS 对外暴露端口。大多数情况下两者都保持 `8000`。

@@ -26,7 +26,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
       MCP_TRANSPORT: ${MCP_TRANSPORT:-streamable-http}
       MCP_HOST: ${MCP_HOST:-0.0.0.0}
       MCP_PORT: ${MCP_PORT:-8000}
@@ -50,7 +54,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
       COMMAND_API_HOST: ${COMMAND_API_HOST:-0.0.0.0}
       COMMAND_API_PORT: ${COMMAND_API_PORT:-8001}
       COMMAND_API_TOKEN: ${COMMAND_API_TOKEN:?COMMAND_API_TOKEN is required}
@@ -73,7 +81,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
       DINGTALK_API_HOST: ${DINGTALK_API_HOST:-0.0.0.0}
       DINGTALK_API_PORT: ${DINGTALK_API_PORT:-8002}
       DINGTALK_OUTGOING_SECRET: ${DINGTALK_OUTGOING_SECRET:-}
@@ -97,7 +109,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_kg}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
       DINGTALK_STREAM_CLIENT_ID: ${DINGTALK_STREAM_CLIENT_ID:?DINGTALK_STREAM_CLIENT_ID is required}
       DINGTALK_STREAM_CLIENT_SECRET: ${DINGTALK_STREAM_CLIENT_SECRET:?DINGTALK_STREAM_CLIENT_SECRET is required}
       DINGTALK_STREAM_ALLOW_WRITE: ${DINGTALK_STREAM_ALLOW_WRITE:-false}
