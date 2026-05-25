@@ -33,7 +33,7 @@ def main() -> None:
     )
     parser.add_argument("--allow-dingtalk-stream-write", action="store_true", help="Allow write commands in Stream Mode.")
     parser.add_argument("--futu-opend-host", default="127.0.0.1")
-    parser.add_argument("--futu-opend-port", default="11111")
+    parser.add_argument("--futu-opend-port", default="11112")
     parser.add_argument("--futu-security-firm", default="FUTUSECURITIES")
     parser.add_argument("--futu-trade-market", default="HK")
     parser.add_argument("--futu-trade-env", default="REAL")

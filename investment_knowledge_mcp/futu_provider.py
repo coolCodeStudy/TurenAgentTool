@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
+import re
 import time
 from typing import Any
 
@@ -66,10 +67,13 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
     security_firm = _enum_value(ft.SecurityFirm, config.futu_security_firm)
     trade_env = _enum_value(ft.TrdEnv, config.futu_trade_env)
 
-    context = context_cls(
-        host=config.futu_opend_host,
-        port=config.futu_opend_port,
-        security_firm=security_firm,
+    context = _create_trade_context(
+        context_cls,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+            "security_firm": security_firm,
+        },
     )
     try:
         kwargs: dict[str, Any] = {
@@ -94,13 +98,49 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
 
 
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
-    signature = inspect.signature(context.position_list_query)
-    supported_kwargs = {
-        key: value
-        for key, value in kwargs.items()
-        if key in signature.parameters
-    }
-    return context.position_list_query(**supported_kwargs)
+    supported_kwargs = _filter_supported_kwargs(context.position_list_query, kwargs)
+    return _call_with_keyword_retry(context.position_list_query, supported_kwargs)
+
+
+def _create_trade_context(context_cls: Any, kwargs: dict[str, Any]) -> Any:
+    supported_kwargs = _filter_supported_kwargs(context_cls, kwargs)
+    return _call_with_keyword_retry(context_cls, supported_kwargs)
+
+
+def _filter_supported_kwargs(callable_obj: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return kwargs
+
+    parameters = signature.parameters
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key in parameters}
+
+
+def _call_with_keyword_retry(callable_obj: Any, kwargs: dict[str, Any]) -> Any:
+    remaining = dict(kwargs)
+    while True:
+        try:
+            return callable_obj(**remaining)
+        except TypeError as exc:
+            keyword = _unexpected_keyword(str(exc))
+            if not keyword or keyword not in remaining:
+                raise
+            remaining.pop(keyword)
+
+
+def _unexpected_keyword(message: str) -> str | None:
+    patterns = [
+        r"unexpected keyword argument '([^']+)'",
+        r"got an unexpected keyword argument \"([^\"]+)\"",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _trade_context_class(ft: Any, trade_market: str) -> Any:
