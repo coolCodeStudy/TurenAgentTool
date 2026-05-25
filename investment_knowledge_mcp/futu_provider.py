@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import inspect
 import time
 from typing import Any
 
@@ -64,7 +65,6 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
     context_cls = _trade_context_class(ft, config.futu_trade_market)
     security_firm = _enum_value(ft.SecurityFirm, config.futu_security_firm)
     trade_env = _enum_value(ft.TrdEnv, config.futu_trade_env)
-    trade_market = _enum_value(ft.TrdMarket, config.futu_trade_market)
 
     context = context_cls(
         host=config.futu_opend_host,
@@ -74,7 +74,6 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
     try:
         kwargs: dict[str, Any] = {
             "trd_env": trade_env,
-            "trd_market": trade_market,
             "refresh_cache": config.futu_position_refresh_cache,
         }
         if config.futu_account_id:
@@ -82,7 +81,7 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
         else:
             kwargs["acc_index"] = config.futu_account_index
 
-        ret, data = context.position_list_query(**kwargs)
+        ret, data = _position_list_query(context, kwargs)
         if ret != ft.RET_OK:
             raise FutuProviderError(f"富途持仓查询失败：{data}")
 
@@ -92,6 +91,16 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
         )
     finally:
         context.close()
+
+
+def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
+    signature = inspect.signature(context.position_list_query)
+    supported_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key in signature.parameters
+    }
+    return context.position_list_query(**supported_kwargs)
 
 
 def _trade_context_class(ft: Any, trade_market: str) -> Any:
