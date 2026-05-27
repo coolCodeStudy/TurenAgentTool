@@ -11,6 +11,7 @@ LANGUAGE="${LANGUAGE:-chs}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 FUTU_LOGIN_ACCOUNT="${FUTU_LOGIN_ACCOUNT:-}"
 FUTU_LOGIN_PWD_MD5="${FUTU_LOGIN_PWD_MD5:-}"
+PROXY_SCRIPT="${PROXY_SCRIPT:-/usr/local/bin/futu-opend-proxy.sh}"
 
 usage() {
   cat <<USAGE
@@ -71,10 +72,25 @@ if [ ! -x "$OPEND_BIN" ]; then
   exit 1
 fi
 
-if [ ! -f "${OPEND_DIR}/Appdata.dat" ]; then
-  echo "WARNING: Appdata.dat not found in $OPEND_DIR." >&2
-  echo "Continuing because some OpenD builds generate or locate Appdata.dat at runtime." >&2
-fi
+ensure_appdata() {
+  if [ -f "${OPEND_DIR}/Appdata.dat" ]; then
+    return
+  fi
+
+  echo "Appdata.dat not found in $OPEND_DIR. Searching under /opt/futu-opend..." >&2
+  local found
+  found="$(find /opt/futu-opend -name Appdata.dat -type f 2>/dev/null | head -n 1 || true)"
+  if [ -z "$found" ]; then
+    echo "Appdata.dat is required by command-line OpenD but was not found." >&2
+    echo "Please re-extract the official OpenD package and confirm Appdata.dat exists in the OpenD directory." >&2
+    exit 1
+  fi
+
+  echo "Copying Appdata.dat from $found to $OPEND_DIR/Appdata.dat"
+  $SUDO install -m 644 "$found" "${OPEND_DIR}/Appdata.dat"
+}
+
+ensure_appdata
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required to update FutuOpenD.xml safely." >&2
@@ -194,6 +210,19 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 SERVICE
 
+cat > /tmp/futu-opend-proxy.sh <<SCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOCKER_HOST_IP="\$(ip -4 addr show docker0 | awk '/inet / {print \$2}' | cut -d/ -f1)"
+if [ -z "\$DOCKER_HOST_IP" ]; then
+  echo "Cannot detect docker0 IPv4 address. Is Docker running?" >&2
+  exit 1
+fi
+
+exec ${SOCAT_BIN} "TCP-LISTEN:${PROXY_PORT},bind=\${DOCKER_HOST_IP},fork,reuseaddr" "TCP:${OPEND_HOST}:${OPEND_PORT}"
+SCRIPT
+
 cat > /tmp/futu-opend-proxy.service <<SERVICE
 [Unit]
 Description=Futu OpenD docker bridge proxy
@@ -204,7 +233,7 @@ Wants=docker.service
 [Service]
 Type=simple
 ExecStartPre=${BASH_BIN} -lc 'timeout 30 bash -c "until cat < /dev/null > /dev/tcp/${OPEND_HOST}/${OPEND_PORT}; do sleep 1; done"'
-ExecStart=${BASH_BIN} -lc 'DOCKER_HOST_IP="\$(ip -4 addr show docker0 | awk "/inet / {print \\\$2}" | cut -d/ -f1)"; test -n "\$DOCKER_HOST_IP"; exec ${SOCAT_BIN} TCP-LISTEN:${PROXY_PORT},bind=\${DOCKER_HOST_IP},fork,reuseaddr TCP:${OPEND_HOST}:${OPEND_PORT}'
+ExecStart=${PROXY_SCRIPT}
 Restart=always
 RestartSec=5
 
@@ -212,9 +241,10 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICE
 
+$SUDO install -m 755 /tmp/futu-opend-proxy.sh "$PROXY_SCRIPT"
 $SUDO install -m 644 /tmp/futu-opend.service /etc/systemd/system/futu-opend.service
 $SUDO install -m 644 /tmp/futu-opend-proxy.service /etc/systemd/system/futu-opend-proxy.service
-rm -f /tmp/futu-opend.service /tmp/futu-opend-proxy.service
+rm -f /tmp/futu-opend.service /tmp/futu-opend-proxy.service /tmp/futu-opend-proxy.sh
 
 $SUDO systemctl daemon-reload
 $SUDO systemctl stop futu-opend-proxy.service futu-opend.service >/dev/null 2>&1 || true
