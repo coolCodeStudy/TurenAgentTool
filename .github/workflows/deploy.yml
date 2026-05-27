@@ -56,20 +56,26 @@ jobs:
           changed_files="$(git diff --name-only "$base" "$head" || true)"
           printf 'Changed files:\n%s\n' "$changed_files"
 
+          changed_file_list="$(mktemp)"
+          printf '%s\n' "$changed_files" > "$changed_file_list"
+
           mode="quick"
           while IFS= read -r file; do
+            file="${file#"${file%%[![:space:]]*}"}"
+            file="${file%"${file##*[![:space:]]}"}"
             [ -z "$file" ] && continue
+            echo "Classifying changed file: $file"
             case "$file" in
               docs/*|*.md|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
+                echo "  -> quick-compatible"
                 ;;
               *)
+                echo "  -> requires full deploy"
                 mode="full"
                 break
                 ;;
             esac
-          done <<EOF
-          $changed_files
-          EOF
+          done < "$changed_file_list"
 
           if [ -z "$changed_files" ]; then
             mode="full"
