@@ -215,7 +215,7 @@ def _handle_portfolio_positions() -> CommandResult:
 
 def _handle_hk_ipos() -> CommandResult:
     try:
-        snapshot = get_hk_ipo_list()
+        snapshot = get_hk_ipo_list(include_orders=False)
     except FutuProviderError as exc:
         return CommandResult(
             ok=False,
@@ -390,15 +390,12 @@ def _render_hk_ipos(snapshot: Any) -> str:
             continue
         lines.append(f"{title}：")
         for item in sorted(items, key=_ipo_sort_key):
-            lines.append(_render_ipo_line(snapshot, item))
+            lines.append(_render_ipo_line(item))
         lines.append("")
 
     if lines[-1] == "":
         lines.pop()
-    if getattr(snapshot, "order_error", None):
-        lines.append("")
-        lines.append(f"个人申购记录读取失败：{snapshot.order_error}")
-    lines.append("注：这里展示富途 IPO 列表状态，并用近期港股订单匹配你的个人申购记录；当前只读查询，不会提交申购。")
+    lines.append("注：这里展示富途 IPO 列表状态；个人 IPO 申购/中签记录暂未接入，当前只读查询，不会提交申购。")
     return "\n".join(lines)
 
 
@@ -424,10 +421,9 @@ def _group_ipos(ipos: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, An
     ]
 
 
-def _render_ipo_line(snapshot: Any, item: dict[str, Any]) -> str:
+def _render_ipo_line(item: dict[str, Any]) -> str:
     name = _display_value(item.get("name"))
     code = _display_value(item.get("code"))
-    personal_status = _fmt_personal_ipo_status(snapshot, item)
     return (
         f"- {name} {code}: 状态 {_fmt_ipo_status(item.get('is_subscribe_status'))}, "
         f"招股截止 {_display_value(item.get('apply_end_time'))}, "
@@ -435,24 +431,8 @@ def _render_ipo_line(snapshot: Any, item: dict[str, Any]) -> str:
         f"发行价 {_fmt_ipo_price(item)}, "
         f"每手 {_display_value(item.get('lot_size'))}, "
         f"入场费 {_display_value(item.get('entrance_price'))}, "
-        f"我的申购 {personal_status}"
+        "我的申购 暂未接入 IPO 申购/中签记录"
     )
-
-
-def _fmt_personal_ipo_status(snapshot: Any, ipo: dict[str, Any]) -> str:
-    orders_by_code = getattr(snapshot, "orders_by_code", None) or {}
-    orders = orders_by_code.get(str(ipo.get("code") or "")) or []
-    if not orders:
-        if getattr(snapshot, "order_error", None):
-            return "未知"
-        return "未发现记录"
-
-    order = orders[0]
-    status = _display_value(order.get("order_status"))
-    qty = _display_value(order.get("qty"))
-    price = _display_value(order.get("price"))
-    updated = _display_value(order.get("updated_time") or order.get("create_time"))
-    return f"{status}，数量 {qty}，价格 {price}，时间 {updated}"
 
 
 def _ipo_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
