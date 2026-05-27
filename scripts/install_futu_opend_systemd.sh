@@ -80,14 +80,22 @@ ensure_appdata() {
   echo "Appdata.dat not found in $OPEND_DIR. Searching under /opt/futu-opend..." >&2
   local found
   found="$(find /opt/futu-opend -name Appdata.dat -type f 2>/dev/null | head -n 1 || true)"
-  if [ -z "$found" ]; then
-    echo "Appdata.dat is required by command-line OpenD but was not found." >&2
-    echo "Please re-extract the official OpenD package and confirm Appdata.dat exists in the OpenD directory." >&2
-    exit 1
+  if [ -n "$found" ]; then
+    echo "Copying Appdata.dat from $found to $OPEND_DIR/Appdata.dat"
+    $SUDO install -m 644 "$found" "${OPEND_DIR}/Appdata.dat"
+    return
   fi
 
-  echo "Copying Appdata.dat from $found to $OPEND_DIR/Appdata.dat"
-  $SUDO install -m 644 "$found" "${OPEND_DIR}/Appdata.dat"
+  local cache_dir="${HOME}/.com.futunn.FutuOpenD/F3CNN"
+  if [ -d "$cache_dir" ] && [ -n "$(find "$cache_dir" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+    echo "WARNING: Appdata.dat was not found, but existing OpenD cache is present at $cache_dir." >&2
+    echo "Continuing because this host has already run OpenD successfully with cached data." >&2
+    return
+  fi
+
+  echo "Appdata.dat was not found and no existing OpenD cache was detected." >&2
+  echo "Please re-extract the official OpenD package or run OpenD once manually to initialize its data cache." >&2
+  exit 1
 }
 
 ensure_appdata
