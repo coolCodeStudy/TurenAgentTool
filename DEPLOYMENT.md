@@ -296,6 +296,7 @@ quick deploy 只上传：
 ```
 
 ECS 会直接解压到 `/opt/investment-knowledge`，并保留现有 `.env` 和正在运行的容器。
+workflow 判断变更文件时会关闭 Git 的路径转义，避免中文文档路径被输出成带引号的八进制转义形式后误判为 full deploy。
 
 ## 安全原则
 
