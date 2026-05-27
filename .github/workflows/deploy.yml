@@ -202,7 +202,8 @@ jobs:
             fi
 
             if [ -n "$DOCKER_COMPOSE" ] && [ -f docker-compose.prod.yml ]; then
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
               $DOCKER_COMPOSE -f docker-compose.prod.yml ps
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
             else
