@@ -72,9 +72,8 @@ if [ ! -x "$OPEND_BIN" ]; then
 fi
 
 if [ ! -f "${OPEND_DIR}/Appdata.dat" ]; then
-  echo "Appdata.dat not found in $OPEND_DIR." >&2
-  echo "OpenD usually needs Appdata.dat in its working directory." >&2
-  exit 1
+  echo "WARNING: Appdata.dat not found in $OPEND_DIR." >&2
+  echo "Continuing because some OpenD builds generate or locate Appdata.dat at runtime." >&2
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
