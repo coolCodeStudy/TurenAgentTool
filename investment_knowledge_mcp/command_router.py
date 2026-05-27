@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.analysis_provider import generate_stock_analysis_with_openai
@@ -382,27 +384,59 @@ def _render_hk_ipos(snapshot: Any) -> str:
         f"- 可申购数量：{active_count}",
         f"- 数据时间：{fetched_at}" + ("（短缓存）" if snapshot.cached else ""),
         "",
-        "新股列表：",
     ]
-    for item in sorted(ipos, key=_ipo_sort_key):
-        name = _display_value(item.get("name"))
-        code = _display_value(item.get("code"))
-        personal_status = _fmt_personal_ipo_status(snapshot, item)
-        lines.append(
-            f"- {name} {code}: 状态 {_fmt_ipo_status(item.get('is_subscribe_status'))}, "
-            f"招股截止 {_display_value(item.get('apply_end_time'))}, "
-            f"上市日 {_display_value(item.get('list_time'))}, "
-            f"发行价 {_fmt_ipo_price(item)}, "
-            f"每手 {_display_value(item.get('lot_size'))}, "
-            f"入场费 {_display_value(item.get('entrance_price'))}, "
-            f"我的申购 {personal_status}"
-        )
+    for title, items in _group_ipos(ipos):
+        if not items:
+            continue
+        lines.append(f"{title}：")
+        for item in sorted(items, key=_ipo_sort_key):
+            lines.append(_render_ipo_line(snapshot, item))
+        lines.append("")
 
-    lines.append("")
+    if lines[-1] == "":
+        lines.pop()
     if getattr(snapshot, "order_error", None):
+        lines.append("")
         lines.append(f"个人申购记录读取失败：{snapshot.order_error}")
     lines.append("注：这里展示富途 IPO 列表状态，并用近期港股订单匹配你的个人申购记录；当前只读查询，不会提交申购。")
     return "\n".join(lines)
+
+
+def _group_ipos(ipos: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    subscribable: list[dict[str, Any]] = []
+    closed_pending_list: list[dict[str, Any]] = []
+    listed_or_other: list[dict[str, Any]] = []
+
+    for item in ipos:
+        list_date = _parse_date(item.get("list_time"))
+        if _is_subscribable(item.get("is_subscribe_status")):
+            subscribable.append(item)
+        elif list_date and list_date > today:
+            closed_pending_list.append(item)
+        else:
+            listed_or_other.append(item)
+
+    return [
+        ("可申购", subscribable),
+        ("已截止/待上市", closed_pending_list),
+        ("已上市/其他", listed_or_other),
+    ]
+
+
+def _render_ipo_line(snapshot: Any, item: dict[str, Any]) -> str:
+    name = _display_value(item.get("name"))
+    code = _display_value(item.get("code"))
+    personal_status = _fmt_personal_ipo_status(snapshot, item)
+    return (
+        f"- {name} {code}: 状态 {_fmt_ipo_status(item.get('is_subscribe_status'))}, "
+        f"招股截止 {_display_value(item.get('apply_end_time'))}, "
+        f"上市日 {_display_value(item.get('list_time'))}, "
+        f"发行价 {_fmt_ipo_price(item)}, "
+        f"每手 {_display_value(item.get('lot_size'))}, "
+        f"入场费 {_display_value(item.get('entrance_price'))}, "
+        f"我的申购 {personal_status}"
+    )
 
 
 def _fmt_personal_ipo_status(snapshot: Any, ipo: dict[str, Any]) -> str:
@@ -474,6 +508,21 @@ def _display_value(value: Any) -> str:
         value = value.strip()
         return value if value else "-"
     return str(value)
+
+
+def _parse_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for candidate in (text[:10], text):
+        for pattern in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(candidate, pattern).date()
+            except ValueError:
+                continue
+    return None
 
 
 def _number(value: Any) -> float:

@@ -144,6 +144,19 @@ CREATE TABLE IF NOT EXISTS command_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS ipo_reminder_events (
+  id BIGSERIAL PRIMARY KEY,
+  reminder_type TEXT NOT NULL,
+  stock_code TEXT NOT NULL,
+  stock_name TEXT,
+  target_date DATE NOT NULL,
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (reminder_type, stock_code, target_date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_stocks_symbol_market ON stocks(symbol, market);
 CREATE INDEX IF NOT EXISTS idx_sectors_parent_id ON sectors(parent_id);
 CREATE INDEX IF NOT EXISTS idx_stock_sector_stock_id ON stock_sector_relations(stock_id);
@@ -155,3 +168,4 @@ CREATE INDEX IF NOT EXISTS idx_user_insights_target ON user_insights(target_type
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_status ON candidate_insights(status);
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_command_events_created_at ON command_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ipo_reminder_events_sent_at ON ipo_reminder_events(sent_at DESC);

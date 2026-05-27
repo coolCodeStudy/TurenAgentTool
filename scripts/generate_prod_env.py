@@ -139,6 +139,8 @@ DINGTALK_STREAM_CLIENT_ID={dingtalk_stream_client_id}
 DINGTALK_STREAM_CLIENT_SECRET={dingtalk_stream_client_secret}
 DINGTALK_STREAM_ALLOW_WRITE={str(dingtalk_stream_allow_write).lower()}
 DINGTALK_STREAM_WRITE_ALLOWED_SENDERS={dingtalk_stream_write_allowed_senders}
+DINGTALK_IPO_REMINDERS_ENABLED=true
+DINGTALK_IPO_REMINDER_INTERVAL_SECONDS=300
 
 FUTU_OPEND_HOST={futu_opend_host}
 FUTU_OPEND_PORT={futu_opend_port}

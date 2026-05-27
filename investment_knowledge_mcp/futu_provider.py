@@ -57,9 +57,9 @@ def get_futu_positions(config: AppConfig | None = None) -> PositionSnapshot:
     return snapshot
 
 
-def get_hk_ipo_list(config: AppConfig | None = None) -> IpoSnapshot:
+def get_hk_ipo_list(config: AppConfig | None = None, include_orders: bool = True) -> IpoSnapshot:
     config = config or get_config()
-    cached = _get_cached_ipo_snapshot()
+    cached = _get_cached_ipo_snapshot(include_orders=include_orders)
     if cached is not None:
         return IpoSnapshot(
             ipos=cached.ipos,
@@ -71,7 +71,7 @@ def get_hk_ipo_list(config: AppConfig | None = None) -> IpoSnapshot:
             cached=True,
         )
 
-    snapshot = _fetch_hk_ipo_list(config)
+    snapshot = _fetch_hk_ipo_list(config, include_orders=include_orders)
     _set_cached_ipo_snapshot(snapshot)
     return snapshot
 
@@ -84,10 +84,12 @@ def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
     return _CACHE
 
 
-def _get_cached_ipo_snapshot() -> IpoSnapshot | None:
+def _get_cached_ipo_snapshot(include_orders: bool) -> IpoSnapshot | None:
     if _IPO_CACHE is None:
         return None
     if time.monotonic() - _IPO_CACHE_MONOTONIC > _IPO_CACHE_SECONDS:
+        return None
+    if include_orders and _IPO_CACHE.orders_by_code is None:
         return None
     return _IPO_CACHE
 
@@ -144,7 +146,7 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
         context.close()
 
 
-def _fetch_hk_ipo_list(config: AppConfig) -> IpoSnapshot:
+def _fetch_hk_ipo_list(config: AppConfig, include_orders: bool) -> IpoSnapshot:
     try:
         import futu as ft
     except ImportError as exc:
@@ -165,10 +167,11 @@ def _fetch_hk_ipo_list(config: AppConfig) -> IpoSnapshot:
         ipos = _normalize_ipos(data)
         orders_by_code: dict[str, list[dict[str, Any]]] | None = None
         order_error: str | None = None
-        try:
-            orders_by_code = _fetch_hk_order_map(config=config, ft=ft, ipos=ipos)
-        except Exception as exc:
-            order_error = str(exc)
+        if include_orders:
+            try:
+                orders_by_code = _fetch_hk_order_map(config=config, ft=ft, ipos=ipos)
+            except Exception as exc:
+                order_error = str(exc)
 
         return IpoSnapshot(
             ipos=ipos,
