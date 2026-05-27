@@ -68,10 +68,12 @@ check_opend_local() {
   fi
 }
 
-warn_if_opend_public() {
+refuse_public_opend() {
   if ss -lntp 2>/dev/null | grep -qE "0\.0\.0\.0:${OPEND_PORT}[[:space:]]"; then
-    echo "WARNING: OpenD appears to be listening on 0.0.0.0:${OPEND_PORT}." >&2
+    echo "OpenD appears to be listening on 0.0.0.0:${OPEND_PORT}." >&2
     echo "For Futu trade safety, restart OpenD with -api_ip=${OPEND_HOST}." >&2
+    echo "Refusing to start the proxy until OpenD is local-only." >&2
+    exit 1
   fi
 }
 
@@ -113,7 +115,7 @@ check_proxy() {
 
 install_socat
 DOCKER_HOST_IP="$(detect_docker_host_ip)"
-warn_if_opend_public
+refuse_public_opend
 check_opend_local
 stop_existing_proxy "$DOCKER_HOST_IP"
 start_proxy "$DOCKER_HOST_IP"
