@@ -170,7 +170,6 @@ set_text(("Lang", "lang"), os.environ["LANGUAGE"])
 set_text(("log_level",), os.environ["LOG_LEVEL"])
 set_text(("no_monitor",), "1")
 
-ET.indent(tree, space="  ")
 tree.write(target, encoding="utf-8", xml_declaration=True)
 PY
 
