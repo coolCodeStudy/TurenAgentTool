@@ -323,9 +323,9 @@ def _render_portfolio_positions(snapshot: Any) -> str:
         f"- 浮动盈亏：{_fmt_money(total_pl)}",
         f"- 数据时间：{fetched_at}" + ("（短缓存）" if snapshot.cached else ""),
         "",
-        "主要持仓：",
+        "持仓明细：",
     ]
-    for item in sorted_positions[:10]:
+    for item in sorted_positions:
         name = item.get("stock_name") or item.get("code") or "unknown"
         code = item.get("code") or ""
         market_val = _number(item.get("market_val"))
@@ -335,8 +335,6 @@ def _render_portfolio_positions(snapshot: Any) -> str:
             f"- {name} {code}: 市值 {_fmt_money(market_val)}, "
             f"占比 {weight:.1f}%, 盈亏 {_fmt_percent(pl_ratio)}"
         )
-    if len(sorted_positions) > 10:
-        lines.append(f"- 其余 {len(sorted_positions) - 10} 个持仓已省略。")
     lines.append("")
     lines.append("注：当前只读持仓，不会下单或修改账户。")
     return "\n".join(lines)
