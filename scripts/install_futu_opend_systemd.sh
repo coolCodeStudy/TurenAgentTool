@@ -149,11 +149,11 @@ else:
     tree = ET.ElementTree(root)
 
 
-def matching_name(element_name: str, names: tuple[str, ...]) -> bool:
+def matching_name(element_name, names):
     return element_name.lower() in {name.lower() for name in names}
 
 
-def set_text(names: tuple[str, ...], value: str) -> None:
+def set_text(names, value):
     for element in root.iter():
         if matching_name(element.tag, names):
             element.text = value
