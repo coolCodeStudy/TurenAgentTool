@@ -4,9 +4,197 @@ on:
   push:
     branches: ["main"]
   workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "Deployment mode"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - quick
+          - full
 
 jobs:
-  deploy:
+  detect_changes:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_mode: ${{ steps.pick.outputs.deploy_mode }}
+      changed_files: ${{ steps.pick.outputs.changed_files }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick deployment mode
+        id: pick
+        run: |
+          set -e
+
+          requested="${{ inputs.deploy_mode || 'auto' }}"
+          if [ "$requested" = "quick" ] || [ "$requested" = "full" ]; then
+            echo "deploy_mode=$requested" >> "$GITHUB_OUTPUT"
+            echo "changed_files=manual-$requested" >> "$GITHUB_OUTPUT"
+            echo "Manual deployment mode: $requested"
+            exit 0
+          fi
+
+          base="${{ github.event.before }}"
+          head="${{ github.sha }}"
+          zero_sha="0000000000000000000000000000000000000000"
+
+          if [ -z "$base" ] || [ "$base" = "$zero_sha" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            if git rev-parse "${head}^" >/dev/null 2>&1; then
+              base="$(git rev-parse "${head}^")"
+            else
+              base="$head"
+            fi
+          fi
+
+          changed_files="$(git diff --name-only "$base" "$head" || true)"
+          printf 'Changed files:\n%s\n' "$changed_files"
+
+          mode="quick"
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              docs/*|*.md|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
+                ;;
+              *)
+                mode="full"
+                break
+                ;;
+            esac
+          done <<EOF
+          $changed_files
+          EOF
+
+          if [ -z "$changed_files" ]; then
+            mode="full"
+          fi
+
+          {
+            echo "deploy_mode=$mode"
+            echo "changed_files<<EOF"
+            echo "$changed_files"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Selected deployment mode: $mode"
+
+  quick_deploy:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.deploy_mode == 'quick'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate quick deployment secrets
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+        run: |
+          set -e
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+          echo "Required quick deployment secrets are present."
+
+      - name: Create quick deployment bundle
+        run: |
+          set -e
+          mkdir -p dist
+          tar \
+            --exclude='./.git' \
+            --exclude='./.venv' \
+            --exclude='./dist' \
+            --exclude='./.env' \
+            --exclude='./.env.test' \
+            --exclude='./.env.production' \
+            --exclude='./__pycache__' \
+            --exclude='*/__pycache__' \
+            --exclude='*.pyc' \
+            -czf dist/investment-knowledge-release.tar.gz .
+          ls -lh dist/investment-knowledge-release.tar.gz
+
+      - name: Prepare ECS base tools
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 10m
+          script: |
+            set -e
+            if command -v tar >/dev/null 2>&1; then
+              echo "ECS base tools are ready."
+              exit 0
+            fi
+            if command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y tar
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum install -y tar
+            elif command -v dnf >/dev/null 2>&1; then
+              sudo dnf install -y tar
+            else
+              echo "Unsupported Linux distribution: cannot install tar automatically."
+              exit 1
+            fi
+
+      - name: Upload quick deployment bundle
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          source: "dist/investment-knowledge-release.tar.gz"
+          target: "/tmp"
+          strip_components: 1
+          overwrite: true
+
+      - name: Quick deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 10m
+          script: |
+            set -e
+
+            APP_DIR=/opt/investment-knowledge
+            RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
+
+            test -f "$RELEASE_TAR"
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_DIR"
+
+            tar -xzf "$RELEASE_TAR" -C "$APP_DIR"
+            cd "$APP_DIR"
+            chmod +x scripts/*.sh 2>/dev/null || true
+
+            echo "Quick deploy completed. Docker services were not rebuilt or restarted."
+            echo "Changed files:"
+            cat <<'EOF'
+            ${{ needs.detect_changes.outputs.changed_files }}
+            EOF
+
+  full_deploy:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.deploy_mode == 'full'
     runs-on: ubuntu-latest
 
     steps:

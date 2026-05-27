@@ -267,7 +267,14 @@ OPENAI_MODEL
 DINGTALK_STREAM_ALLOW_WRITE
 ```
 
-workflow 会在 GitHub Actions runner 上打包当前提交，并构建/保存生产镜像：
+workflow 会先判断本次提交适合哪种部署：
+
+- `quick`：只改 `docs/`、根目录 Markdown、`scripts/*.sh`、`deploy/systemd/*` 或 workflow 文件时触发。只上传源码包到 ECS，不构建镜像，不重启 Docker 服务。通常用于文档、服务器脚本、systemd 模板这类改动。
+- `full`：改 Python 代码、依赖、Dockerfile、Compose、数据库 schema 等运行时内容时触发。会构建镜像、上传镜像包，并重启生产容器。
+
+手动触发 workflow 时可以选择 `auto`、`quick` 或 `full`。不确定时用 `auto`。
+
+full deploy 会在 GitHub Actions runner 上打包当前提交，并构建/保存生产镜像：
 
 - `/tmp/investment-knowledge-release.tar.gz`
 - `/tmp/investment-knowledge-images.tar.gz`
@@ -281,6 +288,14 @@ docker compose -f docker-compose.prod.yml up -d --no-build postgres dingtalk-str
 第一次运行前，ECS 仍然需要预装 Docker Engine 和 Docker Compose plugin。
 如果 ECS 是干净系统，workflow 会先尝试自动安装基础工具、Docker Engine 和 Docker Compose plugin；自动安装支持 Ubuntu/Debian、CentOS/RHEL 系系统。
 ECS 不再需要访问 GitHub，也不需要访问 Docker Hub 拉应用基础镜像；代码和镜像都由 GitHub Actions 通过 SCP 上传。
+
+quick deploy 只上传：
+
+```text
+/tmp/investment-knowledge-release.tar.gz
+```
+
+ECS 会直接解压到 `/opt/investment-knowledge`，并保留现有 `.env` 和正在运行的容器。
 
 ## 安全原则
 
