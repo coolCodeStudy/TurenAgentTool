@@ -1157,6 +1157,18 @@ def get_sector_context(
     )
 
 
+def get_global_user_memory() -> dict[str, Any]:
+    with transaction() as conn:
+        global_insights = _get_global_user_insights_in_conn(conn)
+        global_candidate_insights = _get_global_candidate_insights_in_conn(conn)
+    return to_jsonable(
+        {
+            "global_insights": global_insights,
+            "global_candidate_insights": global_candidate_insights,
+        }
+    )
+
+
 def _resolve_sector_in_conn(
     conn: Connection,
     path: list[str] | None,

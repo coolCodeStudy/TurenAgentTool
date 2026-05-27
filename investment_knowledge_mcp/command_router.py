@@ -8,8 +8,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
-from investment_knowledge_mcp.analysis_provider import generate_stock_analysis_with_openai
+from investment_knowledge_mcp.analysis_provider import (
+    generate_portfolio_analysis_with_openai,
+    generate_stock_analysis_with_openai,
+)
 from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions, get_hk_ipo_list
+from investment_knowledge_mcp.portfolio_analysis import (
+    build_portfolio_analysis_context,
+    render_portfolio_analysis_fallback,
+)
 from scripts.build_analysis_context import render_stock_context
 
 
@@ -17,6 +24,41 @@ from scripts.build_analysis_context import render_stock_context
 class CommandResult:
     ok: bool
     message: str
+
+
+PORTFOLIO_POSITION_COMMANDS = {
+    "我的持仓",
+    "我的仓位",
+    "当前持仓",
+    "当前仓位",
+    "持仓",
+    "仓位",
+    "portfolio",
+    "positions",
+}
+
+PORTFOLIO_ANALYSIS_COMMANDS = {
+    "持仓分析",
+    "仓位分析",
+    "组合分析",
+    "组合体检",
+    "持仓复盘",
+    "仓位复盘",
+    "今天仓位怎么看",
+    "今天持仓怎么看",
+    "今天组合怎么看",
+    "仓位怎么看",
+    "持仓怎么看",
+    "怎么看持仓",
+    "怎么看我的持仓",
+    "分析持仓",
+    "分析我的持仓",
+    "分析一下持仓",
+    "分析一下我的持仓",
+    "我的组合怎么看",
+    "帮我分析持仓",
+    "portfolio analysis",
+}
 
 
 def handle_command(
@@ -55,7 +97,10 @@ def handle_command(
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
 
-    if cleaned in {"我的持仓", "我的仓位", "当前持仓", "当前仓位", "持仓", "仓位", "portfolio", "positions"}:
+    if cleaned in PORTFOLIO_ANALYSIS_COMMANDS:
+        return _handle_portfolio_analysis()
+
+    if cleaned in PORTFOLIO_POSITION_COMMANDS:
         return _handle_portfolio_positions()
 
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
@@ -110,14 +155,8 @@ def is_query_command(command: str) -> bool:
             "帮助",
             "help",
             "?",
-            "我的持仓",
-            "我的仓位",
-            "当前持仓",
-            "当前仓位",
-            "持仓",
-            "仓位",
-            "portfolio",
-            "positions",
+            *PORTFOLIO_POSITION_COMMANDS,
+            *PORTFOLIO_ANALYSIS_COMMANDS,
             "港股新股",
             "港股IPO",
             "港股ipo",
@@ -286,6 +325,10 @@ def _normalize_natural_command(command: str) -> str:
         return "帮助"
     if compact in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return "港股新股"
+    if compact in PORTFOLIO_ANALYSIS_COMMANDS:
+        return "持仓分析"
+    if compact in PORTFOLIO_POSITION_COMMANDS:
+        return "我的持仓"
 
     stock_query = _extract_stock_query(compact)
     if not stock_query:
@@ -369,6 +412,56 @@ def _render_portfolio_positions(snapshot: Any) -> str:
     lines.append("")
     lines.append("注：当前只读持仓，不会下单或修改账户。")
     return "\n".join(lines)
+
+
+def _handle_portfolio_analysis() -> CommandResult:
+    try:
+        snapshot = get_futu_positions()
+    except FutuProviderError as exc:
+        return CommandResult(
+            ok=False,
+            message=(
+                "暂时读取不到富途持仓，无法生成持仓分析。\n"
+                f"原因：{exc}\n\n"
+                "需要确认云端 OpenD 已启动、已登录富途账号，且只在 ECS 本机开放端口。"
+            ),
+        )
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取富途持仓失败，无法生成持仓分析：{exc}")
+
+    context = build_portfolio_analysis_context(snapshot)
+    fallback = render_portfolio_analysis_fallback(context)
+    analysis = _generate_portfolio_analysis(context=context, fallback=fallback)
+    return CommandResult(
+        ok=True,
+        message=analysis + "\n\n" + _portfolio_analysis_footer(context),
+    )
+
+
+def _generate_portfolio_analysis(context: dict[str, Any], fallback: str) -> str:
+    try:
+        analysis = generate_portfolio_analysis_with_openai(context)
+    except Exception as exc:
+        return fallback + f"\n\nOpenAI 组合分析暂时不可用，已使用本地模板分析。错误：{exc}"
+    if not analysis:
+        return fallback
+    return analysis
+
+
+def _portfolio_analysis_footer(context: dict[str, Any]) -> str:
+    summary = context.get("summary") or {}
+    footer = (
+        "注：这版只读分析不会下单；只基于富途实时持仓、已入库知识和你的已确认心得，"
+        "不包含未提供的实时新闻或公告。\n"
+        f"数据覆盖：持仓 {summary.get('position_count', 0)} 个，"
+        f"匹配知识库个股 {len(context.get('knowledge_matches') or [])} 个，"
+        f"组合/策略心得 {len(context.get('global_insights') or [])} 条，"
+        f"待确认候选 {len(context.get('global_candidate_insights') or [])} 条。"
+    )
+    warnings = context.get("context_warnings") or []
+    if warnings:
+        footer += "\n提醒：" + "；".join(str(item) for item in warnings[:2])
+    return footer
 
 
 def _render_hk_ipos(snapshot: Any) -> str:
@@ -626,6 +719,9 @@ def _dedupe(items: list[str]) -> list[str]:
 def _help_text() -> str:
     return """支持的指令：
 - 我的持仓
+- 持仓分析
+- 今天仓位怎么看
+- 组合体检
 - 港股新股
 - 分析 000660 KR
 - 怎么看海力士
