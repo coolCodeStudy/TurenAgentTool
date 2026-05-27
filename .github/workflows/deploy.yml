@@ -66,7 +66,7 @@ jobs:
             [ -z "$file" ] && continue
             echo "Classifying changed file: $file"
             case "$file" in
-              docs/*|*.md|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
+              docs/*|*.md|db/*|investment_knowledge_mcp/*|investment_knowledge_mcp/**/*|scripts/*.py|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
                 echo "  -> quick-compatible"
                 ;;
               *)
@@ -188,11 +188,28 @@ jobs:
             sudo mkdir -p "$APP_DIR"
             sudo chown -R "$(id -un)":"$(id -gn)" "$APP_DIR"
 
+            rm -rf "$APP_DIR/db" "$APP_DIR/investment_knowledge_mcp" "$APP_DIR/scripts"
             tar -xzf "$RELEASE_TAR" -C "$APP_DIR"
             cd "$APP_DIR"
             chmod +x scripts/*.sh 2>/dev/null || true
 
-            echo "Quick deploy completed. Docker services were not rebuilt or restarted."
+            if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE="docker compose"
+            elif sudo docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE="sudo docker compose"
+            else
+              DOCKER_COMPOSE=""
+            fi
+
+            if [ -n "$DOCKER_COMPOSE" ] && [ -f docker-compose.prod.yml ]; then
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
+              $DOCKER_COMPOSE -f docker-compose.prod.yml ps
+              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
+            else
+              echo "Docker Compose unavailable; files were synced without service restart."
+            fi
+
+            echo "Quick deploy completed. Docker image was not rebuilt."
             echo "Changed files:"
             cat <<'EOF'
             ${{ needs.detect_changes.outputs.changed_files }}

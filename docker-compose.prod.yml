@@ -24,6 +24,10 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./db:/app/db:ro
+      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
+      - ./scripts:/app/scripts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,6 +58,10 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./db:/app/db:ro
+      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
+      - ./scripts:/app/scripts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +91,10 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./db:/app/db:ro
+      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
+      - ./scripts:/app/scripts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,6 +125,10 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./db:/app/db:ro
+      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
+      - ./scripts:/app/scripts:ro
     depends_on:
       postgres:
         condition: service_healthy
