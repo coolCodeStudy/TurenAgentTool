@@ -11,6 +11,7 @@ LANGUAGE="${LANGUAGE:-chs}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 FUTU_LOGIN_ACCOUNT="${FUTU_LOGIN_ACCOUNT:-}"
 FUTU_LOGIN_PWD_MD5="${FUTU_LOGIN_PWD_MD5:-}"
+FUTU_PASSWORD_STORAGE="${FUTU_PASSWORD_STORAGE:-md5}"
 PROXY_SCRIPT="${PROXY_SCRIPT:-/usr/local/bin/futu-opend-proxy.sh}"
 
 usage() {
@@ -24,6 +25,7 @@ Installs two ECS host services:
 Environment overrides:
   FUTU_LOGIN_ACCOUNT        Optional; prompted if empty.
   FUTU_LOGIN_PWD_MD5        Optional; prompted password is hashed if empty.
+  FUTU_PASSWORD_STORAGE     md5 or plaintext. Default: ${FUTU_PASSWORD_STORAGE}
   OPEND_HOST                Default: ${OPEND_HOST}
   OPEND_PORT                Default: ${OPEND_PORT}
   PROXY_PORT                Default: ${PROXY_PORT}
@@ -31,6 +33,10 @@ Environment overrides:
 
 This script deliberately does not accept plaintext password flags, because
 command-line flags often end up in shell history and process listings.
+If this OpenD build cannot boot from login_pwd_md5, rerun with:
+  --password-storage plaintext
+That stores the password in ${CONFIG_FILE} with mode 600 instead of exposing it
+in ps output.
 USAGE
 }
 
@@ -38,6 +44,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --opend-dir)
       OPEND_DIR="${2:-}"
+      shift 2
+      ;;
+    --password-storage)
+      FUTU_PASSWORD_STORAGE="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -127,22 +137,40 @@ if [ -z "$FUTU_LOGIN_ACCOUNT" ]; then
   read -r -p "Futu login account: " FUTU_LOGIN_ACCOUNT
 fi
 
-if [ -z "$FUTU_LOGIN_PWD_MD5" ]; then
-  read -r -s -p "Futu login password, will be stored as MD5 in root-only XML: " FUTU_LOGIN_PWD
-  printf '\n'
-  FUTU_LOGIN_PWD_MD5="$(FUTU_LOGIN_PWD="$FUTU_LOGIN_PWD" python3 - <<'PY'
+case "$FUTU_PASSWORD_STORAGE" in
+  md5|plaintext)
+    ;;
+  *)
+    echo "FUTU_PASSWORD_STORAGE must be md5 or plaintext." >&2
+    exit 1
+    ;;
+esac
+
+FUTU_LOGIN_PWD="${FUTU_LOGIN_PWD:-}"
+
+if [ "$FUTU_PASSWORD_STORAGE" = "md5" ]; then
+  if [ -z "$FUTU_LOGIN_PWD_MD5" ]; then
+    read -r -s -p "Futu login password, will be stored as MD5 in root-only XML: " FUTU_LOGIN_PWD
+    printf '\n'
+    FUTU_LOGIN_PWD_MD5="$(FUTU_LOGIN_PWD="$FUTU_LOGIN_PWD" python3 - <<'PY'
 import hashlib
 import os
 
 print(hashlib.md5(os.environ["FUTU_LOGIN_PWD"].encode("utf-8")).hexdigest())
 PY
 )"
-  unset FUTU_LOGIN_PWD
-fi
+    FUTU_LOGIN_PWD=""
+  fi
 
-if ! printf '%s' "$FUTU_LOGIN_PWD_MD5" | grep -Eq '^[0-9a-fA-F]{32}$'; then
-  echo "FUTU_LOGIN_PWD_MD5 must be a 32-character hex MD5 string." >&2
-  exit 1
+  if ! printf '%s' "$FUTU_LOGIN_PWD_MD5" | grep -Eq '^[0-9a-fA-F]{32}$'; then
+    echo "FUTU_LOGIN_PWD_MD5 must be a 32-character hex MD5 string." >&2
+    exit 1
+  fi
+else
+  if [ -z "$FUTU_LOGIN_PWD" ]; then
+    read -r -s -p "Futu login password, will be stored in root-only XML: " FUTU_LOGIN_PWD
+    printf '\n'
+  fi
 fi
 
 $SUDO mkdir -p "$CONFIG_DIR"
@@ -153,6 +181,8 @@ TEMPLATE_XML="$TEMPLATE_XML" \
 CONFIG_FILE="$TMP_CONFIG" \
 FUTU_LOGIN_ACCOUNT="$FUTU_LOGIN_ACCOUNT" \
 FUTU_LOGIN_PWD_MD5="$FUTU_LOGIN_PWD_MD5" \
+FUTU_LOGIN_PWD="$FUTU_LOGIN_PWD" \
+FUTU_PASSWORD_STORAGE="$FUTU_PASSWORD_STORAGE" \
 OPEND_HOST="$OPEND_HOST" \
 OPEND_PORT="$OPEND_PORT" \
 LANGUAGE="$LANGUAGE" \
@@ -185,17 +215,36 @@ def set_text(names, value):
     ET.SubElement(root, names[0]).text = value
 
 
+def remove_elements(names):
+    names_lower = {name.lower() for name in names}
+    for parent in root.iter():
+        for child in list(parent):
+            if child.tag.lower() in names_lower:
+                parent.remove(child)
+
+
+def set_existing_text(names, value):
+    for element in root.iter():
+        if matching_name(element.tag, names):
+            element.text = value
+
+
 set_text(("ip", "api_ip"), os.environ["OPEND_HOST"])
 set_text(("api_port",), os.environ["OPEND_PORT"])
 set_text(("login_account",), os.environ["FUTU_LOGIN_ACCOUNT"])
-set_text(("login_pwd_md5",), os.environ["FUTU_LOGIN_PWD_MD5"])
-set_text(("login_pwd",), "")
+if os.environ["FUTU_PASSWORD_STORAGE"] == "plaintext":
+    remove_elements(("login_pwd_md5",))
+    set_text(("login_pwd",), os.environ["FUTU_LOGIN_PWD"])
+else:
+    remove_elements(("login_pwd",))
+    set_text(("login_pwd_md5",), os.environ["FUTU_LOGIN_PWD_MD5"])
 set_text(("Lang", "lang"), os.environ["LANGUAGE"])
 set_text(("log_level",), os.environ["LOG_LEVEL"])
-set_text(("no_monitor",), "1")
+set_existing_text(("no_monitor",), "1")
 
 tree.write(target, encoding="utf-8", xml_declaration=True)
 PY
+unset FUTU_LOGIN_PWD
 
 $SUDO install -m 600 "$TMP_CONFIG" "$CONFIG_FILE"
 rm -f "$TMP_CONFIG"
