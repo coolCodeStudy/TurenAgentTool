@@ -23,8 +23,20 @@ class PositionSnapshot:
     cached: bool = False
 
 
+@dataclass(frozen=True)
+class IpoSnapshot:
+    ipos: list[dict[str, Any]]
+    fetched_at: datetime
+    market: str = "HK"
+    source: str = "futu"
+    cached: bool = False
+
+
 _CACHE: PositionSnapshot | None = None
 _CACHE_MONOTONIC: float = 0.0
+_IPO_CACHE: IpoSnapshot | None = None
+_IPO_CACHE_MONOTONIC: float = 0.0
+_IPO_CACHE_SECONDS = 60
 
 
 def get_futu_positions(config: AppConfig | None = None) -> PositionSnapshot:
@@ -43,6 +55,23 @@ def get_futu_positions(config: AppConfig | None = None) -> PositionSnapshot:
     return snapshot
 
 
+def get_hk_ipo_list(config: AppConfig | None = None) -> IpoSnapshot:
+    config = config or get_config()
+    cached = _get_cached_ipo_snapshot()
+    if cached is not None:
+        return IpoSnapshot(
+            ipos=cached.ipos,
+            fetched_at=cached.fetched_at,
+            market=cached.market,
+            source=cached.source,
+            cached=True,
+        )
+
+    snapshot = _fetch_hk_ipo_list(config)
+    _set_cached_ipo_snapshot(snapshot)
+    return snapshot
+
+
 def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
     if cache_seconds <= 0 or _CACHE is None:
         return None
@@ -51,10 +80,24 @@ def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
     return _CACHE
 
 
+def _get_cached_ipo_snapshot() -> IpoSnapshot | None:
+    if _IPO_CACHE is None:
+        return None
+    if time.monotonic() - _IPO_CACHE_MONOTONIC > _IPO_CACHE_SECONDS:
+        return None
+    return _IPO_CACHE
+
+
 def _set_cached_snapshot(snapshot: PositionSnapshot) -> None:
     global _CACHE, _CACHE_MONOTONIC
     _CACHE = snapshot
     _CACHE_MONOTONIC = time.monotonic()
+
+
+def _set_cached_ipo_snapshot(snapshot: IpoSnapshot) -> None:
+    global _IPO_CACHE, _IPO_CACHE_MONOTONIC
+    _IPO_CACHE = snapshot
+    _IPO_CACHE_MONOTONIC = time.monotonic()
 
 
 def _fetch_positions(config: AppConfig) -> PositionSnapshot:
@@ -97,12 +140,53 @@ def _fetch_positions(config: AppConfig) -> PositionSnapshot:
         context.close()
 
 
+def _fetch_hk_ipo_list(config: AppConfig) -> IpoSnapshot:
+    try:
+        import futu as ft
+    except ImportError as exc:
+        raise FutuProviderError("futu-api 未安装，无法读取港股新股。") from exc
+
+    quote_context = _create_quote_context(
+        ft.OpenQuoteContext,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+        },
+    )
+    try:
+        ret, data = _ipo_list_query(quote_context, _enum_value(ft.Market, "HK"))
+        if ret != ft.RET_OK:
+            raise FutuProviderError(f"富途港股新股查询失败：{data}")
+
+        return IpoSnapshot(
+            ipos=_normalize_ipos(data),
+            fetched_at=datetime.now(timezone.utc),
+            market="HK",
+        )
+    finally:
+        quote_context.close()
+
+
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
     supported_kwargs = _filter_supported_kwargs(context.position_list_query, kwargs)
     return _call_with_keyword_retry(context.position_list_query, supported_kwargs)
 
 
+def _ipo_list_query(context: Any, market: Any) -> tuple[Any, Any]:
+    try:
+        return context.get_ipo_list(market=market)
+    except TypeError as exc:
+        if "keyword" not in str(exc) and "positional" not in str(exc):
+            raise
+        return context.get_ipo_list(market)
+
+
 def _create_trade_context(context_cls: Any, kwargs: dict[str, Any]) -> Any:
+    supported_kwargs = _filter_supported_kwargs(context_cls, kwargs)
+    return _call_with_keyword_retry(context_cls, supported_kwargs)
+
+
+def _create_quote_context(context_cls: Any, kwargs: dict[str, Any]) -> Any:
     supported_kwargs = _filter_supported_kwargs(context_cls, kwargs)
     return _call_with_keyword_retry(context_cls, supported_kwargs)
 
@@ -150,6 +234,43 @@ def _trade_context_class(ft: Any, trade_market: str) -> Any:
     if market in {"US", "CN"}:
         return ft.OpenSecTradeContext
     return ft.OpenSecTradeContext
+
+
+def _normalize_ipos(data: Any) -> list[dict[str, Any]]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+
+    normalized = []
+    for row in records:
+        item = to_jsonable(row)
+        normalized.append(
+            {
+                "code": _clean_empty(item.get("code")),
+                "name": _clean_empty(item.get("name")),
+                "list_time": _clean_empty(item.get("list_time")),
+                "ipo_price_min": _clean_empty(item.get("ipo_price_min")),
+                "ipo_price_max": _clean_empty(item.get("ipo_price_max")),
+                "list_price": _clean_empty(item.get("list_price")),
+                "lot_size": _clean_empty(item.get("lot_size")),
+                "entrance_price": _clean_empty(item.get("entrance_price")),
+                "is_subscribe_status": item.get("is_subscribe_status"),
+                "apply_end_time": _clean_empty(item.get("apply_end_time")),
+                "raw": item,
+            }
+        )
+    return normalized
+
+
+def _clean_empty(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().upper() in {"", "N/A", "NONE", "NULL"}:
+        return None
+    return value
 
 
 def _enum_value(enum_cls: Any, name: str) -> Any:

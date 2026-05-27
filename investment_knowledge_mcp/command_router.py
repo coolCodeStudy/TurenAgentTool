@@ -7,7 +7,7 @@ from typing import Any
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.analysis_provider import generate_stock_analysis_with_openai
-from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions
+from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions, get_hk_ipo_list
 from scripts.build_analysis_context import render_stock_context
 
 
@@ -55,6 +55,9 @@ def handle_command(
 
     if cleaned in {"我的持仓", "我的仓位", "当前持仓", "当前仓位", "持仓", "仓位", "portfolio", "positions"}:
         return _handle_portfolio_positions()
+
+    if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
+        return _handle_hk_ipos()
 
     confirm_match = re.fullmatch(r"(?:确认候选心得|confirm candidate)\s+(\d+)", cleaned, flags=re.IGNORECASE)
     if confirm_match:
@@ -113,6 +116,12 @@ def is_query_command(command: str) -> bool:
             "仓位",
             "portfolio",
             "positions",
+            "港股新股",
+            "港股IPO",
+            "港股ipo",
+            "新股",
+            "ipo",
+            "IPO",
         }
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
@@ -202,6 +211,24 @@ def _handle_portfolio_positions() -> CommandResult:
     return CommandResult(ok=True, message=_render_portfolio_positions(snapshot))
 
 
+def _handle_hk_ipos() -> CommandResult:
+    try:
+        snapshot = get_hk_ipo_list()
+    except FutuProviderError as exc:
+        return CommandResult(
+            ok=False,
+            message=(
+                "暂时读取不到港股新股。\n"
+                f"原因：{exc}\n\n"
+                "需要确认云端 OpenD 已启动，且容器可以访问 OpenD。"
+            ),
+        )
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取港股新股失败：{exc}")
+
+    return CommandResult(ok=True, message=_render_hk_ipos(snapshot))
+
+
 def _handle_confirm_candidate(candidate_id: int) -> CommandResult:
     result = repository.confirm_candidate_insight(candidate_id)
     return CommandResult(
@@ -255,6 +282,8 @@ def _normalize_natural_command(command: str) -> str:
         return "查看候选心得"
     if compact in {"帮助", "怎么用", "能做什么", "help", "?"}:
         return "帮助"
+    if compact in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
+        return "港股新股"
 
     stock_query = _extract_stock_query(compact)
     if not stock_query:
@@ -338,6 +367,93 @@ def _render_portfolio_positions(snapshot: Any) -> str:
     lines.append("")
     lines.append("注：当前只读持仓，不会下单或修改账户。")
     return "\n".join(lines)
+
+
+def _render_hk_ipos(snapshot: Any) -> str:
+    ipos = snapshot.ipos
+    fetched_at = snapshot.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    if not ipos:
+        return f"当前富途没有返回港股新股列表。\n数据时间：{fetched_at}"
+
+    active_count = sum(1 for item in ipos if _is_subscribable(item.get("is_subscribe_status")))
+    lines = [
+        "港股新股：",
+        f"- 新股数量：{len(ipos)}",
+        f"- 可申购数量：{active_count}",
+        f"- 数据时间：{fetched_at}" + ("（短缓存）" if snapshot.cached else ""),
+        "",
+        "新股列表：",
+    ]
+    for item in sorted(ipos, key=_ipo_sort_key):
+        name = _display_value(item.get("name"))
+        code = _display_value(item.get("code"))
+        lines.append(
+            f"- {name} {code}: 状态 {_fmt_ipo_status(item.get('is_subscribe_status'))}, "
+            f"招股截止 {_display_value(item.get('apply_end_time'))}, "
+            f"上市日 {_display_value(item.get('list_time'))}, "
+            f"发行价 {_fmt_ipo_price(item)}, "
+            f"每手 {_display_value(item.get('lot_size'))}, "
+            f"入场费 {_display_value(item.get('entrance_price'))}"
+        )
+
+    lines.append("")
+    lines.append("注：这里展示的是富途 IPO 列表里的申购状态；当前只读查询，不会提交申购。")
+    return "\n".join(lines)
+
+
+def _ipo_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+    subscribable_rank = 0 if _is_subscribable(item.get("is_subscribe_status")) else 1
+    return (
+        subscribable_rank,
+        str(item.get("apply_end_time") or "9999-99-99"),
+        str(item.get("list_time") or "9999-99-99"),
+    )
+
+
+def _is_subscribable(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on", "认购中", "可申购"}
+    return False
+
+
+def _fmt_ipo_status(value: Any) -> str:
+    if _is_subscribable(value):
+        return "可申购"
+    if value is None:
+        return "不可申购/待更新"
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "不可申购"
+
+
+def _fmt_ipo_price(item: dict[str, Any]) -> str:
+    min_price = item.get("ipo_price_min")
+    max_price = item.get("ipo_price_max")
+    list_price = item.get("list_price")
+    if min_price is not None and max_price is not None:
+        if str(min_price) == str(max_price):
+            return str(min_price)
+        return f"{min_price}-{max_price}"
+    if list_price is not None:
+        return str(list_price)
+    if min_price is not None:
+        return str(min_price)
+    if max_price is not None:
+        return str(max_price)
+    return "-"
+
+
+def _display_value(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, str):
+        value = value.strip()
+        return value if value else "-"
+    return str(value)
 
 
 def _number(value: Any) -> float:
@@ -461,6 +577,7 @@ def _dedupe(items: list[str]) -> list[str]:
 def _help_text() -> str:
     return """支持的指令：
 - 我的持仓
+- 港股新股
 - 分析 000660 KR
 - 怎么看海力士
 - 分析一下腾讯
