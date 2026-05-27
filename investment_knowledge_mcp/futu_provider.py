@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import inspect
 import re
 import time
@@ -28,6 +28,8 @@ class IpoSnapshot:
     ipos: list[dict[str, Any]]
     fetched_at: datetime
     market: str = "HK"
+    orders_by_code: dict[str, list[dict[str, Any]]] | None = None
+    order_error: str | None = None
     source: str = "futu"
     cached: bool = False
 
@@ -63,6 +65,8 @@ def get_hk_ipo_list(config: AppConfig | None = None) -> IpoSnapshot:
             ipos=cached.ipos,
             fetched_at=cached.fetched_at,
             market=cached.market,
+            orders_by_code=cached.orders_by_code,
+            order_error=cached.order_error,
             source=cached.source,
             cached=True,
         )
@@ -158,13 +162,77 @@ def _fetch_hk_ipo_list(config: AppConfig) -> IpoSnapshot:
         if ret != ft.RET_OK:
             raise FutuProviderError(f"富途港股新股查询失败：{data}")
 
+        ipos = _normalize_ipos(data)
+        orders_by_code: dict[str, list[dict[str, Any]]] | None = None
+        order_error: str | None = None
+        try:
+            orders_by_code = _fetch_hk_order_map(config=config, ft=ft, ipos=ipos)
+        except Exception as exc:
+            order_error = str(exc)
+
         return IpoSnapshot(
-            ipos=_normalize_ipos(data),
+            ipos=ipos,
             fetched_at=datetime.now(timezone.utc),
             market="HK",
+            orders_by_code=orders_by_code,
+            order_error=order_error,
         )
     finally:
         quote_context.close()
+
+
+def _fetch_hk_order_map(config: AppConfig, ft: Any, ipos: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    context = _create_trade_context(
+        ft.OpenSecTradeContext,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+            "security_firm": _enum_value(ft.SecurityFirm, config.futu_security_firm),
+        },
+    )
+    try:
+        trade_env = _enum_value(ft.TrdEnv, config.futu_trade_env)
+        trade_market = _optional_enum_value(getattr(ft, "TrdMarket", None), "HK")
+        base_kwargs: dict[str, Any] = {
+            "trd_env": trade_env,
+            "refresh_cache": True,
+        }
+        if trade_market is not None:
+            base_kwargs["order_market"] = trade_market
+        if config.futu_account_id:
+            base_kwargs["acc_id"] = config.futu_account_id
+        else:
+            base_kwargs["acc_index"] = config.futu_account_index
+
+        orders: list[dict[str, Any]] = []
+        errors: list[str] = []
+        successful_queries = 0
+        if hasattr(context, "order_list_query"):
+            ret, data = _call_with_keyword_retry(context.order_list_query, dict(base_kwargs))
+            if ret == ft.RET_OK:
+                successful_queries += 1
+                orders.extend(_normalize_orders(data))
+            else:
+                errors.append(f"当前订单查询失败：{data}")
+
+        if hasattr(context, "history_order_list_query"):
+            history_kwargs = dict(base_kwargs)
+            now = datetime.now()
+            history_kwargs["start"] = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+            history_kwargs["end"] = now.strftime("%Y-%m-%d")
+            ret, data = _call_with_keyword_retry(context.history_order_list_query, history_kwargs)
+            if ret == ft.RET_OK:
+                successful_queries += 1
+                orders.extend(_normalize_orders(data))
+            else:
+                errors.append(f"历史订单查询失败：{data}")
+
+        if successful_queries == 0 and errors:
+            raise FutuProviderError("；".join(errors))
+
+        return _map_orders_to_ipos(orders=orders, ipos=ipos)
+    finally:
+        context.close()
 
 
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
@@ -281,6 +349,78 @@ def _enum_value(enum_cls: Any, name: str) -> Any:
         if key.upper() == normalized:
             return value
     raise FutuProviderError(f"不支持的富途配置值：{enum_cls.__name__}.{name}")
+
+
+def _optional_enum_value(enum_cls: Any, name: str) -> Any | None:
+    if enum_cls is None:
+        return None
+    try:
+        return _enum_value(enum_cls, name)
+    except Exception:
+        return None
+
+
+def _normalize_orders(data: Any) -> list[dict[str, Any]]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+
+    normalized = []
+    for row in records:
+        item = to_jsonable(row)
+        normalized.append(
+            {
+                "code": _clean_empty(item.get("code")),
+                "stock_name": _clean_empty(item.get("stock_name") or item.get("name")),
+                "qty": _clean_empty(item.get("qty")),
+                "price": _clean_empty(item.get("price")),
+                "order_status": _clean_empty(item.get("order_status")),
+                "trd_side": _clean_empty(item.get("trd_side")),
+                "order_type": _clean_empty(item.get("order_type")),
+                "create_time": _clean_empty(item.get("create_time")),
+                "updated_time": _clean_empty(item.get("updated_time") or item.get("update_time")),
+                "raw": item,
+            }
+        )
+    return normalized
+
+
+def _map_orders_to_ipos(orders: list[dict[str, Any]], ipos: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {str(ipo.get("code") or ""): [] for ipo in ipos}
+    for order in orders:
+        order_keys = _code_keys(order.get("code"))
+        order_name = str(order.get("stock_name") or "").strip()
+        for ipo in ipos:
+            ipo_code = str(ipo.get("code") or "")
+            ipo_name = str(ipo.get("name") or "").strip()
+            if order_keys & _code_keys(ipo_code) or (ipo_name and order_name and ipo_name in order_name):
+                result.setdefault(ipo_code, []).append(order)
+
+    for matched_orders in result.values():
+        matched_orders.sort(
+            key=lambda item: str(item.get("updated_time") or item.get("create_time") or ""),
+            reverse=True,
+        )
+    return result
+
+
+def _code_keys(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    raw = str(value).strip().upper()
+    if not raw:
+        return set()
+    keys = {raw}
+    if "." in raw:
+        keys.add(raw.split(".")[-1])
+    digits = re.sub(r"\D", "", raw)
+    if digits:
+        keys.add(digits)
+        keys.add(digits.lstrip("0") or "0")
+    return keys
 
 
 def _normalize_positions(data: Any) -> list[dict[str, Any]]:
