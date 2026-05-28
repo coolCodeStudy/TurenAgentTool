@@ -142,6 +142,7 @@ jobs:
           command_timeout: 10m
           script: |
             set -e
+            sudo rm -f /tmp/investment-knowledge-release.tar.gz /tmp/investment-knowledge-images.tar.gz
             if command -v tar >/dev/null 2>&1; then
               echo "ECS base tools are ready."
               exit 0
@@ -366,6 +367,7 @@ jobs:
             install_docker
             start_docker
             resolve_compose_command
+            sudo rm -f /tmp/investment-knowledge-release.tar.gz /tmp/investment-knowledge-images.tar.gz
 
             echo "ECS dependencies are ready."
 
