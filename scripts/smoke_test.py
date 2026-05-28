@@ -39,6 +39,8 @@ SMOKE_REJECTED_CANDIDATE = "Smoke test verifies candidate insight rejection."
 SMOKE_CONFIRMED_CANDIDATE = "Smoke test verifies candidate insight confirmation."
 SMOKE_ROUTER_INSIGHT = "Smoke test verifies command router formal insight recording."
 SMOKE_ROUTER_CANDIDATE = "Smoke test verifies command router candidate proposal."
+SMOKE_ROUTER_PORTFOLIO_INSIGHT = "Smoke test verifies command router portfolio insight recording."
+SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy candidate proposal."
 
 
 def cleanup_smoke_data() -> None:
@@ -57,6 +59,8 @@ def cleanup_smoke_data() -> None:
                     SMOKE_CONFIRMED_CANDIDATE,
                     SMOKE_ROUTER_INSIGHT,
                     SMOKE_ROUTER_CANDIDATE,
+                    SMOKE_ROUTER_PORTFOLIO_INSIGHT,
+                    SMOKE_ROUTER_STRATEGY_CANDIDATE,
                 ],
             ),
         )
@@ -65,7 +69,14 @@ def cleanup_smoke_data() -> None:
             DELETE FROM candidate_insights
             WHERE insight = ANY(%s)
             """,
-            ([SMOKE_REJECTED_CANDIDATE, SMOKE_CONFIRMED_CANDIDATE, SMOKE_ROUTER_CANDIDATE],),
+            (
+                [
+                    SMOKE_REJECTED_CANDIDATE,
+                    SMOKE_CONFIRMED_CANDIDATE,
+                    SMOKE_ROUTER_CANDIDATE,
+                    SMOKE_ROUTER_STRATEGY_CANDIDATE,
+                ],
+            ),
         )
         stock = conn.execute(
             """
@@ -239,6 +250,8 @@ def main() -> None:
         router_candidate_result = handle_command(
             f"提出个股候选心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_CANDIDATE}"
         )
+        router_portfolio_insight_result = handle_command(f"记录组合心得 {SMOKE_ROUTER_PORTFOLIO_INSIGHT}")
+        router_strategy_candidate_result = handle_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         router_candidates_result = handle_command("查看候选心得")
 
         assert repeated_source["id"] == source["id"]
@@ -254,8 +267,11 @@ def main() -> None:
         assert resolve_stock_reference("Smoke Test Stock")[0]["id"] == stock["id"]
         assert router_insight_result.ok
         assert router_candidate_result.ok
+        assert router_portfolio_insight_result.ok
+        assert router_strategy_candidate_result.ok
         assert router_candidates_result.ok
         assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
+        assert SMOKE_ROUTER_STRATEGY_CANDIDATE in router_candidates_result.message
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
         assert len(result["user_insights"]) == 2

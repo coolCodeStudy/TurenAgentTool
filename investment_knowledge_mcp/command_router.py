@@ -153,6 +153,15 @@ def handle_command(
         symbol, market, insight = stock_insight_match.groups()
         return _handle_record_stock_insight(symbol=symbol, market=market, insight=insight)
 
+    global_insight_match = re.fullmatch(
+        r"(?:记录组合心得|记录策略心得)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if global_insight_match:
+        target_type = "strategy" if cleaned.startswith("记录策略心得") else "portfolio"
+        return _handle_record_global_insight(target_type=target_type, insight=global_insight_match.group(1))
+
     candidate_stock_match = re.fullmatch(
         r"(?:提出个股候选心得|候选个股心得)\s+(\S+)\s+(\S+)\s+(.+)",
         cleaned,
@@ -161,6 +170,15 @@ def handle_command(
     if candidate_stock_match:
         symbol, market, insight = candidate_stock_match.groups()
         return _handle_propose_stock_candidate(symbol=symbol, market=market, insight=insight)
+
+    global_candidate_match = re.fullmatch(
+        r"(?:提出组合候选心得|候选组合心得|提出策略候选心得|候选策略心得)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if global_candidate_match:
+        target_type = "strategy" if "策略" in cleaned[:10] else "portfolio"
+        return _handle_propose_global_candidate(target_type=target_type, insight=global_candidate_match.group(1))
 
     if cleaned in {"帮助", "help", "?"}:
         return CommandResult(ok=True, message=_help_text())
@@ -328,6 +346,15 @@ def _handle_record_stock_insight(symbol: str, market: str, insight: str) -> Comm
     return CommandResult(ok=True, message=f"已记录个股心得 id={row['id']}。")
 
 
+def _handle_record_global_insight(target_type: str, insight: str) -> CommandResult:
+    row = repository.record_user_insight(
+        target_type=target_type,
+        insight=insight,
+    )
+    label = "策略" if target_type == "strategy" else "组合"
+    return CommandResult(ok=True, message=f"已记录{label}心得 id={row['id']}。")
+
+
 def _handle_propose_stock_candidate(symbol: str, market: str, insight: str) -> CommandResult:
     row = repository.propose_candidate_insight(
         target_type="stock",
@@ -337,6 +364,16 @@ def _handle_propose_stock_candidate(symbol: str, market: str, insight: str) -> C
         reason="来自统一指令入口的候选心得，需要用户确认。",
     )
     return CommandResult(ok=True, message=f"已提出候选心得 id={row['id']}，等待确认。")
+
+
+def _handle_propose_global_candidate(target_type: str, insight: str) -> CommandResult:
+    row = repository.propose_candidate_insight(
+        target_type=target_type,
+        insight=insight,
+        reason="来自统一指令入口的组合/策略候选心得，需要用户确认。",
+    )
+    label = "策略" if target_type == "strategy" else "组合"
+    return CommandResult(ok=True, message=f"已提出{label}候选心得 id={row['id']}，等待确认。")
 
 
 def _candidate_count(context: dict) -> int:
@@ -800,4 +837,6 @@ def _help_text() -> str:
 - 拒绝候选心得 5
 - 记录心得 000660 KR 这里写你的正式心得
 - 提出个股候选心得 000660 KR 这里写系统推断出的候选心得
+- 记录组合心得 这里写你的正式组合心得
+- 提出策略候选心得 这里写系统推断出的候选策略心得
 """
