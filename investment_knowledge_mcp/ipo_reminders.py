@@ -17,6 +17,8 @@ from investment_knowledge_mcp.futu_provider import get_hk_ipo_list
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 REMINDER_WINDOW = timedelta(hours=12)
+_REMINDER_LOOP_STARTED = False
+_REMINDER_LOOP_INTERVAL_SECONDS: int | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class IpoReminder:
 
 
 def start_ipo_reminder_loop(config: AppConfig | None = None, logger: logging.Logger | None = None) -> None:
+    global _REMINDER_LOOP_STARTED, _REMINDER_LOOP_INTERVAL_SECONDS
+
     config = config or get_config()
     logger = logger or logging.getLogger("investment_knowledge_mcp.ipo_reminders")
 
@@ -48,7 +52,16 @@ def start_ipo_reminder_loop(config: AppConfig | None = None, logger: logging.Log
         daemon=True,
     )
     thread.start()
+    _REMINDER_LOOP_STARTED = True
+    _REMINDER_LOOP_INTERVAL_SECONDS = interval
     logger.info("IPO reminder loop started: interval_seconds=%s", interval)
+
+
+def get_ipo_reminder_loop_state() -> dict[str, Any]:
+    return {
+        "started": _REMINDER_LOOP_STARTED,
+        "interval_seconds": _REMINDER_LOOP_INTERVAL_SECONDS,
+    }
 
 
 def _run_loop(interval_seconds: int, logger: logging.Logger) -> None:
@@ -82,6 +95,15 @@ def run_ipo_reminder_once(logger: logging.Logger | None = None) -> int:
 
 
 def _build_due_reminders(ipos: list[dict[str, Any]], now: datetime) -> list[IpoReminder]:
+    return [
+        reminder
+        for reminder in build_scheduled_reminders(ipos=ipos, now=now)
+        if _is_due(now, reminder.scheduled_for)
+    ]
+
+
+def build_scheduled_reminders(ipos: list[dict[str, Any]], now: datetime | None = None) -> list[IpoReminder]:
+    now = now or datetime.now(SHANGHAI_TZ)
     reminders: list[IpoReminder] = []
     for item in ipos:
         code = str(item.get("code") or "").strip()
@@ -92,7 +114,7 @@ def _build_due_reminders(ipos: list[dict[str, Any]], now: datetime) -> list[IpoR
         apply_end_date = _parse_date(item.get("apply_end_time"))
         if apply_end_date:
             scheduled_for = datetime.combine(apply_end_date - timedelta(days=1), time(21, 0), tzinfo=SHANGHAI_TZ)
-            if _is_due(now, scheduled_for):
+            if scheduled_for + REMINDER_WINDOW >= now:
                 reminders.append(
                     IpoReminder(
                         reminder_type="ipo_apply_deadline",
@@ -107,7 +129,7 @@ def _build_due_reminders(ipos: list[dict[str, Any]], now: datetime) -> list[IpoR
         list_date = _parse_date(item.get("list_time"))
         if list_date:
             scheduled_for = datetime.combine(list_date - timedelta(days=1), time(12, 30), tzinfo=SHANGHAI_TZ)
-            if _is_due(now, scheduled_for):
+            if scheduled_for + REMINDER_WINDOW >= now:
                 reminders.append(
                     IpoReminder(
                         reminder_type="ipo_dark_pool",
@@ -118,7 +140,7 @@ def _build_due_reminders(ipos: list[dict[str, Any]], now: datetime) -> list[IpoR
                         message=_dark_pool_message(item=item, scheduled_for=scheduled_for),
                     )
                 )
-    return reminders
+    return sorted(reminders, key=lambda reminder: reminder.scheduled_for)
 
 
 def _is_due(now: datetime, scheduled_for: datetime) -> bool:

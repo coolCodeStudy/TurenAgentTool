@@ -18,6 +18,7 @@ from investment_knowledge_mcp.portfolio_analysis import (
     build_portfolio_analysis_context,
     render_portfolio_analysis_fallback,
 )
+from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
 
 
@@ -61,6 +62,28 @@ PORTFOLIO_ANALYSIS_COMMANDS = {
     "portfolio analysis",
 }
 
+SYSTEM_STATUS_COMMANDS = {
+    "系统状态",
+    "自检",
+    "检查系统",
+    "检查部署",
+    "检查OpenD",
+    "检查openD",
+    "检查OpenAI",
+    "检查openai",
+    "status",
+    "health",
+}
+
+IPO_REMINDER_STATUS_COMMANDS = {
+    "IPO提醒状态",
+    "ipo提醒状态",
+    "新股提醒状态",
+    "检查IPO提醒",
+    "检查新股提醒",
+    "ipo status",
+}
+
 
 def handle_command(
     command: str,
@@ -97,6 +120,12 @@ def handle_command(
 
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
+
+    if cleaned in SYSTEM_STATUS_COMMANDS:
+        return CommandResult(ok=True, message=render_system_status())
+
+    if cleaned in IPO_REMINDER_STATUS_COMMANDS:
+        return CommandResult(ok=True, message=render_ipo_reminder_status())
 
     if cleaned in PORTFOLIO_ANALYSIS_COMMANDS:
         return _handle_portfolio_analysis()
@@ -156,6 +185,8 @@ def is_query_command(command: str) -> bool:
             "帮助",
             "help",
             "?",
+            *SYSTEM_STATUS_COMMANDS,
+            *IPO_REMINDER_STATUS_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
             "港股新股",
@@ -759,6 +790,8 @@ def _help_text() -> str:
 - 今天仓位怎么看
 - 组合体检
 - 港股新股
+- 系统状态
+- IPO提醒状态
 - 分析 000660 KR
 - 怎么看海力士
 - 分析一下腾讯
