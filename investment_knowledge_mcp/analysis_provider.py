@@ -101,40 +101,49 @@ def build_portfolio_analysis_prompt(context: dict[str, Any]) -> str:
     compact_context = {
         "snapshot": context.get("snapshot"),
         "summary": context.get("summary"),
+        "currency_exposure": context.get("currency_exposure"),
         "market_exposure": context.get("market_exposure"),
         "top_positions": context.get("top_positions"),
+        "top_positions_by_currency": context.get("top_positions_by_currency"),
         "profit_leaders": context.get("profit_leaders"),
         "loss_leaders": context.get("loss_leaders"),
+        "loss_leaders_by_currency": context.get("loss_leaders_by_currency"),
         "large_loss_positions": context.get("large_loss_positions"),
         "knowledge_matches": _compact_knowledge_matches(context.get("knowledge_matches") or []),
         "global_insights": context.get("global_insights"),
         "global_candidate_insights": context.get("global_candidate_insights"),
         "context_warnings": context.get("context_warnings"),
+        "data_quality_warnings": context.get("data_quality_warnings"),
     }
     return f"""请基于下面的 InvestmentKnowledge 持仓上下文，输出一版中文组合复盘。
 
 要求：
 - 不要给买入/卖出/申购等操作指令，只做结构、风险和后续跟踪分析。
 - 不要声称知道实时新闻、公告、财报或估值，除非上下文明确给出。
-- 先讲组合结构和风险，再讲你的一版看法。
+- 先讲数据口径，再讲组合结构、风险和你的一版看法。
 - 要结合用户已确认的 portfolio/strategy 级心得；候选心得只能提示待确认。
-- 适合钉钉阅读，不要太长。
+- 如果 summary.has_mixed_currency=true，严禁输出“总市值约 X”“Top3 占比 X”这类跨币种合计结论；只能按币种/市场分组讨论，或明确说明未配置汇率换算。
+- 如果 summary.top_weights_available=false，不要把 top_positions.weight 当作可用结论；主要持仓和拖累项优先使用 top_positions_by_currency / loss_leaders_by_currency，并用 currency_weight 描述币种内占比。
+- 用词要直接、少套话，适合钉钉阅读；每段 2 到 4 条，宁可短一点。
 
 输出格式：
+## 数据口径
+- 2 到 3 条，必须说明是否多币种、是否能合计总市值
+
 ## 组合概览
-- 3 到 5 条
+- 2 到 4 条
 
 ## 仓位结构
-- 3 到 5 条
+- 2 到 4 条
 
 ## 主要风险
-- 3 到 5 条
+- 2 到 4 条
 
 ## 我的看法
-- 3 到 5 条
+- 2 到 4 条
 
 ## 后续跟踪
-- 2 到 4 条
+- 2 到 3 条
 
 上下文 JSON：
 ```json

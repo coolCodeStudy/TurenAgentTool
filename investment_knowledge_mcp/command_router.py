@@ -14,6 +14,7 @@ from investment_knowledge_mcp.analysis_provider import (
 )
 from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions, get_hk_ipo_list
 from investment_knowledge_mcp.portfolio_analysis import (
+    DEFAULT_CURRENCY_BY_MARKET,
     build_portfolio_analysis_context,
     render_portfolio_analysis_fallback,
 )
@@ -382,32 +383,58 @@ def _render_portfolio_positions(snapshot: Any) -> str:
     if not positions:
         return f"当前富途持仓为空。\n数据时间：{fetched_at}"
 
-    total_market_value = sum(_number(item.get("market_val")) for item in positions)
-    total_pl = sum(_number(item.get("pl_val")) for item in positions)
     sorted_positions = sorted(
         positions,
         key=lambda item: _number(item.get("market_val")),
         reverse=True,
     )
+    currency_totals: dict[str, dict[str, float]] = {}
+    for item in sorted_positions:
+        currency = _position_currency(item)
+        bucket = currency_totals.setdefault(currency, {"market_val": 0.0, "pl_val": 0.0, "count": 0.0})
+        bucket["market_val"] += _number(item.get("market_val"))
+        bucket["pl_val"] += _number(item.get("pl_val"))
+        bucket["count"] += 1
+    has_mixed_currency = len([currency for currency in currency_totals if currency != "UNKNOWN"]) > 1
 
     lines = [
         "富途实时持仓：",
         f"- 持仓数量：{len(positions)}",
-        f"- 总市值：{_fmt_money(total_market_value)}",
-        f"- 浮动盈亏：{_fmt_money(total_pl)}",
         f"- 数据时间：{fetched_at}" + ("（短缓存）" if snapshot.cached else ""),
         "",
-        "持仓明细：",
+        "按币种汇总：",
     ]
+    if has_mixed_currency:
+        lines.append("- 检测到多币种持仓，未配置汇率换算；这里不展示单一总市值。")
+    else:
+        only_currency = next(iter(currency_totals), "")
+        totals = currency_totals.get(only_currency, {"market_val": 0.0, "pl_val": 0.0})
+        lines.insert(2, f"- 总市值：{_fmt_money(totals['market_val'])} {only_currency}".rstrip())
+        lines.insert(3, f"- 浮动盈亏：{_fmt_money(totals['pl_val'])} {only_currency}".rstrip())
+
+    for currency, totals in sorted(currency_totals.items(), key=lambda pair: pair[1]["market_val"], reverse=True):
+        lines.append(
+            f"- {currency}: 市值 {_fmt_money(totals['market_val'])}, "
+            f"浮动盈亏 {_fmt_money(totals['pl_val'])}, 持仓 {int(totals['count'])} 个"
+        )
+
+    lines.extend(
+        [
+            "",
+            "持仓明细：",
+        ]
+    )
     for item in sorted_positions:
         name = item.get("stock_name") or item.get("code") or "unknown"
         code = item.get("code") or ""
+        currency = _position_currency(item)
         market_val = _number(item.get("market_val"))
-        weight = market_val / total_market_value * 100 if total_market_value else 0
+        currency_total = currency_totals.get(currency, {}).get("market_val") or 0
+        currency_weight = market_val / currency_total * 100 if currency_total else 0
         pl_ratio = _number(item.get("pl_ratio"))
         lines.append(
-            f"- {name} {code}: 市值 {_fmt_money(market_val)}, "
-            f"占比 {weight:.1f}%, 盈亏 {_fmt_percent(pl_ratio)}"
+            f"- {name} {code}: 市值 {_fmt_money(market_val)} {currency}, "
+            f"{currency} 内占比 {currency_weight:.1f}%, 盈亏 {_fmt_percent(pl_ratio)}"
         )
     lines.append("")
     lines.append("注：当前只读持仓，不会下单或修改账户。")
@@ -609,6 +636,15 @@ def _number(value: Any) -> float:
 
 def _fmt_money(value: float) -> str:
     return f"{value:,.2f}"
+
+
+def _position_currency(item: dict[str, Any]) -> str:
+    currency = str(item.get("currency") or "").strip().upper()
+    if currency:
+        return currency
+    code = str(item.get("code") or "")
+    market = code.split(".", 1)[0].upper() if "." in code else ""
+    return DEFAULT_CURRENCY_BY_MARKET.get(market, "UNKNOWN")
 
 
 def _fmt_percent(value: float) -> str:
