@@ -14,6 +14,98 @@ RESPONSES_API_URL = "https://api.openai.com/v1/responses"
 DEFAULT_MODEL = "gpt-5.2"
 
 
+def route_command_intent_with_openai(command: str) -> dict[str, Any] | None:
+    if os.getenv("OPENAI_ANALYSIS_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "你是 InvestmentKnowledge 的意图路由器。只输出 JSON，不要输出解释。"
+                    "你的任务是把用户自然语言映射到安全意图；不要执行动作。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": build_intent_router_prompt(command),
+            },
+        ],
+        "max_output_tokens": 900,
+    }
+
+    with httpx.Client(timeout=60) as client:
+        response = client.post(
+            RESPONSES_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+
+    text = extract_response_text(response.json()).strip()
+    return _parse_json_object(text)
+
+
+def build_intent_router_prompt(command: str) -> str:
+    return f"""请把用户输入路由成一个 JSON 对象。
+
+允许的 intent：
+- portfolio_analysis：用户想分析持仓/仓位/组合风险。
+- portfolio_positions：用户想看当前持仓列表。
+- ipo_status：用户想看港股新股、IPO 或 IPO 提醒状态。
+- system_status：用户想检查系统、部署、OpenD、OpenAI、机器人是否正常。
+- trade_review：用户想看交易记录、收益复盘、月度/区间收益。第一版只做占位说明。
+- memory_candidate：用户在表达可沉淀为组合/策略记忆的观点、偏好、痛点、目标或复盘反思。
+- unknown：不确定。
+
+输出 JSON schema：
+{{
+  "intent": "portfolio_analysis|portfolio_positions|ipo_status|system_status|trade_review|memory_candidate|unknown",
+  "confidence": 0.0,
+  "target_type": "portfolio|strategy|null",
+  "memory_candidate": "适合写入候选心得的一句话；仅 memory_candidate 使用，否则 null",
+  "reason": "一句话说明为什么这样路由",
+  "time_range": "用户提到的月份或日期范围；仅 trade_review 使用，否则 null"
+}}
+
+安全规则：
+- 不要把用户观点直接标成正式心得，只能作为 memory_candidate。
+- 如果用户是在说系统长期目标、投资方式、管理成本、复盘方式，target_type 多数为 strategy。
+- 如果用户是在说当前组合、仓位结构、某组持仓风险，target_type 多数为 portfolio。
+- 如果用户问“为什么没提醒/机器人没反应/系统有没有问题”，路由 system_status 或 ipo_status。
+- 如果用户问“这个月赚在哪亏在哪/交易记录/收益”，路由 trade_review。
+
+用户输入：
+{command}
+"""
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        value = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def generate_stock_analysis_with_openai(context: dict[str, Any]) -> str | None:
     if os.getenv("OPENAI_ANALYSIS_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
         return None

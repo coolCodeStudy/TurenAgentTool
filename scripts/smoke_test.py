@@ -41,6 +41,7 @@ SMOKE_ROUTER_INSIGHT = "Smoke test verifies command router formal insight record
 SMOKE_ROUTER_CANDIDATE = "Smoke test verifies command router candidate proposal."
 SMOKE_ROUTER_PORTFOLIO_INSIGHT = "Smoke test verifies command router portfolio insight recording."
 SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy candidate proposal."
+SMOKE_ROUTER_NATURAL_MEMORY = "我觉得 Smoke Test 的组合管理成本需要被系统识别并沉淀。"
 
 
 def cleanup_smoke_data() -> None:
@@ -61,6 +62,7 @@ def cleanup_smoke_data() -> None:
                     SMOKE_ROUTER_CANDIDATE,
                     SMOKE_ROUTER_PORTFOLIO_INSIGHT,
                     SMOKE_ROUTER_STRATEGY_CANDIDATE,
+                    SMOKE_ROUTER_NATURAL_MEMORY,
                 ],
             ),
         )
@@ -75,6 +77,7 @@ def cleanup_smoke_data() -> None:
                     SMOKE_CONFIRMED_CANDIDATE,
                     SMOKE_ROUTER_CANDIDATE,
                     SMOKE_ROUTER_STRATEGY_CANDIDATE,
+                    SMOKE_ROUTER_NATURAL_MEMORY,
                 ],
             ),
         )
@@ -252,6 +255,8 @@ def main() -> None:
         )
         router_portfolio_insight_result = handle_command(f"记录组合心得 {SMOKE_ROUTER_PORTFOLIO_INSIGHT}")
         router_strategy_candidate_result = handle_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
+        router_natural_memory_result = handle_command(SMOKE_ROUTER_NATURAL_MEMORY)
+        router_trade_review_result = handle_command("帮我看看这个月到底赚在哪亏在哪")
         router_candidates_result = handle_command("查看候选心得")
 
         assert repeated_source["id"] == source["id"]
@@ -269,9 +274,13 @@ def main() -> None:
         assert router_candidate_result.ok
         assert router_portfolio_insight_result.ok
         assert router_strategy_candidate_result.ok
+        assert router_natural_memory_result.ok
+        assert router_trade_review_result.ok
         assert router_candidates_result.ok
         assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_STRATEGY_CANDIDATE in router_candidates_result.message
+        assert SMOKE_ROUTER_NATURAL_MEMORY in router_candidates_result.message
+        assert "交易复盘" in router_trade_review_result.message
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
         assert len(result["user_insights"]) == 2

@@ -11,6 +11,7 @@ from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.analysis_provider import (
     generate_portfolio_analysis_with_openai,
     generate_stock_analysis_with_openai,
+    route_command_intent_with_openai,
 )
 from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions, get_hk_ipo_list
 from investment_knowledge_mcp.portfolio_analysis import (
@@ -183,6 +184,10 @@ def handle_command(
     if cleaned in {"帮助", "help", "?"}:
         return CommandResult(ok=True, message=_help_text())
 
+    routed_result = _handle_intent_routed_command(cleaned)
+    if routed_result is not None:
+        return routed_result
+
     return CommandResult(
         ok=False,
         message="无法识别这条指令。\n\n" + _help_text(),
@@ -192,6 +197,7 @@ def handle_command(
 def is_query_command(command: str) -> bool:
     cleaned = command.strip()
     normalized = _normalize_natural_command(cleaned)
+    heuristic_intent = _heuristic_route_intent(normalized)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
         or normalized
@@ -214,6 +220,8 @@ def is_query_command(command: str) -> bool:
             "ipo",
             "IPO",
         }
+        or heuristic_intent.get("intent")
+        in {"portfolio_analysis", "portfolio_positions", "system_status", "ipo_status", "trade_review"}
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
     )
@@ -374,6 +382,133 @@ def _handle_propose_global_candidate(target_type: str, insight: str) -> CommandR
     )
     label = "策略" if target_type == "strategy" else "组合"
     return CommandResult(ok=True, message=f"已提出{label}候选心得 id={row['id']}，等待确认。")
+
+
+def _handle_intent_routed_command(command: str) -> CommandResult | None:
+    intent = _route_intent(command)
+    intent_name = str(intent.get("intent") or "unknown")
+    confidence = _number(intent.get("confidence"))
+    if intent_name == "unknown" or confidence < 0.45:
+        return None
+
+    if intent_name == "portfolio_analysis":
+        return _handle_portfolio_analysis()
+    if intent_name == "portfolio_positions":
+        return _handle_portfolio_positions()
+    if intent_name == "system_status":
+        return CommandResult(ok=True, message=render_system_status())
+    if intent_name == "ipo_status":
+        if any(keyword in command for keyword in ("提醒", "推送", "状态", "没发", "没提醒")):
+            return CommandResult(ok=True, message=render_ipo_reminder_status())
+        return _handle_hk_ipos()
+    if intent_name == "trade_review":
+        time_range = intent.get("time_range")
+        suffix = f"（识别到时间范围：{time_range}）" if time_range else ""
+        return CommandResult(
+            ok=True,
+            message=(
+                "交易复盘我理解到了，但第一版交易记录/区间收益接口还没接入。"
+                f"{suffix}\n\n"
+                "下一步需要接 Futu 历史成交、账户净资产快照和现金流，才能回答“这个月赚在哪亏在哪”。"
+            ),
+        )
+    if intent_name == "memory_candidate":
+        candidate = str(intent.get("memory_candidate") or command).strip()
+        if not candidate:
+            return None
+        target_type = str(intent.get("target_type") or "strategy").strip().lower()
+        if target_type not in {"portfolio", "strategy"}:
+            target_type = "strategy"
+        result = _handle_propose_global_candidate(target_type=target_type, insight=candidate)
+        return CommandResult(
+            ok=True,
+            message=(
+                result.message
+                + "\n\n"
+                + "我先把它作为候选心得保存，等你确认后才会变成正式长期记忆。"
+            ),
+        )
+    return None
+
+
+def _route_intent(command: str) -> dict[str, Any]:
+    heuristic = _heuristic_route_intent(command)
+    if heuristic.get("confidence", 0) >= 0.8:
+        return heuristic
+    try:
+        routed = route_command_intent_with_openai(command)
+    except Exception:
+        routed = None
+    if routed and routed.get("intent"):
+        return routed
+    return heuristic
+
+
+def _heuristic_route_intent(command: str) -> dict[str, Any]:
+    compact = re.sub(r"\s+", "", command.lower())
+    if any(
+        keyword in compact
+        for keyword in ("系统状态", "自检", "检查系统", "检查部署", "有没有问题", "opend", "openai", "机器人没", "没回复")
+    ):
+        return {"intent": "system_status", "confidence": 0.9, "target_type": None}
+    if any(keyword in compact for keyword in ("ipo提醒", "新股提醒", "没提醒", "提醒状态")):
+        return {"intent": "ipo_status", "confidence": 0.9, "target_type": None}
+    if any(keyword in compact for keyword in ("港股新股", "新股", "ipo")):
+        return {"intent": "ipo_status", "confidence": 0.85, "target_type": None}
+    if any(keyword in compact for keyword in ("交易记录", "收益", "赚在哪", "亏在哪", "月度", "本月")):
+        return {
+            "intent": "trade_review",
+            "confidence": 0.85,
+            "target_type": None,
+            "time_range": _extract_time_range_text(command),
+        }
+    if any(keyword in compact for keyword in ("持仓分析", "仓位分析", "组合分析", "持仓怎么看", "仓位怎么看", "组合风险")):
+        return {"intent": "portfolio_analysis", "confidence": 0.85, "target_type": None}
+    if any(keyword in compact for keyword in ("我的持仓", "当前持仓", "持仓列表", "仓位列表")):
+        return {"intent": "portfolio_positions", "confidence": 0.85, "target_type": None}
+    if _looks_like_memory_candidate(command):
+        target_type = "strategy" if any(keyword in command for keyword in ("系统", "长期", "目标", "策略", "进步", "复盘", "伴侣")) else "portfolio"
+        return {
+            "intent": "memory_candidate",
+            "confidence": 0.78,
+            "target_type": target_type,
+            "memory_candidate": command,
+        }
+    return {"intent": "unknown", "confidence": 0.0, "target_type": None}
+
+
+def _looks_like_memory_candidate(command: str) -> bool:
+    if len(command.strip()) < 12:
+        return False
+    markers = (
+        "我觉得",
+        "我认为",
+        "我希望",
+        "我想",
+        "对我而言",
+        "我的策略",
+        "我的系统",
+        "需要复盘",
+        "消耗",
+        "管理成本",
+        "长期",
+        "伴侣",
+        "持续赚钱",
+        "继续进步",
+    )
+    return any(marker in command for marker in markers)
+
+
+def _extract_time_range_text(command: str) -> str | None:
+    month_match = re.search(r"\d{4}[-/年]\d{1,2}", command)
+    if month_match:
+        return month_match.group(0)
+    range_match = re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}.*\d{4}[-/]\d{1,2}[-/]\d{1,2}", command)
+    if range_match:
+        return range_match.group(0)
+    if "本月" in command:
+        return "本月"
+    return None
 
 
 def _candidate_count(context: dict) -> int:
@@ -839,4 +974,5 @@ def _help_text() -> str:
 - 提出个股候选心得 000660 KR 这里写系统推断出的候选心得
 - 记录组合心得 这里写你的正式组合心得
 - 提出策略候选心得 这里写系统推断出的候选策略心得
+- 也可以自然说：我觉得港股亏损股太消耗精力了 / 帮我看看本月赚在哪亏在哪
 """
