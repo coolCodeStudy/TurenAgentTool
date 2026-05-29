@@ -34,6 +34,17 @@ class IpoSnapshot:
     cached: bool = False
 
 
+@dataclass(frozen=True)
+class TradeHistorySnapshot:
+    deals: list[dict[str, Any]]
+    fetched_at: datetime
+    start: str
+    end: str
+    account_info: dict[str, Any] | None = None
+    account_error: str | None = None
+    source: str = "futu"
+
+
 _CACHE: PositionSnapshot | None = None
 _CACHE_MONOTONIC: float = 0.0
 _IPO_CACHE: IpoSnapshot | None = None
@@ -74,6 +85,11 @@ def get_hk_ipo_list(config: AppConfig | None = None, include_orders: bool = True
     snapshot = _fetch_hk_ipo_list(config, include_orders=include_orders)
     _set_cached_ipo_snapshot(snapshot)
     return snapshot
+
+
+def get_futu_trade_history(start: str, end: str, config: AppConfig | None = None) -> TradeHistorySnapshot:
+    config = config or get_config()
+    return _fetch_trade_history(config=config, start=start, end=end)
 
 
 def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
@@ -238,9 +254,84 @@ def _fetch_hk_order_map(config: AppConfig, ft: Any, ipos: list[dict[str, Any]]) 
         context.close()
 
 
+def _fetch_trade_history(config: AppConfig, start: str, end: str) -> TradeHistorySnapshot:
+    try:
+        import futu as ft
+    except ImportError as exc:
+        raise FutuProviderError("futu-api 未安装，无法读取富途交易记录。") from exc
+
+    context = _create_trade_context(
+        ft.OpenSecTradeContext,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+            "security_firm": _enum_value(ft.SecurityFirm, config.futu_security_firm),
+        },
+    )
+    try:
+        kwargs = _trade_query_kwargs(config=config, ft=ft, refresh_cache=True)
+        kwargs["start"] = start
+        kwargs["end"] = end
+
+        ret, data = _history_deal_list_query(context, kwargs)
+        if ret != ft.RET_OK:
+            raise FutuProviderError(f"富途历史成交查询失败：{data}")
+
+        account_info: dict[str, Any] | None = None
+        account_error: str | None = None
+        try:
+            account_info = _fetch_account_info(context=context, config=config, ft=ft)
+        except Exception as exc:
+            account_error = str(exc)
+
+        return TradeHistorySnapshot(
+            deals=_normalize_deals(data),
+            fetched_at=datetime.now(timezone.utc),
+            start=start,
+            end=end,
+            account_info=account_info,
+            account_error=account_error,
+        )
+    finally:
+        context.close()
+
+
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
     supported_kwargs = _filter_supported_kwargs(context.position_list_query, kwargs)
     return _call_with_keyword_retry(context.position_list_query, supported_kwargs)
+
+
+def _history_deal_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
+    if not hasattr(context, "history_deal_list_query"):
+        raise FutuProviderError("当前 futu-api 版本没有 history_deal_list_query，无法读取历史成交。")
+    supported_kwargs = _filter_supported_kwargs(context.history_deal_list_query, kwargs)
+    return _call_with_keyword_retry(context.history_deal_list_query, supported_kwargs)
+
+
+def _fetch_account_info(context: Any, config: AppConfig, ft: Any) -> dict[str, Any]:
+    if not hasattr(context, "accinfo_query"):
+        raise FutuProviderError("当前 futu-api 版本没有 accinfo_query。")
+    kwargs = _trade_query_kwargs(config=config, ft=ft, refresh_cache=True)
+    ret, data = _call_with_keyword_retry(context.accinfo_query, _filter_supported_kwargs(context.accinfo_query, kwargs))
+    if ret != ft.RET_OK:
+        raise FutuProviderError(f"富途账户信息查询失败：{data}")
+    return _normalize_account_info(data)
+
+
+def _trade_query_kwargs(config: AppConfig, ft: Any, refresh_cache: bool) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "trd_env": _enum_value(ft.TrdEnv, config.futu_trade_env),
+        "refresh_cache": refresh_cache,
+    }
+    trade_market = _optional_enum_value(getattr(ft, "TrdMarket", None), config.futu_trade_market)
+    if trade_market is not None:
+        kwargs["trd_market"] = trade_market
+        kwargs["order_market"] = trade_market
+    if config.futu_account_id:
+        kwargs["acc_id"] = config.futu_account_id
+    else:
+        kwargs["acc_index"] = config.futu_account_index
+    return kwargs
 
 
 def _ipo_list_query(context: Any, market: Any) -> tuple[Any, Any]:
@@ -389,6 +480,83 @@ def _normalize_orders(data: Any) -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _normalize_deals(data: Any) -> list[dict[str, Any]]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+
+    normalized = []
+    for row in records:
+        item = to_jsonable(row)
+        qty = _clean_empty(item.get("qty") or item.get("deal_qty"))
+        price = _clean_empty(item.get("price") or item.get("deal_price"))
+        amount = _deal_amount(qty=qty, price=price)
+        code = _clean_empty(item.get("code"))
+        normalized.append(
+            {
+                "deal_id": _clean_empty(item.get("deal_id")),
+                "order_id": _clean_empty(item.get("order_id")),
+                "code": code,
+                "stock_name": _clean_empty(item.get("stock_name") or item.get("name")),
+                "trd_side": _clean_empty(item.get("trd_side")),
+                "qty": qty,
+                "price": price,
+                "amount": amount,
+                "currency": _clean_empty(item.get("currency")) or _currency_from_code(code),
+                "create_time": _clean_empty(
+                    item.get("create_time")
+                    or item.get("deal_time")
+                    or item.get("time")
+                    or item.get("updated_time")
+                ),
+                "raw": item,
+            }
+        )
+    return normalized
+
+
+def _normalize_account_info(data: Any) -> dict[str, Any]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+    item = to_jsonable(records[0]) if records else to_jsonable(data)
+    return {
+        "total_assets": _clean_empty(item.get("total_assets") or item.get("total_asset")),
+        "market_val": _clean_empty(item.get("market_val") or item.get("market_value")),
+        "cash": _clean_empty(item.get("cash")),
+        "power": _clean_empty(item.get("power")),
+        "avl_withdrawal_cash": _clean_empty(item.get("avl_withdrawal_cash")),
+        "currency": _clean_empty(item.get("currency")),
+        "raw": item,
+    }
+
+
+def _deal_amount(qty: Any, price: Any) -> float | None:
+    try:
+        return float(qty) * float(price)
+    except (TypeError, ValueError):
+        return None
+
+
+def _currency_from_code(code: Any) -> str | None:
+    if not code:
+        return None
+    market = str(code).split(".", 1)[0].upper()
+    if market == "HK":
+        return "HKD"
+    if market == "US":
+        return "USD"
+    if market in {"SH", "SZ", "CN"}:
+        return "CNY"
+    return None
 
 
 def _map_orders_to_ipos(orders: list[dict[str, Any]], ipos: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

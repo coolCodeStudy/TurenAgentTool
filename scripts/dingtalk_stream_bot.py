@@ -13,7 +13,7 @@ import certifi
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from investment_knowledge_mcp.command_router import handle_command, is_query_command
+from investment_knowledge_mcp.command_router import handle_command, is_candidate_write_command, is_query_command
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.ipo_reminders import start_ipo_reminder_loop
@@ -68,17 +68,21 @@ def main() -> None:
                 return AckMessage.STATUS_OK, "OK"
 
             is_query = is_query_command(command)
-            if not args.allow_write and not is_query:
+            is_candidate_write = is_candidate_write_command(command)
+            sender_can_write = _sender_can_write(sender, config.dingtalk_stream_write_allowed_senders)
+            if not args.allow_write and not is_query and not (is_candidate_write and sender_can_write):
+                logger.warning(
+                    "blocked DingTalk non-query command: candidate_write=%s sender=%s",
+                    is_candidate_write,
+                    _format_sender_for_log(sender),
+                )
                 self.reply_text(
-                    "Stream 入口当前只开放查询类指令：怎么看海力士、分析 000660 KR、查看候选心得、帮助。",
+                    "Stream 入口当前只开放查询类指令；候选心得只允许写入白名单本人提交。可用：怎么看海力士、持仓分析、交易记录 2026-05、查看候选心得、帮助。",
                     incoming_message,
                 )
                 return AckMessage.STATUS_OK, "OK"
 
-            if args.allow_write and not is_query and not _sender_can_write(
-                sender,
-                config.dingtalk_stream_write_allowed_senders,
-            ):
+            if args.allow_write and not is_query and not sender_can_write:
                 logger.warning(
                     "blocked DingTalk write command from unauthorized sender=%s",
                     _format_sender_for_log(sender),

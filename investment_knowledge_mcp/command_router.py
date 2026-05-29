@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -13,7 +14,12 @@ from investment_knowledge_mcp.analysis_provider import (
     generate_stock_analysis_with_openai,
     route_command_intent_with_openai,
 )
-from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_positions, get_hk_ipo_list
+from investment_knowledge_mcp.futu_provider import (
+    FutuProviderError,
+    get_futu_positions,
+    get_futu_trade_history,
+    get_hk_ipo_list,
+)
 from investment_knowledge_mcp.portfolio_analysis import (
     DEFAULT_CURRENCY_BY_MARKET,
     build_portfolio_analysis_context,
@@ -85,6 +91,14 @@ IPO_REMINDER_STATUS_COMMANDS = {
     "ipo status",
 }
 
+TRADE_REVIEW_COMMANDS = {
+    "交易记录",
+    "收益复盘",
+    "月度收益",
+    "本月收益",
+    "交易复盘",
+}
+
 
 def handle_command(
     command: str,
@@ -136,6 +150,10 @@ def handle_command(
 
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
+
+    trade_review_match = _match_trade_review_command(cleaned)
+    if trade_review_match is not None:
+        return _handle_trade_review(time_range_text=trade_review_match)
 
     confirm_match = re.fullmatch(r"(?:确认候选心得|confirm candidate)\s+(\d+)", cleaned, flags=re.IGNORECASE)
     if confirm_match:
@@ -224,6 +242,24 @@ def is_query_command(command: str) -> bool:
         in {"portfolio_analysis", "portfolio_positions", "system_status", "ipo_status", "trade_review"}
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
+    )
+
+
+def is_candidate_write_command(command: str) -> bool:
+    cleaned = command.strip()
+    normalized = _normalize_natural_command(cleaned)
+    return bool(
+        re.fullmatch(
+            r"(?:提出个股候选心得|候选个股心得)\s+\S+\s+\S+\s+.+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
+            r"(?:提出组合候选心得|候选组合心得|提出策略候选心得|候选策略心得)\s+.+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or _heuristic_route_intent(normalized).get("intent") == "memory_candidate"
     )
 
 
@@ -402,16 +438,7 @@ def _handle_intent_routed_command(command: str) -> CommandResult | None:
             return CommandResult(ok=True, message=render_ipo_reminder_status())
         return _handle_hk_ipos()
     if intent_name == "trade_review":
-        time_range = intent.get("time_range")
-        suffix = f"（识别到时间范围：{time_range}）" if time_range else ""
-        return CommandResult(
-            ok=True,
-            message=(
-                "交易复盘我理解到了，但第一版交易记录/区间收益接口还没接入。"
-                f"{suffix}\n\n"
-                "下一步需要接 Futu 历史成交、账户净资产快照和现金流，才能回答“这个月赚在哪亏在哪”。"
-            ),
-        )
+        return _handle_trade_review(time_range_text=str(intent.get("time_range") or "").strip() or None)
     if intent_name == "memory_candidate":
         candidate = str(intent.get("memory_candidate") or command).strip()
         if not candidate:
@@ -500,12 +527,12 @@ def _looks_like_memory_candidate(command: str) -> bool:
 
 
 def _extract_time_range_text(command: str) -> str | None:
-    month_match = re.search(r"\d{4}[-/年]\d{1,2}", command)
-    if month_match:
-        return month_match.group(0)
     range_match = re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}.*\d{4}[-/]\d{1,2}[-/]\d{1,2}", command)
     if range_match:
         return range_match.group(0)
+    month_match = re.search(r"\d{4}[-/年]\d{1,2}", command)
+    if month_match:
+        return month_match.group(0)
     if "本月" in command:
         return "本月"
     return None
@@ -720,6 +747,191 @@ def _render_hk_ipos(snapshot: Any) -> str:
         lines.pop()
     lines.append("注：这里展示富途 IPO 列表状态；个人 IPO 申购/中签记录暂未接入，当前只读查询，不会提交申购。")
     return "\n".join(lines)
+
+
+def _match_trade_review_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in TRADE_REVIEW_COMMANDS:
+        return ""
+    for prefix in TRADE_REVIEW_COMMANDS:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    if re.fullmatch(r"交易记录\s+\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{4}[-/]\d{1,2}[-/]\d{1,2}", compact):
+        return compact.replace("交易记录", "", 1).strip()
+    return None
+
+
+def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:
+    start, end, label = _resolve_trade_review_range(time_range_text)
+    try:
+        snapshot = get_futu_trade_history(start=start.isoformat(), end=end.isoformat())
+    except FutuProviderError as exc:
+        message = (
+            f"交易复盘（{label}）接口已接上，但暂时读取不到富途交易记录。\n"
+            f"原因：{exc}\n\n"
+            "需要确认云端 OpenD 已启动、已完成验证码登录，并且容器可以访问 OpenD。"
+        )
+        return CommandResult(ok="futu-api 未安装" in str(exc), message=message)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取富途交易记录失败：{exc}")
+
+    return CommandResult(ok=True, message=_render_trade_review(snapshot=snapshot, label=label))
+
+
+def _resolve_trade_review_range(value: str | None) -> tuple[date, date, str]:
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    text = (value or "").strip()
+    if not text or text == "本月":
+        start = today.replace(day=1)
+        return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
+
+    range_match = re.search(
+        r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}).*?(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
+        text,
+    )
+    if range_match:
+        start = _parse_command_date(range_match.group(1))
+        end = _parse_command_date(range_match.group(2))
+        if end < start:
+            start, end = end, start
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+
+    month_match = re.search(r"(\d{4})[-/年](\d{1,2})", text)
+    if month_match:
+        year = int(month_match.group(1))
+        month = int(month_match.group(2))
+        last_day = calendar.monthrange(year, month)[1]
+        start = date(year, month, 1)
+        end = date(year, month, last_day)
+        if start <= today <= end:
+            end = today
+        return start, end, f"{year:04d}-{month:02d}"
+
+    start = today.replace(day=1)
+    return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
+
+
+def _parse_command_date(value: str) -> date:
+    normalized = value.replace("/", "-")
+    return datetime.strptime(normalized, "%Y-%m-%d").date()
+
+
+def _render_trade_review(snapshot: Any, label: str) -> str:
+    deals = snapshot.deals
+    fetched_at = snapshot.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    lines = [
+        f"交易复盘（{label}）",
+        f"- 成交笔数：{len(deals)}",
+        f"- 查询区间：{snapshot.start} 至 {snapshot.end}",
+        f"- 数据时间：{fetched_at}",
+        "",
+        "口径说明：",
+        "- 这是第一版“成交复盘”，读取的是富途历史成交；严格区间收益还需要期初/期末净资产、出入金和汇率快照，不能只靠成交记录硬算。",
+        "- 当前只读查询，不会下单或修改账户。",
+    ]
+    if snapshot.account_info:
+        lines.extend(["", "当前账户快照："])
+        account = snapshot.account_info
+        for key, label_text in (
+            ("total_assets", "总资产"),
+            ("market_val", "证券市值"),
+            ("cash", "现金"),
+            ("power", "购买力"),
+        ):
+            value = account.get(key)
+            if value is not None:
+                lines.append(f"- {label_text}: {value}")
+    elif snapshot.account_error:
+        lines.extend(["", f"账户快照暂不可用：{snapshot.account_error}"])
+
+    if not deals:
+        lines.extend(["", "这个区间没有读取到成交记录。"])
+        return "\n".join(lines)
+
+    currency_summary = _summarize_deals_by_currency(deals)
+    lines.extend(["", "按币种成交汇总："])
+    for currency, summary in sorted(currency_summary.items()):
+        lines.append(
+            f"- {currency}: 买入 {_fmt_money(summary['buy_amount'])}, "
+            f"卖出 {_fmt_money(summary['sell_amount'])}, "
+            f"净现金流 {_fmt_money(summary['sell_amount'] - summary['buy_amount'])}, "
+            f"成交 {int(summary['count'])} 笔"
+        )
+
+    lines.extend(["", "主要交易标的："])
+    for item in _top_traded_symbols(deals)[:8]:
+        lines.append(
+            f"- {item['name']} {item['code']}: 成交额 {_fmt_money(item['amount'])} {item['currency']}, "
+            f"买入 {int(item['buy_count'])} 笔，卖出 {int(item['sell_count'])} 笔"
+        )
+
+    lines.extend(["", "最近成交："])
+    for deal in sorted(deals, key=lambda item: str(item.get("create_time") or ""), reverse=True)[:10]:
+        side = _fmt_trade_side(deal.get("trd_side"))
+        lines.append(
+            f"- {_display_value(deal.get('create_time'))} {side} "
+            f"{_display_value(deal.get('stock_name'))} {_display_value(deal.get('code'))} "
+            f"{_display_value(deal.get('qty'))} 股 @ {_display_value(deal.get('price'))}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "下一步建议：如果你认可这个成交口径，我会再加“每日账户快照 + 出入金记录 + 汇率换算”，那时才能做更准确的月度收益归因。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _summarize_deals_by_currency(deals: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    result: dict[str, dict[str, float]] = {}
+    for deal in deals:
+        currency = str(deal.get("currency") or "UNKNOWN").upper()
+        bucket = result.setdefault(currency, {"buy_amount": 0.0, "sell_amount": 0.0, "count": 0.0})
+        amount = _number(deal.get("amount"))
+        side = str(deal.get("trd_side") or "").lower()
+        if "sell" in side or "卖" in side:
+            bucket["sell_amount"] += amount
+        elif "buy" in side or "买" in side:
+            bucket["buy_amount"] += amount
+        bucket["count"] += 1
+    return result
+
+
+def _top_traded_symbols(deals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    for deal in deals:
+        code = str(deal.get("code") or "")
+        currency = str(deal.get("currency") or "UNKNOWN").upper()
+        key = (code, currency)
+        item = result.setdefault(
+            key,
+            {
+                "code": code,
+                "currency": currency,
+                "name": str(deal.get("stock_name") or code or "unknown"),
+                "amount": 0.0,
+                "buy_count": 0.0,
+                "sell_count": 0.0,
+            },
+        )
+        item["amount"] += abs(_number(deal.get("amount")))
+        side = str(deal.get("trd_side") or "").lower()
+        if "sell" in side or "卖" in side:
+            item["sell_count"] += 1
+        elif "buy" in side or "买" in side:
+            item["buy_count"] += 1
+    return sorted(result.values(), key=lambda item: item["amount"], reverse=True)
+
+
+def _fmt_trade_side(value: Any) -> str:
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if "buy" in lowered or "买" in text:
+        return "买入"
+    if "sell" in lowered or "卖" in text:
+        return "卖出"
+    return text or "-"
 
 
 def _group_ipos(ipos: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -962,6 +1174,9 @@ def _help_text() -> str:
 - 今天仓位怎么看
 - 组合体检
 - 港股新股
+- 交易记录 2026-05
+- 交易记录 2026-05-01 2026-05-29
+- 本月收益
 - 系统状态
 - IPO提醒状态
 - 分析 000660 KR

@@ -64,7 +64,7 @@ def build_intent_router_prompt(command: str) -> str:
 - portfolio_positions：用户想看当前持仓列表。
 - ipo_status：用户想看港股新股、IPO 或 IPO 提醒状态。
 - system_status：用户想检查系统、部署、OpenD、OpenAI、机器人是否正常。
-- trade_review：用户想看交易记录、收益复盘、月度/区间收益。第一版只做占位说明。
+- trade_review：用户想看交易记录、收益复盘、月度/区间收益。
 - memory_candidate：用户在表达可沉淀为组合/策略记忆的观点、偏好、痛点、目标或复盘反思。
 - unknown：不确定。
 
