@@ -5,7 +5,13 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.command_router import (
+    handle_command,
+    is_maintenance_command,
+    is_query_command,
+)
 from investment_knowledge_mcp.config import get_config
+from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 
 
@@ -236,6 +242,67 @@ def get_realtime_portfolio_positions() -> dict[str, Any]:
         "fetched_at": snapshot.fetched_at.isoformat(),
         "positions": snapshot.positions,
     }
+
+
+@mcp.tool()
+def run_investment_command(
+    command: str,
+    sender: str | None = None,
+    source: str = "hermes",
+) -> dict[str, Any]:
+    """Run a safe natural-language InvestmentKnowledge command for an agent shell.
+
+    This tool is intended for Hermes/OpenClaw style gateways. It only permits
+    query commands and Futu maintenance commands; direct knowledge writes remain
+    behind the existing confirmation flow.
+    """
+    cleaned = command.strip()
+    if not cleaned:
+        return {"ok": False, "message": "command is required"}
+
+    if not (is_query_command(cleaned) or is_maintenance_command(cleaned)):
+        message = (
+            "Hermes MCP 当前只允许查询类和富途维护类指令。"
+            "知识写入请先走候选心得确认流程，避免污染长期记忆。"
+        )
+        _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
+        return {"ok": False, "message": message}
+
+    try:
+        run_schema()
+        result = handle_command(cleaned, include_artifact_path=False)
+        _record_agent_command(
+            command=cleaned,
+            ok=result.ok,
+            message=result.message,
+            sender=sender,
+            source=source,
+        )
+        return {"ok": result.ok, "message": result.message}
+    except Exception as exc:
+        message = f"执行 InvestmentKnowledge 指令失败：{exc}"
+        _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
+        return {"ok": False, "message": message}
+
+
+def _record_agent_command(
+    command: str,
+    ok: bool,
+    message: str,
+    sender: str | None,
+    source: str | None,
+) -> None:
+    try:
+        repository.record_command_event(
+            command=command,
+            ok=ok,
+            message=message,
+            sender=sender,
+            source=source,
+        )
+    except Exception:
+        # Command execution should not fail just because audit logging is down.
+        return
 
 
 @mcp.tool()

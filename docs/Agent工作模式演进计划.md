@@ -117,11 +117,11 @@ updated_at
 - 写入类必须满足白名单。
 - 系统推断出的用户观点只能进入候选心得，不能直接变成正式心得。
 
-## 阶段 4：评估 Hermes 作为外壳
+## 阶段 4：Hermes 作为外壳
 
-目标：判断是否让 Hermes 承担通用 gateway / session / cron / memory shell。
+目标：让 Hermes 承担通用 gateway / session / cron / memory shell，InvestmentKnowledge 退到受控投资后端。
 
-可选架构：
+当前决策：
 
 ```text
 钉钉 / CLI / Cron
@@ -130,22 +130,17 @@ updated_at
 -> PostgreSQL / Futu / OpenAI
 ```
 
-适合条件：
+落地原则：
 
-- InvestmentKnowledge 工具边界稳定。
-- 写入权限和候选确认机制已经清晰。
-- 用户希望同一个 Agent 同时做投资、运维、研究、文件处理等跨域任务。
-
-暂不适合立刻切换的原因：
-
-- 当前新加坡 ECS 刚跑通，直接替换 gateway 会增加部署变量。
-- Hermes 自身有完整配置、session、memory、cron 体系，需要单独运维。
-- 现阶段最痛的问题可以通过自检和任务表先解决。
+- 单个钉钉机器人先由 Hermes 接管，InvestmentKnowledge 不再直接消费同一套 Stream 凭证。
+- InvestmentKnowledge MCP 第一版只暴露安全总入口 `run_investment_command` 给 Hermes。
+- 查询类和富途维护类可以直接执行；正式心得写入仍然必须经过候选确认。
+- GitHub Actions 继续作为正式发布与回滚通道；Hermes 负责日常交互和轻量任务调度。
 
 ## 推荐下一步
 
-1. 实现 `系统状态` / `自检` 指令。
-2. 增加 `agent_tasks` 表和最小任务执行器。
-3. 将“补全前十大持仓画像”做成第一个异步任务。
-4. 再做自然语言 intent router。
-5. 最后再评估 Hermes 是否接管钉钉入口，或仅作为外部 Agent Shell 调用 InvestmentKnowledge MCP。
+1. 给 InvestmentKnowledge MCP 增加安全自然语言命令入口。
+2. 编写 Hermes ECS 安装脚本和单机器人切换文档。
+3. 在新加坡 ECS 上先启动 InvestmentKnowledge MCP HTTP，再启动 Hermes Gateway。
+4. 测试 `帮助`、`我的持仓`、`本月收益`、`富途状态`。
+5. 稳定后再迁移 IPO 定时提醒和任务表。
