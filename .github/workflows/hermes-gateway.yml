@@ -45,7 +45,7 @@ jobs:
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
           source: "scripts/install_hermes_gateway_on_ecs.sh"
-          target: "/tmp"
+          target: "/tmp/hermes-gateway-${{ github.run_id }}"
           strip_components: 1
           overwrite: true
 
@@ -61,7 +61,7 @@ jobs:
             set -e
 
             APP_DIR=/opt/investment-knowledge
-            INSTALLER=/tmp/install_hermes_gateway_on_ecs.sh
+            INSTALLER=/tmp/hermes-gateway-${{ github.run_id }}/install_hermes_gateway_on_ecs.sh
             MODE="${{ inputs.mode }}"
 
             sudo mkdir -p "$APP_DIR/scripts"
