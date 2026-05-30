@@ -446,6 +446,7 @@ jobs:
             POSTGRES_USER=postgres
             POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
             POSTGRES_DB=investment_kg
+            POSTGRES_HOST_PORT=${{ vars.POSTGRES_HOST_PORT || '55432' }}
 
             MCP_TRANSPORT=streamable-http
             MCP_HOST=0.0.0.0

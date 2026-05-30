@@ -165,6 +165,12 @@ CREATE TABLE IF NOT EXISTS coding_tasks (
   CHECK (priority IN ('low', 'normal', 'high'))
 );
 
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS branch_name TEXT;
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS commit_sha TEXT;
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS worker_log TEXT;
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS worker_started_at TIMESTAMPTZ;
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS worker_finished_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS ipo_reminder_events (
   id BIGSERIAL PRIMARY KEY,
   reminder_type TEXT NOT NULL,

@@ -102,8 +102,40 @@ DINGTALK_REQUIRE_MENTION=true
 ## 已知影响
 
 - IPO 定时提醒目前在 InvestmentKnowledge 的 `dingtalk-stream-bot` 进程内；切给 Hermes 后，提醒需要迁移到独立任务或 Hermes cron。
-- Hermes 第一版先不允许自动改代码。后续可以再接 Codex/代码 worker，但那应该是第二阶段。
+- Hermes 不直接改代码；开发任务进入 `coding_tasks` 后，由云端 Codex worker 领取、改代码、提交并推送分支。
 - GitHub Actions 仍然保留，用于备份、可回滚部署和正式发布；Hermes 适合做日常轻量调度，不替代版本管理。
+
+## Codex Worker
+
+云端 Codex worker 是 Hermes 后面的执行层：
+
+```text
+钉钉
+-> Hermes Gateway
+-> InvestmentKnowledge MCP
+-> coding_tasks
+-> ECS Codex worker
+-> GitHub branch/commit
+```
+
+权限边界：
+
+- worker 可以在独立 clone 里运行 `codex exec`、修改代码、提交并推送 `codex/task-*` 分支。
+- worker 默认使用 `CODEX_WORKER_DANGER_FULL_ACCESS=true`，适合当前早期快速迭代；如果后续要收紧，可以改成 `false`。
+- worker 不默认直接部署生产。部署仍走 GitHub Actions，避免一句群聊直接改线上服务。
+- 需要一次性配置 `CODEX_WORKER_GITHUB_TOKEN`，用于 ECS worker 推送分支。
+
+安装入口：
+
+```bash
+bash scripts/install_codex_worker_on_ecs.sh --start
+```
+
+GitHub Actions：
+
+```text
+Actions -> Codex Worker -> install/start/status/stop/run-once
+```
 
 ## 验证步骤
 

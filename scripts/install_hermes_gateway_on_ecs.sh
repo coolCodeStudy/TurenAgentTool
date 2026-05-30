@@ -166,6 +166,8 @@ mcp_servers:
         - run_investment_command
         - create_coding_task
         - list_coding_tasks
+        - claim_next_coding_task
+        - update_coding_task
       resources: false
       prompts: false
 EOF

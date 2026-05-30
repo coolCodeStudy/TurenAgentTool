@@ -428,21 +428,24 @@ def _handle_create_coding_task(title: str) -> CommandResult:
     return CommandResult(
         ok=True,
         message=(
-            f"已创建开发任务 #{row['id']}，等待接入 Codex worker 或人工处理。\n\n"
+            f"已创建开发任务 #{row['id']}，等待云端 Codex worker 处理。\n\n"
             f"任务：{row['title']}\n\n"
-            "当前阶段我只先记录开发任务，不会自动改代码、提交或部署。"
+            "worker 会在 ECS 上拉取任务、改代码并推送分支；线上部署仍需要单独确认。"
         ),
     )
 
 
 def _handle_list_coding_tasks() -> CommandResult:
-    tasks = repository.list_coding_tasks(status="pending", limit=10)
+    tasks = repository.list_coding_tasks(status="all", limit=10)
     if not tasks:
-        return CommandResult(ok=True, message="暂无待处理开发任务。")
+        return CommandResult(ok=True, message="暂无开发任务。")
 
-    lines = ["待处理开发任务："]
+    lines = ["最近开发任务："]
     for task in tasks:
-        lines.append(f"- #{task['id']} [{task['priority']}] {task['title']}")
+        suffix = ""
+        if task.get("branch_name"):
+            suffix = f" -> {task['branch_name']}"
+        lines.append(f"- #{task['id']} [{task['status']}/{task['priority']}] {task['title']}{suffix}")
     return CommandResult(ok=True, message="\n".join(lines))
 
 

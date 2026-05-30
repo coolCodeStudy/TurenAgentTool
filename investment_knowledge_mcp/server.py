@@ -274,6 +274,34 @@ def list_coding_tasks(status: str | None = "pending", limit: int = 10) -> list[d
 
 
 @mcp.tool()
+def claim_next_coding_task(worker_name: str = "codex-worker") -> dict[str, Any] | None:
+    """Claim the next pending coding task for a trusted code worker."""
+    return repository.claim_next_coding_task(worker_name=worker_name)
+
+
+@mcp.tool()
+def update_coding_task(
+    task_id: int,
+    status: str,
+    result: str | None = None,
+    branch_name: str | None = None,
+    commit_sha: str | None = None,
+    worker_log: str | None = None,
+    linked_issue_url: str | None = None,
+) -> dict[str, Any]:
+    """Update a coding task after a trusted worker has processed it."""
+    return repository.update_coding_task(
+        task_id=task_id,
+        status=status,
+        result=result,
+        branch_name=branch_name,
+        commit_sha=commit_sha,
+        worker_log=worker_log,
+        linked_issue_url=linked_issue_url,
+    )
+
+
+@mcp.tool()
 def run_investment_command(
     command: str,
     sender: str | None = None,

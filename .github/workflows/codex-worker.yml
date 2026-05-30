@@ -1,0 +1,122 @@
+name: Codex Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Codex worker operation"
+        required: true
+        default: "install"
+        type: choice
+        options:
+          - install
+          - start
+          - status
+          - stop
+          - run-once
+
+jobs:
+  codex_worker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate ECS secrets
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+        run: |
+          set -e
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+          echo "Required ECS secrets are present."
+
+      - name: Upload Codex worker files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          source: "scripts/install_codex_worker_on_ecs.sh,scripts/codex_task_worker.py"
+          target: "/tmp/codex-worker-${{ github.run_id }}"
+          strip_components: 1
+          overwrite: true
+
+      - name: Run Codex worker operation
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          CODEX_WORKER_GITHUB_TOKEN: ${{ secrets.CODEX_WORKER_GITHUB_TOKEN }}
+          CODEX_WORKER_MODEL: ${{ vars.CODEX_WORKER_MODEL }}
+          CODEX_WORKER_DANGER_FULL_ACCESS: ${{ vars.CODEX_WORKER_DANGER_FULL_ACCESS || 'true' }}
+          CODEX_WORKER_AUTO_PUSH: ${{ vars.CODEX_WORKER_AUTO_PUSH || 'true' }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 40m
+          envs: CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH
+          script: |
+            set -e
+
+            APP_DIR=/opt/investment-knowledge
+            UPLOAD_DIR=/tmp/codex-worker-${{ github.run_id }}
+            MODE="${{ inputs.mode }}"
+
+            sudo mkdir -p "$APP_DIR/scripts"
+            sudo cp "$UPLOAD_DIR/install_codex_worker_on_ecs.sh" "$APP_DIR/scripts/install_codex_worker_on_ecs.sh"
+            sudo cp "$UPLOAD_DIR/codex_task_worker.py" "$APP_DIR/scripts/codex_task_worker.py"
+            sudo chmod +x "$APP_DIR/scripts/install_codex_worker_on_ecs.sh" "$APP_DIR/scripts/codex_task_worker.py"
+
+            cd "$APP_DIR"
+
+            if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE="docker compose"
+            elif sudo docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE="sudo docker compose"
+            else
+              echo "Docker Compose plugin is not available."
+              exit 1
+            fi
+
+            if [ -f docker-compose.prod.yml ]; then
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
+            fi
+
+            case "$MODE" in
+              install)
+                sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH \
+                  bash scripts/install_codex_worker_on_ecs.sh --start
+                ;;
+              start)
+                sudo systemctl restart investment-codex-worker.service
+                ;;
+              status)
+                true
+                ;;
+              stop)
+                sudo systemctl disable --now investment-codex-worker.service || true
+                ;;
+              run-once)
+                sudo systemctl stop investment-codex-worker.service || true
+                sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH \
+                  bash scripts/install_codex_worker_on_ecs.sh
+                sudo /opt/investment-knowledge-codex/venv/bin/python "$APP_DIR/scripts/codex_task_worker.py" --once
+                ;;
+              *)
+                echo "Unknown mode: $MODE"
+                exit 1
+                ;;
+            esac
+
+            sudo systemctl status investment-codex-worker.service --no-pager || true
+            sudo journalctl -u investment-codex-worker.service -n 120 --no-pager || true

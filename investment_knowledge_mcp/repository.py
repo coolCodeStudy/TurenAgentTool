@@ -535,6 +535,98 @@ def list_coding_tasks(status: str | None = "pending", limit: int = 10) -> list[d
     return to_jsonable(rows)
 
 
+def get_coding_task(task_id: int) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM coding_tasks
+            WHERE id = %s
+            """,
+            (task_id,),
+        ).fetchone()
+    return to_jsonable(row) if row else None
+
+
+def claim_next_coding_task(worker_name: str = "codex-worker") -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            WITH next_task AS (
+              SELECT id
+              FROM coding_tasks
+              WHERE status IN ('pending', 'accepted')
+              ORDER BY
+                CASE priority
+                  WHEN 'high' THEN 0
+                  WHEN 'normal' THEN 1
+                  ELSE 2
+                END,
+                created_at ASC
+              LIMIT 1
+              FOR UPDATE SKIP LOCKED
+            )
+            UPDATE coding_tasks AS task SET
+              status = 'running',
+              worker_started_at = COALESCE(worker_started_at, now()),
+              updated_at = now(),
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s)
+            FROM next_task
+            WHERE task.id = next_task.id
+            RETURNING task.*
+            """,
+            (f"{worker_name}: claimed task",),
+        ).fetchone()
+    return to_jsonable(row) if row else None
+
+
+def update_coding_task(
+    task_id: int,
+    status: str,
+    result: str | None = None,
+    branch_name: str | None = None,
+    commit_sha: str | None = None,
+    worker_log: str | None = None,
+    linked_issue_url: str | None = None,
+) -> dict[str, Any]:
+    if status not in {"pending", "accepted", "running", "needs_user", "done", "rejected", "cancelled"}:
+        raise ValueError(f"invalid coding task status: {status}")
+
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE coding_tasks SET
+              status = %s,
+              result = COALESCE(%s, result),
+              branch_name = COALESCE(%s, branch_name),
+              commit_sha = COALESCE(%s, commit_sha),
+              linked_issue_url = COALESCE(%s, linked_issue_url),
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s, '')),
+              worker_finished_at = CASE
+                WHEN %s IN ('done', 'needs_user', 'rejected', 'cancelled') THEN now()
+                ELSE worker_finished_at
+              END,
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                status,
+                result,
+                branch_name,
+                commit_sha,
+                linked_issue_url,
+                worker_log,
+                status,
+                task_id,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(f"coding task not found: {task_id}")
+    return to_jsonable(row)
+
+
 def _resolve_insight_target_in_conn(
     conn: Connection,
     target_type: str,
