@@ -130,6 +130,9 @@ CODING_TASK_LIST_COMMANDS = {
 
 WORKER_STATUS_COMMANDS = {
     "worker状态",
+    "work状态",
+    "worker status",
+    "work status",
     "codex状态",
     "Codex状态",
     "开发worker状态",
@@ -309,6 +312,7 @@ def is_query_command(command: str) -> bool:
             *SYSTEM_STATUS_COMMANDS,
             *FUTU_MAINTENANCE_QUERY_COMMANDS,
             *IPO_REMINDER_STATUS_COMMANDS,
+            *WORKER_STATUS_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
             *TRADE_REVIEW_COMMANDS,

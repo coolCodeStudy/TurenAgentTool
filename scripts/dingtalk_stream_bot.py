@@ -89,7 +89,7 @@ def main() -> None:
                     _format_sender_for_log(sender),
                 )
                 self.reply_text(
-                    "Stream 入口当前只开放查询类指令；候选心得、开发任务和富途维护指令只允许写入白名单本人提交。可用：怎么看海力士、持仓分析、交易记录 2026-05、富途状态、查看候选心得、创建开发任务、帮助。",
+                    "Stream 入口当前只开放查询类指令；候选心得、开发任务和富途维护指令只允许写入白名单本人提交。可用：怎么看海力士、持仓分析、交易记录 2026-05、富途状态、worker状态、查看开发任务、查看候选心得、创建开发任务、帮助。",
                     incoming_message,
                 )
                 return AckMessage.STATUS_OK, "OK"
