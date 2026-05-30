@@ -253,6 +253,9 @@ def main() -> None:
         router_candidate_result = handle_command(
             f"提出个股候选心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_CANDIDATE}"
         )
+        router_duplicate_candidate_result = handle_command(
+            f"提出个股候选心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_CANDIDATE}"
+        )
         router_portfolio_insight_result = handle_command(f"记录组合心得 {SMOKE_ROUTER_PORTFOLIO_INSIGHT}")
         router_strategy_candidate_result = handle_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         router_natural_memory_result = handle_command(SMOKE_ROUTER_NATURAL_MEMORY)
@@ -272,6 +275,8 @@ def main() -> None:
         assert resolve_stock_reference("Smoke Test Stock")[0]["id"] == stock["id"]
         assert router_insight_result.ok
         assert router_candidate_result.ok
+        assert router_duplicate_candidate_result.ok
+        assert "已合并" in router_duplicate_candidate_result.message
         assert router_portfolio_insight_result.ok
         assert router_strategy_candidate_result.ok
         assert router_natural_memory_result.ok

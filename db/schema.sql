@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS candidate_insights (
   normalized_summary TEXT,
   tags JSONB NOT NULL DEFAULT '[]'::jsonb,
   reason TEXT,
+  repeat_count INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'pending',
   confirmed_insight_id BIGINT REFERENCES user_insights(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -122,6 +123,9 @@ CREATE TABLE IF NOT EXISTS candidate_insights (
   decided_at TIMESTAMPTZ,
   CHECK (status IN ('pending', 'confirmed', 'rejected'))
 );
+
+ALTER TABLE candidate_insights
+  ADD COLUMN IF NOT EXISTS repeat_count INTEGER NOT NULL DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS review_reports (
   id BIGSERIAL PRIMARY KEY,

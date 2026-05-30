@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from psycopg import Connection
@@ -878,6 +879,52 @@ def _upsert_candidate_insight_in_conn(
         FROM candidate_insights
         WHERE target_type = %s
           AND target_id IS NOT DISTINCT FROM %s
+          AND status = 'pending'
+          AND regexp_replace(lower(insight), '[[:space:][:punct:]]+', '', 'g') = %s
+        ORDER BY id
+        LIMIT 1
+        """,
+        (target_type, target_id, _normalize_candidate_insight_key(insight)),
+    ).fetchone()
+    if existing is None and target_type in {"portfolio", "strategy"}:
+        existing = conn.execute(
+            """
+            SELECT *
+            FROM candidate_insights
+            WHERE target_type IN ('portfolio', 'strategy')
+              AND target_id IS NULL
+              AND status = 'pending'
+              AND regexp_replace(lower(insight), '[[:space:][:punct:]]+', '', 'g') = %s
+            ORDER BY id
+            LIMIT 1
+            """,
+            (_normalize_candidate_insight_key(insight),),
+        ).fetchone()
+    if existing is not None:
+        return conn.execute(
+            """
+            UPDATE candidate_insights SET
+              target_type = %s,
+              normalized_summary = COALESCE(candidate_insights.normalized_summary, %s),
+              tags = CASE
+                WHEN candidate_insights.tags = '[]'::jsonb THEN %s
+                ELSE candidate_insights.tags
+              END,
+              reason = COALESCE(candidate_insights.reason, %s),
+              repeat_count = candidate_insights.repeat_count + 1,
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (target_type, normalized_summary, Jsonb(tags), reason, existing["id"]),
+        ).fetchone()
+
+    exact_existing = conn.execute(
+        """
+        SELECT *
+        FROM candidate_insights
+        WHERE target_type = %s
+          AND target_id IS NOT DISTINCT FROM %s
           AND insight = %s
           AND status = 'pending'
         ORDER BY id
@@ -885,7 +932,7 @@ def _upsert_candidate_insight_in_conn(
         """,
         (target_type, target_id, insight),
     ).fetchone()
-    if existing is not None:
+    if exact_existing is not None:
         return conn.execute(
             """
             UPDATE candidate_insights SET
@@ -895,11 +942,12 @@ def _upsert_candidate_insight_in_conn(
                 ELSE candidate_insights.tags
               END,
               reason = COALESCE(candidate_insights.reason, %s),
+              repeat_count = candidate_insights.repeat_count + 1,
               updated_at = now()
             WHERE id = %s
             RETURNING *
             """,
-            (normalized_summary, Jsonb(tags), reason, existing["id"]),
+            (normalized_summary, Jsonb(tags), reason, exact_existing["id"]),
         ).fetchone()
 
     return conn.execute(
@@ -912,6 +960,10 @@ def _upsert_candidate_insight_in_conn(
         """,
         (target_type, target_id, insight, normalized_summary, Jsonb(tags), reason),
     ).fetchone()
+
+
+def _normalize_candidate_insight_key(insight: str) -> str:
+    return re.sub(r"[\s\W_]+", "", insight.strip().lower())
 
 
 def _get_candidate_insight_in_conn(

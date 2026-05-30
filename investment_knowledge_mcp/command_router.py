@@ -321,8 +321,10 @@ def _handle_list_candidates() -> CommandResult:
 
     lines = ["待确认候选心得："]
     for candidate in candidates:
+        repeat_count = int(candidate.get("repeat_count") or 1)
+        repeat_suffix = f" x{repeat_count}" if repeat_count > 1 else ""
         lines.append(
-            f"- [{candidate['id']}] {candidate['target_type']}:{candidate['target_id']} "
+            f"- [{candidate['id']}{repeat_suffix}] {candidate['target_type']}:{candidate['target_id']} "
             f"{candidate['insight']}"
         )
     return CommandResult(ok=True, message="\n".join(lines))
@@ -407,7 +409,8 @@ def _handle_propose_stock_candidate(symbol: str, market: str, insight: str) -> C
         insight=insight,
         reason="来自统一指令入口的候选心得，需要用户确认。",
     )
-    return CommandResult(ok=True, message=f"已提出候选心得 id={row['id']}，等待确认。")
+    suffix = _candidate_repeat_suffix(row)
+    return CommandResult(ok=True, message=f"已提出候选心得 id={row['id']}{suffix}，等待确认。")
 
 
 def _handle_propose_global_candidate(target_type: str, insight: str) -> CommandResult:
@@ -417,7 +420,15 @@ def _handle_propose_global_candidate(target_type: str, insight: str) -> CommandR
         reason="来自统一指令入口的组合/策略候选心得，需要用户确认。",
     )
     label = "策略" if target_type == "strategy" else "组合"
-    return CommandResult(ok=True, message=f"已提出{label}候选心得 id={row['id']}，等待确认。")
+    suffix = _candidate_repeat_suffix(row)
+    return CommandResult(ok=True, message=f"已提出{label}候选心得 id={row['id']}{suffix}，等待确认。")
+
+
+def _candidate_repeat_suffix(row: dict[str, Any]) -> str:
+    repeat_count = int(row.get("repeat_count") or 1)
+    if repeat_count <= 1:
+        return ""
+    return f"（重复 {repeat_count} 次，已合并）"
 
 
 def _handle_intent_routed_command(command: str) -> CommandResult | None:
@@ -460,7 +471,7 @@ def _handle_intent_routed_command(command: str) -> CommandResult | None:
 
 def _route_intent(command: str) -> dict[str, Any]:
     heuristic = _heuristic_route_intent(command)
-    if heuristic.get("confidence", 0) >= 0.8:
+    if heuristic.get("confidence", 0) >= 0.8 or heuristic.get("intent") == "memory_candidate":
         return heuristic
     try:
         routed = route_command_intent_with_openai(command)
