@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import inspect
 import re
 import time
@@ -42,6 +42,16 @@ class TradeHistorySnapshot:
     end: str
     account_info: dict[str, Any] | None = None
     account_error: str | None = None
+    source: str = "futu"
+
+
+@dataclass(frozen=True)
+class CashFlowSnapshot:
+    cash_flows: list[dict[str, Any]]
+    fetched_at: datetime
+    start: str
+    end: str
+    errors: list[str]
     source: str = "futu"
 
 
@@ -90,6 +100,11 @@ def get_hk_ipo_list(config: AppConfig | None = None, include_orders: bool = True
 def get_futu_trade_history(start: str, end: str, config: AppConfig | None = None) -> TradeHistorySnapshot:
     config = config or get_config()
     return _fetch_trade_history(config=config, start=start, end=end)
+
+
+def get_futu_cash_flows(start: str, end: str, config: AppConfig | None = None) -> CashFlowSnapshot:
+    config = config or get_config()
+    return _fetch_cash_flows(config=config, start=start, end=end)
 
 
 def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
@@ -296,6 +311,79 @@ def _fetch_trade_history(config: AppConfig, start: str, end: str) -> TradeHistor
         context.close()
 
 
+def _fetch_cash_flows(config: AppConfig, start: str, end: str) -> CashFlowSnapshot:
+    try:
+        import futu as ft
+    except ImportError as exc:
+        raise FutuProviderError("futu-api 未安装，无法读取富途资金流水。") from exc
+
+    context = _create_trade_context(
+        ft.OpenSecTradeContext,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+            "security_firm": _enum_value(ft.SecurityFirm, config.futu_security_firm),
+        },
+    )
+    try:
+        if not hasattr(context, "get_acc_cash_flow"):
+            raise FutuProviderError("当前 futu-api 版本没有 get_acc_cash_flow，无法读取资金流水。")
+
+        kwargs = _cash_flow_query_kwargs(config=config, ft=ft)
+        kwargs["start"] = start
+        kwargs["end"] = end
+        kwargs["clearing_date"] = ""
+        ret, data = _call_with_keyword_retry(context.get_acc_cash_flow, _filter_supported_kwargs(context.get_acc_cash_flow, kwargs))
+        if ret == ft.RET_OK:
+            return CashFlowSnapshot(
+                cash_flows=_normalize_cash_flows(data),
+                fetched_at=datetime.now(timezone.utc),
+                start=start,
+                end=end,
+                errors=[],
+            )
+
+        errors = [f"区间资金流水查询失败：{data}"]
+        start_date = _parse_iso_date(start)
+        end_date = _parse_iso_date(end)
+        days = _date_range(start_date, end_date)
+        if len(days) > 20:
+            return CashFlowSnapshot(
+                cash_flows=[],
+                fetched_at=datetime.now(timezone.utc),
+                start=start,
+                end=end,
+                errors=errors
+                + [
+                    "富途证券账户资金流水通常需要按清算日逐日查询；本区间超过 20 天，"
+                    "为避免触发频率限制，当前命令未逐日回补。"
+                ],
+            )
+
+        rows: list[dict[str, Any]] = []
+        for day in days:
+            daily_kwargs = _cash_flow_query_kwargs(config=config, ft=ft)
+            daily_kwargs["clearing_date"] = day.isoformat()
+            ret, data = _call_with_keyword_retry(
+                context.get_acc_cash_flow,
+                _filter_supported_kwargs(context.get_acc_cash_flow, daily_kwargs),
+            )
+            if ret == ft.RET_OK:
+                rows.extend(_normalize_cash_flows(data))
+            else:
+                errors.append(f"{day.isoformat()} 资金流水查询失败：{data}")
+
+        return CashFlowSnapshot(
+            cash_flows=rows,
+            fetched_at=datetime.now(timezone.utc),
+            start=start,
+            end=end,
+            errors=errors,
+        )
+    finally:
+        context.close()
+
+
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
     supported_kwargs = _filter_supported_kwargs(context.position_list_query, kwargs)
     return _call_with_keyword_retry(context.position_list_query, supported_kwargs)
@@ -327,6 +415,20 @@ def _trade_query_kwargs(config: AppConfig, ft: Any, refresh_cache: bool) -> dict
     if trade_market is not None:
         kwargs["trd_market"] = trade_market
         kwargs["order_market"] = trade_market
+    if config.futu_account_id:
+        kwargs["acc_id"] = config.futu_account_id
+    else:
+        kwargs["acc_index"] = config.futu_account_index
+    return kwargs
+
+
+def _cash_flow_query_kwargs(config: AppConfig, ft: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "trd_env": _enum_value(ft.TrdEnv, config.futu_trade_env),
+    }
+    cashflow_direction = _optional_enum_value(getattr(ft, "CashFlowDirection", None), "NONE")
+    if cashflow_direction is not None:
+        kwargs["cashflow_direction"] = cashflow_direction
     if config.futu_account_id:
         kwargs["acc_id"] = config.futu_account_id
     else:
@@ -537,6 +639,48 @@ def _normalize_account_info(data: Any) -> dict[str, Any]:
         "currency": _clean_empty(item.get("currency")),
         "raw": item,
     }
+
+
+def _normalize_cash_flows(data: Any) -> list[dict[str, Any]]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+
+    normalized = []
+    for row in records:
+        item = to_jsonable(row)
+        normalized.append(
+            {
+                "cashflow_id": _clean_empty(item.get("cashflow_id")),
+                "clearing_date": _clean_empty(item.get("clearing_date")),
+                "settlement_date": _clean_empty(item.get("settlement_date")),
+                "currency": _clean_empty(item.get("currency")),
+                "cashflow_type": _clean_empty(item.get("cashflow_type")),
+                "cashflow_direction": _clean_empty(item.get("cashflow_direction")),
+                "cashflow_amount": _clean_empty(item.get("cashflow_amount")),
+                "cashflow_remark": _clean_empty(item.get("cashflow_remark")),
+                "raw": item,
+            }
+        )
+    return normalized
+
+
+def _parse_iso_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _date_range(start: date, end: date) -> list[date]:
+    if end < start:
+        start, end = end, start
+    days = []
+    cursor = start
+    while cursor <= end:
+        days.append(cursor)
+        cursor += timedelta(days=1)
+    return days
 
 
 def _deal_amount(qty: Any, price: Any) -> float | None:

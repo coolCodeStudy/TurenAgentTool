@@ -295,7 +295,7 @@ def main() -> None:
         assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_STRATEGY_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_NATURAL_MEMORY in router_candidates_result.message
-        assert "交易复盘" in router_trade_review_result.message
+        assert "估算收益复盘" in router_trade_review_result.message
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
         assert len(result["user_insights"]) == 2

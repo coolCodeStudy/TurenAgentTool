@@ -16,6 +16,7 @@ from investment_knowledge_mcp.analysis_provider import (
 )
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
+    get_futu_cash_flows,
     get_futu_positions,
     get_futu_trade_history,
     get_hk_ipo_list,
@@ -107,10 +108,15 @@ IPO_REMINDER_STATUS_COMMANDS = {
 
 TRADE_REVIEW_COMMANDS = {
     "交易记录",
+    "交易复盘",
+}
+
+PERFORMANCE_ESTIMATE_COMMANDS = {
+    "估算收益",
+    "估算本月收益",
     "收益复盘",
     "月度收益",
     "本月收益",
-    "交易复盘",
 }
 
 
@@ -180,6 +186,10 @@ def handle_command(
 
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
+
+    performance_match = _match_performance_estimate_command(cleaned)
+    if performance_match is not None:
+        return _handle_performance_estimate(time_range_text=performance_match)
 
     trade_review_match = _match_trade_review_command(cleaned)
     if trade_review_match is not None:
@@ -573,6 +583,8 @@ def _handle_intent_routed_command(command: str) -> CommandResult | None:
             return CommandResult(ok=True, message=render_ipo_reminder_status())
         return _handle_hk_ipos()
     if intent_name == "trade_review":
+        if any(keyword in command for keyword in ("收益", "赚在哪", "亏在哪")):
+            return _handle_performance_estimate(time_range_text=str(intent.get("time_range") or "").strip() or None)
         return _handle_trade_review(time_range_text=str(intent.get("time_range") or "").strip() or None)
     if intent_name == "memory_candidate":
         candidate = str(intent.get("memory_candidate") or command).strip()
@@ -896,6 +908,16 @@ def _match_trade_review_command(command: str) -> str | None:
     return None
 
 
+def _match_performance_estimate_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in PERFORMANCE_ESTIMATE_COMMANDS:
+        return ""
+    for prefix in PERFORMANCE_ESTIMATE_COMMANDS:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    return None
+
+
 def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:
     start, end, label = _resolve_trade_review_range(time_range_text)
     try:
@@ -911,6 +933,47 @@ def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:
         return CommandResult(ok=False, message=f"读取富途交易记录失败：{exc}")
 
     return CommandResult(ok=True, message=_render_trade_review(snapshot=snapshot, label=label))
+
+
+def _handle_performance_estimate(time_range_text: str | None = None) -> CommandResult:
+    start, end, label = _resolve_trade_review_range(time_range_text)
+    try:
+        trade_snapshot = get_futu_trade_history(start=start.isoformat(), end=end.isoformat())
+    except FutuProviderError as exc:
+        message = (
+            f"估算收益复盘（{label}）暂时读取不到富途交易记录。\n"
+            f"原因：{exc}\n\n"
+            "需要确认云端 OpenD 已启动、已完成验证码登录，并且容器可以访问 OpenD。"
+        )
+        return CommandResult(ok="futu-api 未安装" in str(exc), message=message)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取富途交易记录失败，无法估算收益：{exc}")
+
+    try:
+        position_snapshot = get_futu_positions()
+        positions_error = None
+    except Exception as exc:
+        position_snapshot = None
+        positions_error = str(exc)
+
+    try:
+        cash_flow_snapshot = get_futu_cash_flows(start=start.isoformat(), end=end.isoformat())
+        cash_flow_error = None
+    except Exception as exc:
+        cash_flow_snapshot = None
+        cash_flow_error = str(exc)
+
+    return CommandResult(
+        ok=True,
+        message=_render_performance_estimate(
+            trade_snapshot=trade_snapshot,
+            position_snapshot=position_snapshot,
+            cash_flow_snapshot=cash_flow_snapshot,
+            positions_error=positions_error,
+            cash_flow_error=cash_flow_error,
+            label=label,
+        ),
+    )
 
 
 def _resolve_trade_review_range(value: str | None) -> tuple[date, date, str]:
@@ -1018,6 +1081,100 @@ def _render_trade_review(snapshot: Any, label: str) -> str:
     return "\n".join(lines)
 
 
+def _render_performance_estimate(
+    trade_snapshot: Any,
+    position_snapshot: Any,
+    cash_flow_snapshot: Any,
+    positions_error: str | None,
+    cash_flow_error: str | None,
+    label: str,
+) -> str:
+    fetched_at = trade_snapshot.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    account = trade_snapshot.account_info or {}
+    deals = trade_snapshot.deals
+    lines = [
+        f"估算收益复盘（{label}）",
+        f"- 查询区间：{trade_snapshot.start} 至 {trade_snapshot.end}",
+        f"- 数据时间：{fetched_at}",
+        "- 结论口径：当前还没有历史期初净资产快照，所以不能严格给出本月收益率；这里先做估算所需数据拼图和低置信度归因。",
+        "",
+        "当前账户快照：",
+    ]
+    if account:
+        for key, label_text in (
+            ("total_assets", "总资产"),
+            ("market_val", "证券市值"),
+            ("cash", "现金"),
+            ("power", "购买力"),
+        ):
+            value = account.get(key)
+            if value is not None:
+                lines.append(f"- {label_text}: {value}")
+    else:
+        lines.append("- 暂未读取到账户快照。")
+
+    if position_snapshot is not None:
+        position_summary = _summarize_positions_by_currency(position_snapshot.positions)
+        lines.extend(["", "当前持仓浮盈亏："])
+        for currency, summary in sorted(position_summary.items()):
+            lines.append(
+                f"- {currency}: 市值 {_fmt_money(summary['market_val'])}, "
+                f"浮动盈亏 {_fmt_money(summary['pl_val'])}, 持仓 {int(summary['count'])} 个"
+            )
+    elif positions_error:
+        lines.extend(["", f"当前持仓暂不可用：{positions_error}"])
+
+    deal_summary = _summarize_deals_by_currency(deals)
+    lines.extend(["", "区间成交现金流："])
+    if deal_summary:
+        for currency, summary in sorted(deal_summary.items()):
+            lines.append(
+                f"- {currency}: 买入 {_fmt_money(summary['buy_amount'])}, "
+                f"卖出 {_fmt_money(summary['sell_amount'])}, "
+                f"净交易现金流 {_fmt_money(summary['sell_amount'] - summary['buy_amount'])}, "
+                f"成交 {int(summary['count'])} 笔"
+            )
+    else:
+        lines.append("- 区间没有读取到成交。")
+
+    lines.extend(["", "区间资金流水："])
+    if cash_flow_snapshot is None:
+        lines.append(f"- 暂不可用：{cash_flow_error}")
+    else:
+        if cash_flow_snapshot.cash_flows:
+            cash_flow_summary = _summarize_cash_flows(cash_flow_snapshot.cash_flows)
+            for currency, summary in sorted(cash_flow_summary.items()):
+                lines.append(
+                    f"- {currency}: 总流水 {_fmt_money(summary['total'])}, "
+                    f"外部/非交易流水估算 {_fmt_money(summary['external'])}, "
+                    f"记录 {int(summary['count'])} 条"
+                )
+            top_types = _top_cash_flow_types(cash_flow_snapshot.cash_flows)
+            if top_types:
+                lines.append("")
+                lines.append("主要资金流水类型：")
+                for item in top_types[:8]:
+                    lines.append(
+                        f"- {item['currency']} {item['type']}: {_fmt_money(item['amount'])}, {int(item['count'])} 条"
+                    )
+        else:
+            lines.append("- 没有读取到资金流水记录。")
+        for error in cash_flow_snapshot.errors[:3]:
+            lines.append(f"- 提醒：{error}")
+
+    lines.extend(
+        [
+            "",
+            "估算判断：",
+            "- 当前可以判断交易活跃度、现金流方向、当前持仓浮盈亏，但还不能严谨计算本月净收益率。",
+            "- 若要从估算走向准确，需要从今天开始保存每日账户快照；历史月份可以用成交、资金流水、当前持仓和历史价格回放做低/中置信度估算。",
+            "",
+            "下一步：我建议把 `本月收益` 固定为这个收益口径，把纯成交列表留给 `交易复盘`。",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _summarize_deals_by_currency(deals: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     result: dict[str, dict[str, float]] = {}
     for deal in deals:
@@ -1031,6 +1188,70 @@ def _summarize_deals_by_currency(deals: list[dict[str, Any]]) -> dict[str, dict[
             bucket["buy_amount"] += amount
         bucket["count"] += 1
     return result
+
+
+def _summarize_positions_by_currency(positions: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    result: dict[str, dict[str, float]] = {}
+    for item in positions:
+        currency = _position_currency(item)
+        bucket = result.setdefault(currency, {"market_val": 0.0, "pl_val": 0.0, "count": 0.0})
+        bucket["market_val"] += _number(item.get("market_val"))
+        bucket["pl_val"] += _number(item.get("pl_val"))
+        bucket["count"] += 1
+    return result
+
+
+def _summarize_cash_flows(cash_flows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    result: dict[str, dict[str, float]] = {}
+    for item in cash_flows:
+        currency = str(item.get("currency") or "UNKNOWN").upper()
+        amount = _number(item.get("cashflow_amount"))
+        bucket = result.setdefault(currency, {"total": 0.0, "external": 0.0, "count": 0.0})
+        bucket["total"] += amount
+        bucket["count"] += 1
+        if _is_external_cash_flow(item):
+            bucket["external"] += amount
+    return result
+
+
+def _top_cash_flow_types(cash_flows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in cash_flows:
+        currency = str(item.get("currency") or "UNKNOWN").upper()
+        flow_type = str(item.get("cashflow_type") or "UNKNOWN")
+        key = (currency, flow_type)
+        bucket = result.setdefault(key, {"currency": currency, "type": flow_type, "amount": 0.0, "count": 0.0})
+        bucket["amount"] += _number(item.get("cashflow_amount"))
+        bucket["count"] += 1
+    return sorted(result.values(), key=lambda item: abs(item["amount"]), reverse=True)
+
+
+def _is_external_cash_flow(item: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in ("cashflow_type", "cashflow_remark", "cashflow_direction")
+    ).lower()
+    external_markers = (
+        "deposit",
+        "withdraw",
+        "transfer",
+        "fund",
+        "入金",
+        "出金",
+        "存入",
+        "提取",
+        "转入",
+        "转出",
+        "换汇",
+        "currency exchange",
+        "interest",
+        "dividend",
+        "利息",
+        "股息",
+        "分红",
+    )
+    trade_markers = ("buy", "sell", "买入", "卖出", "交易", "成交")
+    return any(marker in text for marker in external_markers) and not any(marker in text for marker in trade_markers)
 
 
 def _top_traded_symbols(deals: list[dict[str, Any]]) -> list[dict[str, Any]]:
