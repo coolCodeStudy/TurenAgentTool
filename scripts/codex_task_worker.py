@@ -65,9 +65,20 @@ def main() -> None:
         args.once = True
 
     config = load_config()
-    ensure_codex_available(config.codex_bin)
-    ensure_schema(config)
-    record_worker_status(config, "started")
+    try:
+        ensure_schema(config)
+        record_worker_status(config, "starting", metadata={"pid": os.getpid()})
+        ensure_codex_available(config.codex_bin)
+        record_worker_status(config, "started", metadata={"pid": os.getpid()})
+    except Exception as exc:
+        message = f"worker startup failed: {exc}"
+        print(message, flush=True)
+        try:
+            record_worker_status(config, "error", last_error=message, metadata={"pid": os.getpid()})
+        except Exception:
+            pass
+        notify_dingtalk(config, f"Codex worker 启动失败。\n\n原因：{message}")
+        raise
 
     while True:
         try:

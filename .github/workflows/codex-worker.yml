@@ -46,7 +46,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          source: "scripts/install_codex_worker_on_ecs.sh,scripts/codex_task_worker.py"
+          source: "scripts/install_codex_worker_on_ecs.sh,scripts/codex_task_worker.py,scripts/deploy_from_local_checkout.sh"
           target: "/tmp/codex-worker-${{ github.run_id }}"
           strip_components: 1
           overwrite: true
@@ -79,7 +79,8 @@ jobs:
             sudo mkdir -p "$APP_DIR/scripts"
             sudo cp "$UPLOAD_DIR/install_codex_worker_on_ecs.sh" "$APP_DIR/scripts/install_codex_worker_on_ecs.sh"
             sudo cp "$UPLOAD_DIR/codex_task_worker.py" "$APP_DIR/scripts/codex_task_worker.py"
-            sudo chmod +x "$APP_DIR/scripts/install_codex_worker_on_ecs.sh" "$APP_DIR/scripts/codex_task_worker.py"
+            sudo cp "$UPLOAD_DIR/deploy_from_local_checkout.sh" "$APP_DIR/scripts/deploy_from_local_checkout.sh"
+            sudo chmod +x "$APP_DIR/scripts/install_codex_worker_on_ecs.sh" "$APP_DIR/scripts/codex_task_worker.py" "$APP_DIR/scripts/deploy_from_local_checkout.sh"
 
             cd "$APP_DIR"
 

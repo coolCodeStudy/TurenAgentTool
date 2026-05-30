@@ -114,6 +114,7 @@ install_worker_venv() {
 write_worker_env() {
   mkdir -p "$(dirname "$WORKER_ENV")"
   chmod 700 "$(dirname "$WORKER_ENV")"
+  CODEX_BIN_PATH="$(command -v codex || true)"
 
   cat > "$WORKER_ENV" <<EOF
 POSTGRES_HOST=127.0.0.1
@@ -125,6 +126,7 @@ POSTGRES_DB=${POSTGRES_DB:-investment_kg}
 OPENAI_API_KEY=$OPENAI_API_KEY
 DINGTALK_SEND_WEBHOOK=${DINGTALK_SEND_WEBHOOK:-}
 DINGTALK_SEND_SECRET=${DINGTALK_SEND_SECRET:-}
+CODEX_BIN=${CODEX_BIN_PATH:-codex}
 CODEX_WORKER_GITHUB_TOKEN=${CODEX_WORKER_GITHUB_TOKEN:-}
 CODEX_WORKER_REPO_URL=$CODEX_WORKER_REPO_URL
 CODEX_WORKER_BASE_BRANCH=$CODEX_WORKER_BASE_BRANCH
@@ -159,6 +161,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INVESTMENT_DIR
 EnvironmentFile=$WORKER_ENV
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 ExecStart=$WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/codex_task_worker.py --loop
 Restart=always
 RestartSec=10
