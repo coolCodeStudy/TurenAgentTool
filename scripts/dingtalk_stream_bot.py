@@ -16,6 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from investment_knowledge_mcp.command_router import (
     handle_command,
     is_candidate_write_command,
+    is_coding_task_command,
     is_maintenance_command,
     is_query_command,
 )
@@ -74,19 +75,21 @@ def main() -> None:
 
             is_query = is_query_command(command)
             is_candidate_write = is_candidate_write_command(command)
+            is_coding_task = is_coding_task_command(command)
             is_maintenance = is_maintenance_command(command)
             sender_can_write = _sender_can_write(sender, config.dingtalk_stream_write_allowed_senders)
             if not args.allow_write and not is_query and not (
-                (is_candidate_write or is_maintenance) and sender_can_write
+                (is_candidate_write or is_coding_task or is_maintenance) and sender_can_write
             ):
                 logger.warning(
-                    "blocked DingTalk non-query command: candidate_write=%s maintenance=%s sender=%s",
+                    "blocked DingTalk non-query command: candidate_write=%s coding_task=%s maintenance=%s sender=%s",
                     is_candidate_write,
+                    is_coding_task,
                     is_maintenance,
                     _format_sender_for_log(sender),
                 )
                 self.reply_text(
-                    "Stream 入口当前只开放查询类指令；候选心得和富途维护指令只允许写入白名单本人提交。可用：怎么看海力士、持仓分析、交易记录 2026-05、富途状态、查看候选心得、帮助。",
+                    "Stream 入口当前只开放查询类指令；候选心得、开发任务和富途维护指令只允许写入白名单本人提交。可用：怎么看海力士、持仓分析、交易记录 2026-05、富途状态、查看候选心得、创建开发任务、帮助。",
                     incoming_message,
                 )
                 return AckMessage.STATUS_OK, "OK"
