@@ -164,6 +164,8 @@ mcp_servers:
     tools:
       include:
         - run_investment_command
+        - create_coding_task
+        - list_coding_tasks
       resources: false
       prompts: false
 EOF

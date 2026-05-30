@@ -203,10 +203,19 @@ jobs:
             fi
 
             if [ -n "$DOCKER_COMPOSE" ] && [ -f docker-compose.prod.yml ]; then
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
+              if systemctl is-active --quiet hermes-gateway.service; then
+                echo "Hermes gateway is active; restarting MCP and keeping dingtalk-stream-bot stopped."
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp
+                $DOCKER_COMPOSE -f docker-compose.prod.yml stop dingtalk-stream-bot || true
+              else
+                echo "Hermes gateway is not active; restarting legacy dingtalk-stream-bot."
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
+              fi
               $DOCKER_COMPOSE -f docker-compose.prod.yml ps
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
+              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 mcp || true
             else
               echo "Docker Compose unavailable; files were synced without service restart."
             fi
@@ -485,9 +494,17 @@ jobs:
 
             gzip -dc "$IMAGE_TAR" | $DOCKER load
             $DOCKER_COMPOSE -f docker-compose.prod.yml config
-            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
+            if systemctl is-active --quiet hermes-gateway.service; then
+              echo "Hermes gateway is active; restarting MCP and keeping dingtalk-stream-bot stopped."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp
+              $DOCKER_COMPOSE -f docker-compose.prod.yml stop dingtalk-stream-bot || true
+            else
+              echo "Hermes gateway is not active; restarting legacy dingtalk-stream-bot."
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
+            fi
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             sleep 20
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 dingtalk-stream-bot || true
+            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 mcp || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 postgres || true

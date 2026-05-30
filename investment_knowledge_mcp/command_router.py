@@ -119,6 +119,15 @@ PERFORMANCE_ESTIMATE_COMMANDS = {
     "本月收益",
 }
 
+CODING_TASK_LIST_COMMANDS = {
+    "开发任务",
+    "查看开发任务",
+    "编程任务",
+    "查看编程任务",
+    "coding tasks",
+    "dev tasks",
+}
+
 
 def handle_command(
     command: str,
@@ -155,6 +164,9 @@ def handle_command(
 
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
+
+    if cleaned in CODING_TASK_LIST_COMMANDS:
+        return _handle_list_coding_tasks()
 
     if cleaned in SYSTEM_STATUS_COMMANDS:
         return CommandResult(ok=True, message=render_system_status())
@@ -239,6 +251,14 @@ def handle_command(
         target_type = "strategy" if "策略" in cleaned[:10] else "portfolio"
         return _handle_propose_global_candidate(target_type=target_type, insight=global_candidate_match.group(1))
 
+    coding_task_match = re.fullmatch(
+        r"(?:创建开发任务|提出开发任务|创建编程任务|新建开发任务|开发任务|coding task|dev task)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if coding_task_match:
+        return _handle_create_coding_task(coding_task_match.group(1))
+
     if cleaned in {"帮助", "help", "?"}:
         return CommandResult(ok=True, message=_help_text())
 
@@ -316,6 +336,20 @@ def is_candidate_write_command(command: str) -> bool:
     )
 
 
+def is_coding_task_command(command: str) -> bool:
+    cleaned = command.strip()
+    normalized = _normalize_natural_command(cleaned)
+    return bool(
+        normalized in CODING_TASK_LIST_COMMANDS
+        or re.fullmatch(
+            r"(?:创建开发任务|提出开发任务|创建编程任务|新建开发任务|开发任务|coding task|dev task)\s+.+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or _heuristic_route_intent(normalized).get("intent") == "coding_task"
+    )
+
+
 def _handle_analyze_stock(
     symbol: str,
     market: str,
@@ -380,6 +414,35 @@ def _handle_list_candidates() -> CommandResult:
             f"- [{candidate['id']}{repeat_suffix}] {candidate['target_type']}:{candidate['target_id']} "
             f"{candidate['insight']}"
         )
+    return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_create_coding_task(title: str) -> CommandResult:
+    cleaned_title = _clean_coding_task_title(title)
+    row = repository.create_coding_task(
+        title=cleaned_title,
+        description=cleaned_title,
+        labels=["coding", "from-dingtalk"],
+        source="dingtalk-hermes",
+    )
+    return CommandResult(
+        ok=True,
+        message=(
+            f"已创建开发任务 #{row['id']}，等待接入 Codex worker 或人工处理。\n\n"
+            f"任务：{row['title']}\n\n"
+            "当前阶段我只先记录开发任务，不会自动改代码、提交或部署。"
+        ),
+    )
+
+
+def _handle_list_coding_tasks() -> CommandResult:
+    tasks = repository.list_coding_tasks(status="pending", limit=10)
+    if not tasks:
+        return CommandResult(ok=True, message="暂无待处理开发任务。")
+
+    lines = ["待处理开发任务："]
+    for task in tasks:
+        lines.append(f"- #{task['id']} [{task['priority']}] {task['title']}")
     return CommandResult(ok=True, message="\n".join(lines))
 
 
@@ -588,6 +651,9 @@ def _handle_intent_routed_command(command: str) -> CommandResult | None:
         if any(keyword in command for keyword in ("收益", "赚在哪", "亏在哪")):
             return _handle_performance_estimate(time_range_text=str(intent.get("time_range") or "").strip() or None)
         return _handle_trade_review(time_range_text=str(intent.get("time_range") or "").strip() or None)
+    if intent_name == "coding_task":
+        title = str(intent.get("coding_task") or command).strip()
+        return _handle_create_coding_task(title or command)
     if intent_name == "memory_candidate":
         candidate = str(intent.get("memory_candidate") or command).strip()
         if not candidate:
@@ -622,6 +688,13 @@ def _route_intent(command: str) -> dict[str, Any]:
 
 def _heuristic_route_intent(command: str) -> dict[str, Any]:
     compact = re.sub(r"\s+", "", command.lower())
+    if _looks_like_coding_task(command):
+        return {
+            "intent": "coding_task",
+            "confidence": 0.82,
+            "target_type": None,
+            "coding_task": _clean_coding_task_title(command),
+        }
     if any(
         keyword in compact
         for keyword in ("系统状态", "自检", "检查系统", "检查部署", "有没有问题", "opend", "openai", "机器人没", "没回复")
@@ -651,6 +724,55 @@ def _heuristic_route_intent(command: str) -> dict[str, Any]:
             "memory_candidate": command,
         }
     return {"intent": "unknown", "confidence": 0.0, "target_type": None}
+
+
+def _looks_like_coding_task(command: str) -> bool:
+    text = command.strip()
+    if len(text) < 8:
+        return False
+    explicit_markers = (
+        "创建开发任务",
+        "提出开发任务",
+        "创建编程任务",
+        "新建开发任务",
+        "开发任务",
+        "coding task",
+        "dev task",
+    )
+    if any(marker in text.lower() for marker in explicit_markers):
+        return True
+
+    action_markers = ("帮我修", "帮我改", "帮我实现", "帮我加", "帮我做", "修一下", "改一下", "优化一下", "排查一下")
+    tech_markers = (
+        "代码",
+        "脚本",
+        "workflow",
+        "github",
+        "deploy",
+        "部署",
+        "报错",
+        "bug",
+        "接口",
+        "命令",
+        "hermes",
+        "codex",
+        "mcp",
+        "钉钉",
+        "opend",
+        "openai",
+    )
+    return any(marker in text for marker in action_markers) and any(marker.lower() in text.lower() for marker in tech_markers)
+
+
+def _clean_coding_task_title(command: str) -> str:
+    title = _strip_trailing_punctuation(command)
+    title = re.sub(
+        r"^(?:创建开发任务|提出开发任务|创建编程任务|新建开发任务|开发任务|coding task|dev task)\s*[:：]?\s*",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return title.strip() or command.strip()
 
 
 def _looks_like_memory_candidate(command: str) -> bool:
@@ -1548,9 +1670,11 @@ def _help_text() -> str:
 - 查看候选心得
 - 确认候选心得 6
 - 拒绝候选心得 5
+- 创建开发任务 帮我修一下本月收益的展示格式
+- 查看开发任务
 - 记录心得 000660 KR 这里写你的正式心得
 - 提出个股候选心得 000660 KR 这里写系统推断出的候选心得
 - 记录组合心得 这里写你的正式组合心得
 - 提出策略候选心得 这里写系统推断出的候选策略心得
-- 也可以自然说：我觉得港股亏损股太消耗精力了 / 帮我看看本月赚在哪亏在哪
+- 也可以自然说：我觉得港股亏损股太消耗精力了 / 帮我看看本月赚在哪亏在哪 / 帮我修一下部署脚本报错
 """

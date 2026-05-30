@@ -65,15 +65,17 @@ def build_intent_router_prompt(command: str) -> str:
 - ipo_status：用户想看港股新股、IPO 或 IPO 提醒状态。
 - system_status：用户想检查系统、部署、OpenD、OpenAI、机器人是否正常。
 - trade_review：用户想看交易记录、收益复盘、月度/区间收益。
+- coding_task：用户想让系统修代码、改功能、排查 bug、调整部署、创建开发任务。
 - memory_candidate：用户在表达可沉淀为组合/策略记忆的观点、偏好、痛点、目标或复盘反思。
 - unknown：不确定。
 
 输出 JSON schema：
 {{
-  "intent": "portfolio_analysis|portfolio_positions|ipo_status|system_status|trade_review|memory_candidate|unknown",
+  "intent": "portfolio_analysis|portfolio_positions|ipo_status|system_status|trade_review|coding_task|memory_candidate|unknown",
   "confidence": 0.0,
   "target_type": "portfolio|strategy|null",
   "memory_candidate": "适合写入候选心得的一句话；仅 memory_candidate 使用，否则 null",
+  "coding_task": "适合作为开发任务标题的一句话；仅 coding_task 使用，否则 null",
   "reason": "一句话说明为什么这样路由",
   "time_range": "用户提到的月份或日期范围；仅 trade_review 使用，否则 null"
 }}
@@ -84,6 +86,7 @@ def build_intent_router_prompt(command: str) -> str:
 - 如果用户是在说当前组合、仓位结构、某组持仓风险，target_type 多数为 portfolio。
 - 如果用户问“为什么没提醒/机器人没反应/系统有没有问题”，路由 system_status 或 ipo_status。
 - 如果用户问“这个月赚在哪亏在哪/交易记录/收益”，路由 trade_review。
+- 如果用户让你“修/改/实现/优化/部署/排查”某个系统或代码问题，路由 coding_task，不要假装已经改完。
 
 用户输入：
 {command}

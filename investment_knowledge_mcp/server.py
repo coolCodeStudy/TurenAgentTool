@@ -9,6 +9,7 @@ from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.command_router import (
     handle_command,
     is_candidate_write_command,
+    is_coding_task_command,
     is_maintenance_command,
     is_query_command,
 )
@@ -247,6 +248,32 @@ def get_realtime_portfolio_positions() -> dict[str, Any]:
 
 
 @mcp.tool()
+def create_coding_task(
+    title: str,
+    description: str | None = None,
+    priority: str = "normal",
+    labels: list[str] | None = None,
+    sender: str | None = None,
+    source: str = "hermes",
+) -> dict[str, Any]:
+    """Create a coding task for later Codex/manual handling. This does not edit code."""
+    return repository.create_coding_task(
+        title=title,
+        description=description,
+        priority=priority,
+        labels=labels,
+        sender=sender,
+        source=source,
+    )
+
+
+@mcp.tool()
+def list_coding_tasks(status: str | None = "pending", limit: int = 10) -> list[dict[str, Any]]:
+    """List coding tasks tracked by InvestmentKnowledge."""
+    return repository.list_coding_tasks(status=status, limit=limit)
+
+
+@mcp.tool()
 def run_investment_command(
     command: str,
     sender: str | None = None,
@@ -293,6 +320,7 @@ def _is_safe_agent_command(command: str) -> bool:
         is_query_command(command)
         or is_maintenance_command(command)
         or is_candidate_write_command(command)
+        or is_coding_task_command(command)
         or re.fullmatch(r"(?:确认候选心得|confirm candidate)\s+\d+", command, flags=re.IGNORECASE)
         or re.fullmatch(r"(?:拒绝候选心得|reject candidate)\s+\d+", command, flags=re.IGNORECASE)
     )

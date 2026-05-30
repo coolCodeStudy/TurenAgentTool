@@ -135,6 +135,7 @@ updated_at
 - 单个钉钉机器人先由 Hermes 接管，InvestmentKnowledge 不再直接消费同一套 Stream 凭证。
 - InvestmentKnowledge MCP 第一版只暴露安全总入口 `run_investment_command` 给 Hermes。
 - 查询类和富途维护类可以直接执行；正式心得写入仍然必须经过候选确认。
+- 开发类需求先进入 `coding_tasks`，由 Hermes/Codex worker 或人工后续处理；第一版不自动改代码、提交或部署。
 - GitHub Actions 继续作为正式发布与回滚通道；Hermes 负责日常交互和轻量任务调度。
 
 ## 推荐下一步

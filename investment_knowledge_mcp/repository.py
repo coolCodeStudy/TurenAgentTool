@@ -468,6 +468,73 @@ def record_command_event(
     return to_jsonable(row)
 
 
+def create_coding_task(
+    title: str,
+    description: str | None = None,
+    priority: str = "normal",
+    labels: list[str] | None = None,
+    source: str | None = None,
+    sender: str | None = None,
+) -> dict[str, Any]:
+    cleaned_title = title.strip()
+    if not cleaned_title:
+        raise ValueError("title is required")
+
+    cleaned_description = (description or cleaned_title).strip()
+    cleaned_priority = priority.strip().lower()
+    if cleaned_priority not in {"low", "normal", "high"}:
+        cleaned_priority = "normal"
+
+    cleaned_labels = [item.strip() for item in labels or [] if item and item.strip()]
+
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO coding_tasks (
+              title, description, priority, labels, source, sender
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                cleaned_title,
+                cleaned_description,
+                cleaned_priority,
+                Jsonb(cleaned_labels),
+                source,
+                sender,
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def list_coding_tasks(status: str | None = "pending", limit: int = 10) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 50))
+    with transaction() as conn:
+        if status is None or status == "all":
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM coding_tasks
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM coding_tasks
+                WHERE status = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (status, limit),
+            ).fetchall()
+    return to_jsonable(rows)
+
+
 def _resolve_insight_target_in_conn(
     conn: Connection,
     target_type: str,

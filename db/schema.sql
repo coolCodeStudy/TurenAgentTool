@@ -148,6 +148,23 @@ CREATE TABLE IF NOT EXISTS command_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS coding_tasks (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  source TEXT,
+  sender TEXT,
+  labels JSONB NOT NULL DEFAULT '[]'::jsonb,
+  linked_issue_url TEXT,
+  result TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('pending', 'accepted', 'running', 'needs_user', 'done', 'rejected', 'cancelled')),
+  CHECK (priority IN ('low', 'normal', 'high'))
+);
+
 CREATE TABLE IF NOT EXISTS ipo_reminder_events (
   id BIGSERIAL PRIMARY KEY,
   reminder_type TEXT NOT NULL,
@@ -172,4 +189,5 @@ CREATE INDEX IF NOT EXISTS idx_user_insights_target ON user_insights(target_type
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_status ON candidate_insights(status);
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_command_events_created_at ON command_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coding_tasks_status_created_at ON coding_tasks(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ipo_reminder_events_sent_at ON ipo_reminder_events(sent_at DESC);
