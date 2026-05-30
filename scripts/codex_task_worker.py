@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -12,7 +13,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 import psycopg
 from psycopg.rows import dict_row
@@ -35,6 +37,10 @@ class WorkerConfig:
     task_timeout_seconds: int
     test_command: str | None
     auto_push: bool
+    auto_deploy: bool
+    deploy_workflow: str
+    deploy_mode: str
+    github_api_url: str
     github_token: str | None
     git_user_name: str
     git_user_email: str
@@ -96,6 +102,10 @@ def load_config() -> WorkerConfig:
         task_timeout_seconds=int(os.getenv("CODEX_WORKER_TASK_TIMEOUT_SECONDS", "3600")),
         test_command=os.getenv("CODEX_WORKER_TEST_COMMAND") or None,
         auto_push=_env_bool("CODEX_WORKER_AUTO_PUSH", default=True),
+        auto_deploy=_env_bool("CODEX_WORKER_AUTO_DEPLOY", default=True),
+        deploy_workflow=os.getenv("CODEX_WORKER_DEPLOY_WORKFLOW", "deploy.yml"),
+        deploy_mode=os.getenv("CODEX_WORKER_DEPLOY_MODE", "auto"),
+        github_api_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
         github_token=os.getenv("CODEX_WORKER_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or None,
         git_user_name=os.getenv("CODEX_WORKER_GIT_USER_NAME", "InvestmentKnowledge Codex Worker"),
         git_user_email=os.getenv("CODEX_WORKER_GIT_USER_EMAIL", "codex-worker@users.noreply.github.com"),
@@ -232,7 +242,13 @@ def process_task(config: WorkerConfig, task: dict[str, Any]) -> None:
         push_branch(config, branch_name)
         pushed = True
 
-    result = render_result(task, branch_name, commit_sha, pushed, codex_final)
+    deploy_triggered = False
+    deploy_message = ""
+    if pushed and config.auto_deploy:
+        deploy_message = trigger_deploy_workflow(config, branch_name)
+        deploy_triggered = True
+
+    result = render_result(task, branch_name, commit_sha, pushed, deploy_triggered, deploy_message, codex_final)
     update_task(
         config,
         task_id=task_id,
@@ -345,13 +361,73 @@ def push_branch(config: WorkerConfig, branch_name: str) -> None:
     run(["git", "push", "-u", "origin", branch_name], cwd=config.work_dir, timeout=config.task_timeout_seconds)
 
 
-def render_result(task: dict[str, Any], branch_name: str, commit_sha: str, pushed: bool, codex_final: str) -> str:
+def trigger_deploy_workflow(config: WorkerConfig, branch_name: str) -> str:
+    if not config.github_token:
+        raise RuntimeError("CODEX_WORKER_GITHUB_TOKEN is required to trigger deployment")
+
+    owner, repo = parse_github_repo(config.repo_url)
+    url = (
+        f"{config.github_api_url.rstrip('/')}/repos/{owner}/{repo}"
+        f"/actions/workflows/{quote(config.deploy_workflow, safe='')}/dispatches"
+    )
+    payload = json.dumps(
+        {
+            "ref": branch_name,
+            "inputs": {
+                "deploy_mode": config.deploy_mode,
+            },
+        }
+    ).encode("utf-8")
+    request = Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {config.github_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "investment-knowledge-codex-worker",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        if response.status != 204:
+            raise RuntimeError(f"GitHub workflow dispatch returned HTTP {response.status}")
+    return f"Triggered {config.deploy_workflow} on {branch_name} with deploy_mode={config.deploy_mode}"
+
+
+def parse_github_repo(repo_url: str) -> tuple[str, str]:
+    if repo_url.startswith("git@github.com:"):
+        path = repo_url.removeprefix("git@github.com:")
+    else:
+        parsed = urlparse(repo_url)
+        path = parsed.path.lstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        raise ValueError(f"cannot parse GitHub repo url: {repo_url}")
+    return parts[-2], parts[-1]
+
+
+def render_result(
+    task: dict[str, Any],
+    branch_name: str,
+    commit_sha: str,
+    pushed: bool,
+    deploy_triggered: bool,
+    deploy_message: str,
+    codex_final: str,
+) -> str:
     lines = [
         f"开发任务 #{task['id']} 已完成。",
         f"- 分支: {branch_name}",
         f"- commit: {commit_sha}",
         f"- 已推送: {'是' if pushed else '否'}",
+        f"- 已触发部署: {'是' if deploy_triggered else '否'}",
     ]
+    if deploy_message:
+        lines.append(f"- 部署: {deploy_message}")
     if codex_final.strip():
         lines.extend(["", "Codex 摘要:", codex_final.strip()[:3000]])
     return "\n".join(lines)

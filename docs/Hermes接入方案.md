@@ -116,14 +116,15 @@ DINGTALK_REQUIRE_MENTION=true
 -> coding_tasks
 -> ECS Codex worker
 -> GitHub branch/commit
+-> GitHub Actions deploy
 ```
 
 权限边界：
 
 - worker 可以在独立 clone 里运行 `codex exec`、修改代码、提交并推送 `codex/task-*` 分支。
 - worker 默认使用 `CODEX_WORKER_DANGER_FULL_ACCESS=true`，适合当前早期快速迭代；如果后续要收紧，可以改成 `false`。
-- worker 不默认直接部署生产。部署仍走 GitHub Actions，避免一句群聊直接改线上服务。
-- 需要一次性配置 `CODEX_WORKER_GITHUB_TOKEN`，用于 ECS worker 推送分支。
+- worker 默认使用 `CODEX_WORKER_AUTO_DEPLOY=true`，任务完成后会触发 GitHub Actions deploy，把该任务分支部署到 ECS。
+- 需要一次性配置 `CODEX_WORKER_GITHUB_TOKEN`，用于 ECS worker 推送分支和触发 workflow dispatch。
 
 安装入口：
 

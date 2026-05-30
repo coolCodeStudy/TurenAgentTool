@@ -9,6 +9,9 @@ CODEX_WORKER_BASE_BRANCH=${CODEX_WORKER_BASE_BRANCH:-main}
 CODEX_WORKER_MODEL=${CODEX_WORKER_MODEL:-}
 CODEX_WORKER_DANGER_FULL_ACCESS=${CODEX_WORKER_DANGER_FULL_ACCESS:-true}
 CODEX_WORKER_AUTO_PUSH=${CODEX_WORKER_AUTO_PUSH:-true}
+CODEX_WORKER_AUTO_DEPLOY=${CODEX_WORKER_AUTO_DEPLOY:-true}
+CODEX_WORKER_DEPLOY_WORKFLOW=${CODEX_WORKER_DEPLOY_WORKFLOW:-deploy.yml}
+CODEX_WORKER_DEPLOY_MODE=${CODEX_WORKER_DEPLOY_MODE:-auto}
 CODEX_WORKER_POLL_SECONDS=${CODEX_WORKER_POLL_SECONDS:-30}
 
 usage() {
@@ -20,10 +23,10 @@ Usage:
 
 Required for useful operation:
   OPENAI_API_KEY                  Used to login Codex CLI if not already logged in.
-  CODEX_WORKER_GITHUB_TOKEN       GitHub PAT with repo write access, used to push task branches.
+  CODEX_WORKER_GITHUB_TOKEN       GitHub PAT with repo write/workflow access, used to push branches and trigger deploy.
 
 The worker reads pending coding_tasks, runs `codex exec` in a dedicated clone,
-commits changes, and pushes a codex/task-* branch.
+commits changes, pushes a codex/task-* branch, and can trigger GitHub Actions deploy.
 EOF
 }
 
@@ -124,6 +127,9 @@ CODEX_WORKER_DIR=$WORKER_HOME/repo
 CODEX_WORKER_MODEL=$CODEX_WORKER_MODEL
 CODEX_WORKER_DANGER_FULL_ACCESS=$CODEX_WORKER_DANGER_FULL_ACCESS
 CODEX_WORKER_AUTO_PUSH=$CODEX_WORKER_AUTO_PUSH
+CODEX_WORKER_AUTO_DEPLOY=$CODEX_WORKER_AUTO_DEPLOY
+CODEX_WORKER_DEPLOY_WORKFLOW=$CODEX_WORKER_DEPLOY_WORKFLOW
+CODEX_WORKER_DEPLOY_MODE=$CODEX_WORKER_DEPLOY_MODE
 CODEX_WORKER_POLL_SECONDS=$CODEX_WORKER_POLL_SECONDS
 CODEX_WORKER_GIT_USER_NAME=InvestmentKnowledge Codex Worker
 CODEX_WORKER_GIT_USER_EMAIL=codex-worker@users.noreply.github.com

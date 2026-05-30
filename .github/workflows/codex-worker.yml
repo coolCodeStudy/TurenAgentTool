@@ -58,13 +58,15 @@ jobs:
           CODEX_WORKER_MODEL: ${{ vars.CODEX_WORKER_MODEL }}
           CODEX_WORKER_DANGER_FULL_ACCESS: ${{ vars.CODEX_WORKER_DANGER_FULL_ACCESS || 'true' }}
           CODEX_WORKER_AUTO_PUSH: ${{ vars.CODEX_WORKER_AUTO_PUSH || 'true' }}
+          CODEX_WORKER_AUTO_DEPLOY: ${{ vars.CODEX_WORKER_AUTO_DEPLOY || 'true' }}
+          CODEX_WORKER_DEPLOY_MODE: ${{ vars.CODEX_WORKER_DEPLOY_MODE || 'auto' }}
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
           command_timeout: 40m
-          envs: CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH
+          envs: CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH,CODEX_WORKER_AUTO_DEPLOY,CODEX_WORKER_DEPLOY_MODE
           script: |
             set -e
 
@@ -94,7 +96,7 @@ jobs:
 
             case "$MODE" in
               install)
-                sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH \
+                sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH,CODEX_WORKER_AUTO_DEPLOY,CODEX_WORKER_DEPLOY_MODE \
                   bash scripts/install_codex_worker_on_ecs.sh --start
                 ;;
               start)
@@ -108,7 +110,7 @@ jobs:
                 ;;
               run-once)
                 sudo systemctl stop investment-codex-worker.service || true
-                sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH \
+                sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH,CODEX_WORKER_AUTO_DEPLOY,CODEX_WORKER_DEPLOY_MODE \
                   bash scripts/install_codex_worker_on_ecs.sh
                 sudo /opt/investment-knowledge-codex/venv/bin/python "$APP_DIR/scripts/codex_task_worker.py" --once
                 ;;
