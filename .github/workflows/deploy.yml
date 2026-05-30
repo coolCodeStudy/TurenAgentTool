@@ -204,11 +204,11 @@ jobs:
 
             if [ -n "$DOCKER_COMPOSE" ] && [ -f docker-compose.prod.yml ]; then
               if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
-                echo "Hermes gateway is installed; restarting MCP and keeping dingtalk-stream-bot stopped."
+                echo "Hermes gateway is installed but DingTalk is temporarily routed back to legacy dingtalk-stream-bot."
+                systemctl stop hermes-gateway.service || true
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp
-                $DOCKER_COMPOSE -f docker-compose.prod.yml stop dingtalk-stream-bot || true
-                bash scripts/install_hermes_gateway_on_ecs.sh --config-only --start || systemctl restart hermes-gateway.service || true
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
               else
                 echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
@@ -499,10 +499,9 @@ jobs:
             gzip -dc "$IMAGE_TAR" | $DOCKER load
             $DOCKER_COMPOSE -f docker-compose.prod.yml config
             if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
-              echo "Hermes gateway is installed; restarting MCP and keeping dingtalk-stream-bot stopped."
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp
-              $DOCKER_COMPOSE -f docker-compose.prod.yml stop dingtalk-stream-bot || true
-              bash scripts/install_hermes_gateway_on_ecs.sh --config-only --start || systemctl restart hermes-gateway.service || true
+              echo "Hermes gateway is installed but DingTalk is temporarily routed back to legacy dingtalk-stream-bot."
+              systemctl stop hermes-gateway.service || true
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp dingtalk-stream-bot
             else
               echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
               $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
