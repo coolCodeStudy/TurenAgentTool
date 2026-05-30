@@ -53,6 +53,8 @@ class WorkerConfig:
     git_user_email: str
     dingtalk_webhook: str | None
     dingtalk_secret: str | None
+    notify_state_dir: Path
+    startup_error_notify_cooldown_seconds: int
 
 
 def main() -> None:
@@ -77,7 +79,12 @@ def main() -> None:
             record_worker_status(config, "error", last_error=message, metadata={"pid": os.getpid()})
         except Exception:
             pass
-        notify_dingtalk(config, f"Codex worker 启动失败。\n\n原因：{message}")
+        notify_dingtalk_once(
+            config,
+            dedupe_key=f"startup:{message}",
+            content=f"Codex worker 启动失败。\n\n原因：{message}",
+            cooldown_seconds=config.startup_error_notify_cooldown_seconds,
+        )
         raise
 
     while True:
@@ -158,6 +165,10 @@ def load_config() -> WorkerConfig:
         git_user_email=os.getenv("CODEX_WORKER_GIT_USER_EMAIL", "codex-worker@users.noreply.github.com"),
         dingtalk_webhook=os.getenv("DINGTALK_SEND_WEBHOOK") or None,
         dingtalk_secret=os.getenv("DINGTALK_SEND_SECRET") or None,
+        notify_state_dir=Path(os.getenv("CODEX_WORKER_NOTIFY_STATE_DIR", "/var/lib/investment-knowledge-codex")),
+        startup_error_notify_cooldown_seconds=int(
+            os.getenv("CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS", "3600")
+        ),
     )
 
 
@@ -580,6 +591,39 @@ def notify_dingtalk(config: WorkerConfig, content: str) -> None:
                 print(f"DingTalk notify failed: HTTP {response.status} {body[:300]}", flush=True)
     except Exception as exc:
         print(f"DingTalk notify failed: {exc}", flush=True)
+
+
+def notify_dingtalk_once(
+    config: WorkerConfig,
+    dedupe_key: str,
+    content: str,
+    cooldown_seconds: int,
+) -> None:
+    if not config.dingtalk_webhook:
+        return
+    if cooldown_seconds <= 0:
+        notify_dingtalk(config, content)
+        return
+
+    digest = hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest()
+    state_path = config.notify_state_dir / f"notify-{digest}.json"
+    now = time.time()
+    try:
+        config.notify_state_dir.mkdir(parents=True, exist_ok=True)
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            last_sent_at = float(state.get("last_sent_at") or 0)
+            if now - last_sent_at < cooldown_seconds:
+                print("DingTalk notify skipped by cooldown.", flush=True)
+                return
+        notify_dingtalk(config, content)
+        state_path.write_text(
+            json.dumps({"last_sent_at": now, "dedupe_key": dedupe_key}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(f"DingTalk notify cooldown failed: {exc}", flush=True)
+        notify_dingtalk(config, content)
 
 
 def signed_dingtalk_webhook(webhook: str, secret: str | None) -> str:
