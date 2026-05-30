@@ -168,6 +168,14 @@ def handle_command(
     if cleaned in CODING_TASK_LIST_COMMANDS:
         return _handle_list_coding_tasks()
 
+    coding_task_detail_match = re.fullmatch(
+        r"(?:查看开发任务|开发任务详情|查看编程任务|编程任务详情|coding task|dev task)\s+#?(\d+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if coding_task_detail_match:
+        return _handle_coding_task_detail(int(coding_task_detail_match.group(1)))
+
     if cleaned in SYSTEM_STATUS_COMMANDS:
         return CommandResult(ok=True, message=render_system_status())
 
@@ -430,7 +438,7 @@ def _handle_create_coding_task(title: str) -> CommandResult:
         message=(
             f"已创建开发任务 #{row['id']}，等待云端 Codex worker 处理。\n\n"
             f"任务：{row['title']}\n\n"
-            "worker 会在 ECS 上拉取任务、改代码并推送分支；线上部署仍需要单独确认。"
+            "worker 会在 ECS 上拉取任务、改代码、推送分支，并在完成后触发部署。"
         ),
     )
 
@@ -447,6 +455,41 @@ def _handle_list_coding_tasks() -> CommandResult:
             suffix = f" -> {task['branch_name']}"
         lines.append(f"- #{task['id']} [{task['status']}/{task['priority']}] {task['title']}{suffix}")
     return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_coding_task_detail(task_id: int) -> CommandResult:
+    task = repository.get_coding_task(task_id)
+    if not task:
+        return CommandResult(ok=False, message=f"没有找到开发任务 #{task_id}。")
+
+    lines = [
+        f"开发任务 #{task['id']}",
+        f"- 状态：{task['status']}",
+        f"- 优先级：{task['priority']}",
+        f"- 标题：{task['title']}",
+    ]
+    if task.get("branch_name"):
+        lines.append(f"- 分支：{task['branch_name']}")
+    if task.get("commit_sha"):
+        lines.append(f"- commit：{task['commit_sha']}")
+    if task.get("worker_started_at"):
+        lines.append(f"- 开始：{task['worker_started_at']}")
+    if task.get("worker_finished_at"):
+        lines.append(f"- 结束：{task['worker_finished_at']}")
+    if task.get("result"):
+        lines.extend(["", "结果：", _truncate_text(str(task["result"]), 2500)])
+    elif task.get("worker_log"):
+        lines.extend(["", "worker 日志：", _truncate_text(str(task["worker_log"]), 2500)])
+    else:
+        lines.append("")
+        lines.append("还没有 worker 结果。")
+    return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n\n...内容过长，已截断。"
 
 
 def _handle_portfolio_positions() -> CommandResult:

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -13,7 +16,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, quote_plus, urlparse
 from urllib.request import Request, urlopen
 
 import psycopg
@@ -44,6 +47,8 @@ class WorkerConfig:
     github_token: str | None
     git_user_name: str
     git_user_email: str
+    dingtalk_webhook: str | None
+    dingtalk_secret: str | None
 
 
 def main() -> None:
@@ -71,6 +76,7 @@ def main() -> None:
             process_task(config, task)
         except Exception as exc:
             message = f"Codex worker failed: {exc}"
+            notify_dingtalk(config, f"开发任务 #{task['id']} 处理失败。\n\n原因：{message}")
             update_task(
                 config,
                 task_id=task["id"],
@@ -109,6 +115,8 @@ def load_config() -> WorkerConfig:
         github_token=os.getenv("CODEX_WORKER_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or None,
         git_user_name=os.getenv("CODEX_WORKER_GIT_USER_NAME", "InvestmentKnowledge Codex Worker"),
         git_user_email=os.getenv("CODEX_WORKER_GIT_USER_EMAIL", "codex-worker@users.noreply.github.com"),
+        dingtalk_webhook=os.getenv("DINGTALK_SEND_WEBHOOK") or None,
+        dingtalk_secret=os.getenv("DINGTALK_SEND_SECRET") or None,
     )
 
 
@@ -258,6 +266,7 @@ def process_task(config: WorkerConfig, task: dict[str, Any]) -> None:
         commit_sha=commit_sha,
         worker_log="Codex task completed.",
     )
+    notify_dingtalk(config, result)
 
 
 def prepare_repo(config: WorkerConfig, branch_name: str) -> None:
@@ -431,6 +440,48 @@ def render_result(
     if codex_final.strip():
         lines.extend(["", "Codex 摘要:", codex_final.strip()[:3000]])
     return "\n".join(lines)
+
+
+def notify_dingtalk(config: WorkerConfig, content: str) -> None:
+    if not config.dingtalk_webhook:
+        return
+    payload = json.dumps(
+        {
+            "msgtype": "text",
+            "text": {"content": truncate_text(content, 3500)},
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = Request(
+        signed_dingtalk_webhook(config.dingtalk_webhook, config.dingtalk_secret),
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            if response.status >= 300:
+                print(f"DingTalk notify failed: HTTP {response.status} {body[:300]}", flush=True)
+    except Exception as exc:
+        print(f"DingTalk notify failed: {exc}", flush=True)
+
+
+def signed_dingtalk_webhook(webhook: str, secret: str | None) -> str:
+    if not secret:
+        return webhook
+    timestamp = str(int(time.time() * 1000))
+    string_to_sign = f"{timestamp}\n{secret}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), string_to_sign, hashlib.sha256).digest()
+    sign = quote_plus(base64.b64encode(digest).decode("utf-8"))
+    separator = "&" if "?" in webhook else "?"
+    return f"{webhook}{separator}timestamp={timestamp}&sign={sign}"
+
+
+def truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n\n...内容过长，已截断。"
 
 
 def run(args: list[str], cwd: Path, timeout: int = 3600) -> None:
