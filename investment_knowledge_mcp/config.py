@@ -54,6 +54,7 @@ class AppConfig:
     dingtalk_stream_client_id: str | None = None
     dingtalk_stream_client_secret: str | None = None
     dingtalk_stream_write_allowed_senders: tuple[str, ...] = ()
+    dingtalk_command_timeout_seconds: int = 25
     dingtalk_ipo_reminders_enabled: bool = True
     dingtalk_ipo_reminder_interval_seconds: int = 300
     futu_opend_host: str = "127.0.0.1"
@@ -98,6 +99,7 @@ def get_config() -> AppConfig:
         dingtalk_stream_client_id=os.getenv("DINGTALK_STREAM_CLIENT_ID") or None,
         dingtalk_stream_client_secret=os.getenv("DINGTALK_STREAM_CLIENT_SECRET") or None,
         dingtalk_stream_write_allowed_senders=_get_csv("DINGTALK_STREAM_WRITE_ALLOWED_SENDERS"),
+        dingtalk_command_timeout_seconds=int(os.getenv("DINGTALK_COMMAND_TIMEOUT_SECONDS", "25")),
         dingtalk_ipo_reminders_enabled=_get_bool("DINGTALK_IPO_REMINDERS_ENABLED", default=True),
         dingtalk_ipo_reminder_interval_seconds=int(os.getenv("DINGTALK_IPO_REMINDER_INTERVAL_SECONDS", "300")),
         futu_opend_host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),

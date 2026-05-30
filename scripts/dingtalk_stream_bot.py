@@ -103,7 +103,7 @@ def main() -> None:
                 return AckMessage.STATUS_OK, "OK"
 
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
+            future = loop.run_in_executor(
                 None,
                 lambda: handle_command(
                     command,
@@ -111,6 +111,23 @@ def main() -> None:
                     include_artifact_path=False,
                 ),
             )
+            try:
+                result = await asyncio.wait_for(future, timeout=config.dingtalk_command_timeout_seconds)
+            except asyncio.TimeoutError:
+                logger.exception(
+                    "DingTalk command timed out after %s seconds: %s",
+                    config.dingtalk_command_timeout_seconds,
+                    command,
+                )
+                self.reply_text(
+                    (
+                        f"这条指令超过 {config.dingtalk_command_timeout_seconds} 秒还没返回，我先中止等待。\n\n"
+                        "如果是富途相关指令，大概率是 OpenD 登录态/验证码/网络连接卡住了。"
+                        "可以先试：富途状态、富途请求验证码、富途验证码 123456。"
+                    ),
+                    incoming_message,
+                )
+                return AckMessage.STATUS_OK, "OK"
             self.reply_text(result.message, incoming_message)
             return AckMessage.STATUS_OK, "OK"
 
