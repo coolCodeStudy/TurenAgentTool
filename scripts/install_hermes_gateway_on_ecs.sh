@@ -123,9 +123,10 @@ install_hermes() {
   git pull --ff-only
 
   if command -v uv >/dev/null 2>&1; then
-    uv venv --python "$HERMES_PYTHON" venv
+    uv venv --clear --python "$HERMES_PYTHON" venv
     uv pip install --python "$HERMES_DIR/venv/bin/python" -e ".[cli,pty,mcp,dingtalk]"
   else
+    rm -rf venv
     python3 -m venv venv
     "$HERMES_DIR/venv/bin/pip" install -U pip
     "$HERMES_DIR/venv/bin/pip" install -e ".[cli,pty,mcp,dingtalk]"
