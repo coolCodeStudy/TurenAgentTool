@@ -20,6 +20,13 @@ from investment_knowledge_mcp.futu_provider import (
     get_futu_trade_history,
     get_hk_ipo_list,
 )
+from investment_knowledge_mcp.futu_opend_control import (
+    FutuOpenDControlError,
+    ping_opend_telnet,
+    relogin_opend,
+    request_phone_verify_code,
+    submit_phone_verify_code,
+)
 from investment_knowledge_mcp.portfolio_analysis import (
     DEFAULT_CURRENCY_BY_MARKET,
     build_portfolio_analysis_context,
@@ -82,6 +89,13 @@ SYSTEM_STATUS_COMMANDS = {
     "health",
 }
 
+FUTU_MAINTENANCE_QUERY_COMMANDS = {
+    "富途状态",
+    "OpenD状态",
+    "opend状态",
+    "富途控制状态",
+}
+
 IPO_REMINDER_STATUS_COMMANDS = {
     "IPO提醒状态",
     "ipo提醒状态",
@@ -138,6 +152,19 @@ def handle_command(
 
     if cleaned in SYSTEM_STATUS_COMMANDS:
         return CommandResult(ok=True, message=render_system_status())
+
+    if cleaned in FUTU_MAINTENANCE_QUERY_COMMANDS:
+        return _handle_futu_control_status()
+
+    futu_verify_match = re.fullmatch(r"(?:富途验证码|OpenD验证码|opend验证码)\s+(\d{4,8})", cleaned, flags=re.IGNORECASE)
+    if futu_verify_match:
+        return _handle_futu_verify_code(futu_verify_match.group(1))
+
+    if cleaned in {"请求富途验证码", "富途请求验证码", "OpenD请求验证码", "opend请求验证码"}:
+        return _handle_futu_request_verify_code()
+
+    if cleaned in {"富途重登录", "重登录富途", "OpenD重登录", "opend重登录"}:
+        return _handle_futu_relogin()
 
     if cleaned in IPO_REMINDER_STATUS_COMMANDS:
         return CommandResult(ok=True, message=render_ipo_reminder_status())
@@ -228,6 +255,7 @@ def is_query_command(command: str) -> bool:
             "help",
             "?",
             *SYSTEM_STATUS_COMMANDS,
+            *FUTU_MAINTENANCE_QUERY_COMMANDS,
             *IPO_REMINDER_STATUS_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
@@ -242,6 +270,15 @@ def is_query_command(command: str) -> bool:
         in {"portfolio_analysis", "portfolio_positions", "system_status", "ipo_status", "trade_review"}
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
+    )
+
+
+def is_maintenance_command(command: str) -> bool:
+    cleaned = command.strip()
+    return bool(
+        re.fullmatch(r"(?:富途验证码|OpenD验证码|opend验证码)\s+\d{4,8}", cleaned, flags=re.IGNORECASE)
+        or cleaned in {"请求富途验证码", "富途请求验证码", "OpenD请求验证码", "opend请求验证码"}
+        or cleaned in {"富途重登录", "重登录富途", "OpenD重登录", "opend重登录"}
     )
 
 
@@ -380,6 +417,62 @@ def _handle_confirm_candidate(candidate_id: int) -> CommandResult:
 def _handle_reject_candidate(candidate_id: int) -> CommandResult:
     candidate = repository.reject_candidate_insight(candidate_id)
     return CommandResult(ok=True, message=f"已拒绝候选心得 {candidate['id']}。")
+
+
+def _handle_futu_control_status() -> CommandResult:
+    try:
+        response = ping_opend_telnet()
+    except FutuOpenDControlError as exc:
+        return CommandResult(
+            ok=False,
+            message=(
+                "OpenD Telnet 控制口暂不可用。\n"
+                f"原因：{exc}\n\n"
+                "如果要用钉钉提交验证码，需要让 OpenD 启动参数包含 "
+                "`-telnet_ip=127.0.0.1 -telnet_port=22222`，并把该端口代理给容器。"
+            ),
+        )
+    return CommandResult(ok=True, message="OpenD Telnet 控制口可用。\n\n" + _trim_opend_response(response))
+
+
+def _handle_futu_request_verify_code() -> CommandResult:
+    try:
+        response = request_phone_verify_code()
+    except FutuOpenDControlError as exc:
+        return CommandResult(ok=False, message=f"请求富途验证码失败：{exc}")
+    return CommandResult(
+        ok=True,
+        message="已向 OpenD 发送请求手机验证码命令。\n\n" + _trim_opend_response(response),
+    )
+
+
+def _handle_futu_verify_code(code: str) -> CommandResult:
+    try:
+        response = submit_phone_verify_code(code)
+    except FutuOpenDControlError as exc:
+        return CommandResult(ok=False, message=f"提交富途验证码失败：{exc}")
+    return CommandResult(
+        ok=True,
+        message="已向 OpenD 提交手机验证码。\n\n" + _trim_opend_response(response),
+    )
+
+
+def _handle_futu_relogin() -> CommandResult:
+    try:
+        response = relogin_opend()
+    except FutuOpenDControlError as exc:
+        return CommandResult(ok=False, message=f"触发富途重登录失败：{exc}")
+    return CommandResult(
+        ok=True,
+        message="已向 OpenD 发送重登录命令。\n\n" + _trim_opend_response(response),
+    )
+
+
+def _trim_opend_response(response: str) -> str:
+    lines = [line.rstrip() for line in response.strip().splitlines() if line.strip()]
+    if not lines:
+        return "OpenD 没有返回详细文本。"
+    return "\n".join(lines[:20])
 
 
 def _handle_record_stock_insight(symbol: str, market: str, insight: str) -> CommandResult:
@@ -1188,6 +1281,10 @@ def _help_text() -> str:
 - 交易记录 2026-05
 - 交易记录 2026-05-01 2026-05-29
 - 本月收益
+- 富途状态
+- 富途请求验证码
+- 富途验证码 123456
+- 富途重登录
 - 系统状态
 - IPO提醒状态
 - 分析 000660 KR

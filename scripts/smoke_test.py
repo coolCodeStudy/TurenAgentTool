@@ -7,7 +7,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 os.environ["OPENAI_ANALYSIS_ENABLED"] = "false"
 
-from investment_knowledge_mcp.command_router import handle_command, is_candidate_write_command, is_query_command
+from investment_knowledge_mcp.command_router import (
+    handle_command,
+    is_candidate_write_command,
+    is_maintenance_command,
+    is_query_command,
+)
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.repository import (
@@ -285,6 +290,7 @@ def main() -> None:
         assert not is_query_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
+        assert is_maintenance_command("富途验证码 123456")
         assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_STRATEGY_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_NATURAL_MEMORY in router_candidates_result.message

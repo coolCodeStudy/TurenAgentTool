@@ -58,6 +58,8 @@ class AppConfig:
     dingtalk_ipo_reminder_interval_seconds: int = 300
     futu_opend_host: str = "127.0.0.1"
     futu_opend_port: int = 11112
+    futu_opend_telnet_host: str = "127.0.0.1"
+    futu_opend_telnet_port: int = 22222
     futu_security_firm: str = "FUTUSECURITIES"
     futu_trade_market: str = "HK"
     futu_trade_env: str = "REAL"
@@ -100,6 +102,8 @@ def get_config() -> AppConfig:
         dingtalk_ipo_reminder_interval_seconds=int(os.getenv("DINGTALK_IPO_REMINDER_INTERVAL_SECONDS", "300")),
         futu_opend_host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
         futu_opend_port=int(os.getenv("FUTU_OPEND_PORT", "11112")),
+        futu_opend_telnet_host=os.getenv("FUTU_OPEND_TELNET_HOST", "127.0.0.1"),
+        futu_opend_telnet_port=int(os.getenv("FUTU_OPEND_TELNET_PORT", "22222")),
         futu_security_firm=os.getenv("FUTU_SECURITY_FIRM", "FUTUSECURITIES"),
         futu_trade_market=os.getenv("FUTU_TRADE_MARKET", "HK"),
         futu_trade_env=os.getenv("FUTU_TRADE_ENV", "REAL"),

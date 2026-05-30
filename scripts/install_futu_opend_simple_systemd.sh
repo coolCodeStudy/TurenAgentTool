@@ -9,6 +9,9 @@ PROXY_SCRIPT="${PROXY_SCRIPT:-/usr/local/bin/futu-opend-proxy.sh}"
 OPEND_HOST="${OPEND_HOST:-127.0.0.1}"
 OPEND_PORT="${OPEND_PORT:-11111}"
 PROXY_PORT="${PROXY_PORT:-11112}"
+TELNET_HOST="${TELNET_HOST:-127.0.0.1}"
+TELNET_PORT="${TELNET_PORT:-22222}"
+TELNET_PROXY_PORT="${TELNET_PROXY_PORT:-22222}"
 LANGUAGE="${LANGUAGE:-chs}"
 FUTU_LOGIN_ACCOUNT="${FUTU_LOGIN_ACCOUNT:-}"
 FUTU_LOGIN_PWD="${FUTU_LOGIN_PWD:-}"
@@ -113,6 +116,8 @@ TMP_ENV="$(mktemp)"
   printf 'FUTU_LOGIN_PWD=%s\n' "$(shell_quote "$FUTU_LOGIN_PWD")"
   printf 'OPEND_HOST=%s\n' "$(shell_quote "$OPEND_HOST")"
   printf 'OPEND_PORT=%s\n' "$(shell_quote "$OPEND_PORT")"
+  printf 'TELNET_HOST=%s\n' "$(shell_quote "$TELNET_HOST")"
+  printf 'TELNET_PORT=%s\n' "$(shell_quote "$TELNET_PORT")"
   printf 'LANGUAGE=%s\n' "$(shell_quote "$LANGUAGE")"
 } > "$TMP_ENV"
 $SUDO install -m 600 "$TMP_ENV" "$ENV_FILE"
@@ -131,6 +136,8 @@ exec "\$OPEND_BIN" \\
   -login_pwd="\$FUTU_LOGIN_PWD" \\
   -api_ip="\$OPEND_HOST" \\
   -api_port="\$OPEND_PORT" \\
+  -telnet_ip="\$TELNET_HOST" \\
+  -telnet_port="\$TELNET_PORT" \\
   -lang="\$LANGUAGE"
 SCRIPT
 
@@ -161,7 +168,22 @@ if [ -z "\$DOCKER_HOST_IP" ]; then
   exit 1
 fi
 
-exec ${SOCAT_BIN} "TCP-LISTEN:${PROXY_PORT},bind=\${DOCKER_HOST_IP},fork,reuseaddr" "TCP:${OPEND_HOST}:${OPEND_PORT}"
+api_pid=""
+telnet_pid=""
+
+cleanup() {
+  if [ -n "\$api_pid" ]; then kill "\$api_pid" >/dev/null 2>&1 || true; fi
+  if [ -n "\$telnet_pid" ]; then kill "\$telnet_pid" >/dev/null 2>&1 || true; fi
+}
+trap cleanup EXIT INT TERM
+
+${SOCAT_BIN} "TCP-LISTEN:${PROXY_PORT},bind=\${DOCKER_HOST_IP},fork,reuseaddr" "TCP:${OPEND_HOST}:${OPEND_PORT}" &
+api_pid="\$!"
+
+${SOCAT_BIN} "TCP-LISTEN:${TELNET_PROXY_PORT},bind=\${DOCKER_HOST_IP},fork,reuseaddr" "TCP:${TELNET_HOST}:${TELNET_PORT}" &
+telnet_pid="\$!"
+
+wait -n "\$api_pid" "\$telnet_pid"
 SCRIPT
 
 cat > /tmp/futu-opend-proxy.service <<SERVICE
@@ -174,6 +196,7 @@ Wants=docker.service
 [Service]
 Type=simple
 ExecStartPre=${BASH_BIN} -lc 'timeout 30 bash -c "until cat < /dev/null > /dev/tcp/${OPEND_HOST}/${OPEND_PORT}; do sleep 1; done"'
+ExecStartPre=${BASH_BIN} -lc 'timeout 30 bash -c "until cat < /dev/null > /dev/tcp/${TELNET_HOST}/${TELNET_PORT}; do sleep 1; done"'
 ExecStart=${PROXY_SCRIPT}
 Restart=always
 RestartSec=5

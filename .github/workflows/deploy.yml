@@ -464,6 +464,8 @@ jobs:
 
             FUTU_OPEND_HOST=${{ vars.FUTU_OPEND_HOST || 'host.docker.internal' }}
             FUTU_OPEND_PORT=${{ vars.FUTU_OPEND_PORT || '11112' }}
+            FUTU_OPEND_TELNET_HOST=${{ vars.FUTU_OPEND_TELNET_HOST || 'host.docker.internal' }}
+            FUTU_OPEND_TELNET_PORT=${{ vars.FUTU_OPEND_TELNET_PORT || '22222' }}
             FUTU_SECURITY_FIRM=${{ vars.FUTU_SECURITY_FIRM || 'FUTUSECURITIES' }}
             FUTU_TRADE_MARKET=${{ vars.FUTU_TRADE_MARKET || 'HK' }}
             FUTU_TRADE_ENV=${{ vars.FUTU_TRADE_ENV || 'REAL' }}
