@@ -128,6 +128,14 @@ CODING_TASK_LIST_COMMANDS = {
     "dev tasks",
 }
 
+WORKER_STATUS_COMMANDS = {
+    "worker状态",
+    "codex状态",
+    "Codex状态",
+    "开发worker状态",
+    "开发任务状态",
+}
+
 
 def handle_command(
     command: str,
@@ -167,6 +175,9 @@ def handle_command(
 
     if cleaned in CODING_TASK_LIST_COMMANDS:
         return _handle_list_coding_tasks()
+
+    if cleaned in WORKER_STATUS_COMMANDS:
+        return _handle_worker_status()
 
     coding_task_detail_match = re.fullmatch(
         r"(?:查看开发任务|开发任务详情|查看编程任务|编程任务详情|coding task|dev task)\s+#?(\d+)",
@@ -483,6 +494,40 @@ def _handle_coding_task_detail(task_id: int) -> CommandResult:
     else:
         lines.append("")
         lines.append("还没有 worker 结果。")
+    return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_worker_status() -> CommandResult:
+    workers = repository.list_worker_status()
+    tasks = repository.list_coding_tasks(status="all", limit=5)
+
+    lines = ["Codex worker 状态："]
+    if not workers:
+        lines.append("- 暂无 worker 心跳记录。")
+        lines.append("- 这通常表示 worker 没启动，或还没连上数据库。")
+    else:
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        for worker in workers:
+            last_seen = str(worker.get("last_seen_at") or "")
+            stale_hint = ""
+            try:
+                last_seen_dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+                age_seconds = (now - last_seen_dt.astimezone(ZoneInfo("Asia/Shanghai"))).total_seconds()
+                if age_seconds > 120:
+                    stale_hint = "，可能已卡住"
+            except ValueError:
+                pass
+            lines.append(f"- {worker['name']}: {worker['status']}，最后心跳 {last_seen}{stale_hint}")
+            if worker.get("last_error"):
+                lines.append(f"  最近错误：{_truncate_text(str(worker['last_error']), 800)}")
+
+    lines.append("")
+    lines.append("最近开发任务：")
+    if not tasks:
+        lines.append("- 暂无开发任务。")
+    else:
+        for task in tasks:
+            lines.append(f"- #{task['id']} [{task['status']}] {task['title']}")
     return CommandResult(ok=True, message="\n".join(lines))
 
 

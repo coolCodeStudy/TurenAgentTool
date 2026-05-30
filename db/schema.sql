@@ -171,6 +171,15 @@ ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS worker_log TEXT;
 ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS worker_started_at TIMESTAMPTZ;
 ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS worker_finished_at TIMESTAMPTZ;
 
+CREATE TABLE IF NOT EXISTS worker_status (
+  name TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_error TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS ipo_reminder_events (
   id BIGSERIAL PRIMARY KEY,
   reminder_type TEXT NOT NULL,

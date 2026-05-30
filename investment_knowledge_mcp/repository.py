@@ -627,6 +627,46 @@ def update_coding_task(
     return to_jsonable(row)
 
 
+def upsert_worker_status(
+    name: str,
+    status: str,
+    last_error: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cleaned_name = name.strip()
+    if not cleaned_name:
+        raise ValueError("worker name is required")
+
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO worker_status (name, status, last_seen_at, last_error, metadata, updated_at)
+            VALUES (%s, %s, now(), %s, %s, now())
+            ON CONFLICT (name) DO UPDATE SET
+              status = EXCLUDED.status,
+              last_seen_at = now(),
+              last_error = EXCLUDED.last_error,
+              metadata = EXCLUDED.metadata,
+              updated_at = now()
+            RETURNING *
+            """,
+            (cleaned_name, status, last_error, Jsonb(metadata or {})),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def list_worker_status() -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM worker_status
+            ORDER BY last_seen_at DESC
+            """
+        ).fetchall()
+    return to_jsonable(rows)
+
+
 def _resolve_insight_target_in_conn(
     conn: Connection,
     target_type: str,

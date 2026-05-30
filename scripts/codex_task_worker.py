@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 
 VALID_TERMINAL_STATUSES = {"done", "needs_user", "rejected", "cancelled"}
@@ -65,9 +66,25 @@ def main() -> None:
 
     config = load_config()
     ensure_codex_available(config.codex_bin)
+    ensure_schema(config)
+    record_worker_status(config, "started")
 
     while True:
-        task = claim_next_task(config)
+        try:
+            record_worker_status(config, "idle")
+            task = claim_next_task(config)
+        except Exception as exc:
+            message = f"claim task failed: {exc}"
+            print(message, flush=True)
+            try:
+                record_worker_status(config, "error", last_error=message)
+            except Exception:
+                pass
+            if args.once:
+                raise
+            time.sleep(config.poll_seconds)
+            continue
+
         if task is None:
             if args.once:
                 print("No pending coding task.", flush=True)
@@ -76,10 +93,13 @@ def main() -> None:
             continue
 
         try:
+            record_worker_status(config, "running", metadata={"task_id": task["id"]})
             process_task(config, task)
+            record_worker_status(config, "idle", metadata={"last_task_id": task["id"]})
         except Exception as exc:
             message = f"Codex worker failed: {exc}"
             notify_dingtalk(config, f"开发任务 #{task['id']} 处理失败。\n\n原因：{message}")
+            record_worker_status(config, "error", last_error=message, metadata={"task_id": task["id"]})
             update_task(
                 config,
                 task_id=task["id"],
@@ -179,6 +199,43 @@ def claim_next_task(config: WorkerConfig) -> dict[str, Any] | None:
                 """,
                 (f"{config.worker_name}: claimed task",),
             ).fetchone()
+
+
+def ensure_schema(config: WorkerConfig) -> None:
+    schema_path = Path(os.getenv("CODEX_WORKER_SCHEMA_PATH", "/opt/investment-knowledge/db/schema.sql"))
+    if not schema_path.exists():
+        return
+    schema_sql = schema_path.read_text(encoding="utf-8")
+    with psycopg.connect(config.database_url, row_factory=dict_row) as conn:
+        conn.execute(schema_sql)
+
+
+def record_worker_status(
+    config: WorkerConfig,
+    status: str,
+    last_error: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    with psycopg.connect(config.database_url, row_factory=dict_row) as conn:
+        with conn.transaction():
+            conn.execute(
+                """
+                INSERT INTO worker_status (name, status, last_seen_at, last_error, metadata, updated_at)
+                VALUES (%s, %s, now(), %s, %s, now())
+                ON CONFLICT (name) DO UPDATE SET
+                  status = EXCLUDED.status,
+                  last_seen_at = now(),
+                  last_error = EXCLUDED.last_error,
+                  metadata = EXCLUDED.metadata,
+                  updated_at = now()
+                """,
+                (
+                    config.worker_name,
+                    status,
+                    last_error,
+                    Jsonb(metadata or {}),
+                ),
+            )
 
 
 def update_task(
