@@ -291,6 +291,7 @@ def main() -> None:
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")
+        assert is_maintenance_command("富途登录")
         assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_STRATEGY_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_NATURAL_MEMORY in router_candidates_result.message

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import time
 from typing import Iterable
 
 from investment_knowledge_mcp.config import AppConfig, get_config
@@ -41,16 +42,41 @@ def send_opend_command(command: str, config: AppConfig | None = None, timeout: f
             timeout=timeout,
         ) as sock:
             sock.settimeout(timeout)
-            sock.sendall(command.encode("utf-8") + b"\n")
-            chunks = _read_until_timeout(sock)
+            banner = _read_available(sock, idle_seconds=0.25)
+            sock.sendall(command.encode("utf-8") + b"\r\n")
+            time.sleep(0.05)
+            response = _read_until_timeout(sock)
     except OSError as exc:
         raise FutuOpenDControlError(
             "连接 OpenD Telnet 控制口失败，请确认 OpenD 已用 -telnet_ip/-telnet_port 启动，"
             "并且容器可访问该端口。"
         ) from exc
 
-    response = _decode_response(chunks).strip()
-    return response or "OpenD 已接收命令，但没有返回文本。"
+    decoded_banner = _decode_response(banner).strip()
+    decoded_response = _decode_response(response).strip()
+    if decoded_response:
+        return decoded_response
+    if decoded_banner:
+        return decoded_banner + "\n\n注意：OpenD 只返回了连接欢迎信息，没有返回命令处理结果。"
+    return "OpenD 已接收命令，但没有返回文本。"
+
+
+def _read_available(sock: socket.socket, idle_seconds: float) -> bytes:
+    chunks: list[bytes] = []
+    original_timeout = sock.gettimeout()
+    sock.settimeout(idle_seconds)
+    try:
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except (TimeoutError, socket.timeout):
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        sock.settimeout(original_timeout)
+    return b"".join(chunks)
 
 
 def _read_until_timeout(sock: socket.socket) -> bytes:

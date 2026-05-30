@@ -163,6 +163,9 @@ def handle_command(
     if cleaned in {"请求富途验证码", "富途请求验证码", "OpenD请求验证码", "opend请求验证码"}:
         return _handle_futu_request_verify_code()
 
+    if cleaned in {"富途登录", "修复富途", "富途登录修复", "OpenD登录", "opend登录"}:
+        return _handle_futu_login_flow()
+
     if cleaned in {"富途重登录", "重登录富途", "OpenD重登录", "opend重登录"}:
         return _handle_futu_relogin()
 
@@ -278,6 +281,7 @@ def is_maintenance_command(command: str) -> bool:
     return bool(
         re.fullmatch(r"(?:富途验证码|OpenD验证码|opend验证码)\s+\d{4,8}", cleaned, flags=re.IGNORECASE)
         or cleaned in {"请求富途验证码", "富途请求验证码", "OpenD请求验证码", "opend请求验证码"}
+        or cleaned in {"富途登录", "修复富途", "富途登录修复", "OpenD登录", "opend登录"}
         or cleaned in {"富途重登录", "重登录富途", "OpenD重登录", "opend重登录"}
     )
 
@@ -442,7 +446,11 @@ def _handle_futu_request_verify_code() -> CommandResult:
         return CommandResult(ok=False, message=f"请求富途验证码失败：{exc}")
     return CommandResult(
         ok=True,
-        message="已向 OpenD 发送请求手机验证码命令。\n\n" + _trim_opend_response(response),
+        message=(
+            "已向 OpenD 发送请求手机验证码命令。\n\n"
+            + _trim_opend_response(response)
+            + "\n\n如果手机收到验证码，请回复：富途验证码 123456"
+        ),
     )
 
 
@@ -453,7 +461,11 @@ def _handle_futu_verify_code(code: str) -> CommandResult:
         return CommandResult(ok=False, message=f"提交富途验证码失败：{exc}")
     return CommandResult(
         ok=True,
-        message="已向 OpenD 提交手机验证码。\n\n" + _trim_opend_response(response),
+        message=(
+            "已向 OpenD 提交手机验证码。\n\n"
+            + _trim_opend_response(response)
+            + "\n\n请等 5-10 秒后再试：我的持仓"
+        ),
     )
 
 
@@ -465,6 +477,25 @@ def _handle_futu_relogin() -> CommandResult:
     return CommandResult(
         ok=True,
         message="已向 OpenD 发送重登录命令。\n\n" + _trim_opend_response(response),
+    )
+
+
+def _handle_futu_login_flow() -> CommandResult:
+    try:
+        relogin_response = relogin_opend()
+        verify_response = request_phone_verify_code()
+    except FutuOpenDControlError as exc:
+        return CommandResult(ok=False, message=f"启动富途登录修复失败：{exc}")
+    return CommandResult(
+        ok=True,
+        message=(
+            "已尝试触发 OpenD 重登录并请求手机验证码。\n\n"
+            "重登录返回：\n"
+            + _trim_opend_response(relogin_response)
+            + "\n\n验证码请求返回：\n"
+            + _trim_opend_response(verify_response)
+            + "\n\n如果手机收到验证码，请回复：富途验证码 123456"
+        ),
     )
 
 
@@ -1282,6 +1313,7 @@ def _help_text() -> str:
 - 交易记录 2026-05-01 2026-05-29
 - 本月收益
 - 富途状态
+- 富途登录
 - 富途请求验证码
 - 富途验证码 123456
 - 富途重登录
