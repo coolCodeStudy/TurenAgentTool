@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -7,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.command_router import (
     handle_command,
+    is_candidate_write_command,
     is_maintenance_command,
     is_query_command,
 )
@@ -252,18 +254,19 @@ def run_investment_command(
 ) -> dict[str, Any]:
     """Run a safe natural-language InvestmentKnowledge command for an agent shell.
 
-    This tool is intended for Hermes/OpenClaw style gateways. It only permits
-    query commands and Futu maintenance commands; direct knowledge writes remain
-    behind the existing confirmation flow.
+    This tool is intended for Hermes/OpenClaw style gateways. It permits
+    query commands, Futu maintenance commands, candidate-memory proposals, and
+    explicit candidate confirmation/rejection. Direct formal memory writes remain
+    blocked.
     """
     cleaned = command.strip()
     if not cleaned:
         return {"ok": False, "message": "command is required"}
 
-    if not (is_query_command(cleaned) or is_maintenance_command(cleaned)):
+    if not _is_safe_agent_command(cleaned):
         message = (
-            "Hermes MCP 当前只允许查询类和富途维护类指令。"
-            "知识写入请先走候选心得确认流程，避免污染长期记忆。"
+            "Hermes MCP 当前只允许查询类、富途维护类、候选心得和候选确认/拒绝指令。"
+            "正式心得写入必须先经过候选确认，避免污染长期记忆。"
         )
         _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
         return {"ok": False, "message": message}
@@ -283,6 +286,16 @@ def run_investment_command(
         message = f"执行 InvestmentKnowledge 指令失败：{exc}"
         _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
         return {"ok": False, "message": message}
+
+
+def _is_safe_agent_command(command: str) -> bool:
+    return bool(
+        is_query_command(command)
+        or is_maintenance_command(command)
+        or is_candidate_write_command(command)
+        or re.fullmatch(r"(?:确认候选心得|confirm candidate)\s+\d+", command, flags=re.IGNORECASE)
+        or re.fullmatch(r"(?:拒绝候选心得|reject candidate)\s+\d+", command, flags=re.IGNORECASE)
+    )
 
 
 def _record_agent_command(
