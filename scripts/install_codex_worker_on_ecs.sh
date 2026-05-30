@@ -15,6 +15,8 @@ CODEX_WORKER_LOCAL_DEPLOY_BUILD=${CODEX_WORKER_LOCAL_DEPLOY_BUILD:-false}
 CODEX_WORKER_DEPLOY_WORKFLOW=${CODEX_WORKER_DEPLOY_WORKFLOW:-deploy.yml}
 CODEX_WORKER_DEPLOY_MODE=${CODEX_WORKER_DEPLOY_MODE:-auto}
 CODEX_WORKER_POLL_SECONDS=${CODEX_WORKER_POLL_SECONDS:-30}
+CODEX_WORKER_AUTH_MODE=${CODEX_WORKER_AUTH_MODE:-chatgpt}
+CODEX_WORKER_RUN_DEVICE_LOGIN=${CODEX_WORKER_RUN_DEVICE_LOGIN:-false}
 
 usage() {
   cat <<'EOF'
@@ -24,8 +26,16 @@ Usage:
   bash scripts/install_codex_worker_on_ecs.sh [--start]
 
 Required for useful operation:
-  OPENAI_API_KEY                  Used to login Codex CLI if not already logged in.
   CODEX_WORKER_GITHUB_TOKEN       GitHub PAT with repo write/workflow access, used to push branches and trigger deploy.
+
+Codex authentication:
+  Default auth mode is ChatGPT subscription login, not API-key billing.
+  To sign in on a headless ECS host, run with CODEX_WORKER_RUN_DEVICE_LOGIN=true
+  and complete the device-code flow in your browser.
+
+Optional:
+  CODEX_WORKER_AUTH_MODE=api       Use OPENAI_API_KEY for API-billed Codex CLI usage.
+  OPENAI_API_KEY                   Required only when CODEX_WORKER_AUTH_MODE=api.
 
 The worker reads pending coding_tasks, runs `codex exec` in a dedicated clone,
 commits changes, pushes a codex/task-* branch, deploys locally on ECS by default,
@@ -86,10 +96,6 @@ load_investment_env() {
     echo "Missing POSTGRES_PASSWORD. Keep it in $INVESTMENT_DIR/.env or export it before running." >&2
     exit 1
   fi
-  if [ -z "${OPENAI_API_KEY:-}" ]; then
-    echo "Missing OPENAI_API_KEY. Keep it in $INVESTMENT_DIR/.env or export it before running." >&2
-    exit 1
-  fi
 }
 
 install_codex_cli() {
@@ -98,7 +104,31 @@ install_codex_cli() {
   fi
 
   if ! codex login status >/dev/null 2>&1; then
-    printf "%s" "$OPENAI_API_KEY" | codex login --with-api-key
+    case "$CODEX_WORKER_AUTH_MODE" in
+      chatgpt)
+        if [ "$CODEX_WORKER_RUN_DEVICE_LOGIN" = "true" ]; then
+          codex login --device-auth
+        else
+          cat >&2 <<'EOF'
+Codex CLI is not signed in.
+Run the Codex Worker workflow with mode=login, or SSH to ECS and run:
+  sudo CODEX_WORKER_RUN_DEVICE_LOGIN=true CODEX_WORKER_AUTH_MODE=chatgpt bash /opt/investment-knowledge/scripts/install_codex_worker_on_ecs.sh
+EOF
+          exit 1
+        fi
+        ;;
+      api)
+        if [ -z "${OPENAI_API_KEY:-}" ]; then
+          echo "Missing OPENAI_API_KEY for CODEX_WORKER_AUTH_MODE=api." >&2
+          exit 1
+        fi
+        printf "%s" "$OPENAI_API_KEY" | codex login --with-api-key
+        ;;
+      *)
+        echo "Unknown CODEX_WORKER_AUTH_MODE: $CODEX_WORKER_AUTH_MODE" >&2
+        exit 1
+        ;;
+    esac
   fi
 }
 
@@ -124,10 +154,11 @@ POSTGRES_USER=${POSTGRES_USER:-postgres}
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_DB=${POSTGRES_DB:-investment_kg}
 
-OPENAI_API_KEY=$OPENAI_API_KEY
 DINGTALK_SEND_WEBHOOK=${DINGTALK_SEND_WEBHOOK:-}
 DINGTALK_SEND_SECRET=${DINGTALK_SEND_SECRET:-}
 CODEX_BIN=${CODEX_BIN_PATH:-codex}
+CODEX_HOME=/root/.codex
+CODEX_WORKER_AUTH_MODE=$CODEX_WORKER_AUTH_MODE
 CODEX_WORKER_GITHUB_TOKEN=${CODEX_WORKER_GITHUB_TOKEN:-}
 CODEX_WORKER_REPO_URL=$CODEX_WORKER_REPO_URL
 CODEX_WORKER_BASE_BRANCH=$CODEX_WORKER_BASE_BRANCH
