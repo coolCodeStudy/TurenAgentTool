@@ -103,14 +103,28 @@ DINGTALK_REQUIRE_MENTION=true
 
 ## 验证步骤
 
-1. InvestmentKnowledge MCP 在线：
+1. 先只安装 Hermes，不启动、不切入口：
+
+```bash
+cd /opt/investment-knowledge
+bash scripts/install_hermes_gateway_on_ecs.sh
+```
+
+2. InvestmentKnowledge MCP 在线：
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
 ```
 
-2. Hermes 能收到钉钉消息并回复。
-3. 在钉钉里测试：
+3. 正式切入口时再执行：
+
+```bash
+cd /opt/investment-knowledge
+bash scripts/install_hermes_gateway_on_ecs.sh --switch-dingtalk
+```
+
+4. Hermes 能收到钉钉消息并回复。
+5. 在钉钉里测试：
 
 ```text
 @机器人 帮助
@@ -119,7 +133,7 @@ docker compose -f docker-compose.prod.yml ps
 @机器人 富途状态
 ```
 
-4. 确认写入类表达不会直接入库：
+6. 确认写入类表达不会直接入库：
 
 ```text
 @机器人 我觉得港股亏损太消耗精力

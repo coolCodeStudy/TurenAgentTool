@@ -1,0 +1,104 @@
+name: Hermes Gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Hermes operation mode"
+        required: true
+        default: "install"
+        type: choice
+        options:
+          - install
+          - start
+          - switch
+
+jobs:
+  hermes_gateway:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate ECS secrets
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+        run: |
+          set -e
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+          echo "Required ECS secrets are present."
+
+      - name: Upload Hermes installer
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          source: "scripts/install_hermes_gateway_on_ecs.sh"
+          target: "/tmp"
+          strip_components: 1
+          overwrite: true
+
+      - name: Run Hermes operation
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 40m
+          script: |
+            set -e
+
+            APP_DIR=/opt/investment-knowledge
+            INSTALLER=/tmp/install_hermes_gateway_on_ecs.sh
+            MODE="${{ inputs.mode }}"
+
+            sudo mkdir -p "$APP_DIR/scripts"
+            sudo cp "$INSTALLER" "$APP_DIR/scripts/install_hermes_gateway_on_ecs.sh"
+            sudo chmod +x "$APP_DIR/scripts/install_hermes_gateway_on_ecs.sh"
+
+            cd "$APP_DIR"
+
+            if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE="docker compose"
+            elif sudo docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE="sudo docker compose"
+            else
+              echo "Docker Compose plugin is not available."
+              exit 1
+            fi
+
+            if [ -f docker-compose.prod.yml ]; then
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp
+              $DOCKER_COMPOSE -f docker-compose.prod.yml ps
+            fi
+
+            case "$MODE" in
+              install)
+                bash scripts/install_hermes_gateway_on_ecs.sh
+                ;;
+              start)
+                bash scripts/install_hermes_gateway_on_ecs.sh --start
+                ;;
+              switch)
+                bash scripts/install_hermes_gateway_on_ecs.sh --switch-dingtalk
+                ;;
+              *)
+                echo "Unknown mode: $MODE"
+                exit 1
+                ;;
+            esac
+
+            systemctl status hermes-gateway.service --no-pager || true
+            journalctl -u hermes-gateway.service -n 120 --no-pager || true

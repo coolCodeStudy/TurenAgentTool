@@ -10,16 +10,19 @@ DINGTALK_ALLOWED_USERS=${DINGTALK_ALLOWED_USERS:-0140522255091257971}
 OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.2}
 OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
 SWITCH_DINGTALK=false
+START_HERMES=false
 
 usage() {
   cat <<'EOF'
 Install Hermes Gateway on ECS and configure it to call InvestmentKnowledge MCP.
 
 Usage:
-  bash scripts/install_hermes_gateway_on_ecs.sh [--switch-dingtalk]
+  bash scripts/install_hermes_gateway_on_ecs.sh [--start] [--switch-dingtalk]
 
 Options:
+  --start           Start Hermes Gateway after installation.
   --switch-dingtalk  Stop InvestmentKnowledge dingtalk-stream-bot after Hermes is installed.
+                     This implies --start.
 
 Environment overrides:
   HERMES_DIR=/opt/hermes-agent
@@ -36,6 +39,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --switch-dingtalk)
       SWITCH_DINGTALK=true
+      START_HERMES=true
+      ;;
+    --start)
+      START_HERMES=true
       ;;
     -h|--help)
       usage
@@ -179,7 +186,7 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now hermes-gateway.service
+  systemctl enable hermes-gateway.service
 }
 
 switch_dingtalk_owner() {
@@ -192,6 +199,13 @@ switch_dingtalk_owner() {
   fi
 }
 
+start_hermes_gateway() {
+  if [ "$START_HERMES" != "true" ]; then
+    return
+  fi
+  systemctl restart hermes-gateway.service
+}
+
 print_next_steps() {
   cat <<EOF
 Hermes Gateway installed.
@@ -202,6 +216,9 @@ Status:
 
 InvestmentKnowledge MCP should be available at:
   $INVESTMENT_MCP_URL
+
+If you installed only and want to test Hermes later:
+  systemctl start hermes-gateway.service
 
 If you have not switched DingTalk yet, stop the old Stream bot before testing Hermes:
   cd $INVESTMENT_DIR
@@ -222,4 +239,5 @@ install_hermes
 write_hermes_config
 install_systemd_service
 switch_dingtalk_owner
+start_hermes_gateway
 print_next_steps
