@@ -288,6 +288,8 @@ def main() -> None:
         assert router_trade_review_result.ok
         assert router_candidates_result.ok
         assert not is_query_command(SMOKE_ROUTER_NATURAL_MEMORY)
+        assert is_query_command("交易复盘")
+        assert is_query_command("本月收益")
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

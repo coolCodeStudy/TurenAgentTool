@@ -272,6 +272,8 @@ def is_query_command(command: str) -> bool:
             *IPO_REMINDER_STATUS_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
+            *TRADE_REVIEW_COMMANDS,
+            *PERFORMANCE_ESTIMATE_COMMANDS,
             "港股新股",
             "港股IPO",
             "港股ipo",
