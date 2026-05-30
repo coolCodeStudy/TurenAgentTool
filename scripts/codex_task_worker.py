@@ -41,6 +41,9 @@ class WorkerConfig:
     test_command: str | None
     auto_push: bool
     auto_deploy: bool
+    local_deploy: bool
+    local_deploy_command: str | None
+    local_deploy_build: bool
     deploy_workflow: str
     deploy_mode: str
     github_api_url: str
@@ -108,7 +111,10 @@ def load_config() -> WorkerConfig:
         task_timeout_seconds=int(os.getenv("CODEX_WORKER_TASK_TIMEOUT_SECONDS", "3600")),
         test_command=os.getenv("CODEX_WORKER_TEST_COMMAND") or None,
         auto_push=_env_bool("CODEX_WORKER_AUTO_PUSH", default=True),
-        auto_deploy=_env_bool("CODEX_WORKER_AUTO_DEPLOY", default=True),
+        auto_deploy=_env_bool("CODEX_WORKER_AUTO_DEPLOY", default=False),
+        local_deploy=_env_bool("CODEX_WORKER_LOCAL_DEPLOY", default=True),
+        local_deploy_command=os.getenv("CODEX_WORKER_LOCAL_DEPLOY_COMMAND") or None,
+        local_deploy_build=_env_bool("CODEX_WORKER_LOCAL_DEPLOY_BUILD", default=False),
         deploy_workflow=os.getenv("CODEX_WORKER_DEPLOY_WORKFLOW", "deploy.yml"),
         deploy_mode=os.getenv("CODEX_WORKER_DEPLOY_MODE", "auto"),
         github_api_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
@@ -252,11 +258,26 @@ def process_task(config: WorkerConfig, task: dict[str, Any]) -> None:
 
     deploy_triggered = False
     deploy_message = ""
+    local_deployed = False
+    local_deploy_message = ""
+    if config.local_deploy:
+        local_deploy_message = deploy_locally(config)
+        local_deployed = True
     if pushed and config.auto_deploy:
         deploy_message = trigger_deploy_workflow(config, branch_name)
         deploy_triggered = True
 
-    result = render_result(task, branch_name, commit_sha, pushed, deploy_triggered, deploy_message, codex_final)
+    result = render_result(
+        task,
+        branch_name,
+        commit_sha,
+        pushed,
+        local_deployed,
+        local_deploy_message,
+        deploy_triggered,
+        deploy_message,
+        codex_final,
+    )
     update_task(
         config,
         task_id=task_id,
@@ -370,6 +391,23 @@ def push_branch(config: WorkerConfig, branch_name: str) -> None:
     run(["git", "push", "-u", "origin", branch_name], cwd=config.work_dir, timeout=config.task_timeout_seconds)
 
 
+def deploy_locally(config: WorkerConfig) -> str:
+    if config.local_deploy_command:
+        run_shell(config.local_deploy_command, cwd=config.work_dir, timeout=config.task_timeout_seconds)
+        return f"Ran local deploy command: {config.local_deploy_command}"
+
+    script_path = config.work_dir / "scripts" / "deploy_from_local_checkout.sh"
+    if not script_path.exists():
+        raise RuntimeError(f"local deploy script not found: {script_path}")
+
+    env = os.environ.copy()
+    env["SOURCE_DIR"] = str(config.work_dir)
+    env.setdefault("APP_DIR", "/opt/investment-knowledge")
+    env["BUILD_IMAGE"] = "true" if config.local_deploy_build else "false"
+    run([str(script_path)], cwd=config.work_dir, timeout=config.task_timeout_seconds, env=env)
+    return f"Deployed locally to {env['APP_DIR']} (build_image={env['BUILD_IMAGE']})"
+
+
 def trigger_deploy_workflow(config: WorkerConfig, branch_name: str) -> str:
     if not config.github_token:
         raise RuntimeError("CODEX_WORKER_GITHUB_TOKEN is required to trigger deployment")
@@ -424,6 +462,8 @@ def render_result(
     branch_name: str,
     commit_sha: str,
     pushed: bool,
+    local_deployed: bool,
+    local_deploy_message: str,
     deploy_triggered: bool,
     deploy_message: str,
     codex_final: str,
@@ -433,10 +473,13 @@ def render_result(
         f"- 分支: {branch_name}",
         f"- commit: {commit_sha}",
         f"- 已推送: {'是' if pushed else '否'}",
-        f"- 已触发部署: {'是' if deploy_triggered else '否'}",
+        f"- 已本机部署: {'是' if local_deployed else '否'}",
+        f"- 已触发 GitHub 部署: {'是' if deploy_triggered else '否'}",
     ]
+    if local_deploy_message:
+        lines.append(f"- 本机部署: {local_deploy_message}")
     if deploy_message:
-        lines.append(f"- 部署: {deploy_message}")
+        lines.append(f"- GitHub 部署: {deploy_message}")
     if codex_final.strip():
         lines.extend(["", "Codex 摘要:", codex_final.strip()[:3000]])
     return "\n".join(lines)
@@ -484,10 +527,10 @@ def truncate_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + "\n\n...内容过长，已截断。"
 
 
-def run(args: list[str], cwd: Path, timeout: int = 3600) -> None:
+def run(args: list[str], cwd: Path, timeout: int = 3600, env: dict[str, str] | None = None) -> None:
     display = sanitize_command(args)
     print(f"$ {' '.join(display)}", flush=True)
-    subprocess.run(args, cwd=cwd, check=True, timeout=timeout)
+    subprocess.run(args, cwd=cwd, check=True, timeout=timeout, env=env)
 
 
 def run_shell(command: str, cwd: Path, timeout: int = 3600) -> None:
