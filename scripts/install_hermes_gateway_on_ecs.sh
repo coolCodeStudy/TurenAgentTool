@@ -5,6 +5,7 @@ HERMES_DIR=${HERMES_DIR:-/opt/hermes-agent}
 HERMES_HOME=${HERMES_HOME:-/root/.hermes}
 INVESTMENT_DIR=${INVESTMENT_DIR:-/opt/investment-knowledge}
 HERMES_REPO_URL=${HERMES_REPO_URL:-https://github.com/NousResearch/hermes-agent.git}
+HERMES_PYTHON=${HERMES_PYTHON:-3.12}
 INVESTMENT_MCP_URL=${INVESTMENT_MCP_URL:-http://127.0.0.1:8000/mcp}
 DINGTALK_ALLOWED_USERS=${DINGTALK_ALLOWED_USERS:-0140522255091257971}
 OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.2}
@@ -27,6 +28,7 @@ Options:
 Environment overrides:
   HERMES_DIR=/opt/hermes-agent
   HERMES_HOME=/root/.hermes
+  HERMES_PYTHON=3.12
   INVESTMENT_DIR=/opt/investment-knowledge
   INVESTMENT_MCP_URL=http://127.0.0.1:8000/mcp
   DINGTALK_ALLOWED_USERS=0140522255091257971
@@ -66,6 +68,7 @@ require_root() {
 
 install_base_tools() {
   if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y git curl ca-certificates python3 python3-venv
   elif command -v dnf >/dev/null 2>&1; then
@@ -101,6 +104,7 @@ load_investment_env() {
 }
 
 install_uv() {
+  export PATH="/root/.local/bin:$PATH"
   if command -v uv >/dev/null 2>&1; then
     return
   fi
@@ -119,8 +123,8 @@ install_hermes() {
   git pull --ff-only
 
   if command -v uv >/dev/null 2>&1; then
-    uv venv venv
-    uv pip install -e ".[cli,pty,mcp,dingtalk]"
+    uv venv --python "$HERMES_PYTHON" venv
+    uv pip install --python "$HERMES_DIR/venv/bin/python" -e ".[cli,pty,mcp,dingtalk]"
   else
     python3 -m venv venv
     "$HERMES_DIR/venv/bin/pip" install -U pip
