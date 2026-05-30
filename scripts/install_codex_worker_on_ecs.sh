@@ -117,6 +117,7 @@ write_worker_env() {
   CODEX_BIN_PATH="$(command -v codex || true)"
 
   cat > "$WORKER_ENV" <<EOF
+CODEX_WORKER_DATABASE_URL=
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=${POSTGRES_HOST_PORT:-55432}
 POSTGRES_USER=${POSTGRES_USER:-postgres}
