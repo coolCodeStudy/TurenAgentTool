@@ -15,6 +15,7 @@ TELNET_PROXY_PORT="${TELNET_PROXY_PORT:-22222}"
 LANGUAGE="${LANGUAGE:-chs}"
 FUTU_LOGIN_ACCOUNT="${FUTU_LOGIN_ACCOUNT:-}"
 FUTU_LOGIN_PWD="${FUTU_LOGIN_PWD:-}"
+REQUESTED_OPEND_DIR=""
 
 usage() {
   cat <<USAGE
@@ -36,6 +37,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --opend-dir)
       OPEND_DIR="${2:-}"
+      REQUESTED_OPEND_DIR="$OPEND_DIR"
       shift 2
       ;;
     -h|--help)
@@ -49,6 +51,16 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -f "$ENV_FILE" ]; then
+  # Reuse existing root-only credentials when reinstalling/upgrading the host
+  # service, then re-apply the explicitly provided OpenD directory.
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  if [ -n "$REQUESTED_OPEND_DIR" ]; then
+    OPEND_DIR="$REQUESTED_OPEND_DIR"
+  fi
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=""
