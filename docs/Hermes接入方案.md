@@ -21,18 +21,18 @@
 
 ## 第一版边界
 
-第一版只让 Hermes 调用 InvestmentKnowledge 的安全 MCP 工具：
+第一版只让 Hermes 调用 InvestmentKnowledge 的安全 MCP 总入口：
 
 ```text
 run_investment_command
 ```
 
-这个工具只允许：
+这个工具内部复用 `command_router.handle_command()`，避免 Hermes 在多个底层工具之间猜测或直接操作数据库。它只允许：
 
 - 查询类指令：持仓、持仓分析、港股新股、本月收益、交易复盘、系统状态等。
 - 富途维护类指令：富途状态、富途请求验证码、富途验证码、富途重登录等。
 - 候选心得类指令：提出候选心得、查看候选心得、确认候选心得、拒绝候选心得。
-- 开发任务类指令：创建开发任务、查看开发任务。第一版只记录任务，不自动改代码或部署。
+- 开发任务类指令：创建开发任务、查看开发任务。开发任务会进入 `coding_tasks`，由云端 Codex worker 后续处理。
 
 不允许 Hermes 直接写正式心得。知识沉淀仍然走候选心得和确认流程，避免把群聊里的随口讨论写进长期记忆。
 
@@ -83,8 +83,6 @@ mcp_servers:
     tools:
       include:
         - run_investment_command
-        - create_coding_task
-        - list_coding_tasks
       resources: false
       prompts: false
 ```

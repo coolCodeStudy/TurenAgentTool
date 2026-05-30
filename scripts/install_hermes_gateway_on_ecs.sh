@@ -12,18 +12,20 @@ OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.2}
 OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
 SWITCH_DINGTALK=false
 START_HERMES=false
+CONFIG_ONLY=false
 
 usage() {
   cat <<'EOF'
 Install Hermes Gateway on ECS and configure it to call InvestmentKnowledge MCP.
 
 Usage:
-  bash scripts/install_hermes_gateway_on_ecs.sh [--start] [--switch-dingtalk]
+  bash scripts/install_hermes_gateway_on_ecs.sh [--start] [--switch-dingtalk] [--config-only]
 
 Options:
   --start           Start Hermes Gateway after installation.
   --switch-dingtalk  Stop InvestmentKnowledge dingtalk-stream-bot after Hermes is installed.
                      This implies --start.
+  --config-only     Only rewrite Hermes config/systemd and optionally restart.
 
 Environment overrides:
   HERMES_DIR=/opt/hermes-agent
@@ -45,6 +47,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --start)
       START_HERMES=true
+      ;;
+    --config-only)
+      CONFIG_ONLY=true
       ;;
     -h|--help)
       usage
@@ -164,10 +169,6 @@ mcp_servers:
     tools:
       include:
         - run_investment_command
-        - create_coding_task
-        - list_coding_tasks
-        - claim_next_coding_task
-        - update_coding_task
       resources: false
       prompts: false
 EOF
@@ -241,10 +242,12 @@ EOF
 }
 
 require_root
-install_base_tools
 load_investment_env
-install_uv
-install_hermes
+if [ "$CONFIG_ONLY" != "true" ]; then
+  install_base_tools
+  install_uv
+  install_hermes
+fi
 write_hermes_config
 install_systemd_service
 switch_dingtalk_owner
