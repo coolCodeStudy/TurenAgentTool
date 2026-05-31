@@ -135,10 +135,9 @@ def load_config() -> WorkerConfig:
     database_url = (
         os.getenv("CODEX_WORKER_DATABASE_URL")
         or _database_url_from_parts()
-        or os.getenv("DATABASE_URL")
     )
     if not database_url:
-        raise RuntimeError("CODEX_WORKER_DATABASE_URL, POSTGRES_* or DATABASE_URL environment is required")
+        raise RuntimeError("CODEX_WORKER_DATABASE_URL or POSTGRES_* environment is required")
 
     return WorkerConfig(
         database_url=database_url,

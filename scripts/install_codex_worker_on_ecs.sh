@@ -151,9 +151,27 @@ write_worker_env() {
   mkdir -p "$(dirname "$WORKER_ENV")"
   chmod 700 "$(dirname "$WORKER_ENV")"
   CODEX_BIN_PATH="$(command -v codex || true)"
+  CODEX_WORKER_DATABASE_URL_VALUE="$(
+    POSTGRES_HOST=127.0.0.1 \
+    POSTGRES_PORT="${POSTGRES_HOST_PORT:-55432}" \
+    POSTGRES_USER="${POSTGRES_USER:-postgres}" \
+    POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+    POSTGRES_DB="${POSTGRES_DB:-investment_kg}" \
+    python3 - <<'PY'
+import os
+from urllib.parse import quote
+
+user = quote(os.environ["POSTGRES_USER"])
+password = quote(os.environ["POSTGRES_PASSWORD"])
+host = os.environ["POSTGRES_HOST"]
+port = os.environ["POSTGRES_PORT"]
+db = quote(os.environ["POSTGRES_DB"])
+print(f"postgresql://{user}:{password}@{host}:{port}/{db}")
+PY
+  )"
 
   cat > "$WORKER_ENV" <<EOF
-CODEX_WORKER_DATABASE_URL=
+CODEX_WORKER_DATABASE_URL=$CODEX_WORKER_DATABASE_URL_VALUE
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=${POSTGRES_HOST_PORT:-55432}
 POSTGRES_USER=${POSTGRES_USER:-postgres}
@@ -202,6 +220,7 @@ Type=simple
 WorkingDirectory=$INVESTMENT_DIR
 EnvironmentFile=$WORKER_ENV
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+UnsetEnvironment=DATABASE_URL
 ExecStart=$WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/codex_task_worker.py --loop
 Restart=always
 RestartSec=10
