@@ -70,6 +70,7 @@ jobs:
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
           command_timeout: 40m
+          request_pty: ${{ inputs.mode == 'login' }}
           envs: CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH,CODEX_WORKER_AUTO_DEPLOY,CODEX_WORKER_LOCAL_DEPLOY,CODEX_WORKER_LOCAL_DEPLOY_BUILD,CODEX_WORKER_DEPLOY_MODE,CODEX_WORKER_AUTH_MODE
           script: |
             set -e
@@ -107,7 +108,7 @@ jobs:
               login)
                 sudo systemctl stop investment-codex-worker.service || true
                 sudo --preserve-env=CODEX_WORKER_GITHUB_TOKEN,CODEX_WORKER_MODEL,CODEX_WORKER_DANGER_FULL_ACCESS,CODEX_WORKER_AUTO_PUSH,CODEX_WORKER_AUTO_DEPLOY,CODEX_WORKER_LOCAL_DEPLOY,CODEX_WORKER_LOCAL_DEPLOY_BUILD,CODEX_WORKER_DEPLOY_MODE,CODEX_WORKER_AUTH_MODE \
-                  env CODEX_WORKER_RUN_DEVICE_LOGIN=true bash scripts/install_codex_worker_on_ecs.sh
+                  env CODEX_WORKER_FORCE_LOGIN=true CODEX_WORKER_RUN_DEVICE_LOGIN=true bash scripts/install_codex_worker_on_ecs.sh
                 ;;
               start)
                 sudo systemctl restart investment-codex-worker.service

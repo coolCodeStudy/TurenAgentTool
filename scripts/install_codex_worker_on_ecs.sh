@@ -17,6 +17,7 @@ CODEX_WORKER_DEPLOY_MODE=${CODEX_WORKER_DEPLOY_MODE:-auto}
 CODEX_WORKER_POLL_SECONDS=${CODEX_WORKER_POLL_SECONDS:-30}
 CODEX_WORKER_AUTH_MODE=${CODEX_WORKER_AUTH_MODE:-chatgpt}
 CODEX_WORKER_RUN_DEVICE_LOGIN=${CODEX_WORKER_RUN_DEVICE_LOGIN:-false}
+CODEX_WORKER_FORCE_LOGIN=${CODEX_WORKER_FORCE_LOGIN:-false}
 CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS=${CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS:-3600}
 
 usage() {
@@ -102,6 +103,10 @@ load_investment_env() {
 install_codex_cli() {
   if ! command -v codex >/dev/null 2>&1; then
     npm install -g @openai/codex
+  fi
+
+  if [ "$CODEX_WORKER_FORCE_LOGIN" = "true" ]; then
+    codex logout >/dev/null 2>&1 || true
   fi
 
   if ! codex login status >/dev/null 2>&1; then
