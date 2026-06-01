@@ -570,7 +570,7 @@ def claim_next_coding_task(worker_name: str = "codex-worker") -> dict[str, Any] 
               status = 'running',
               worker_started_at = COALESCE(worker_started_at, now()),
               updated_at = now(),
-              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s)
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text)
             FROM next_task
             WHERE task.id = next_task.id
             RETURNING task.*
@@ -601,7 +601,7 @@ def update_coding_task(
               branch_name = COALESCE(%s, branch_name),
               commit_sha = COALESCE(%s, commit_sha),
               linked_issue_url = COALESCE(%s, linked_issue_url),
-              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s, '')),
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s::text, '')),
               worker_finished_at = CASE
                 WHEN %s IN ('done', 'needs_user', 'rejected', 'cancelled') THEN now()
                 ELSE worker_finished_at

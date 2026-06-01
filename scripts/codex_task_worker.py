@@ -217,7 +217,7 @@ def claim_next_task(config: WorkerConfig) -> dict[str, Any] | None:
                   status = 'running',
                   worker_started_at = COALESCE(worker_started_at, now()),
                   updated_at = now(),
-                  worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s)
+                  worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text)
                 FROM next_task
                 WHERE task.id = next_task.id
                 RETURNING task.*
@@ -284,7 +284,7 @@ def update_task(
                   result = COALESCE(%s, result),
                   branch_name = COALESCE(%s, branch_name),
                   commit_sha = COALESCE(%s, commit_sha),
-                  worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s, '')),
+                  worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s::text, '')),
                   worker_finished_at = CASE
                     WHEN %s THEN now()
                     ELSE worker_finished_at
