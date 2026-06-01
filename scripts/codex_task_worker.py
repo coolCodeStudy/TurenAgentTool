@@ -645,7 +645,23 @@ def truncate_text(text: str, max_chars: int) -> str:
 def run(args: list[str], cwd: Path, timeout: int = 3600, env: dict[str, str] | None = None) -> None:
     display = sanitize_command(args)
     print(f"$ {' '.join(display)}", flush=True)
-    subprocess.run(args, cwd=cwd, check=True, timeout=timeout, env=env)
+    result = subprocess.run(
+        args,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        env=env,
+    )
+    if result.stdout:
+        print(result.stdout, flush=True)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, flush=True)
+    if result.returncode != 0:
+        output = "\n".join(part for part in [result.stdout, result.stderr] if part).strip()
+        details = truncate_text(output, 2000) if output else "no process output captured"
+        raise RuntimeError(f"Command failed with exit code {result.returncode}: {' '.join(display)}\n{details}")
 
 
 def run_shell(command: str, cwd: Path, timeout: int = 3600) -> None:

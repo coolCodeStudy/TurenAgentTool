@@ -627,6 +627,28 @@ def update_coding_task(
     return to_jsonable(row)
 
 
+def retry_coding_task(task_id: int, worker_log: str | None = None) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE coding_tasks SET
+              status = 'pending',
+              worker_started_at = NULL,
+              worker_finished_at = NULL,
+              result = NULL,
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s::text, '')),
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (worker_log, task_id),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(f"coding task not found: {task_id}")
+    return to_jsonable(row)
+
+
 def upsert_worker_status(
     name: str,
     status: str,

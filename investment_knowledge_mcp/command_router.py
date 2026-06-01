@@ -190,6 +190,14 @@ def handle_command(
     if coding_task_detail_match:
         return _handle_coding_task_detail(int(coding_task_detail_match.group(1)))
 
+    retry_coding_task_match = re.fullmatch(
+        r"(?:重试开发任务|重新运行开发任务|重跑开发任务|retry coding task|retry dev task)\s+#?(\d+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if retry_coding_task_match:
+        return _handle_retry_coding_task(int(retry_coding_task_match.group(1)))
+
     if cleaned in SYSTEM_STATUS_COMMANDS:
         return CommandResult(ok=True, message=render_system_status())
 
@@ -365,6 +373,11 @@ def is_coding_task_command(command: str) -> bool:
     return bool(
         normalized in CODING_TASK_LIST_COMMANDS
         or re.fullmatch(
+            r"(?:重试开发任务|重新运行开发任务|重跑开发任务|retry coding task|retry dev task)\s+#?\d+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
             r"(?:创建开发任务|提出开发任务|创建编程任务|新建开发任务|开发任务|coding task|dev task)\s+.+",
             normalized,
             flags=re.IGNORECASE,
@@ -499,6 +512,24 @@ def _handle_coding_task_detail(task_id: int) -> CommandResult:
         lines.append("")
         lines.append("还没有 worker 结果。")
     return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_retry_coding_task(task_id: int) -> CommandResult:
+    try:
+        task = repository.retry_coding_task(
+            task_id,
+            worker_log="Requeued by DingTalk command.",
+        )
+    except ValueError:
+        return CommandResult(ok=False, message=f"没有找到开发任务 #{task_id}。")
+    return CommandResult(
+        ok=True,
+        message=(
+            f"已重新排队开发任务 #{task['id']}。\n\n"
+            f"任务：{task['title']}\n\n"
+            "worker 会在下一轮轮询时重新处理。"
+        ),
+    )
 
 
 def _handle_worker_status() -> CommandResult:
