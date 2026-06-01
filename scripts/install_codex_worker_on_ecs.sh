@@ -161,11 +161,11 @@ write_worker_env() {
 import os
 from urllib.parse import quote
 
-user = quote(os.environ["POSTGRES_USER"])
-password = quote(os.environ["POSTGRES_PASSWORD"])
+user = quote(os.environ["POSTGRES_USER"], safe="")
+password = quote(os.environ["POSTGRES_PASSWORD"], safe="")
 host = os.environ["POSTGRES_HOST"]
 port = os.environ["POSTGRES_PORT"]
-db = quote(os.environ["POSTGRES_DB"])
+db = quote(os.environ["POSTGRES_DB"], safe="")
 print(f"postgresql://{user}:{password}@{host}:{port}/{db}")
 PY
   )"
@@ -198,7 +198,7 @@ CODEX_WORKER_DEPLOY_MODE=$CODEX_WORKER_DEPLOY_MODE
 CODEX_WORKER_POLL_SECONDS=$CODEX_WORKER_POLL_SECONDS
 CODEX_WORKER_NOTIFY_STATE_DIR=/var/lib/investment-knowledge-codex
 CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS=$CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS
-CODEX_WORKER_GIT_USER_NAME=InvestmentKnowledge Codex Worker
+CODEX_WORKER_GIT_USER_NAME="InvestmentKnowledge Codex Worker"
 CODEX_WORKER_GIT_USER_EMAIL=codex-worker@users.noreply.github.com
 EOF
   chmod 600 "$WORKER_ENV"
