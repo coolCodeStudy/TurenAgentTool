@@ -136,15 +136,7 @@ jobs:
                 sudo bash -lc 'set -a; [ -f /etc/investment-knowledge/codex-worker.env ] && . /etc/investment-knowledge/codex-worker.env; set +a; "${CODEX_BIN:-codex}" login status' || true
 
                 echo "== worker database socket =="
-                sudo bash -lc 'set -a; [ -f /etc/investment-knowledge/codex-worker.env ] && . /etc/investment-knowledge/codex-worker.env; set +a; python3 - <<PY
-import os
-import socket
-
-host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
-port = int(os.environ.get("POSTGRES_PORT", "55432"))
-socket.create_connection((host, port), timeout=5).close()
-print(f"database socket reachable: {host}:{port}")
-PY' || true
+                sudo bash -lc 'set -a; [ -f /etc/investment-knowledge/codex-worker.env ] && . /etc/investment-knowledge/codex-worker.env; set +a; python3 -c '"'"'import os, socket; host=os.environ.get("POSTGRES_HOST", "127.0.0.1"); port=int(os.environ.get("POSTGRES_PORT", "55432")); socket.create_connection((host, port), timeout=5).close(); print(f"database socket reachable: {host}:{port}")'"'"'' || true
                 ;;
               stop)
                 sudo systemctl disable --now investment-codex-worker.service || true
