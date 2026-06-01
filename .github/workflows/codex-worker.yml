@@ -114,7 +114,37 @@ jobs:
                 sudo systemctl restart investment-codex-worker.service
                 ;;
               status)
-                true
+                echo "== docker compose =="
+                $DOCKER_COMPOSE -f docker-compose.prod.yml ps || true
+
+                echo "== worker env =="
+                if [ -f /etc/investment-knowledge/codex-worker.env ]; then
+                  sudo awk -F= '
+                    /^(CODEX_WORKER_DATABASE_URL|POSTGRES_HOST|POSTGRES_PORT|POSTGRES_DB|CODEX_BIN|CODEX_HOME|CODEX_WORKER_AUTH_MODE)=/ {
+                      if ($1 == "CODEX_WORKER_DATABASE_URL") {
+                        print $1"=<redacted>"
+                      } else {
+                        print
+                      }
+                    }
+                  ' /etc/investment-knowledge/codex-worker.env
+                else
+                  echo "worker env file missing: /etc/investment-knowledge/codex-worker.env"
+                fi
+
+                echo "== codex login status =="
+                sudo bash -lc 'set -a; [ -f /etc/investment-knowledge/codex-worker.env ] && . /etc/investment-knowledge/codex-worker.env; set +a; "${CODEX_BIN:-codex}" login status' || true
+
+                echo "== worker database socket =="
+                sudo bash -lc 'set -a; [ -f /etc/investment-knowledge/codex-worker.env ] && . /etc/investment-knowledge/codex-worker.env; set +a; python3 - <<PY
+import os
+import socket
+
+host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+port = int(os.environ.get("POSTGRES_PORT", "55432"))
+socket.create_connection((host, port), timeout=5).close()
+print(f"database socket reachable: {host}:{port}")
+PY' || true
                 ;;
               stop)
                 sudo systemctl disable --now investment-codex-worker.service || true
