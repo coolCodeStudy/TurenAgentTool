@@ -138,6 +138,20 @@ CREATE TABLE IF NOT EXISTS review_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS account_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  snapshot_date DATE NOT NULL,
+  source TEXT NOT NULL DEFAULT 'futu',
+  account_info JSONB NOT NULL DEFAULT '{}'::jsonb,
+  positions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  fx_rates JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  fetched_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (snapshot_date, source)
+);
+
 CREATE TABLE IF NOT EXISTS command_events (
   id BIGSERIAL PRIMARY KEY,
   source TEXT,

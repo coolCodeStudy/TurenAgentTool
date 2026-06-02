@@ -1289,6 +1289,14 @@ def _handle_performance_estimate(time_range_text: str | None = None) -> CommandR
         cash_flow_snapshot = None
         cash_flow_error = str(exc)
 
+    snapshot_row, snapshot_error = _save_account_snapshot_for_performance(
+        trade_snapshot=trade_snapshot,
+        position_snapshot=position_snapshot,
+        start=start,
+        end=end,
+    )
+    account_snapshots, account_snapshots_error = _load_account_snapshots_for_range(start=start, end=end)
+
     return CommandResult(
         ok=True,
         message=_render_performance_estimate(
@@ -1297,6 +1305,10 @@ def _handle_performance_estimate(time_range_text: str | None = None) -> CommandR
             cash_flow_snapshot=cash_flow_snapshot,
             positions_error=positions_error,
             cash_flow_error=cash_flow_error,
+            account_snapshot=snapshot_row,
+            account_snapshot_error=snapshot_error,
+            account_snapshots=account_snapshots,
+            account_snapshots_error=account_snapshots_error,
             label=label,
         ),
     )
@@ -1338,6 +1350,44 @@ def _resolve_trade_review_range(value: str | None) -> tuple[date, date, str]:
 def _parse_command_date(value: str) -> date:
     normalized = value.replace("/", "-")
     return datetime.strptime(normalized, "%Y-%m-%d").date()
+
+
+def _save_account_snapshot_for_performance(
+    trade_snapshot: Any,
+    position_snapshot: Any,
+    start: date,
+    end: date,
+) -> tuple[dict[str, Any] | None, str | None]:
+    account_info = trade_snapshot.account_info or {}
+    positions = position_snapshot.positions if position_snapshot is not None else []
+    if not account_info and not positions:
+        return None, None
+
+    fetched_at = trade_snapshot.fetched_at.astimezone(ZoneInfo("Asia/Shanghai"))
+    try:
+        row = repository.upsert_account_snapshot(
+            snapshot_date=fetched_at.date().isoformat(),
+            account_info=account_info,
+            positions=positions,
+            fx_rates=_current_fx_rates_for_snapshot(),
+            fetched_at=fetched_at.isoformat(),
+            metadata={
+                "command": "performance_estimate",
+                "range_start": start.isoformat(),
+                "range_end": end.isoformat(),
+            },
+        )
+    except Exception as exc:
+        return None, str(exc)
+    return row, None
+
+
+def _load_account_snapshots_for_range(start: date, end: date) -> tuple[list[dict[str, Any]], str | None]:
+    try:
+        rows = repository.list_account_snapshots(start=start.isoformat(), end=end.isoformat())
+    except Exception as exc:
+        return [], str(exc)
+    return rows, None
 
 
 def _render_trade_review(snapshot: Any, label: str) -> str:
@@ -1429,6 +1479,10 @@ def _render_performance_estimate(
     cash_flow_snapshot: Any,
     positions_error: str | None,
     cash_flow_error: str | None,
+    account_snapshot: dict[str, Any] | None,
+    account_snapshot_error: str | None,
+    account_snapshots: list[dict[str, Any]],
+    account_snapshots_error: str | None,
     label: str,
 ) -> str:
     fetched_at = trade_snapshot.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -1456,6 +1510,21 @@ def _render_performance_estimate(
                 lines.append(f"- {label_text}: {value}")
     else:
         lines.append("- 暂未读取到账户快照。")
+
+    lines.extend(["", "账户快照记录："])
+    if account_snapshot is not None:
+        lines.append(f"- 已保存/更新 {account_snapshot.get('snapshot_date')} 的账户快照。")
+    elif account_snapshot_error:
+        lines.append(f"- 本次快照未保存：{account_snapshot_error}")
+    else:
+        lines.append("- 本次没有足够的账户/持仓数据可保存。")
+
+    if account_snapshots:
+        lines.extend(_render_account_snapshot_history(account_snapshots))
+    elif account_snapshots_error:
+        lines.append(f"- 本月历史快照暂不可用：{account_snapshots_error}")
+    else:
+        lines.append("- 本月暂未读取到已保存的历史账户快照。")
 
     position_summary: dict[str, dict[str, float]] = {}
     if position_snapshot is not None:
@@ -1626,6 +1695,65 @@ def _performance_rollup_to_usd(
             continue
         result["external_cash_flow"] = result.get("external_cash_flow", 0.0) + summary["external"] * rate
     return result
+
+
+def _render_account_snapshot_history(snapshots: list[dict[str, Any]]) -> list[str]:
+    lines = [f"- 本区间已保存账户快照 {len(snapshots)} 天。"]
+    if len(snapshots) < 2:
+        return lines
+
+    first = snapshots[0]
+    last = snapshots[-1]
+    first_assets = _snapshot_total_assets(first)
+    last_assets = _snapshot_total_assets(last)
+    if first_assets is None or last_assets is None:
+        lines.append("- 快照里缺少可比较的总资产字段，暂不展示资产变化。")
+        return lines
+
+    first_currency = _snapshot_account_currency(first)
+    last_currency = _snapshot_account_currency(last)
+    if first_currency and first_currency == last_currency:
+        delta = last_assets - first_assets
+        delta_usd = _fmt_usd_equivalent(delta, first_currency)
+        lines.append(
+            f"- 快照资产变化：{first.get('snapshot_date')} {_fmt_money(first_assets)} {first_currency} "
+            f"-> {last.get('snapshot_date')} {_fmt_money(last_assets)} {last_currency}，"
+            f"变化 {_fmt_money(delta)} {first_currency}{delta_usd}。"
+        )
+        lines.append("- 注意：这还没有扣除出入金/换汇影响，不能直接等同于收益。")
+    else:
+        first_label = first_currency or "UNKNOWN"
+        last_label = last_currency or "UNKNOWN"
+        lines.append(
+            f"- 快照资产口径不一致或缺少币种：期初 {first_label}，期末 {last_label}；暂不做资产变化比较。"
+        )
+    return lines
+
+
+def _snapshot_total_assets(snapshot: dict[str, Any]) -> float | None:
+    account = snapshot.get("account_info") or {}
+    if not isinstance(account, dict):
+        return None
+    value = account.get("total_assets")
+    if value is None:
+        return None
+    return _number(value)
+
+
+def _snapshot_account_currency(snapshot: dict[str, Any]) -> str | None:
+    account = snapshot.get("account_info") or {}
+    if not isinstance(account, dict):
+        return None
+    currency = str(account.get("currency") or "").strip().upper()
+    return currency or None
+
+
+def _current_fx_rates_for_snapshot() -> dict[str, Any]:
+    return {
+        currency: rate
+        for currency in ("USD", "HKD", "CNY")
+        if (rate := _fx_to_usd_rate(currency)) is not None
+    }
 
 
 def _top_cash_flow_types(cash_flows: list[dict[str, Any]]) -> list[dict[str, Any]]:

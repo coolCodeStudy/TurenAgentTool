@@ -627,6 +627,63 @@ def update_coding_task(
     return to_jsonable(row)
 
 
+def upsert_account_snapshot(
+    snapshot_date: str,
+    account_info: dict[str, Any] | None,
+    positions: list[dict[str, Any]] | None,
+    fx_rates: dict[str, Any] | None,
+    fetched_at: str,
+    metadata: dict[str, Any] | None = None,
+    source: str = "futu",
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO account_snapshots (
+              snapshot_date, source, account_info, positions, fx_rates, metadata, fetched_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (snapshot_date, source) DO UPDATE SET
+              account_info = EXCLUDED.account_info,
+              positions = EXCLUDED.positions,
+              fx_rates = EXCLUDED.fx_rates,
+              metadata = EXCLUDED.metadata,
+              fetched_at = EXCLUDED.fetched_at,
+              updated_at = now()
+            RETURNING *
+            """,
+            (
+                snapshot_date,
+                source,
+                Jsonb(account_info or {}),
+                Jsonb(positions or []),
+                Jsonb(fx_rates or {}),
+                Jsonb(metadata or {}),
+                fetched_at,
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def list_account_snapshots(
+    start: str,
+    end: str,
+    source: str = "futu",
+) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM account_snapshots
+            WHERE source = %s
+              AND snapshot_date BETWEEN %s AND %s
+            ORDER BY snapshot_date ASC
+            """,
+            (source, start, end),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
 def retry_coding_task(task_id: int, worker_log: str | None = None) -> dict[str, Any]:
     with transaction() as conn:
         row = conn.execute(
