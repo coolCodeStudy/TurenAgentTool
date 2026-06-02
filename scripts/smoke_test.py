@@ -1,8 +1,9 @@
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,7 @@ os.environ["OPENAI_ANALYSIS_ENABLED"] = "false"
 
 from investment_knowledge_mcp.command_router import (
     _extract_time_range_text,
+    _render_performance_estimate,
     _resolve_trade_review_range,
     handle_command,
     is_candidate_write_command,
@@ -323,6 +325,32 @@ def main() -> None:
         ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
         assert ytd_start.isoformat() == f"{today.year}-01-01"
         assert ytd_end == today
+        historical_start = today - timedelta(days=40)
+        historical_end = today - timedelta(days=30)
+        historical_message = _render_performance_estimate(
+            trade_snapshot=SimpleNamespace(
+                start=historical_start.isoformat(),
+                end=historical_end.isoformat(),
+                fetched_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+                account_info={"total_assets": 1000, "market_val": 800, "cash": 200, "power": 100},
+                deals=[],
+            ),
+            position_snapshot=SimpleNamespace(
+                positions=[{"currency": "USD", "market_val": 800, "pl_val": 50}]
+            ),
+            cash_flow_snapshot=SimpleNamespace(cash_flows=[], errors=[]),
+            positions_error=None,
+            cash_flow_error=None,
+            account_snapshot={"snapshot_date": today.isoformat()},
+            account_snapshot_error=None,
+            account_snapshots=[],
+            account_snapshots_error=None,
+            label=f"{historical_start.isoformat()} 至 {historical_end.isoformat()}",
+        )
+        assert "实时账户快照（截至数据时间，非查询区间）" in historical_message
+        assert "今日实时账户快照已保存/更新" in historical_message
+        assert "查询区间暂未读取到已保存的历史账户快照" in historical_message
+        assert "实时持仓浮盈亏（截至数据时间，非查询区间）" in historical_message
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

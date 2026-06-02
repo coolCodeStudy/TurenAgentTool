@@ -1671,17 +1671,27 @@ def _render_performance_estimate(
     label: str,
 ) -> str:
     fetched_at = trade_snapshot.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    range_end = _parse_snapshot_date(str(trade_snapshot.end))
+    is_historical_range = range_end is not None and range_end < today
     account = trade_snapshot.account_info or {}
     deals = trade_snapshot.deals
+    account_heading = "当前账户快照："
+    position_heading = "当前持仓浮盈亏（按原币种）："
+    usd_heading = "美元折算总览（展示用）："
+    if is_historical_range:
+        account_heading = "实时账户快照（截至数据时间，非查询区间）："
+        position_heading = "实时持仓浮盈亏（截至数据时间，非查询区间）："
+        usd_heading = "美元折算总览（含实时持仓参考）："
     lines = [
         f"估算收益复盘（{label}）",
         f"- 查询区间：{trade_snapshot.start} 至 {trade_snapshot.end}",
         f"- 数据时间：{fetched_at}",
         "- 展示基准：USD；各币种原始数据会保留，并额外给出美元折算汇总。",
-        "- 结论口径：当前还没有历史期初净资产快照，所以不能严格给出本月收益率；这里先做估算所需数据拼图和低置信度归因。",
+        "- 结论口径：当前还没有完整的期初/期末净资产快照、出入金和汇率快照，所以不能严格给出区间收益率；这里先做估算所需数据拼图和低置信度归因。",
         f"- 汇率口径：{_fx_disclaimer()}",
         "",
-        "当前账户快照：",
+        account_heading,
     ]
     if account:
         for key, label_text in (
@@ -1696,9 +1706,13 @@ def _render_performance_estimate(
     else:
         lines.append("- 暂未读取到账户快照。")
 
-    lines.extend(["", "账户快照记录："])
+    lines.extend(["", "查询区间账户快照记录："])
     if account_snapshot is not None:
-        lines.append(f"- 已保存/更新 {account_snapshot.get('snapshot_date')} 的账户快照。")
+        saved_date = account_snapshot.get("snapshot_date")
+        if is_historical_range:
+            lines.append(f"- 今日实时账户快照已保存/更新 {saved_date}，用于后续复盘，不作为本区间期末快照。")
+        else:
+            lines.append(f"- 已保存/更新 {saved_date} 的账户快照。")
     elif account_snapshot_error:
         lines.append(f"- 本次快照未保存：{account_snapshot_error}")
     else:
@@ -1707,14 +1721,14 @@ def _render_performance_estimate(
     if account_snapshots:
         lines.extend(_render_account_snapshot_history(account_snapshots))
     elif account_snapshots_error:
-        lines.append(f"- 本月历史快照暂不可用：{account_snapshots_error}")
+        lines.append(f"- 查询区间历史快照暂不可用：{account_snapshots_error}")
     else:
-        lines.append("- 本月暂未读取到已保存的历史账户快照。")
+        lines.append("- 查询区间暂未读取到已保存的历史账户快照。")
 
     position_summary: dict[str, dict[str, float]] = {}
     if position_snapshot is not None:
         position_summary = _summarize_positions_by_currency(position_snapshot.positions)
-        lines.extend(["", "当前持仓浮盈亏（按原币种）："])
+        lines.extend(["", position_heading])
         for currency, summary in sorted(position_summary.items()):
             market_usd = _fmt_usd_equivalent(summary["market_val"], currency)
             pl_usd = _fmt_usd_equivalent(summary["pl_val"], currency)
@@ -1776,11 +1790,12 @@ def _render_performance_estimate(
         cash_flow_summary=cash_flow_summary,
     )
     if usd_rollup:
-        lines.extend(["", "美元折算总览（展示用）："])
+        lines.extend(["", usd_heading])
         if "market_val" in usd_rollup:
+            holding_label = "实时持仓" if is_historical_range else "当前持仓"
             lines.append(
-                f"- 当前持仓市值约 {_fmt_money(usd_rollup['market_val'])} USD，"
-                f"当前持仓浮盈亏约 {_fmt_money(usd_rollup.get('pl_val', 0.0))} USD。"
+                f"- {holding_label}市值约 {_fmt_money(usd_rollup['market_val'])} USD，"
+                f"{holding_label}浮盈亏约 {_fmt_money(usd_rollup.get('pl_val', 0.0))} USD。"
             )
         if "net_trade_cash_flow" in usd_rollup:
             lines.append(f"- 区间净交易现金流约 {_fmt_money(usd_rollup['net_trade_cash_flow'])} USD。")
@@ -1792,13 +1807,20 @@ def _render_performance_estimate(
         [
             "",
             "估算判断：",
-            "- 当前可以判断交易活跃度、现金流方向、当前持仓浮盈亏和大致美元口径规模，但还不能严谨计算本月净收益率。",
-            "- 若要从估算走向准确，需要从今天开始保存每日账户快照；历史月份可以用成交、资金流水、当前持仓和历史价格回放做低/中置信度估算。",
+            "- 当前可以判断交易活跃度、现金流方向和大致美元口径规模，但还不能严谨计算区间净收益率。",
+            "- 实时账户和实时持仓只作为参考；历史月份要准确复盘，需要查询区间内的账户快照、出入金、换汇和历史价格回放。",
             "",
             "下一步：我建议把 `本月收益` 固定为这个收益口径，把纯成交列表留给 `交易复盘`。",
         ]
     )
     return "\n".join(lines)
+
+
+def _parse_snapshot_date(value: str) -> date | None:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _summarize_deals_by_currency(deals: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
