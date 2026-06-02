@@ -118,6 +118,7 @@ __pycache__/
 
 # dotenv environment variables file
 .env
+.env.codex
 .env.test
 .env.production
 

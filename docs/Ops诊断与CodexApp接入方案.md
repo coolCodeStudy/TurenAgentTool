@@ -2,37 +2,112 @@
 
 ## 目标
 
-让 InvestmentKnowledge 的云端状态、日志和开发任务不再依赖人工 SSH 复制。
+让 Codex App 可以直接查看 InvestmentKnowledge 云端状态、日志和开发任务，不再依赖用户 SSH 到 ECS 复制日志。
 
-目标交互：
+当前主链路：
 
 ```text
 Codex App
-  -> Hermes/Codex App MCP Bridge
-      -> Hermes / InvestmentKnowledge Command API
-      -> ECS Ops API
-          -> Docker / systemd / journalctl / Codex worker / Hermes / Futu / Postgres
+  -> InvestmentKnowledge MCP /mcp
+      -> ECS 内部 Ops API
+          -> Docker / systemd / journalctl / Codex worker / Futu / Postgres
 ```
 
-钉钉、Hermes、Codex App 复用同一套能力。
+关键原则：
+
+- Codex App 只连接云端 `InvestmentKnowledge MCP /mcp`。
+- `Ops API` 只在 ECS 内网使用，不直接暴露公网。
+- Hermes 暂时不是主链路，只作为未来多入口网关的可选组件。
 
 ## 组件
 
 - `scripts/ecs_ops_api.py`
   - 跑在 ECS 宿主机 systemd 下。
+  - 监听 ECS 内部地址，例如 `127.0.0.1:8767` 或 docker bridge 地址。
   - 只允许白名单诊断动作。
   - 返回日志前做脱敏和截断。
 
 - `investment_knowledge_mcp/ops_client.py`
   - 应用侧访问 Ops API 的客户端。
-  - 提供结构化查询和中文摘要渲染。
+  - 负责结构化查询和中文摘要渲染。
+
+- `investment_knowledge_mcp/server.py`
+  - 云端 MCP 入口。
+  - 已暴露云端诊断工具：
+    - `cloud_system_status`
+    - `cloud_recent_errors`
+    - `cloud_service_logs`
+    - `cloud_coding_status`
 
 - `scripts/hermes_mcp_bridge.py`
-  - 给 Codex App 使用的 MCP bridge。
-  - 可调用云端 command API 和 Ops API。
-  - 后续如果 Hermes 暴露稳定 HTTP/API，可把下游切到 Hermes，Codex App 配置不变。
+  - 备用的本地 stdio MCP bridge。
+  - 只有当 Codex App 不能直接连接云端 `/mcp`，或需要通过本地隧道/代理访问时使用。
+  - 支持自动读取 `.env.codex`、`.env`、`~/.investment-knowledge/ops.env`。
 
-## 钉钉/Hermes 可用命令
+## Codex App 推荐接入
+
+优先使用云端 MCP：
+
+```text
+类型：流式 HTTP
+URL：http://<ECS_HOST>:8000/mcp
+```
+
+要求：
+
+- ECS 安全组允许你的可信来源访问 `8000`。
+- `docker-compose.prod.yml` 已启动 `mcp` 服务。
+- 云端 `.env` 中 MCP 配置大致为：
+
+```env
+COMPOSE_PROFILES=stream,http
+MCP_TRANSPORT=streamable-http
+MCP_HOST=0.0.0.0
+MCP_PORT=8000
+MCP_HOST_PORT=8000
+MCP_PATH=/mcp
+OPS_API_URL=http://host.docker.internal:8767
+OPS_API_TOKEN=<same-as-command-api-token-or-dedicated-token>
+```
+
+连接后，Codex App 应该可以调用：
+
+- `cloud_system_status`：查看 Docker、systemd、Postgres、Futu、MCP 等状态。
+- `cloud_recent_errors`：查看最近 warning/error。
+- `cloud_service_logs`：查看指定服务日志，支持 `mcp`、`dingtalk-stream-bot`、`codex-worker`、`hermes`、`postgres`、`futu-opend`、`futu-proxy`、`ops-api`。
+- `cloud_coding_status`：查看云端 Codex worker 状态和最近任务。
+
+## 备用：本地 Bridge 接入
+
+如果不想直接开放云端 `/mcp`，可以先用本地 bridge：
+
+```text
+Codex App
+  -> local stdio MCP bridge
+      -> Command API / Ops API
+```
+
+在项目根目录创建本地文件 `.env.codex`，不要提交：
+
+```env
+COMMAND_API_URL=http://<ECS_HOST>:8001
+COMMAND_API_TOKEN=<command-api-token>
+OPS_API_URL=http://<ECS_HOST>:8767
+OPS_API_TOKEN=<ops-api-token>
+HERMES_BRIDGE_TIMEOUT_SECONDS=20
+```
+
+然后在 Codex App 里添加 stdio MCP：
+
+```bash
+python scripts/hermes_mcp_bridge.py
+```
+
+注意：这个备用方案只有在你通过安全组、VPN、SSH tunnel 或反向代理安全暴露对应端口时才建议使用。默认不建议直接把 `8767` 暴露到公网。
+
+## 钉钉可用诊断命令
+
+当前钉钉入口也复用同一套 Ops 能力：
 
 - `云端状态`
 - `最近错误`
@@ -44,33 +119,47 @@ Codex App
 - `postgres日志`
 - `服务日志 codex-worker`
 
-## GitHub Actions
+## Hermes 定位
 
-- `ECS Ops API -> install`
-  - 上传并安装 `investment-ops-api.service`。
-- `ECS Ops API -> status`
-  - 查看服务状态和最近日志。
-- 正常 `Deploy to Alibaba Cloud ECS` 的 full deploy 会自动安装/重启 Ops API。
-- quick deploy 如果 Ops API 已安装，会重启它以加载最新脚本。
+Hermes 暂时不进入主链路。
 
-## Codex App MCP 配置
+保留 Hermes 的原因：
 
-本地运行 MCP bridge 时需要提供：
+- 未来可能承接多个聊天入口。
+- 未来可能做更复杂的意图分发。
+- 未来可能统一钉钉、网页、Codex worker 等入口。
 
-```bash
-COMMAND_API_URL=http://<host>:8001
-COMMAND_API_TOKEN=<token>
-OPS_API_URL=http://<host>:8767
-OPS_API_TOKEN=<token>
-python scripts/hermes_mcp_bridge.py
-```
+暂时不用 Hermes 的原因：
 
-生产环境建议不要直接把 `8767` 暴露到公网；优先让 Codex App 通过安全隧道或后续 Hermes API 调用。
+- 当前 InvestmentKnowledge MCP 已经能直接提供诊断能力。
+- Hermes 失败不应影响投资查询、日志诊断和 Codex App 调试。
+- 主链路越短，定位问题越快。
 
 ## 安全边界
 
-- Ops API 默认监听 `127.0.0.1:8767`。
-- 需要 `OPS_API_TOKEN` 或 `COMMAND_API_TOKEN` 才能访问。
-- 不支持任意 shell 命令。
-- 服务名白名单：`hermes`、`codex-worker`、`mcp`、`dingtalk-stream-bot`、`postgres`、`futu-opend`、`futu-proxy`、`ops-api`。
-- 日志会脱敏 `token`、`secret`、`password`、`webhook`、`access_token`、OpenAI key、Futu 登录参数等敏感内容。
+- Ops API 不支持任意 shell 命令。
+- Ops API 服务名白名单：
+  - `hermes`
+  - `codex-worker`
+  - `mcp`
+  - `dingtalk-stream-bot`
+  - `postgres`
+  - `futu-opend`
+  - `futu-proxy`
+  - `ops-api`
+- 日志会脱敏：
+  - token
+  - secret
+  - password
+  - webhook
+  - access_token
+  - OpenAI key
+  - Futu 登录参数
+
+## 当前结论
+
+现阶段的主方向是：
+
+1. 让 InvestmentKnowledge MCP 成为 Codex App 访问云端系统的主入口。
+2. 让 Ops API 只作为 ECS 内部诊断服务。
+3. 保留 Hermes，但不让它阻塞主系统迭代。

@@ -7,11 +7,13 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import json
 import os
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 
 mcp = FastMCP("HermesInvestmentBridge")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class BridgeError(RuntimeError):
@@ -28,27 +30,51 @@ def hermes_command(command: str, source: str = "codex-app") -> dict[str, Any]:
 
 
 @mcp.tool()
-def hermes_cloud_status() -> dict[str, Any]:
+def cloud_system_status() -> dict[str, Any]:
     """Read cloud system status through the controlled Ops API."""
     return _ops_get("/ops/status")
 
 
 @mcp.tool()
-def hermes_recent_errors(lines: int = 160) -> dict[str, Any]:
+def cloud_recent_errors(lines: int = 160) -> dict[str, Any]:
     """Read recent cloud errors through the controlled Ops API."""
     return _ops_get("/ops/recent-errors", {"lines": lines})
 
 
 @mcp.tool()
-def hermes_service_logs(service: str, lines: int = 120) -> dict[str, Any]:
+def cloud_service_logs(service: str, lines: int = 120) -> dict[str, Any]:
     """Read recent logs for a whitelisted cloud service."""
     return _ops_get("/ops/logs", {"service": service, "lines": lines})
 
 
 @mcp.tool()
-def hermes_coding_status() -> dict[str, Any]:
+def cloud_coding_status() -> dict[str, Any]:
     """Read cloud Codex worker status through the controlled Ops API."""
     return _ops_get("/ops/coding-status")
+
+
+@mcp.tool()
+def hermes_cloud_status() -> dict[str, Any]:
+    """Backward-compatible alias for cloud_system_status."""
+    return cloud_system_status()
+
+
+@mcp.tool()
+def hermes_recent_errors(lines: int = 160) -> dict[str, Any]:
+    """Backward-compatible alias for cloud_recent_errors."""
+    return cloud_recent_errors(lines=lines)
+
+
+@mcp.tool()
+def hermes_service_logs(service: str, lines: int = 120) -> dict[str, Any]:
+    """Backward-compatible alias for cloud_service_logs."""
+    return cloud_service_logs(service=service, lines=lines)
+
+
+@mcp.tool()
+def hermes_coding_status() -> dict[str, Any]:
+    """Backward-compatible alias for cloud_coding_status."""
+    return cloud_coding_status()
 
 
 def _post_command(command: str, source: str) -> dict[str, Any]:
@@ -101,5 +127,29 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _load_env_files() -> None:
+    for path in (
+        PROJECT_ROOT / ".env.codex",
+        PROJECT_ROOT / ".env",
+        Path.home() / ".investment-knowledge" / "ops.env",
+    ):
+        _load_env_file(path)
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 if __name__ == "__main__":
+    _load_env_files()
     mcp.run()
