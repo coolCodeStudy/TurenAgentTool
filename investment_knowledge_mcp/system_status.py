@@ -25,6 +25,7 @@ def render_system_status() -> str:
         _config_check("钉钉主动推送 webhook", bool(config.dingtalk_send_webhook)),
         _config_check("钉钉 Stream Client ID", bool(config.dingtalk_stream_client_id)),
         _config_check("每日账户快照任务", config.account_snapshot_scheduler_enabled),
+        _config_check("IPO提醒任务", config.dingtalk_ipo_reminders_enabled),
     ]
 
     lines = [
@@ -63,10 +64,13 @@ def render_ipo_reminder_status() -> str:
         f"- 时间：{now.strftime('%Y-%m-%d %H:%M:%S %Z')}",
         f"- 提醒开关：{'开启' if config.dingtalk_ipo_reminders_enabled else '关闭'}",
         f"- 主动推送 webhook：{'已配置' if config.dingtalk_send_webhook else '未配置'}",
-        f"- 后台提醒循环：{'已启动' if loop_state.get('started') else '未启动'}",
     ]
-    if loop_state.get("interval_seconds"):
+    if loop_state.get("started"):
+        lines.append("- 后台提醒循环：当前进程已启动")
         lines.append(f"- 扫描间隔：{loop_state['interval_seconds']} 秒")
+    else:
+        lines.append("- 后台提醒循环：由独立 ipo-reminder-scheduler 服务负责")
+        lines.append(f"- 扫描间隔：{config.dingtalk_ipo_reminder_interval_seconds} 秒")
 
     if not config.dingtalk_ipo_reminders_enabled:
         lines.append("")

@@ -209,15 +209,18 @@ jobs:
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate account-snapshot-scheduler
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate ipo-reminder-scheduler
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
               else
                 echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate account-snapshot-scheduler
+                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate ipo-reminder-scheduler
                 $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
               fi
               $DOCKER_COMPOSE -f docker-compose.prod.yml ps
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 account-snapshot-scheduler || true
+              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 ipo-reminder-scheduler || true
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 mcp || true
               if [ -f scripts/install_ops_api_on_ecs.sh ] && [ -f .env ]; then
@@ -522,15 +525,16 @@ jobs:
             if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
               echo "Hermes gateway is installed but DingTalk is temporarily routed back to legacy dingtalk-stream-bot."
               systemctl stop hermes-gateway.service || true
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp account-snapshot-scheduler dingtalk-stream-bot
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
             else
               echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres account-snapshot-scheduler dingtalk-stream-bot
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
             fi
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             sleep 20
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 account-snapshot-scheduler || true
+            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 ipo-reminder-scheduler || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 dingtalk-stream-bot || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 mcp || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 postgres || true

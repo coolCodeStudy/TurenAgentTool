@@ -102,7 +102,7 @@ jobs:
               rollback)
                 systemctl disable --now hermes-gateway.service || true
                 if [ -f docker-compose.prod.yml ]; then
-                  $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres account-snapshot-scheduler dingtalk-stream-bot
+                  $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
                 fi
                 ;;
               *)

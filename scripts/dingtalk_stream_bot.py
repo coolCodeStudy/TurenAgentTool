@@ -22,7 +22,6 @@ from investment_knowledge_mcp.command_router import (
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
-from investment_knowledge_mcp.ipo_reminders import start_ipo_reminder_loop
 
 
 def main() -> None:
@@ -56,7 +55,6 @@ def main() -> None:
     logger.info("Initializing database schema")
     run_schema()
     logger.info("Database schema ready")
-    start_ipo_reminder_loop(config=config, logger=logger)
 
     class InvestmentKnowledgeHandler(dingtalk_stream.ChatbotHandler):
         async def process(self, callback: dingtalk_stream.CallbackMessage):

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 import logging
-import threading
+from threading import Event
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -11,6 +12,7 @@ from psycopg import errors
 
 from investment_knowledge_mcp.config import AppConfig, get_config
 from investment_knowledge_mcp.db import connect
+from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.dingtalk_sender import send_text_message
 from investment_knowledge_mcp.futu_provider import get_hk_ipo_list
 
@@ -31,7 +33,7 @@ class IpoReminder:
     message: str
 
 
-def start_ipo_reminder_loop(config: AppConfig | None = None, logger: logging.Logger | None = None) -> None:
+def run_ipo_reminder_scheduler_forever(config: AppConfig | None = None, logger: logging.Logger | None = None) -> None:
     global _REMINDER_LOOP_STARTED, _REMINDER_LOOP_INTERVAL_SECONDS
 
     config = config or get_config()
@@ -39,22 +41,18 @@ def start_ipo_reminder_loop(config: AppConfig | None = None, logger: logging.Log
 
     if not config.dingtalk_ipo_reminders_enabled:
         logger.info("IPO reminders disabled by DINGTALK_IPO_REMINDERS_ENABLED=false")
+        _wait_forever()
         return
     if not config.dingtalk_send_webhook:
         logger.info("IPO reminders disabled: DINGTALK_SEND_WEBHOOK is not configured")
+        _wait_forever()
         return
 
     interval = max(60, config.dingtalk_ipo_reminder_interval_seconds)
-    thread = threading.Thread(
-        target=_run_loop,
-        args=(interval, logger),
-        name="ipo-reminder-loop",
-        daemon=True,
-    )
-    thread.start()
     _REMINDER_LOOP_STARTED = True
     _REMINDER_LOOP_INTERVAL_SECONDS = interval
-    logger.info("IPO reminder loop started: interval_seconds=%s", interval)
+    logger.info("IPO reminder scheduler started: interval_seconds=%s", interval)
+    _run_loop(interval, logger)
 
 
 def get_ipo_reminder_loop_state() -> dict[str, Any]:
@@ -69,8 +67,13 @@ def _run_loop(interval_seconds: int, logger: logging.Logger) -> None:
         try:
             run_ipo_reminder_once(logger=logger)
         except Exception:
-            logger.exception("IPO reminder loop failed")
-        threading.Event().wait(interval_seconds)
+            logger.exception("IPO reminder scheduler failed")
+        Event().wait(interval_seconds)
+
+
+def _wait_forever(interval_seconds: int = 3600) -> None:
+    while True:
+        Event().wait(interval_seconds)
 
 
 def run_ipo_reminder_once(logger: logging.Logger | None = None) -> int:
@@ -259,3 +262,29 @@ def _price(item: dict[str, Any]) -> str:
     if max_price is not None:
         return str(max_price)
     return "-"
+
+
+def _setup_logging() -> logging.Logger:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return logging.getLogger("investment_knowledge_mcp.ipo_reminders")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the standalone IPO reminder scheduler.")
+    parser.add_argument("--once", action="store_true", help="Scan IPO reminders once and exit.")
+    args = parser.parse_args()
+
+    logger = _setup_logging()
+    run_schema()
+    if args.once:
+        sent_count = run_ipo_reminder_once(logger=logger)
+        logger.info("IPO reminder scan completed: sent_count=%s", sent_count)
+        return
+    run_ipo_reminder_scheduler_forever(logger=logger)
+
+
+if __name__ == "__main__":
+    main()

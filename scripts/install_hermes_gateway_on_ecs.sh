@@ -241,7 +241,7 @@ If you have not switched DingTalk yet, stop the old Stream bot before testing He
 Rollback:
   systemctl disable --now hermes-gateway.service
   cd $INVESTMENT_DIR
-  docker compose -f docker-compose.prod.yml up -d account-snapshot-scheduler dingtalk-stream-bot
+  docker compose -f docker-compose.prod.yml up -d account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
 EOF
 }
 

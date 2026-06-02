@@ -4,7 +4,7 @@ import argparse
 from datetime import date, datetime, time
 import logging
 import os
-import threading
+from threading import Event
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -24,31 +24,6 @@ _SNAPSHOT_LOOP_INTERVAL_SECONDS: int | None = None
 _SNAPSHOT_LOOP_TIME: str | None = None
 
 
-def start_account_snapshot_loop(config: AppConfig | None = None, logger: logging.Logger | None = None) -> None:
-    global _SNAPSHOT_LOOP_STARTED, _SNAPSHOT_LOOP_INTERVAL_SECONDS, _SNAPSHOT_LOOP_TIME
-
-    config = config or get_config()
-    logger = logger or logging.getLogger("investment_knowledge_mcp.account_snapshots")
-
-    if not config.account_snapshot_scheduler_enabled:
-        logger.info("Account snapshot scheduler disabled by ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED=false")
-        return
-
-    scheduled_time = _parse_time(config.account_snapshot_time)
-    interval = max(60, config.account_snapshot_interval_seconds)
-    thread = threading.Thread(
-        target=_run_loop,
-        args=(scheduled_time, interval, logger),
-        name="account-snapshot-loop",
-        daemon=True,
-    )
-    thread.start()
-    _SNAPSHOT_LOOP_STARTED = True
-    _SNAPSHOT_LOOP_INTERVAL_SECONDS = interval
-    _SNAPSHOT_LOOP_TIME = scheduled_time.strftime("%H:%M")
-    logger.info("Account snapshot loop started: time=%s interval_seconds=%s", _SNAPSHOT_LOOP_TIME, interval)
-
-
 def run_account_snapshot_scheduler_forever(config: AppConfig | None = None, logger: logging.Logger | None = None) -> None:
     global _SNAPSHOT_LOOP_STARTED, _SNAPSHOT_LOOP_INTERVAL_SECONDS, _SNAPSHOT_LOOP_TIME
 
@@ -57,6 +32,7 @@ def run_account_snapshot_scheduler_forever(config: AppConfig | None = None, logg
 
     if not config.account_snapshot_scheduler_enabled:
         logger.info("Account snapshot scheduler disabled by ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED=false")
+        _wait_forever()
         return
 
     scheduled_time = _parse_time(config.account_snapshot_time)
@@ -107,8 +83,13 @@ def _run_loop(scheduled_time: time, interval_seconds: int, logger: logging.Logge
                 run_account_snapshot_once(logger=logger, snapshot_date=now.date())
                 last_attempted_date = now.date()
             except Exception:
-                logger.exception("Account snapshot loop failed")
-        threading.Event().wait(interval_seconds)
+                logger.exception("Account snapshot scheduler failed")
+        Event().wait(interval_seconds)
+
+
+def _wait_forever(interval_seconds: int = 3600) -> None:
+    while True:
+        Event().wait(interval_seconds)
 
 
 def _parse_time(value: str) -> time:
