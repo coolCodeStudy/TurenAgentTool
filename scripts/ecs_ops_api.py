@@ -29,6 +29,7 @@ COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
+    "account-snapshot-scheduler": "account-snapshot-scheduler",
     "postgres": "postgres",
 }
 
@@ -47,6 +48,9 @@ SERVICE_ALIASES = {
     "hermes-gateway": "hermes",
     "dingtalk": "dingtalk-stream-bot",
     "stream": "dingtalk-stream-bot",
+    "account-snapshot": "account-snapshot-scheduler",
+    "snapshot": "account-snapshot-scheduler",
+    "snapshot-scheduler": "account-snapshot-scheduler",
     "futu": "futu-opend",
     "opend": "futu-opend",
     "futu_proxy": "futu-proxy",
@@ -160,7 +164,7 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
             }
         )
 
-    for name in ("mcp", "dingtalk-stream-bot", "command-api", "postgres"):
+    for name in ("mcp", "dingtalk-stream-bot", "account-snapshot-scheduler", "command-api", "postgres"):
         try:
             result = _run(_compose_command(["logs", "--tail", str(lines), name]))
             text = _filter_error_lines(_combine_output(result))

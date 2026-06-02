@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import date, datetime, time
 import logging
 import os
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.config import AppConfig, get_config
+from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.futu_provider import get_futu_positions, get_futu_trade_history
 
 
@@ -45,6 +47,25 @@ def start_account_snapshot_loop(config: AppConfig | None = None, logger: logging
     _SNAPSHOT_LOOP_INTERVAL_SECONDS = interval
     _SNAPSHOT_LOOP_TIME = scheduled_time.strftime("%H:%M")
     logger.info("Account snapshot loop started: time=%s interval_seconds=%s", _SNAPSHOT_LOOP_TIME, interval)
+
+
+def run_account_snapshot_scheduler_forever(config: AppConfig | None = None, logger: logging.Logger | None = None) -> None:
+    global _SNAPSHOT_LOOP_STARTED, _SNAPSHOT_LOOP_INTERVAL_SECONDS, _SNAPSHOT_LOOP_TIME
+
+    config = config or get_config()
+    logger = logger or logging.getLogger("investment_knowledge_mcp.account_snapshots")
+
+    if not config.account_snapshot_scheduler_enabled:
+        logger.info("Account snapshot scheduler disabled by ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED=false")
+        return
+
+    scheduled_time = _parse_time(config.account_snapshot_time)
+    interval = max(60, config.account_snapshot_interval_seconds)
+    _SNAPSHOT_LOOP_STARTED = True
+    _SNAPSHOT_LOOP_INTERVAL_SECONDS = interval
+    _SNAPSHOT_LOOP_TIME = scheduled_time.strftime("%H:%M")
+    logger.info("Account snapshot scheduler started: time=%s interval_seconds=%s", _SNAPSHOT_LOOP_TIME, interval)
+    _run_loop(scheduled_time, interval, logger)
 
 
 def get_account_snapshot_loop_state() -> dict[str, Any]:
@@ -96,7 +117,7 @@ def _parse_time(value: str) -> time:
         hour_text, minute_text = text.split(":", 1)
         return time(hour=int(hour_text), minute=int(minute_text))
     except Exception:
-        return time(hour=16, minute=10)
+        return time(hour=0, minute=5)
 
 
 def _current_fx_rates_for_snapshot() -> dict[str, Any]:
@@ -126,3 +147,28 @@ def _positive_number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def _setup_logging() -> logging.Logger:
+    logging.basicConfig(
+        level=os.getenv("ACCOUNT_SNAPSHOT_LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return logging.getLogger("investment_knowledge_mcp.account_snapshots")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the standalone account snapshot scheduler.")
+    parser.add_argument("--once", action="store_true", help="Save one account snapshot and exit.")
+    args = parser.parse_args()
+
+    logger = _setup_logging()
+    run_schema()
+    if args.once:
+        run_account_snapshot_once(logger=logger)
+        return
+    run_account_snapshot_scheduler_forever(logger=logger)
+
+
+if __name__ == "__main__":
+    main()

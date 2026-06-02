@@ -38,7 +38,10 @@ def render_system_status() -> str:
             f"扫描间隔 {account_snapshot_loop.get('interval_seconds') or '-'} 秒"
         )
     else:
-        lines.append(f"- 每日账户快照时间：{config.account_snapshot_time}，当前进程后台循环未启动")
+        lines.append(
+            f"- 每日账户快照时间：{config.account_snapshot_time}，"
+            "由独立 account-snapshot-scheduler 服务负责"
+        )
 
     failed = [item for item in checks if not item["ok"]]
     if failed:
