@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date, datetime
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -41,6 +42,12 @@ from investment_knowledge_mcp.portfolio_analysis import (
 )
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
+
+
+DEFAULT_FX_TO_USD = {
+    "USD": 1.0,
+    "HKD": 1.0 / 7.8,
+}
 
 
 @dataclass(frozen=True)
@@ -1368,11 +1375,27 @@ def _render_trade_review(snapshot: Any, label: str) -> str:
     currency_summary = _summarize_deals_by_currency(deals)
     lines.extend(["", "按币种成交汇总："])
     for currency, summary in sorted(currency_summary.items()):
+        buy_usd = _fmt_usd_equivalent(summary["buy_amount"], currency)
+        sell_usd = _fmt_usd_equivalent(summary["sell_amount"], currency)
+        net_cash_flow = summary["sell_amount"] - summary["buy_amount"]
+        net_usd = _fmt_usd_equivalent(net_cash_flow, currency)
         lines.append(
-            f"- {currency}: 买入 {_fmt_money(summary['buy_amount'])}, "
-            f"卖出 {_fmt_money(summary['sell_amount'])}, "
-            f"净现金流 {_fmt_money(summary['sell_amount'] - summary['buy_amount'])}, "
+            f"- {currency}: 买入 {_fmt_money(summary['buy_amount'])}{buy_usd}, "
+            f"卖出 {_fmt_money(summary['sell_amount'])}{sell_usd}, "
+            f"净现金流 {_fmt_money(net_cash_flow)}{net_usd}, "
             f"成交 {int(summary['count'])} 笔"
+        )
+    usd_summary = _deal_summary_to_usd(currency_summary)
+    if usd_summary:
+        lines.extend(
+            [
+                "",
+                "美元折算汇总（展示用）：",
+                f"- 买入约 {_fmt_money(usd_summary['buy_amount'])} USD，"
+                f"卖出约 {_fmt_money(usd_summary['sell_amount'])} USD，"
+                f"净交易现金流约 {_fmt_money(usd_summary['net_cash_flow'])} USD。",
+                f"- 汇率口径：{_fx_disclaimer()}",
+            ]
         )
 
     lines.extend(["", "主要交易标的："])
@@ -1415,7 +1438,9 @@ def _render_performance_estimate(
         f"估算收益复盘（{label}）",
         f"- 查询区间：{trade_snapshot.start} 至 {trade_snapshot.end}",
         f"- 数据时间：{fetched_at}",
+        "- 展示基准：USD；各币种原始数据会保留，并额外给出美元折算汇总。",
         "- 结论口径：当前还没有历史期初净资产快照，所以不能严格给出本月收益率；这里先做估算所需数据拼图和低置信度归因。",
+        f"- 汇率口径：{_fx_disclaimer()}",
         "",
         "当前账户快照：",
     ]
@@ -1432,30 +1457,38 @@ def _render_performance_estimate(
     else:
         lines.append("- 暂未读取到账户快照。")
 
+    position_summary: dict[str, dict[str, float]] = {}
     if position_snapshot is not None:
         position_summary = _summarize_positions_by_currency(position_snapshot.positions)
-        lines.extend(["", "当前持仓浮盈亏："])
+        lines.extend(["", "当前持仓浮盈亏（按原币种）："])
         for currency, summary in sorted(position_summary.items()):
+            market_usd = _fmt_usd_equivalent(summary["market_val"], currency)
+            pl_usd = _fmt_usd_equivalent(summary["pl_val"], currency)
             lines.append(
-                f"- {currency}: 市值 {_fmt_money(summary['market_val'])}, "
-                f"浮动盈亏 {_fmt_money(summary['pl_val'])}, 持仓 {int(summary['count'])} 个"
+                f"- {currency}: 市值 {_fmt_money(summary['market_val'])}{market_usd}, "
+                f"浮动盈亏 {_fmt_money(summary['pl_val'])}{pl_usd}, 持仓 {int(summary['count'])} 个"
             )
     elif positions_error:
         lines.extend(["", f"当前持仓暂不可用：{positions_error}"])
 
     deal_summary = _summarize_deals_by_currency(deals)
-    lines.extend(["", "区间成交现金流："])
+    lines.extend(["", "区间成交现金流（按原币种）："])
     if deal_summary:
         for currency, summary in sorted(deal_summary.items()):
+            buy_usd = _fmt_usd_equivalent(summary["buy_amount"], currency)
+            sell_usd = _fmt_usd_equivalent(summary["sell_amount"], currency)
+            net_cash_flow = summary["sell_amount"] - summary["buy_amount"]
+            net_usd = _fmt_usd_equivalent(net_cash_flow, currency)
             lines.append(
-                f"- {currency}: 买入 {_fmt_money(summary['buy_amount'])}, "
-                f"卖出 {_fmt_money(summary['sell_amount'])}, "
-                f"净交易现金流 {_fmt_money(summary['sell_amount'] - summary['buy_amount'])}, "
+                f"- {currency}: 买入 {_fmt_money(summary['buy_amount'])}{buy_usd}, "
+                f"卖出 {_fmt_money(summary['sell_amount'])}{sell_usd}, "
+                f"净交易现金流 {_fmt_money(net_cash_flow)}{net_usd}, "
                 f"成交 {int(summary['count'])} 笔"
             )
     else:
         lines.append("- 区间没有读取到成交。")
 
+    cash_flow_summary: dict[str, dict[str, float]] = {}
     lines.extend(["", "区间资金流水："])
     if cash_flow_snapshot is None:
         lines.append(f"- 暂不可用：{cash_flow_error}")
@@ -1463,9 +1496,11 @@ def _render_performance_estimate(
         if cash_flow_snapshot.cash_flows:
             cash_flow_summary = _summarize_cash_flows(cash_flow_snapshot.cash_flows)
             for currency, summary in sorted(cash_flow_summary.items()):
+                total_usd = _fmt_usd_equivalent(summary["total"], currency)
+                external_usd = _fmt_usd_equivalent(summary["external"], currency)
                 lines.append(
-                    f"- {currency}: 总流水 {_fmt_money(summary['total'])}, "
-                    f"外部/非交易流水估算 {_fmt_money(summary['external'])}, "
+                    f"- {currency}: 总流水 {_fmt_money(summary['total'])}{total_usd}, "
+                    f"外部/非交易流水估算 {_fmt_money(summary['external'])}{external_usd}, "
                     f"记录 {int(summary['count'])} 条"
                 )
             top_types = _top_cash_flow_types(cash_flow_snapshot.cash_flows)
@@ -1481,11 +1516,29 @@ def _render_performance_estimate(
         for error in cash_flow_snapshot.errors[:3]:
             lines.append(f"- 提醒：{error}")
 
+    usd_rollup = _performance_rollup_to_usd(
+        position_summary=position_summary,
+        deal_summary=deal_summary,
+        cash_flow_summary=cash_flow_summary,
+    )
+    if usd_rollup:
+        lines.extend(["", "美元折算总览（展示用）："])
+        if "market_val" in usd_rollup:
+            lines.append(
+                f"- 当前持仓市值约 {_fmt_money(usd_rollup['market_val'])} USD，"
+                f"当前持仓浮盈亏约 {_fmt_money(usd_rollup.get('pl_val', 0.0))} USD。"
+            )
+        if "net_trade_cash_flow" in usd_rollup:
+            lines.append(f"- 区间净交易现金流约 {_fmt_money(usd_rollup['net_trade_cash_flow'])} USD。")
+        if "external_cash_flow" in usd_rollup:
+            lines.append(f"- 区间外部/非交易资金流水估算约 {_fmt_money(usd_rollup['external_cash_flow'])} USD。")
+        lines.append("- 注意：这是为了阅读方便做的展示折算，不代表严格收益率。")
+
     lines.extend(
         [
             "",
             "估算判断：",
-            "- 当前可以判断交易活跃度、现金流方向、当前持仓浮盈亏，但还不能严谨计算本月净收益率。",
+            "- 当前可以判断交易活跃度、现金流方向、当前持仓浮盈亏和大致美元口径规模，但还不能严谨计算本月净收益率。",
             "- 若要从估算走向准确，需要从今天开始保存每日账户快照；历史月份可以用成交、资金流水、当前持仓和历史价格回放做低/中置信度估算。",
             "",
             "下一步：我建议把 `本月收益` 固定为这个收益口径，把纯成交列表留给 `交易复盘`。",
@@ -1530,6 +1583,48 @@ def _summarize_cash_flows(cash_flows: list[dict[str, Any]]) -> dict[str, dict[st
         bucket["count"] += 1
         if _is_external_cash_flow(item):
             bucket["external"] += amount
+    return result
+
+
+def _deal_summary_to_usd(summary_by_currency: dict[str, dict[str, float]]) -> dict[str, float]:
+    result = {"buy_amount": 0.0, "sell_amount": 0.0, "net_cash_flow": 0.0}
+    has_value = False
+    for currency, summary in summary_by_currency.items():
+        rate = _fx_to_usd_rate(currency)
+        if rate is None:
+            continue
+        has_value = True
+        result["buy_amount"] += summary["buy_amount"] * rate
+        result["sell_amount"] += summary["sell_amount"] * rate
+        result["net_cash_flow"] += (summary["sell_amount"] - summary["buy_amount"]) * rate
+    return result if has_value else {}
+
+
+def _performance_rollup_to_usd(
+    position_summary: dict[str, dict[str, float]],
+    deal_summary: dict[str, dict[str, float]],
+    cash_flow_summary: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for currency, summary in position_summary.items():
+        rate = _fx_to_usd_rate(currency)
+        if rate is None:
+            continue
+        result["market_val"] = result.get("market_val", 0.0) + summary["market_val"] * rate
+        result["pl_val"] = result.get("pl_val", 0.0) + summary["pl_val"] * rate
+    for currency, summary in deal_summary.items():
+        rate = _fx_to_usd_rate(currency)
+        if rate is None:
+            continue
+        result["net_trade_cash_flow"] = (
+            result.get("net_trade_cash_flow", 0.0)
+            + (summary["sell_amount"] - summary["buy_amount"]) * rate
+        )
+    for currency, summary in cash_flow_summary.items():
+        rate = _fx_to_usd_rate(currency)
+        if rate is None:
+            continue
+        result["external_cash_flow"] = result.get("external_cash_flow", 0.0) + summary["external"] * rate
     return result
 
 
@@ -1725,7 +1820,46 @@ def _number(value: Any) -> float:
 
 
 def _fmt_money(value: float) -> str:
+    if abs(value) < 0.005:
+        value = 0.0
     return f"{value:,.2f}"
+
+
+def _fmt_usd_equivalent(value: float, currency: str) -> str:
+    if str(currency or "").strip().upper() == "USD":
+        return ""
+    rate = _fx_to_usd_rate(currency)
+    if rate is None:
+        return ""
+    return f"（≈ {_fmt_money(value * rate)} USD）"
+
+
+def _fx_to_usd_rate(currency: str) -> float | None:
+    normalized = str(currency or "").strip().upper()
+    if not normalized or normalized == "UNKNOWN":
+        return None
+    env_key = f"FX_TO_USD_{normalized}"
+    if os.getenv(env_key):
+        return _positive_number(os.getenv(env_key))
+    if normalized == "HKD" and os.getenv("FX_USD_HKD"):
+        usd_hkd = _positive_number(os.getenv("FX_USD_HKD"))
+        return 1.0 / usd_hkd if usd_hkd else None
+    return DEFAULT_FX_TO_USD.get(normalized)
+
+
+def _fx_disclaimer() -> str:
+    usd_hkd = os.getenv("FX_USD_HKD")
+    hkd_to_usd = os.getenv("FX_TO_USD_HKD")
+    if usd_hkd:
+        return f"1 USD = {usd_hkd} HKD（来自环境变量 FX_USD_HKD）；未配置实时汇率。"
+    if hkd_to_usd:
+        return f"1 HKD = {hkd_to_usd} USD（来自环境变量 FX_TO_USD_HKD）；未配置实时汇率。"
+    return "默认 1 USD = 7.80 HKD，USD 原币不折算；未配置实时汇率。"
+
+
+def _positive_number(value: Any) -> float | None:
+    number = _number(value)
+    return number if number > 0 else None
 
 
 def _position_currency(item: dict[str, Any]) -> str:
