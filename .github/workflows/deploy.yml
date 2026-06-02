@@ -217,7 +217,7 @@ jobs:
               $DOCKER_COMPOSE -f docker-compose.prod.yml ps
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 mcp || true
-              if systemctl cat investment-ops-api.service >/dev/null 2>&1; then
+              if [ -f scripts/install_ops_api_on_ecs.sh ] && [ -f .env ]; then
                 sudo bash scripts/install_ops_api_on_ecs.sh --start
                 systemctl status investment-ops-api.service --no-pager || true
               fi
