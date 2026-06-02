@@ -1,13 +1,17 @@
 from pathlib import Path
+from datetime import datetime
 import os
 import sys
 import tempfile
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 os.environ["OPENAI_ANALYSIS_ENABLED"] = "false"
 
 from investment_knowledge_mcp.command_router import (
+    _extract_time_range_text,
+    _resolve_trade_review_range,
     handle_command,
     is_candidate_write_command,
     is_maintenance_command,
@@ -291,6 +295,34 @@ def main() -> None:
         assert is_query_command("交易复盘")
         assert is_query_command("本月收益")
         assert is_query_command("补全交易记录 2026-05")
+        assert _extract_time_range_text("5月收益") == "5月"
+        assert _extract_time_range_text("五月份收益") == "五月份"
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        may_start, may_end, may_label = _resolve_trade_review_range("5月")
+        expected_may_year = today.year if 5 <= today.month else today.year - 1
+        assert may_start.isoformat() == f"{expected_may_year}-05-01"
+        assert may_label == f"{expected_may_year}-05"
+        may_zh_start, _, may_zh_label = _resolve_trade_review_range("五月份")
+        assert may_zh_start.isoformat() == f"{expected_may_year}-05-01"
+        assert may_zh_label == f"{expected_may_year}-05"
+        future_month = today.month + 1 if today.month < 12 else 1
+        future_start, _, future_label = _resolve_trade_review_range(f"{future_month}月")
+        expected_future_year = today.year - 1 if future_month > today.month else today.year
+        assert future_start.isoformat() == f"{expected_future_year}-{future_month:02d}-01"
+        assert future_label == f"{expected_future_year}-{future_month:02d}"
+        range_start, range_end, _ = _resolve_trade_review_range("5月1日到5月31日")
+        assert range_start.isoformat() == f"{expected_may_year}-05-01"
+        assert range_end.isoformat() == f"{expected_may_year}-05-31"
+        month_range_start, month_range_end, _ = _resolve_trade_review_range("4月到5月")
+        expected_april_year = today.year if 4 <= today.month else today.year - 1
+        assert month_range_start.isoformat() == f"{expected_april_year}-04-01"
+        assert month_range_end.isoformat() == f"{expected_may_year}-05-31"
+        recent_start, recent_end, _ = _resolve_trade_review_range("最近30天")
+        assert recent_end == today
+        assert (recent_end - recent_start).days == 29
+        ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
+        assert ytd_start.isoformat() == f"{today.year}-01-01"
+        assert ytd_end == today
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 import re
@@ -48,6 +48,26 @@ DEFAULT_FX_TO_USD = {
     "USD": 1.0,
     "HKD": 1.0 / 7.8,
 }
+CHINESE_MONTHS = {
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+    "十一": 11,
+    "十二": 12,
+}
+_MONTH_TEXT = r"(?:\d{1,2}|十[一二]?|[一二三四五六七八九])"
+_MONTH_TOKEN_RE = re.compile(rf"(?<!\d){_MONTH_TEXT}\s*月份?")
+_DATE_TOKEN_RE = re.compile(
+    rf"(?:\d{{4}}\s*年\s*)?{_MONTH_TEXT}\s*月\s*\d{{1,2}}\s*[日号]?|"
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+)
 
 
 @dataclass(frozen=True)
@@ -1014,11 +1034,18 @@ def _extract_time_range_text(command: str) -> str | None:
     range_match = re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}.*\d{4}[-/]\d{1,2}[-/]\d{1,2}", command)
     if range_match:
         return range_match.group(0)
+    if re.search(r"(?:今年以来|今年|本年|本月|这个月|上月|上个月|近\s*\d+\s*[天日]|最近\s*\d+\s*[天日])", command):
+        return command
+    if _DATE_TOKEN_RE.search(command) and re.search(r"(?:到|至|~|—|-)", command):
+        return command
+    if _MONTH_TOKEN_RE.search(command) and re.search(r"(?:到|至|~|—|-)", command):
+        return command
     month_match = re.search(r"\d{4}[-/年]\d{1,2}", command)
     if month_match:
         return month_match.group(0)
-    if "本月" in command:
-        return "本月"
+    bare_month_match = _MONTH_TOKEN_RE.search(command)
+    if bare_month_match:
+        return bare_month_match.group(0)
     return None
 
 
@@ -1369,8 +1396,26 @@ def _handle_performance_estimate(time_range_text: str | None = None) -> CommandR
 def _resolve_trade_review_range(value: str | None) -> tuple[date, date, str]:
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     text = (value or "").strip()
-    if not text or text == "本月":
+    if not text or re.search(r"(?:本月|这个月)", text):
         start = today.replace(day=1)
+        return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
+
+    if re.search(r"(?:上月|上个月)", text):
+        year = today.year
+        month = today.month - 1
+        if month == 0:
+            year -= 1
+            month = 12
+        return _month_range(year=year, month=month, today=today)
+
+    if re.search(r"(?:今年以来|今年|本年)", text):
+        start = date(today.year, 1, 1)
+        return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
+
+    recent_days_match = re.search(r"(?:近|最近)\s*(\d{1,4})\s*[天日]", text)
+    if recent_days_match:
+        days = max(1, int(recent_days_match.group(1)))
+        start = today - _date_delta(days - 1)
         return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
 
     range_match = re.search(
@@ -1384,16 +1429,32 @@ def _resolve_trade_review_range(value: str | None) -> tuple[date, date, str]:
             start, end = end, start
         return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
 
+    date_tokens = _extract_date_tokens(text, today=today)
+    if len(date_tokens) >= 2:
+        start, end = date_tokens[0], date_tokens[1]
+        if end < start:
+            start, end = end, start
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+
     month_match = re.search(r"(\d{4})[-/年](\d{1,2})", text)
     if month_match:
         year = int(month_match.group(1))
         month = int(month_match.group(2))
-        last_day = calendar.monthrange(year, month)[1]
-        start = date(year, month, 1)
-        end = date(year, month, last_day)
-        if start <= today <= end:
-            end = today
-        return start, end, f"{year:04d}-{month:02d}"
+        return _month_range(year=year, month=month, today=today)
+
+    month_tokens = _extract_month_tokens(text, today=today)
+    if len(month_tokens) >= 2:
+        first_year, first_month = month_tokens[0]
+        last_year, last_month = month_tokens[1]
+        start, _, _ = _month_range(year=first_year, month=first_month, today=today)
+        _, end, _ = _month_range(year=last_year, month=last_month, today=today)
+        if end < start:
+            start, end = end, start
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+
+    bare_month = _parse_bare_month(text)
+    if bare_month is not None:
+        return _month_range(year=_infer_year_for_month(bare_month, today=today), month=bare_month, today=today)
 
     start = today.replace(day=1)
     return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
@@ -1402,6 +1463,78 @@ def _resolve_trade_review_range(value: str | None) -> tuple[date, date, str]:
 def _parse_command_date(value: str) -> date:
     normalized = value.replace("/", "-")
     return datetime.strptime(normalized, "%Y-%m-%d").date()
+
+
+def _date_delta(days: int) -> timedelta:
+    return timedelta(days=days)
+
+
+def _month_range(year: int, month: int, today: date) -> tuple[date, date, str]:
+    last_day = calendar.monthrange(year, month)[1]
+    start = date(year, month, 1)
+    end = date(year, month, last_day)
+    if start <= today <= end:
+        end = today
+    return start, end, f"{year:04d}-{month:02d}"
+
+
+def _parse_bare_month(value: str) -> int | None:
+    match = _MONTH_TOKEN_RE.search(value)
+    if not match:
+        return None
+    month = _parse_month_text(match.group(0))
+    if month is None or month < 1 or month > 12:
+        return None
+    return month
+
+
+def _extract_month_tokens(value: str, today: date) -> list[tuple[int, int]]:
+    result: list[tuple[int, int]] = []
+    for match in re.finditer(rf"(?:(\d{{4}})\s*年\s*)?({_MONTH_TEXT})\s*月份?", value):
+        month = _parse_month_text(match.group(2))
+        if month is None or month < 1 or month > 12:
+            continue
+        year = int(match.group(1)) if match.group(1) else _infer_year_for_month(month, today=today)
+        result.append((year, month))
+    return result
+
+
+def _extract_date_tokens(value: str, today: date) -> list[date]:
+    result: list[date] = []
+    for match in re.finditer(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value):
+        result.append(_parse_command_date(match.group(0)))
+    for match in re.finditer(rf"(?:(\d{{4}})\s*年\s*)?({_MONTH_TEXT})\s*月\s*(\d{{1,2}})\s*[日号]?", value):
+        month = _parse_month_text(match.group(2))
+        day = int(match.group(3))
+        if month is None or month < 1 or month > 12:
+            continue
+        year = int(match.group(1)) if match.group(1) else _infer_year_for_date(month=month, day=day, today=today)
+        try:
+            result.append(date(year, month, day))
+        except ValueError:
+            continue
+    return sorted(set(result))
+
+
+def _parse_month_text(value: str) -> int | None:
+    text = re.sub(r"\s+", "", value)
+    text = text.replace("月份", "").replace("月", "")
+    if text.isdigit():
+        return int(text)
+    return CHINESE_MONTHS.get(text)
+
+
+def _infer_year_for_month(month: int, today: date) -> int:
+    return today.year - 1 if month > today.month else today.year
+
+
+def _infer_year_for_date(month: int, day: int, today: date) -> int:
+    year = today.year
+    try:
+        candidate = date(year, month, day)
+    except ValueError:
+        return year
+    return year - 1 if candidate > today else year
 
 
 def _save_account_snapshot_for_performance(
