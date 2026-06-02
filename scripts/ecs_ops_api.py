@@ -216,7 +216,47 @@ def _check_compose() -> dict[str, Any]:
         command = _compose_command(["ps", "--format", "json"])
     except ValueError as exc:
         return {"name": "docker_compose", "ok": False, "message": str(exc)}
-    return _check_command("docker_compose", command)
+
+    result = _run(command)
+    if not result.ok:
+        return {"name": "docker_compose", "ok": False, "message": _first_line(result.stderr or result.stdout) or "failed"}
+
+    summary = _summarize_compose_ps(result.stdout)
+    return {"name": "docker_compose", "ok": True, "message": summary or "ok"}
+
+
+def _summarize_compose_ps(output: str) -> str:
+    services: list[dict[str, Any]] = []
+    for line in _tail_nonempty_lines(output, limit=200):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list):
+            services.extend(item for item in value if isinstance(item, dict))
+        elif isinstance(value, dict):
+            services.append(value)
+
+    if not services:
+        return _first_line(output) or "ok"
+
+    running: list[str] = []
+    not_running: list[str] = []
+    for item in services:
+        name = str(item.get("Service") or item.get("Name") or item.get("Names") or "-")
+        state = str(item.get("State") or "").lower()
+        status = str(item.get("Status") or "")
+        if state == "running" or status.startswith("Up"):
+            running.append(name)
+        else:
+            not_running.append(f"{name}={state or status or 'unknown'}")
+
+    parts: list[str] = []
+    if running:
+        parts.append("running: " + ", ".join(sorted(running)))
+    if not_running:
+        parts.append("not running: " + ", ".join(sorted(not_running)))
+    return "; ".join(parts)
 
 
 def _check_systemd(name: str, unit: str) -> dict[str, Any]:
