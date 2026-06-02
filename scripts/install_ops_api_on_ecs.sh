@@ -2,7 +2,6 @@
 set -euo pipefail
 
 INVESTMENT_DIR=${INVESTMENT_DIR:-/opt/investment-knowledge}
-OPS_API_HOST=${OPS_API_HOST:-127.0.0.1}
 OPS_API_PORT=${OPS_API_PORT:-8767}
 START_OPS=false
 
@@ -15,7 +14,7 @@ Usage:
 
 Environment:
   INVESTMENT_DIR=/opt/investment-knowledge
-  OPS_API_HOST=127.0.0.1
+  OPS_API_HOST=...              Optional; defaults to docker0 bridge IP, then 127.0.0.1.
   OPS_API_PORT=8767
   OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
 EOF
@@ -55,6 +54,16 @@ if [ -f "$INVESTMENT_DIR/.env" ]; then
   . "$INVESTMENT_DIR/.env"
   set +a
 fi
+
+if [ -z "${OPS_API_HOST:-}" ]; then
+  OPS_API_HOST=$(
+    ip -4 addr show docker0 2>/dev/null |
+      awk '/inet / {print $2}' |
+      cut -d/ -f1 |
+      head -1
+  )
+fi
+OPS_API_HOST=${OPS_API_HOST:-127.0.0.1}
 
 OPS_API_TOKEN=${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
 if [ -z "$OPS_API_TOKEN" ]; then

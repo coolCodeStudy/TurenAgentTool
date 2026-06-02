@@ -220,6 +220,10 @@ jobs:
               if [ -f scripts/install_ops_api_on_ecs.sh ] && [ -f .env ]; then
                 sudo bash scripts/install_ops_api_on_ecs.sh --start
                 systemctl status investment-ops-api.service --no-pager || true
+                if [ -f /etc/investment-knowledge/ops-api.env ]; then
+                  . /etc/investment-knowledge/ops-api.env
+                  curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
+                fi
               fi
               systemctl status hermes-gateway.service --no-pager || true
               journalctl -u hermes-gateway.service -n 160 --no-pager || true
@@ -505,6 +509,10 @@ jobs:
             chmod 600 .env
 
             sudo bash scripts/install_ops_api_on_ecs.sh --start
+            if [ -f /etc/investment-knowledge/ops-api.env ]; then
+              . /etc/investment-knowledge/ops-api.env
+              curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
+            fi
 
             gzip -dc "$IMAGE_TAR" | $DOCKER load
             $DOCKER_COMPOSE -f docker-compose.prod.yml config

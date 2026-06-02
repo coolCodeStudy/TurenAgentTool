@@ -92,4 +92,7 @@ jobs:
 
             sudo systemctl status investment-ops-api.service --no-pager || true
             sudo journalctl -u investment-ops-api.service -n 80 --no-pager || true
-            curl -s http://127.0.0.1:8767/health || true
+            if [ -f /etc/investment-knowledge/ops-api.env ]; then
+              . /etc/investment-knowledge/ops-api.env
+            fi
+            curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
