@@ -28,6 +28,12 @@ from investment_knowledge_mcp.futu_opend_control import (
     request_phone_verify_code,
     submit_phone_verify_code,
 )
+from investment_knowledge_mcp.ops_client import (
+    render_cloud_coding_status,
+    render_cloud_system_status,
+    render_recent_errors,
+    render_service_logs,
+)
 from investment_knowledge_mcp.portfolio_analysis import (
     DEFAULT_CURRENCY_BY_MARKET,
     build_portfolio_analysis_context,
@@ -137,6 +143,43 @@ WORKER_STATUS_COMMANDS = {
     "Codex状态",
     "开发worker状态",
     "开发任务状态",
+    "开发状态",
+    "云端开发状态",
+}
+
+CLOUD_SYSTEM_STATUS_COMMANDS = {
+    "云端状态",
+    "ECS状态",
+    "ecs状态",
+    "服务器状态",
+    "云端系统状态",
+    "线上状态",
+    "生产状态",
+    "cloud status",
+}
+
+RECENT_ERRORS_COMMANDS = {
+    "最近错误",
+    "最近报错",
+    "云端错误",
+    "线上错误",
+    "查看错误",
+    "查看最近错误",
+    "recent errors",
+}
+
+SERVICE_LOG_COMMANDS = {
+    "worker日志": "codex-worker",
+    "codex日志": "codex-worker",
+    "codex worker日志": "codex-worker",
+    "hermes日志": "hermes",
+    "mcp日志": "mcp",
+    "钉钉日志": "dingtalk-stream-bot",
+    "dingtalk日志": "dingtalk-stream-bot",
+    "futu日志": "futu-opend",
+    "opend日志": "futu-opend",
+    "postgres日志": "postgres",
+    "数据库日志": "postgres",
 }
 
 
@@ -181,6 +224,23 @@ def handle_command(
 
     if cleaned in WORKER_STATUS_COMMANDS:
         return _handle_worker_status()
+
+    if cleaned in CLOUD_SYSTEM_STATUS_COMMANDS:
+        return CommandResult(ok=True, message=render_cloud_system_status())
+
+    if cleaned in RECENT_ERRORS_COMMANDS:
+        return CommandResult(ok=True, message=render_recent_errors())
+
+    if cleaned in SERVICE_LOG_COMMANDS:
+        return CommandResult(ok=True, message=render_service_logs(SERVICE_LOG_COMMANDS[cleaned]))
+
+    service_log_match = re.fullmatch(
+        r"(?:服务日志|查看服务日志|service logs?)\s+([a-zA-Z0-9_-]+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if service_log_match:
+        return CommandResult(ok=True, message=render_service_logs(service_log_match.group(1)))
 
     coding_task_detail_match = re.fullmatch(
         r"(?:查看开发任务|开发任务详情|查看编程任务|编程任务详情|coding task|dev task)\s+#?(\d+)",
@@ -321,6 +381,9 @@ def is_query_command(command: str) -> bool:
             *FUTU_MAINTENANCE_QUERY_COMMANDS,
             *IPO_REMINDER_STATUS_COMMANDS,
             *WORKER_STATUS_COMMANDS,
+            *CLOUD_SYSTEM_STATUS_COMMANDS,
+            *RECENT_ERRORS_COMMANDS,
+            *SERVICE_LOG_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
@@ -334,6 +397,7 @@ def is_query_command(command: str) -> bool:
         }
         or heuristic_intent.get("intent")
         in {"portfolio_analysis", "portfolio_positions", "system_status", "ipo_status", "trade_review"}
+        or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
     )
@@ -537,6 +601,11 @@ def _handle_worker_status() -> CommandResult:
     tasks = repository.list_coding_tasks(status="all", limit=5)
 
     lines = ["Codex worker 状态："]
+    cloud_status = render_cloud_coding_status()
+    if not cloud_status.startswith("云端开发状态暂不可用"):
+        lines.append(cloud_status)
+        lines.append("")
+
     if not workers:
         lines.append("- 暂无 worker 心跳记录。")
         lines.append("- 这通常表示 worker 没启动，或还没连上数据库。")
@@ -1789,6 +1858,11 @@ def _help_text() -> str:
 - 富途验证码 123456
 - 富途重登录
 - 系统状态
+- 云端状态
+- 最近错误
+- worker日志
+- hermes日志
+- mcp日志
 - IPO提醒状态
 - 分析 000660 KR
 - 怎么看海力士

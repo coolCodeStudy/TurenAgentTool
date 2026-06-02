@@ -1,0 +1,95 @@
+name: ECS Ops API
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Ops API operation"
+        required: true
+        default: "install"
+        type: choice
+        options:
+          - install
+          - start
+          - status
+          - stop
+
+jobs:
+  ops_api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate ECS secrets
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+        run: |
+          set -e
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Upload Ops API files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          source: "scripts/ecs_ops_api.py,scripts/install_ops_api_on_ecs.sh"
+          target: "/tmp/ops-api-${{ github.run_id }}"
+          strip_components: 1
+          overwrite: true
+
+      - name: Run Ops API operation
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 10m
+          script: |
+            set -e
+
+            APP_DIR=/opt/investment-knowledge
+            UPLOAD_DIR=/tmp/ops-api-${{ github.run_id }}
+            MODE="${{ inputs.mode }}"
+
+            sudo mkdir -p "$APP_DIR/scripts"
+            sudo cp "$UPLOAD_DIR/ecs_ops_api.py" "$APP_DIR/scripts/ecs_ops_api.py"
+            sudo cp "$UPLOAD_DIR/install_ops_api_on_ecs.sh" "$APP_DIR/scripts/install_ops_api_on_ecs.sh"
+            sudo chmod +x "$APP_DIR/scripts/ecs_ops_api.py" "$APP_DIR/scripts/install_ops_api_on_ecs.sh"
+
+            cd "$APP_DIR"
+
+            case "$MODE" in
+              install)
+                sudo bash scripts/install_ops_api_on_ecs.sh --start
+                ;;
+              start)
+                sudo systemctl restart investment-ops-api.service
+                ;;
+              status)
+                true
+                ;;
+              stop)
+                sudo systemctl disable --now investment-ops-api.service || true
+                ;;
+              *)
+                echo "Unknown mode: $MODE"
+                exit 1
+                ;;
+            esac
+
+            sudo systemctl status investment-ops-api.service --no-pager || true
+            sudo journalctl -u investment-ops-api.service -n 80 --no-pager || true
+            curl -s http://127.0.0.1:8767/health || true

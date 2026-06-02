@@ -217,6 +217,10 @@ jobs:
               $DOCKER_COMPOSE -f docker-compose.prod.yml ps
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 mcp || true
+              if systemctl cat investment-ops-api.service >/dev/null 2>&1; then
+                sudo bash scripts/install_ops_api_on_ecs.sh --start
+                systemctl status investment-ops-api.service --no-pager || true
+              fi
               systemctl status hermes-gateway.service --no-pager || true
               journalctl -u hermes-gateway.service -n 160 --no-pager || true
             else
@@ -491,10 +495,16 @@ jobs:
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             OPENAI_MODEL=${{ vars.OPENAI_MODEL || 'gpt-5.2' }}
             OPENAI_ANALYSIS_ENABLED=true
+
+            OPS_API_URL=${{ vars.OPS_API_URL || 'http://host.docker.internal:8767' }}
+            OPS_API_TOKEN=${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+            OPS_API_TIMEOUT_SECONDS=${{ vars.OPS_API_TIMEOUT_SECONDS || '8' }}
             ENV
 
             sed -i 's/^            //' .env
             chmod 600 .env
+
+            sudo bash scripts/install_ops_api_on_ecs.sh --start
 
             gzip -dc "$IMAGE_TAR" | $DOCKER load
             $DOCKER_COMPOSE -f docker-compose.prod.yml config

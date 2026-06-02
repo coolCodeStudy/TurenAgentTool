@@ -169,6 +169,10 @@ mcp_servers:
     tools:
       include:
         - run_investment_command
+        - cloud_system_status
+        - cloud_recent_errors
+        - cloud_service_logs
+        - cloud_coding_status
       resources: false
       prompts: false
 EOF

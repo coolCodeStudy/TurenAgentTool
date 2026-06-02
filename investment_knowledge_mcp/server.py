@@ -16,6 +16,15 @@ from investment_knowledge_mcp.command_router import (
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.futu_provider import get_futu_positions
+from investment_knowledge_mcp.ops_client import (
+    fetch_cloud_system_status,
+    fetch_coding_status,
+    fetch_recent_errors,
+    fetch_service_logs,
+    render_cloud_system_status,
+    render_recent_errors,
+    render_service_logs,
+)
 
 
 config = get_config()
@@ -372,6 +381,36 @@ def _record_agent_command(
     except Exception:
         # Command execution should not fail just because audit logging is down.
         return
+
+
+@mcp.tool()
+def cloud_system_status(render: bool = True) -> dict[str, Any]:
+    """Read ECS-level system status through the controlled Ops API."""
+    if render:
+        return {"ok": True, "message": render_cloud_system_status()}
+    return {"ok": True, "data": fetch_cloud_system_status()}
+
+
+@mcp.tool()
+def cloud_recent_errors(lines: int = 160, render: bool = True) -> dict[str, Any]:
+    """Read recent ECS/Hermes/Codex/Futu errors through the controlled Ops API."""
+    if render:
+        return {"ok": True, "message": render_recent_errors(lines=lines)}
+    return {"ok": True, "data": fetch_recent_errors(lines=lines)}
+
+
+@mcp.tool()
+def cloud_service_logs(service: str, lines: int = 120, render: bool = True) -> dict[str, Any]:
+    """Read recent logs for one whitelisted cloud service."""
+    if render:
+        return {"ok": True, "message": render_service_logs(service=service, lines=lines)}
+    return {"ok": True, "data": fetch_service_logs(service=service, lines=lines)}
+
+
+@mcp.tool()
+def cloud_coding_status() -> dict[str, Any]:
+    """Read cloud Codex worker status through the controlled Ops API."""
+    return {"ok": True, "data": fetch_coding_status()}
 
 
 @mcp.tool()

@@ -34,6 +34,17 @@ run_investment_command
 - 候选心得类指令：提出候选心得、查看候选心得、确认候选心得、拒绝候选心得。
 - 开发任务类指令：创建开发任务、查看开发任务。开发任务会进入 `coding_tasks`，由云端 Codex worker 后续处理。
 
+云端诊断能力已经单独抽为 Ops API，并通过 MCP 暴露给 Hermes：
+
+```text
+cloud_system_status
+cloud_recent_errors
+cloud_service_logs
+cloud_coding_status
+```
+
+Hermes 可以直接调用这些结构化工具，也可以继续用 `run_investment_command` 处理自然语言命令，例如 `云端状态`、`最近错误`、`worker日志`、`hermes日志`。
+
 不允许 Hermes 直接写正式心得。知识沉淀仍然走候选心得和确认流程，避免把群聊里的随口讨论写进长期记忆。
 
 ## 单机器人切换方案

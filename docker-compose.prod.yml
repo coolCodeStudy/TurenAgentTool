@@ -57,6 +57,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
       OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+      OPS_API_URL: ${OPS_API_URL:-http://host.docker.internal:8767}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
     ports:
       - "${MCP_HOST_PORT:-8000}:${MCP_PORT:-8000}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.server"]
@@ -101,6 +103,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
       OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+      OPS_API_URL: ${OPS_API_URL:-http://host.docker.internal:8767}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
     ports:
       - "${COMMAND_API_HOST_PORT:-8001}:${COMMAND_API_PORT:-8001}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
@@ -135,6 +139,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
       OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+      OPS_API_URL: ${OPS_API_URL:-http://host.docker.internal:8767}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
     ports:
       - "${DINGTALK_API_HOST_PORT:-8002}:${DINGTALK_API_PORT:-8002}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.dingtalk_api"]
@@ -185,6 +191,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
       OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+      OPS_API_URL: ${OPS_API_URL:-http://host.docker.internal:8767}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
     command:
       - sh
       - -c
