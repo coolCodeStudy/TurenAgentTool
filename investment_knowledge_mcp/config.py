@@ -57,6 +57,9 @@ class AppConfig:
     dingtalk_command_timeout_seconds: int = 25
     dingtalk_ipo_reminders_enabled: bool = True
     dingtalk_ipo_reminder_interval_seconds: int = 300
+    account_snapshot_scheduler_enabled: bool = True
+    account_snapshot_time: str = "16:10"
+    account_snapshot_interval_seconds: int = 300
     futu_opend_host: str = "127.0.0.1"
     futu_opend_port: int = 11112
     futu_opend_telnet_host: str = "127.0.0.1"
@@ -105,6 +108,9 @@ def get_config() -> AppConfig:
         dingtalk_command_timeout_seconds=int(os.getenv("DINGTALK_COMMAND_TIMEOUT_SECONDS", "25")),
         dingtalk_ipo_reminders_enabled=_get_bool("DINGTALK_IPO_REMINDERS_ENABLED", default=True),
         dingtalk_ipo_reminder_interval_seconds=int(os.getenv("DINGTALK_IPO_REMINDER_INTERVAL_SECONDS", "300")),
+        account_snapshot_scheduler_enabled=_get_bool("ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED", default=True),
+        account_snapshot_time=os.getenv("ACCOUNT_SNAPSHOT_TIME", "16:10"),
+        account_snapshot_interval_seconds=int(os.getenv("ACCOUNT_SNAPSHOT_INTERVAL_SECONDS", "300")),
         futu_opend_host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
         futu_opend_port=int(os.getenv("FUTU_OPEND_PORT", "11112")),
         futu_opend_telnet_host=os.getenv("FUTU_OPEND_TELNET_HOST", "127.0.0.1"),

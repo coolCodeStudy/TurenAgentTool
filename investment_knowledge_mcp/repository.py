@@ -684,6 +684,127 @@ def list_account_snapshots(
     return to_jsonable(rows)
 
 
+def upsert_trade_records(
+    deals: list[dict[str, Any]],
+    source: str = "futu",
+) -> dict[str, Any]:
+    inserted_or_updated = 0
+    with transaction() as conn:
+        for deal in deals:
+            normalized = _normalize_trade_record(deal)
+            conn.execute(
+                """
+                INSERT INTO trade_records (
+                  source, record_key, deal_id, order_id, code, stock_name, trd_side,
+                  qty, price, amount, currency, create_time, trade_date, raw, synced_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (source, record_key) DO UPDATE SET
+                  deal_id = EXCLUDED.deal_id,
+                  order_id = EXCLUDED.order_id,
+                  code = EXCLUDED.code,
+                  stock_name = EXCLUDED.stock_name,
+                  trd_side = EXCLUDED.trd_side,
+                  qty = EXCLUDED.qty,
+                  price = EXCLUDED.price,
+                  amount = EXCLUDED.amount,
+                  currency = EXCLUDED.currency,
+                  create_time = EXCLUDED.create_time,
+                  trade_date = EXCLUDED.trade_date,
+                  raw = EXCLUDED.raw,
+                  synced_at = now(),
+                  updated_at = now()
+                """,
+                (
+                    source,
+                    normalized["record_key"],
+                    normalized["deal_id"],
+                    normalized["order_id"],
+                    normalized["code"],
+                    normalized["stock_name"],
+                    normalized["trd_side"],
+                    normalized["qty"],
+                    normalized["price"],
+                    normalized["amount"],
+                    normalized["currency"],
+                    normalized["create_time"],
+                    normalized["trade_date"],
+                    Jsonb(normalized["raw"]),
+                ),
+            )
+            inserted_or_updated += 1
+
+    return {"synced_count": inserted_or_updated}
+
+
+def count_trade_records(
+    start: str,
+    end: str,
+    source: str = "futu",
+) -> int:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT count(*) AS count
+            FROM trade_records
+            WHERE source = %s
+              AND trade_date BETWEEN %s AND %s
+            """,
+            (source, start, end),
+        ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _normalize_trade_record(deal: dict[str, Any]) -> dict[str, Any]:
+    create_time = _clean_optional_text(str(deal.get("create_time") or "")) if deal.get("create_time") is not None else None
+    deal_id = _clean_optional_text(str(deal.get("deal_id") or "")) if deal.get("deal_id") is not None else None
+    order_id = _clean_optional_text(str(deal.get("order_id") or "")) if deal.get("order_id") is not None else None
+    code = _clean_optional_text(str(deal.get("code") or "")) if deal.get("code") is not None else None
+    record_key = deal_id or "|".join(
+        [
+            str(order_id or ""),
+            str(code or ""),
+            str(deal.get("trd_side") or ""),
+            str(deal.get("qty") or ""),
+            str(deal.get("price") or ""),
+            str(create_time or ""),
+        ]
+    )
+    return {
+        "record_key": record_key,
+        "deal_id": deal_id,
+        "order_id": order_id,
+        "code": code,
+        "stock_name": _clean_optional_text(str(deal.get("stock_name") or "")) if deal.get("stock_name") is not None else None,
+        "trd_side": _clean_optional_text(str(deal.get("trd_side") or "")) if deal.get("trd_side") is not None else None,
+        "qty": _optional_number(deal.get("qty")),
+        "price": _optional_number(deal.get("price")),
+        "amount": _optional_number(deal.get("amount")),
+        "currency": _clean_optional_text(str(deal.get("currency") or "")) if deal.get("currency") is not None else None,
+        "create_time": create_time,
+        "trade_date": _date_from_text(create_time),
+        "raw": deal.get("raw") if isinstance(deal.get("raw"), dict) else deal,
+    }
+
+
+def _optional_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _date_from_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip()
+    if len(text) < 10:
+        return None
+    return text[:10].replace("/", "-")
+
+
 def retry_coding_task(task_id: int, worker_log: str | None = None) -> dict[str, Any]:
     with transaction() as conn:
         row = conn.execute(

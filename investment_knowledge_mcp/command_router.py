@@ -132,6 +132,12 @@ PERFORMANCE_ESTIMATE_COMMANDS = {
     "本月收益",
 }
 
+TRADE_BACKFILL_COMMANDS = {
+    "补全交易记录",
+    "同步交易记录",
+    "回补交易记录",
+}
+
 CODING_TASK_LIST_COMMANDS = {
     "开发任务",
     "查看开发任务",
@@ -296,6 +302,10 @@ def handle_command(
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
 
+    trade_backfill_match = _match_trade_backfill_command(cleaned)
+    if trade_backfill_match is not None:
+        return _handle_trade_backfill(time_range_text=trade_backfill_match)
+
     performance_match = _match_performance_estimate_command(cleaned)
     if performance_match is not None:
         return _handle_performance_estimate(time_range_text=performance_match)
@@ -395,6 +405,7 @@ def is_query_command(command: str) -> bool:
             *PORTFOLIO_ANALYSIS_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
+            *TRADE_BACKFILL_COMMANDS,
             "港股新股",
             "港股IPO",
             "港股ipo",
@@ -1244,6 +1255,16 @@ def _match_performance_estimate_command(command: str) -> str | None:
     return None
 
 
+def _match_trade_backfill_command(command: str) -> str | None:
+    compact = command.strip()
+    for prefix in TRADE_BACKFILL_COMMANDS:
+        if compact == prefix:
+            return ""
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    return None
+
+
 def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:
     start, end, label = _resolve_trade_review_range(time_range_text)
     try:
@@ -1259,6 +1280,37 @@ def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:
         return CommandResult(ok=False, message=f"读取富途交易记录失败：{exc}")
 
     return CommandResult(ok=True, message=_render_trade_review(snapshot=snapshot, label=label))
+
+
+def _handle_trade_backfill(time_range_text: str | None = None) -> CommandResult:
+    start, end, label = _resolve_trade_review_range(time_range_text)
+    try:
+        snapshot = get_futu_trade_history(start=start.isoformat(), end=end.isoformat())
+    except FutuProviderError as exc:
+        message = (
+            f"补全交易记录（{label}）暂时读取不到富途交易记录。\n"
+            f"原因：{exc}\n\n"
+            "需要确认云端 OpenD 已启动、已完成验证码登录，并且容器可以访问 OpenD。"
+        )
+        return CommandResult(ok="futu-api 未安装" in str(exc), message=message)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取富途交易记录失败，无法补全：{exc}")
+
+    try:
+        result = repository.upsert_trade_records(snapshot.deals)
+        stored_count = repository.count_trade_records(start=start.isoformat(), end=end.isoformat())
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"交易记录落库失败：{exc}")
+
+    lines = [
+        f"交易记录补全（{label}）",
+        f"- 查询区间：{snapshot.start} 至 {snapshot.end}",
+        f"- 富途返回成交：{len(snapshot.deals)} 笔",
+        f"- 本次写入/更新：{result['synced_count']} 笔",
+        f"- 当前库内该区间记录：{stored_count} 笔",
+        "- 口径：按富途 deal_id 去重；缺少 deal_id 时使用订单、标的、方向、数量、价格、时间组合去重。",
+    ]
+    return CommandResult(ok=True, message="\n".join(lines))
 
 
 def _handle_performance_estimate(time_range_text: str | None = None) -> CommandResult:
@@ -2113,6 +2165,7 @@ def _help_text() -> str:
 - 港股新股
 - 交易记录 2026-05
 - 交易记录 2026-05-01 2026-05-29
+- 补全交易记录 2026-05
 - 本月收益
 - 富途状态
 - 富途登录

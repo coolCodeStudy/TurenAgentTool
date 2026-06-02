@@ -7,6 +7,7 @@ from typing import Any
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import connect
 from investment_knowledge_mcp.futu_provider import FutuProviderError, get_hk_ipo_list
+from investment_knowledge_mcp.account_snapshots import get_account_snapshot_loop_state
 from investment_knowledge_mcp.ipo_reminders import (
     SHANGHAI_TZ,
     build_scheduled_reminders,
@@ -16,12 +17,14 @@ from investment_knowledge_mcp.ipo_reminders import (
 
 def render_system_status() -> str:
     config = get_config()
+    account_snapshot_loop = get_account_snapshot_loop_state()
     checks = [
         _database_check(),
         _socket_check("OpenD", config.futu_opend_host, config.futu_opend_port),
         _socket_check("OpenAI", "api.openai.com", 443),
         _config_check("钉钉主动推送 webhook", bool(config.dingtalk_send_webhook)),
         _config_check("钉钉 Stream Client ID", bool(config.dingtalk_stream_client_id)),
+        _config_check("每日账户快照任务", config.account_snapshot_scheduler_enabled),
     ]
 
     lines = [
@@ -29,6 +32,13 @@ def render_system_status() -> str:
         f"- 时间：{datetime.now(SHANGHAI_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}",
     ]
     lines.extend(f"- {_status_icon(item['ok'])} {item['name']}：{item['message']}" for item in checks)
+    if account_snapshot_loop.get("time"):
+        lines.append(
+            f"- 每日账户快照时间：{account_snapshot_loop['time']}，"
+            f"扫描间隔 {account_snapshot_loop.get('interval_seconds') or '-'} 秒"
+        )
+    else:
+        lines.append(f"- 每日账户快照时间：{config.account_snapshot_time}，当前进程后台循环未启动")
 
     failed = [item for item in checks if not item["ok"]]
     if failed:

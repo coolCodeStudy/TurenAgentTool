@@ -152,6 +152,34 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
   UNIQUE (snapshot_date, source)
 );
 
+CREATE TABLE IF NOT EXISTS trade_records (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT NOT NULL DEFAULT 'futu',
+  record_key TEXT NOT NULL,
+  deal_id TEXT,
+  order_id TEXT,
+  code TEXT,
+  stock_name TEXT,
+  trd_side TEXT,
+  qty NUMERIC,
+  price NUMERIC,
+  amount NUMERIC,
+  currency TEXT,
+  create_time TEXT,
+  trade_date DATE,
+  raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (source, record_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_records_trade_date
+  ON trade_records (trade_date);
+
+CREATE INDEX IF NOT EXISTS idx_trade_records_code
+  ON trade_records (code);
+
 CREATE TABLE IF NOT EXISTS command_events (
   id BIGSERIAL PRIMARY KEY,
   source TEXT,
