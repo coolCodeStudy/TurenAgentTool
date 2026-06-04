@@ -1,0 +1,148 @@
+{
+  "stock": {
+    "symbol": "02476",
+    "market": "HK",
+    "name": "胜宏科技",
+    "core_business": "胜宏科技（惠州）股份有限公司是高端印刷电路板（PCB）供应商，重点从事高阶高密度互连（HDI）、高多层PCB（MLPCB）、FPC及软硬结合板等产品的研发、生产和销售，产品面向AI与高性能计算、智能终端、汽车电子、网络通信、医疗设备及其他应用。",
+    "equity_structure": "A+H上市公司：2015年6月在深交所创业板上市，A股代码300476；2026年4月在港交所主板上市，H股代码02476。",
+    "stock_character": "AI算力硬件链条里的高弹性PCB标的，业务增长与AI服务器、数据中心交换机、高速互联和高端HDI/高多层PCB需求高度相关；股价容易受AI资本开支、客户订单兑现、估值拥挤度和扩产节奏影响。",
+    "notable_history": "公司成立于2006年，2015年登陆深交所创业板，2026年登陆港交所主板。招股书披露，按2025年上半年AI及高性能算力PCB收入规模计，公司以13.8%市场份额位居全球第一。"
+  },
+  "sources": [
+    {
+      "key": "hkex_prospectus_20260413",
+      "source_type": "prospectus",
+      "title": "胜宏科技（惠州）股份有限公司 H股招股章程",
+      "url": "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/0413/2026041300006_c.pdf",
+      "publisher": "HKEXnews",
+      "published_at": "2026-04-13T00:00:00+08:00"
+    },
+    {
+      "key": "company_intro",
+      "source_type": "company_website",
+      "title": "Victory Giant Technology Introduction",
+      "url": "https://en.shpcb.com/about-9-1.html",
+      "publisher": "Victory Giant Technology"
+    },
+    {
+      "key": "etnet_ipo_profile",
+      "source_type": "web",
+      "title": "02476 Victory Giant Technology IPO Detail",
+      "url": "https://www.etnet.com.hk/www/eng/stocks/ci_ipo_detail.php?code=2476",
+      "publisher": "ET Net"
+    },
+    {
+      "key": "stock_connect_20260518",
+      "source_type": "exchange_notice",
+      "title": "关于深港通下的港股通标的证券名单调整的公告",
+      "url": "https://pdf.dfcfw.com/pdf/H2_AN202605181822410166_1.pdf?t=1779266752245",
+      "publisher": "中国创盈市场服务有限公司",
+      "published_at": "2026-05-18T00:00:00+08:00"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["AI基础设施", "AI服务器供应链", "AI算力PCB/高端HDI"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "hkex_prospectus_20260413",
+      "description": "面向AI算力卡、AI服务器、服务器、数据中心交换机等场景的高阶HDI和高多层PCB供应商。",
+      "recent_status": "AI与高性能计算PCB成为公司2025年最大收入应用方向，2025年该应用收入占PCB产品收入43.2%。"
+    },
+    {
+      "path": ["电子制造", "印制电路板", "高多层PCB"],
+      "relation_type": "main",
+      "confidence": 0.85,
+      "source_key": "hkex_prospectus_20260413",
+      "description": "公司核心产品包括高阶HDI、高多层PCB、FPC和软硬结合板，是高端PCB制造商。",
+      "recent_status": "公司披露具备100层以上高多层PCB制造能力，并实现多阶高层HDI产品量产能力。"
+    },
+    {
+      "path": ["数据中心网络", "高速互联", "交换机/光模块PCB"],
+      "relation_type": "related",
+      "confidence": 0.75,
+      "source_key": "hkex_prospectus_20260413",
+      "description": "产品应用覆盖数据中心交换机、高速光模块和网络通信设备，是AI数据中心网络侧的相关供应链标的。",
+      "recent_status": "AI基础设施扩张带动高频高速、低损耗、高散热PCB需求。"
+    },
+    {
+      "path": ["新能源汽车供应链", "汽车电子", "车规PCB"],
+      "relation_type": "related",
+      "confidence": 0.7,
+      "source_key": "hkex_prospectus_20260413",
+      "description": "公司汽车电子产品应用于新能源汽车三电系统、智能驾驶、车身控制模组及智能座舱。",
+      "recent_status": "汽车电子是公司非AI业务的重要应用方向，但当前组合语境下不是第一主线。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "胜宏科技的核心业务是高端PCB研发、生产和销售，重点产品包括高阶HDI、高多层PCB、FPC及软硬结合板，面向AI与高性能计算、智能终端、汽车电子、网络通信、医疗设备及其他应用。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.9,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "公司当前最重要的投资主线是AI基础设施PCB：AI服务器、AI算力卡和数据中心交换机对高频高速、低损耗、高散热PCB的要求提升，推动高端HDI和高多层PCB需求。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.85,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "按招股书引用的弗若斯特沙利文资料，以2025年上半年AI及高性能算力PCB收入规模计，公司市场份额为13.8%，位居全球第一；以2024年同一指标计位列全球第七。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.85,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "公司2025年AI与高性能计算应用收入为人民币8,341,256千元，占PCB产品收入43.2%，较2024年的6.6%显著提升。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.9,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "公司2025年收入为人民币19,292,313千元，毛利率35.2%，本公司拥有人应占年度利润为人民币4,311,988千元；2024年对应收入为人民币10,731,469千元，毛利率22.7%，拥有人应占利润为人民币1,154,431千元。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.85,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "公司所处PCB行业竞争激烈，若不能持续满足客户需求、跟上技术进步，或在产品质量和成本上保持差异化，可能失去市场份额。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.85,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "公司AI PCB主线与AI基础设施资本开支、头部客户订单、产品迭代和扩产消化高度相关；若AI服务器需求、客户验证或订单兑现不及预期，高增长叙事可能反转。",
+      "source_key": "hkex_prospectus_20260413",
+      "confidence": 0.75,
+      "stale_after": "2026-10-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "watch_item",
+      "content": "胜宏科技（02476）被调入深港通下港股通标的证券名单，并自2026年5月18日起生效。",
+      "source_key": "stock_connect_20260518",
+      "confidence": 0.85,
+      "stale_after": "2026-08-18T00:00:00+08:00"
+    }
+  ],
+  "user_insights": [
+    {
+      "insight": "胜宏科技首先按 PCB 龙头和 AI 算力 PCB/高端 HDI 主线理解；同时它是 A+H 两地上市且已纳入港股通的标的，港股侧流通值更低、H 股筹码远少于 A 股筹码，这会放大港股侧资金和筹码变化对股价的影响。",
+      "normalized_summary": "用户认为胜宏科技的核心是 PCB 龙头和 AI 算力 PCB/高端 HDI 主线；A+H 两地上市与港股通属性叠加较小 H 股流通盘，使港股侧更容易受到资金流和筹码结构影响。",
+      "tags": ["PCB龙头", "AI算力PCB", "高端HDI", "A+H两地上市", "港股通", "筹码结构", "流动性"]
+    }
+  ],
+  "draft_status": "pending_user_review",
+  "review_notes": [
+    "这是第一只持仓图谱样板，暂不写入正式数据库。",
+    "建议用户重点确认：主线是否应命名为 AI服务器PCB / AI算力PCB / 高端PCB/HDI，以及汽车电子是否只作为副线。",
+    "系统推断出的交易/仓位观点不直接写 user_insights，需用户明确确认。"
+  ]
+}
