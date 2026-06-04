@@ -40,6 +40,10 @@ from investment_knowledge_mcp.portfolio_analysis import (
     build_portfolio_analysis_context,
     render_portfolio_analysis_fallback,
 )
+from investment_knowledge_mcp.portfolio_graph import (
+    build_portfolio_graph_queue,
+    render_portfolio_graph_queue,
+)
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
 
@@ -108,6 +112,16 @@ PORTFOLIO_ANALYSIS_COMMANDS = {
     "我的组合怎么看",
     "帮我分析持仓",
     "portfolio analysis",
+}
+
+PORTFOLIO_GRAPH_COMMANDS = {
+    "持仓图谱",
+    "持仓图谱队列",
+    "组合图谱",
+    "组合图谱队列",
+    "图谱队列",
+    "持仓知识图谱",
+    "portfolio graph",
 }
 
 SYSTEM_STATUS_COMMANDS = {
@@ -322,6 +336,9 @@ def handle_command(
     if cleaned in PORTFOLIO_ANALYSIS_COMMANDS:
         return _handle_portfolio_analysis()
 
+    if cleaned in PORTFOLIO_GRAPH_COMMANDS:
+        return _handle_portfolio_graph_queue()
+
     if cleaned in PORTFOLIO_POSITION_COMMANDS:
         return _handle_portfolio_positions()
 
@@ -429,6 +446,7 @@ def is_query_command(command: str) -> bool:
             *SERVICE_LOG_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
+            *PORTFOLIO_GRAPH_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
@@ -440,7 +458,7 @@ def is_query_command(command: str) -> bool:
             "IPO",
         }
         or heuristic_intent.get("intent")
-        in {"portfolio_analysis", "portfolio_positions", "system_status", "ipo_status", "trade_review"}
+        in {"portfolio_analysis", "portfolio_positions", "portfolio_graph", "system_status", "ipo_status", "trade_review"}
         or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
@@ -878,6 +896,8 @@ def _handle_intent_routed_command(command: str) -> CommandResult | None:
 
     if intent_name == "portfolio_analysis":
         return _handle_portfolio_analysis()
+    if intent_name == "portfolio_graph":
+        return _handle_portfolio_graph_queue()
     if intent_name == "portfolio_positions":
         return _handle_portfolio_positions()
     if intent_name == "system_status":
@@ -950,6 +970,8 @@ def _heuristic_route_intent(command: str) -> dict[str, Any]:
             "target_type": None,
             "time_range": _extract_time_range_text(command),
         }
+    if any(keyword in compact for keyword in ("持仓图谱", "组合图谱", "图谱队列", "知识图谱覆盖")):
+        return {"intent": "portfolio_graph", "confidence": 0.9, "target_type": None}
     if any(keyword in compact for keyword in ("持仓分析", "仓位分析", "组合分析", "持仓怎么看", "仓位怎么看", "组合风险")):
         return {"intent": "portfolio_analysis", "confidence": 0.85, "target_type": None}
     if any(keyword in compact for keyword in ("我的持仓", "当前持仓", "持仓列表", "仓位列表")):
@@ -1075,6 +1097,8 @@ def _normalize_natural_command(command: str) -> str:
         return "港股新股"
     if compact in PORTFOLIO_ANALYSIS_COMMANDS:
         return "持仓分析"
+    if compact in PORTFOLIO_GRAPH_COMMANDS:
+        return "持仓图谱"
     if compact in PORTFOLIO_POSITION_COMMANDS:
         return "我的持仓"
 
@@ -1210,6 +1234,25 @@ def _handle_portfolio_analysis() -> CommandResult:
         ok=True,
         message=analysis + "\n\n" + _portfolio_analysis_footer(context),
     )
+
+
+def _handle_portfolio_graph_queue() -> CommandResult:
+    try:
+        snapshot = get_futu_positions()
+    except FutuProviderError as exc:
+        return CommandResult(
+            ok=False,
+            message=(
+                "暂时读取不到富途持仓，无法生成持仓图谱队列。\n"
+                f"原因：{exc}\n\n"
+                "需要确认云端 OpenD 已启动、已登录富途账号，且只在 ECS 本机开放端口。"
+            ),
+        )
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取富途持仓失败，无法生成持仓图谱队列：{exc}")
+
+    context = build_portfolio_graph_queue(snapshot)
+    return CommandResult(ok=True, message=render_portfolio_graph_queue(context))
 
 
 def _generate_portfolio_analysis(context: dict[str, Any], fallback: str) -> str:
@@ -2321,6 +2364,7 @@ def _help_text() -> str:
     return """支持的指令：
 - 我的持仓
 - 持仓分析
+- 持仓图谱
 - 今天仓位怎么看
 - 组合体检
 - 港股新股

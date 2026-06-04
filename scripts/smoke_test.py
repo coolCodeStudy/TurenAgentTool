@@ -21,6 +21,7 @@ from investment_knowledge_mcp.command_router import (
 )
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
+from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
 from investment_knowledge_mcp.repository import (
     add_knowledge_item,
     add_source,
@@ -272,6 +273,32 @@ def main() -> None:
         router_natural_memory_result = handle_command(SMOKE_ROUTER_NATURAL_MEMORY)
         router_trade_review_result = handle_command("帮我看看这个月到底赚在哪亏在哪")
         router_candidates_result = handle_command("查看候选心得")
+        graph_context = build_portfolio_graph_queue(
+            SimpleNamespace(
+                positions=[
+                    {
+                        "code": f"{SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                        "stock_name": "Smoke Test Stock",
+                        "qty": 10,
+                        "market_val": 1000,
+                        "pl_val": 12,
+                        "currency": "USD",
+                    },
+                    {
+                        "code": "HK.MISSING",
+                        "stock_name": "Missing Graph Stock",
+                        "qty": 20,
+                        "market_val": 500,
+                        "pl_val": -5,
+                        "currency": "HKD",
+                    },
+                ],
+                fetched_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+                cached=False,
+                source="smoke",
+            )
+        )
+        graph_message = render_portfolio_graph_queue(graph_context)
 
         assert repeated_source["id"] == source["id"]
         assert repeated_knowledge["id"] == knowledge["id"]
@@ -293,7 +320,13 @@ def main() -> None:
         assert router_natural_memory_result.ok
         assert router_trade_review_result.ok
         assert router_candidates_result.ok
+        assert graph_context["summary"]["position_count"] == 2
+        assert graph_context["summary"]["stock_profile_count"] == 1
+        assert graph_context["summary"]["sector_linked_count"] == 1
+        assert "持仓图谱队列" in graph_message
+        assert "Missing Graph Stock" in graph_message
         assert not is_query_command(SMOKE_ROUTER_NATURAL_MEMORY)
+        assert is_query_command("持仓图谱")
         assert is_query_command("交易复盘")
         assert is_query_command("本月收益")
         assert is_query_command("补全交易记录 2026-05")
