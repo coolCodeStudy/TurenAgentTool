@@ -1,0 +1,120 @@
+{
+  "stock": {
+    "symbol": "TLT",
+    "market": "US",
+    "name": "iShares 20+ Year Treasury Bond ETF",
+    "core_business": "TLT 是 BlackRock iShares 旗下的美国长期国债 ETF，目标是跟踪 ICE US Treasury 20+ Year Bond Index，主要持有剩余期限超过20年的美国国债，为投资者提供长期美国国债和久期敞口。",
+    "equity_structure": "ETF，NASDAQ 上市，发行人为 iShares/BlackRock；不是经营型公司，没有普通公司意义上的股权结构。",
+    "stock_character": "长久期美国国债 ETF，核心不是企业成长，而是利率、通胀预期、实际利率、财政供给、美元流动性和避险需求共同驱动的宏观工具；价格对长期利率变化高度敏感，可作为降息交易、衰退/风险资产回撤对冲或组合久期配置。",
+    "notable_history": "基金成立于2002年7月22日；截至2026年6月3日，基金净资产约411.75亿美元，30日 SEC yield 为4.96%，费用率0.15%，NASDAQ 上市。"
+  },
+  "sources": [
+    {
+      "key": "ishares_product_page_20260603",
+      "source_type": "fund_page",
+      "title": "iShares 20+ Year Treasury Bond ETF",
+      "url": "https://www.ishares.com/us/products/239454/ishares-20-year-treasury-bond-etf",
+      "publisher": "iShares",
+      "published_at": "2026-06-03T00:00:00-04:00"
+    },
+    {
+      "key": "ishares_fact_sheet_20260331",
+      "source_type": "fact_sheet",
+      "title": "iShares 20+ Year Treasury Bond ETF Fact Sheet",
+      "url": "https://www.ishares.com/us/literature/fact-sheet/tlt-ishares-20-year-treasury-bond-etf-fund-fact-sheet-en-us.pdf",
+      "publisher": "iShares",
+      "published_at": "2026-03-31T00:00:00-04:00"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["宏观资产配置", "美国利率", "长久期美国国债"],
+      "relation_type": "main",
+      "confidence": 0.95,
+      "source_key": "ishares_product_page_20260603",
+      "description": "TLT 跟踪20年以上美国国债指数，提供长久期美国国债敞口，是组合里表达美国长期利率方向的典型 ETF 工具。",
+      "recent_status": "截至2026年6月3日，TLT 30日 SEC yield 为4.96%，NAV 为85.30美元。"
+    },
+    {
+      "path": ["组合风险管理", "风险资产对冲", "衰退/降息交易"],
+      "relation_type": "main",
+      "confidence": 0.82,
+      "source_key": "ishares_product_page_20260603",
+      "description": "长久期国债在增长下行、通胀回落或降息预期强化时通常具备资本利得弹性，可用于对冲权益组合中的风险资产回撤。",
+      "recent_status": "截至2026年6月3日，TLT 年初至今 NAV total return 为-0.33%，说明降息交易仍受长端利率和期限溢价约束。"
+    },
+    {
+      "path": ["美元资产", "固定收益ETF", "美国国债ETF"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "ishares_product_page_20260603",
+      "description": "TLT 是美国国债 ETF，月度分红，费用率0.15%，适合用 ETF 形式获得美国长期国债篮子敞口。",
+      "recent_status": "截至2026年6月3日，基金净资产约411.75亿美元，30日平均成交量约2695万股。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "TLT 是 iShares 20+ Year Treasury Bond ETF，寻求跟踪由剩余期限超过20年的美国国债组成的指数，为投资者提供长久期美国政府债券敞口。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.95,
+      "stale_after": "2026-09-03T00:00:00-04:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "TLT 的基准指数为 ICE US Treasury 20+ Year Bond Index，交易所为 NASDAQ，基金成立日为2002年7月22日，分配频率为月度。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.9,
+      "stale_after": "2026-09-03T00:00:00-04:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "截至2026年6月3日，TLT 的 NAV 为85.30美元，基金净资产约411.75亿美元，30日 SEC yield 为4.96%，12个月 trailing yield 为4.59%，费用率0.15%。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.9,
+      "stale_after": "2026-07-03T00:00:00-04:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "TLT 的核心投资逻辑不是公司基本面，而是美国长端利率方向：若长端收益率下行，长久期债券价格通常上升；若通胀、财政供给或期限溢价推高长端收益率，TLT 价格会承压。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.86,
+      "stale_after": "2026-09-03T00:00:00-04:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "组合语境中，TLT 可作为降息交易、衰退交易和权益风险对冲工具；它和 AI/成长股方向不同，主要提供宏观久期暴露和一定避险属性。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.82,
+      "stale_after": "2026-09-03T00:00:00-04:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "TLT 是长久期债券 ETF，价格对长期利率变化高度敏感；如果美国长端利率上行、通胀预期反复、期限溢价上升或财政发债供给压力加大，基金价格可能明显下跌。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.9,
+      "stale_after": "2026-09-03T00:00:00-04:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "TLT 虽持有美国国债，但 ETF 本身没有到期日；如果投资者在价格低位卖出，仍可能实现资本损失，不能简单等同于单只国债持有到期。",
+      "source_key": "ishares_product_page_20260603",
+      "confidence": 0.82,
+      "stale_after": "2026-09-03T00:00:00-04:00"
+    }
+  ],
+  "user_insights": [
+    {
+      "insight": "TLT 在我的组合里偏防守资产，我一般用来抄底和做波段；它每个月都会付利息/分红，需要注意美股股息税对实际收益的影响。",
+      "normalized_summary": "用户将 TLT 定位为组合防守资产，主要用于抄底和波段交易；同时关注其月度分红/利息现金流以及美股股息税对实际收益的拖累。",
+      "tags": ["防守资产", "长久期美债", "降息交易", "波段交易", "抄底", "月度分红", "股息税", "现金流"]
+    }
+  ],
+  "draft_status": "pending_user_review",
+  "review_notes": [
+    "这是第三只持仓图谱样板，也是第一只 ETF/宏观工具样板，暂不写入正式数据库。",
+    "用户已确认 TLT 按长久期美债 / 降息交易 / 风险资产对冲来理解，并且在组合里偏防守资产。",
+    "用户已确认正式心得：TLT 用来抄底和做波段，每月分红/利息需要注意股息税。",
+    "ETF 不适合按普通股票的行业龙头逻辑处理；后续如需要，可以为 ETF 增加单独资产类型字段。"
+  ]
+}
