@@ -1,0 +1,121 @@
+{
+  "stock": {
+    "symbol": "09660",
+    "market": "HK",
+    "name": "地平线机器人-W",
+    "core_business": "地平线机器人是智能驾驶计算方案公司，主要提供面向乘用车的辅助驾驶和自动驾驶计算解决方案，包括征程系列车规级处理硬件、算法、软件授权和技术服务，并拓展非汽车机器人和开发者套件等场景。",
+    "equity_structure": "WVR不同投票权架构公司，开曼控股，港股主板上市代码09660。",
+    "stock_character": "港股智能驾驶和国产车载AI芯片代表标的，核心看点是智能驾驶渗透率、征程系列出货、HSD/城区辅助驾驶量产、车企定点、软件授权和高研发投入兑现；股价也受港股AI情绪、亏损扩大和融资/稀释预期影响。",
+    "notable_history": "公司2025年收入人民币37.58亿元，同比增长57.7%；毛利人民币24.26亿元，毛利率约64.5%；但全年亏损人民币104.69亿元，研发费用人民币51.54亿元。"
+  },
+  "sources": [
+    {
+      "key": "annual_results_2025",
+      "source_type": "annual_results",
+      "title": "Horizon Robotics Annual Results Announcement for the Year Ended December 31, 2025",
+      "url": "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/0319/2026031900927.pdf",
+      "publisher": "HKEXnews",
+      "published_at": "2026-03-19T00:00:00+08:00"
+    },
+    {
+      "key": "annual_report_2025",
+      "source_type": "annual_report",
+      "title": "Horizon Robotics Annual Report 2025",
+      "url": "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/0430/2026043001830.pdf",
+      "publisher": "HKEXnews",
+      "published_at": "2026-04-30T00:00:00+08:00"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["智能汽车", "智能驾驶", "ADAS/自动驾驶计算方案"],
+      "relation_type": "main",
+      "confidence": 0.94,
+      "source_key": "annual_results_2025",
+      "description": "地平线机器人主要提供乘用车智能驾驶计算方案，覆盖车规级处理硬件、算法、软件授权和技术服务。",
+      "recent_status": "2025年公司收入同比增长57.7%，反映智能驾驶渗透和产品方案放量。"
+    },
+    {
+      "path": ["AI芯片", "车载AI芯片", "征程系列"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "annual_results_2025",
+      "description": "征程系列车规级处理硬件是公司智能驾驶方案的核心载体，是国产车载AI芯片和软硬一体方案的重要标的。",
+      "recent_status": "公司继续加大征程6系列、HSD等核心产品研发投入。"
+    },
+    {
+      "path": ["AI应用", "具身智能/机器人", "机器人开发平台"],
+      "relation_type": "related",
+      "confidence": 0.68,
+      "source_key": "annual_results_2025",
+      "description": "非汽车解决方案包括处理硬件和机器人开发套件，但当前收入主线仍以汽车智能驾驶为主。",
+      "recent_status": "2025年非汽车解决方案收入同比增长179.9%至人民币2.011亿元，但基数仍较小。"
+    },
+    {
+      "path": ["港股AI资产", "亏损成长股", "智能驾驶高弹性标的"],
+      "relation_type": "main",
+      "confidence": 0.78,
+      "source_key": "annual_results_2025",
+      "description": "地平线机器人是港股AI和智能驾驶高弹性成长股，收入增长和高研发投入并存，估值对风险偏好敏感。",
+      "recent_status": "2025年研发费用同比增长63.3%至人民币51.54亿元，全年亏损人民币104.69亿元。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "地平线机器人主要提供汽车智能驾驶解决方案，包括车规级处理硬件、算法、软件授权和技术服务，同时提供部分非汽车处理硬件和机器人开发套件。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.9,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2025年公司收入为人民币3,758.3百万元，同比增长57.7%；毛利为人民币2,425.7百万元，同比增长31.7%。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.9,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2025年公司经营亏损为人民币3,338.8百万元，全年亏损为人民币10,469.4百万元；调整后净亏损为人民币2,811.8百万元。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.9,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2025年许可和服务收入同比增长17.4%至人民币1,934.9百万元；非汽车解决方案收入同比增长179.9%至人民币201.1百万元。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.85,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "地平线机器人的核心投资主线是智能驾驶渗透率提升和国产车载AI计算方案放量：若征程系列出货、HSD量产、车企定点和软件授权收入兑现，收入和估值弹性较大。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.84,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "公司处于高研发投入阶段，2025年研发费用同比增长63.3%至人民币5,153.7百万元，主要用于智能辅助驾驶技术、云服务和技术服务采购等投入。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.88,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "地平线机器人仍处于亏损成长阶段，面临研发投入持续、量产节奏、车企客户集中、竞争加剧、毛利率下行、融资稀释和港股风险偏好波动等风险。",
+      "source_key": "annual_results_2025",
+      "confidence": 0.85,
+      "stale_after": "2026-09-19T00:00:00+08:00"
+    }
+  ],
+  "user_insights": [],
+  "draft_status": "pending_user_review",
+  "review_notes": [
+    "这是 09660 地平线机器人-W 图谱草稿，暂不写入正式数据库。",
+    "建议用户确认：是否按 智能驾驶 / 国产车载AI芯片 / 港股AI亏损成长股 来理解。",
+    "系统没有代用户生成正式心得；等用户确认后再写 user_insights。"
+  ]
+}

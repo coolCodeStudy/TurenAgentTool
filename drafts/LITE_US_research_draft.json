@@ -1,0 +1,126 @@
+{
+  "stock": {
+    "symbol": "LITE",
+    "market": "US",
+    "name": "Lumentum",
+    "core_business": "Lumentum Holdings Inc. 是光学与光子技术公司，产品包括光模块、光子器件、激光器和光学子系统，服务于AI数据中心、云计算、通信网络、工业制造和传感等场景。",
+    "equity_structure": "美国上市公司，NASDAQ 上市，代码 LITE。",
+    "stock_character": "AI数据中心光通信链条里的高弹性光子器件和光模块标的，股价受AI数据中心资本开支、云客户订单、800G/1.6T升级、CPO/OCS等新技术节奏、产品组合、产能爬坡和并购整合影响。",
+    "notable_history": "2026财年第三季度收入为8.084亿美元，同比增长90.1%、环比增长21.5%；公司给出2026财年第四季度收入9.60亿至10.10亿美元的指引。"
+  },
+  "sources": [
+    {
+      "key": "q3_fy2026_results",
+      "source_type": "quarterly_results",
+      "title": "Lumentum Announces Third Quarter of Fiscal Year 2026 Financial Results",
+      "url": "https://investor.lumentum.com/financial-news-releases/news-details/2026/Lumentum-Announces-Third-Quarter-of-Fiscal-Year-2026-Financial-Results/default.aspx",
+      "publisher": "Lumentum",
+      "published_at": "2026-05-05T00:00:00-07:00"
+    },
+    {
+      "key": "investor_overview",
+      "source_type": "company_website",
+      "title": "Lumentum Investor Relations Overview",
+      "url": "https://investor.lumentum.com/overview/default.aspx",
+      "publisher": "Lumentum"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["AI基础设施", "AI数据中心网络", "光模块/光子器件"],
+      "relation_type": "main",
+      "confidence": 0.92,
+      "source_key": "investor_overview",
+      "description": "Lumentum 的光学与光子产品用于支撑 AI、云计算和下一代通信网络，是AI数据中心网络侧的光通信供应链标的。",
+      "recent_status": "2026财年第三季度收入同比增长90.1%，公司披露强劲增长与AI、云数据中心和网络需求相关。"
+    },
+    {
+      "path": ["数据中心网络", "高速互联", "光通信组件"],
+      "relation_type": "main",
+      "confidence": 0.88,
+      "source_key": "q3_fy2026_results",
+      "description": "公司组件和系统收入均显著增长，产品组合覆盖可扩展、节能的数据中心连接和光学子系统。",
+      "recent_status": "2026财年第三季度组件收入5.333亿美元，占收入66.0%；系统收入2.751亿美元，占收入34.0%。"
+    },
+    {
+      "path": ["光通信产业链", "光子技术", "激光器/光学子系统"],
+      "relation_type": "main",
+      "confidence": 0.86,
+      "source_key": "investor_overview",
+      "description": "Lumentum 是光学与光子技术公司，产品覆盖激光器、模块和光学子系统，除AI数据中心外也服务通信、工业与传感场景。",
+      "recent_status": "公司强调光子技术对AI、云计算和下一代通信基础设施的重要性。"
+    },
+    {
+      "path": ["AI基础设施", "先进封装/互联", "CPO/OCS光互联"],
+      "relation_type": "related",
+      "confidence": 0.74,
+      "source_key": "q3_fy2026_results",
+      "description": "公司在前瞻性表述中提到 OCS 和 CPO 相关收入增长机会，代表AI数据中心光互联升级的潜在方向。",
+      "recent_status": "CPO/OCS仍属于成长机会和技术路线跟踪项，短期仍需看客户导入、量产节奏和收入兑现。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "Lumentum 是全球光学与光子技术公司，产品用于支撑AI、云计算、下一代通信网络、数据中心连接、工业制造和传感应用。",
+      "source_key": "investor_overview",
+      "confidence": 0.9,
+      "stale_after": "2026-11-05T00:00:00-07:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2026财年第三季度 Lumentum 收入为8.084亿美元，同比增长90.1%、环比增长21.5%；GAAP毛利率44.2%，非GAAP毛利率47.9%。",
+      "source_key": "q3_fy2026_results",
+      "confidence": 0.9,
+      "stale_after": "2026-08-05T00:00:00-07:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2026财年第三季度，Lumentum组件收入为5.333亿美元，占收入66.0%；系统收入为2.751亿美元，占收入34.0%。",
+      "source_key": "q3_fy2026_results",
+      "confidence": 0.85,
+      "stale_after": "2026-08-05T00:00:00-07:00"
+    },
+    {
+      "knowledge_type": "watch_item",
+      "content": "公司给出2026财年第四季度收入9.60亿至10.10亿美元、非GAAP经营利润率35.0%-36.0%、非GAAP摊薄EPS 2.85-3.05美元的指引。",
+      "source_key": "q3_fy2026_results",
+      "confidence": 0.9,
+      "stale_after": "2026-08-05T00:00:00-07:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "Lumentum 的核心投资主线是AI数据中心光通信：AI集群扩张带来更高带宽、更低功耗和更高速互联需求，推动光模块、光子器件和光学子系统增长。",
+      "source_key": "investor_overview",
+      "confidence": 0.84,
+      "stale_after": "2026-11-05T00:00:00-07:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "Lumentum 面临AI和云数据中心需求波动、客户库存调整、产品组合变化、平均售价下降、产能爬坡、供应链和质量交付风险。",
+      "source_key": "q3_fy2026_results",
+      "confidence": 0.85,
+      "stale_after": "2026-11-05T00:00:00-07:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "公司还面临地缘政治、关税和出口管制、稀土等关键材料供应、并购整合和债务服务等风险。",
+      "source_key": "q3_fy2026_results",
+      "confidence": 0.8,
+      "stale_after": "2026-11-05T00:00:00-07:00"
+    }
+  ],
+  "user_insights": [
+    {
+      "insight": "Lumentum 是美股光模块的龙头。",
+      "normalized_summary": "用户认为 Lumentum 可按美股光模块龙头理解。",
+      "tags": ["美股光模块", "光模块龙头", "AI数据中心", "光通信"]
+    }
+  ],
+  "draft_status": "pending_user_review",
+  "review_notes": [
+    "这是 LITE 图谱草稿，暂不写入正式数据库。",
+    "建议用户确认：是否按 AI数据中心光通信 / 光模块与光子器件 / 高弹性供应链 来理解。",
+    "用户已确认正式心得：Lumentum 是美股光模块的龙头。"
+  ]
+}
