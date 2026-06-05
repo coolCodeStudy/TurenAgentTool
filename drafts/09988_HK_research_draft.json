@@ -1,0 +1,144 @@
+{
+  "stock": {
+    "symbol": "09988",
+    "market": "HK",
+    "name": "阿里巴巴-W",
+    "core_business": "阿里巴巴集团是中国大型互联网与科技平台公司，业务覆盖中国电商、本地生活、国际数字商业、菜鸟物流、云计算与AI、数字媒体娱乐及创新业务；港股代码09988，NYSE ADS代码BABA。",
+    "equity_structure": "阿里巴巴为开曼控股公司，采用WVR不同投票权架构，港股主板上市代码09988，并有人民币柜台89988；ADS在纽约证券交易所上市，代码BABA。",
+    "stock_character": "中国互联网平台龙头和港股核心权重股，传统主线是电商现金流、平台效率和股东回报；新增再估值主线来自阿里云、Qwen大模型、AI基础设施和通义/AI应用生态。股价同时受中国消费、平台竞争、监管、海外上市风险、AI资本开支和利润投入周期影响。",
+    "notable_history": "截至2026财年，集团收入为人民币1,023,670百万元，同比增长3%；2026年3月季度云智能集团外部收入同比增长40%，AI相关产品收入连续第11个季度实现三位数增长。"
+  },
+  "sources": [
+    {
+      "key": "fy2026_results",
+      "source_type": "quarterly_results",
+      "title": "Alibaba Group Announces March Quarter 2026 and Fiscal Year 2026 Results",
+      "url": "https://home.alibabagroup.com/en-US/document-1991237455038119936",
+      "publisher": "Alibaba Group",
+      "published_at": "2026-05-13T00:00:00+08:00"
+    },
+    {
+      "key": "fy2026_20f_sec",
+      "source_type": "annual_report",
+      "title": "Alibaba Group Holding Limited Form 20-F for Fiscal Year 2026",
+      "url": "https://www.sec.gov/Archives/edgar/data/0001577552/000119312526231755/baba-20260331.htm",
+      "publisher": "SEC",
+      "published_at": "2026-05-20T00:00:00-04:00"
+    },
+    {
+      "key": "fy2026_20f_hkex",
+      "source_type": "annual_report",
+      "title": "Annual Report of Alibaba Group Holding Limited on Form 20-F for Fiscal Year 2026",
+      "url": "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/0520/2026052001340.pdf",
+      "publisher": "HKEXnews",
+      "published_at": "2026-05-20T00:00:00+08:00"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["中国互联网平台", "电商平台", "综合电商/即时零售"],
+      "relation_type": "main",
+      "confidence": 0.92,
+      "source_key": "fy2026_20f_sec",
+      "description": "阿里巴巴的核心业务仍包括淘宝、天猫等中国电商平台，并延伸到即时零售、本地生活和用户体验投入。",
+      "recent_status": "2026财年公司继续加大中国电商用户体验和即时商业相关投入，短期利润受到投入周期影响。"
+    },
+    {
+      "path": ["AI基础设施", "云计算平台", "阿里云/AI云"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "fy2026_results",
+      "description": "阿里云是阿里巴巴AI基础设施和企业AI服务的核心载体，云收入增长与AI算力、模型服务和企业AI应用需求相关。",
+      "recent_status": "2026年3月季度云智能集团外部收入同比增长40%，AI相关产品占云外部收入约30%。"
+    },
+    {
+      "path": ["AI应用", "大模型生态", "Qwen/通义生态"],
+      "relation_type": "main",
+      "confidence": 0.82,
+      "source_key": "fy2026_results",
+      "description": "阿里巴巴在大模型、AI Agent和应用生态上持续投入，Qwen模型和相关AI应用是云与消费生态再估值的重要组成。",
+      "recent_status": "公司披露AI相关产品收入连续第11个季度实现三位数增长，并推动AI模型、芯片和应用平台商业化。"
+    },
+    {
+      "path": ["港股核心资产", "中国互联网权重", "平台经济龙头"],
+      "relation_type": "main",
+      "confidence": 0.88,
+      "source_key": "fy2026_20f_sec",
+      "description": "阿里巴巴是港股和中概互联网的重要权重标的，具备电商现金流、云计算、AI和股东回报等多重叙事。",
+      "recent_status": "2026财年公司董事会批准年度现金股息，同时继续受到AI和即时商业投入周期影响。"
+    },
+    {
+      "path": ["全球电商", "跨境电商", "国际数字商业"],
+      "relation_type": "related",
+      "confidence": 0.76,
+      "source_key": "fy2026_20f_sec",
+      "description": "国际数字商业是阿里巴巴的增长方向之一，包括跨境及海外平台业务，但在组合语境中通常不是第一主线。",
+      "recent_status": "国际业务增长与全球消费、跨境履约、区域竞争和补贴投入相关。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "阿里巴巴集团业务覆盖中国电商、本地生活、国际数字商业、菜鸟物流、云计算与AI、数字媒体娱乐及创新业务，是中国互联网平台与科技基础设施龙头之一。",
+      "source_key": "fy2026_20f_sec",
+      "confidence": 0.9,
+      "stale_after": "2026-11-20T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "公司港股主板上市代码09988，并设有人民币柜台89988；ADS在纽约证券交易所上市，代码BABA。",
+      "source_key": "fy2026_results",
+      "confidence": 0.95,
+      "stale_after": "2026-11-20T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2026财年阿里巴巴总收入为人民币1,023,670百万元，同比增长3%；净利润为人民币102,127百万元，同比下降19%。",
+      "source_key": "fy2026_20f_sec",
+      "confidence": 0.9,
+      "stale_after": "2026-11-20T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2026年3月季度云智能集团收入为人民币41,626百万元；云外部收入同比增长40%，AI相关产品收入连续第11个季度实现三位数增长。",
+      "source_key": "fy2026_results",
+      "confidence": 0.9,
+      "stale_after": "2026-08-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "阿里巴巴的投资主线从传统电商平台现金流，逐步叠加阿里云、Qwen大模型、AI基础设施和企业AI应用的再估值逻辑；但AI投入会压制短期利润，需要观察云收入增速、AI收入占比和资本开支回报。",
+      "source_key": "fy2026_results",
+      "confidence": 0.84,
+      "stale_after": "2026-08-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "watch_item",
+      "content": "2026财年公司董事会批准年度常规现金股息，每股普通股0.13125美元或每ADS 1.05美元，股权登记日为2026年6月11日。",
+      "source_key": "fy2026_results",
+      "confidence": 0.85,
+      "stale_after": "2026-07-11T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "阿里巴巴短期利润受到AI、云基础设施、即时商业和用户体验投入影响；如果投入无法转化为云收入、用户增长和商业化效率，估值修复可能受阻。",
+      "source_key": "fy2026_results",
+      "confidence": 0.85,
+      "stale_after": "2026-08-13T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "阿里巴巴还面临中国消费复苏不确定、平台竞争、监管政策、数据安全、跨境地缘风险、海外上市审计与中概股风险等因素。",
+      "source_key": "fy2026_20f_sec",
+      "confidence": 0.82,
+      "stale_after": "2026-11-20T00:00:00+08:00"
+    }
+  ],
+  "user_insights": [],
+  "draft_status": "pending_user_review",
+  "review_notes": [
+    "这是第四只持仓图谱草稿，暂不写入正式数据库。",
+    "建议用户重点确认：阿里巴巴是否按电商现金牛 + 云/AI再估值 + 中国互联网平台龙头理解。",
+    "系统没有代用户生成正式心得；等用户确认后再写 user_insights。"
+  ]
+}
