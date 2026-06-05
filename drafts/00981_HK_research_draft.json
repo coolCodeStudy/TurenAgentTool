@@ -1,0 +1,156 @@
+{
+  "stock": {
+    "symbol": "00981",
+    "market": "HK",
+    "name": "中芯国际",
+    "core_business": "中芯国际集成电路制造有限公司是中国大陆领先的纯晶圆代工企业，向全球客户提供8英寸和12英寸晶圆的半导体代工与技术服务，并提供设计服务、IP支持、光罩制造等一站式配套服务。",
+    "equity_structure": "A+H上市公司：A股在上交所科创板上市，代码688981；港股在港交所主板上市，代码00981。",
+    "stock_character": "中国大陆晶圆代工核心资产，股价受国产替代、国产AI芯片制造、成熟制程景气、产能利用率、资本开支、先进制程预期、地缘政策和港股/A股资金结构共同影响；组合语境中可按国产芯片制造龙头和国产AI芯片制造主线理解。",
+    "notable_history": "公司2025年收入93.27亿美元，同比增长16.2%，继续巩固全球第二大纯晶圆代工厂地位；2025年月产能规模超过100万片标准逻辑8英寸等效晶圆。"
+  },
+  "sources": [
+    {
+      "key": "annual_report_2025",
+      "source_type": "annual_report",
+      "title": "SMIC 2025 Annual Report",
+      "url": "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/0408/2026040801181.pdf",
+      "publisher": "HKEXnews",
+      "published_at": "2026-04-08T00:00:00+08:00"
+    },
+    {
+      "key": "q1_2026_results",
+      "source_type": "quarterly_results",
+      "title": "SMIC Reports Unaudited Results for the Three Months Ended March 31, 2026",
+      "url": "https://www.hkexnews.hk/listedco/listconews/sehk/2026/0514/2026051400908.pdf",
+      "publisher": "HKEXnews",
+      "published_at": "2026-05-14T00:00:00+08:00"
+    },
+    {
+      "key": "company_info",
+      "source_type": "company_website",
+      "title": "SMIC Company Information",
+      "url": "https://www.smics.com/en/site/company_info",
+      "publisher": "SMIC"
+    }
+  ],
+  "sectors": [
+    {
+      "path": ["半导体产业链", "晶圆制造", "纯晶圆代工"],
+      "relation_type": "main",
+      "confidence": 0.95,
+      "source_key": "annual_report_2025",
+      "description": "中芯国际向客户提供8英寸和12英寸晶圆的半导体代工和技术服务，是中国大陆制造能力、制造规模和综合服务能力领先的晶圆代工企业。",
+      "recent_status": "2025年公司收入同比增长16.2%，产能利用率93.5%，继续巩固全球第二大纯晶圆代工厂地位。"
+    },
+    {
+      "path": ["国产替代", "半导体制造国产化", "本土晶圆代工"],
+      "relation_type": "main",
+      "confidence": 0.9,
+      "source_key": "annual_report_2025",
+      "description": "在本土供应链回流、国产芯片需求和中国大陆晶圆制造能力提升的语境下，中芯国际是本土晶圆代工核心标的。",
+      "recent_status": "2025年公司称本土化供应链需求继续增强，更多晶圆代工需求回流国内。"
+    },
+    {
+      "path": ["AI基础设施", "AI配套芯片", "成熟制程晶圆代工"],
+      "relation_type": "main",
+      "confidence": 0.82,
+      "source_key": "q1_2026_results",
+      "description": "组合语境中，中芯国际承载国产AI芯片制造故事；同时需区分先进制程突破预期与成熟制程配套芯片需求，AI需求会通过电源管理、传感器、连接、工业控制等配套芯片影响代工景气。",
+      "recent_status": "2026年一季度公司对全年业务更乐观，并给出二季度收入环比增长14%-16%的指引。"
+    },
+    {
+      "path": ["AI基础设施", "国产AI芯片", "晶圆制造"],
+      "relation_type": "main",
+      "confidence": 0.8,
+      "source_key": "annual_report_2025",
+      "description": "中芯国际是中国大陆晶圆制造能力的核心载体之一，在国产AI芯片制造叙事中具有战略参照意义；但具体弹性仍取决于工艺平台、客户导入、产能利用率和资本开支效率。",
+      "recent_status": "2025年公司月产能规模超过100万片标准逻辑8英寸等效晶圆，产能利用率93.5%。"
+    },
+    {
+      "path": ["汽车电子供应链", "车规芯片", "成熟制程晶圆代工"],
+      "relation_type": "related",
+      "confidence": 0.78,
+      "source_key": "q1_2026_results",
+      "description": "工业及汽车应用是中芯国际晶圆收入的重要应用方向，汽车电子平台研发和认证周期长，对成熟制程本土代工有结构性需求。",
+      "recent_status": "2026年一季度工业及汽车应用占晶圆收入14.0%，高于2025年一季度的9.6%。"
+    }
+  ],
+  "knowledge_items": [
+    {
+      "knowledge_type": "business",
+      "content": "中芯国际是全球领先的半导体代工企业之一，也是中国大陆制造能力、制造规模和综合服务能力领先的晶圆代工企业，向全球客户提供8英寸和12英寸晶圆的半导体代工与技术服务。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.9,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "公司A股在上交所科创板上市，代码688981；港股在港交所主板上市，代码00981。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.95,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "sector_logic",
+      "content": "中芯国际的核心投资主线是中国大陆晶圆代工核心资产、半导体制造国产化和国产AI芯片制造：本土供应链回流、国产AI芯片制造预期、成熟制程需求、产能利用率和资本开支效率共同决定基本面弹性。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.82,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "公司2025年收入为93.26799亿美元，同比增长16.2%；归属于公司拥有人利润为6.85131亿美元，同比增长39.0%；毛利率为21.0%，较2024年提升3.0个百分点。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.9,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "公司2025年月产能规模超过100万片标准逻辑8英寸等效晶圆，产能利用率为93.5%，研发投入为7.74亿美元，占收入8.3%。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.85,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "business",
+      "content": "2026年一季度公司收入为25.05487亿美元，同比增长11.5%、环比增长0.7%；毛利率20.1%；产能利用率93.1%；月产能提升至1,078,250片标准逻辑8英寸等效晶圆。",
+      "source_key": "q1_2026_results",
+      "confidence": 0.9,
+      "stale_after": "2026-08-14T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "watch_item",
+      "content": "公司2026年二季度指引为收入环比增长14%-16%，毛利率20%-22%；该指引反映公司根据客户需求和在手订单对全年整体业务更乐观。",
+      "source_key": "q1_2026_results",
+      "confidence": 0.85,
+      "stale_after": "2026-08-14T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "晶圆代工是技术密集和资本密集行业，工艺迭代快、研发周期长、资本投入大；若公司技术路线判断、研发投入或新平台量产节奏落后，长期竞争力和市场份额可能受损。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.85,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    },
+    {
+      "knowledge_type": "risk",
+      "content": "中芯国际经营还受到半导体周期、供需变化、设备和零部件供应、地缘政策、汇率和高折旧压力影响；高资本开支带来的折旧会持续压制利润弹性。",
+      "source_key": "annual_report_2025",
+      "confidence": 0.8,
+      "stale_after": "2026-10-08T00:00:00+08:00"
+    }
+  ],
+  "user_insights": [
+    {
+      "insight": "中芯国际是国产芯片制造龙头，市场叙事上对标台积电；它是港股通标的，也是A+H两地上市公司，但港股筹码太多，整体股性比较一般。",
+      "normalized_summary": "用户认为中芯国际应按国产芯片制造龙头和国产AI芯片制造主线理解，市场叙事上对标台积电；其港股通与A+H属性重要，但港股筹码结构导致股性一般。",
+      "tags": ["国产芯片制造", "国产AI芯片", "晶圆代工", "台积电对标", "港股通", "A+H两地上市", "筹码结构", "股性"]
+    }
+  ],
+  "draft_status": "pending_user_review",
+  "review_notes": [
+    "这是第二只持仓图谱样板，暂不写入正式数据库。",
+    "用户已确认主线为国产晶圆代工 / 半导体制造国产化 / 成熟制程景气，并要求AI放在主线，按国产AI芯片制造故事理解。",
+    "用户已确认正式心得，草稿中已写入 user_insights。"
+  ]
+}
