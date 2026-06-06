@@ -44,6 +44,7 @@ from investment_knowledge_mcp.portfolio_graph import (
     build_portfolio_graph_queue,
     render_portfolio_graph_queue,
 )
+from investment_knowledge_mcp.research.pipeline import ResearchPipelineOptions, ResearchPipelineResult, run_single_stock_research
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
 
@@ -122,6 +123,19 @@ PORTFOLIO_GRAPH_COMMANDS = {
     "图谱队列",
     "持仓知识图谱",
     "portfolio graph",
+}
+
+PORTFOLIO_RESEARCH_DRAFT_COMMANDS = {
+    "全持仓研究草稿",
+    "全持仓图谱草稿",
+    "portfolio research drafts",
+}
+
+PORTFOLIO_GRAPH_BACKFILL_COMMANDS = {
+    "持仓图谱补全",
+    "补全持仓图谱",
+    "全持仓图谱入库",
+    "portfolio graph backfill",
 }
 
 SYSTEM_STATUS_COMMANDS = {
@@ -269,6 +283,16 @@ def handle_command(
             include_artifact_path=include_artifact_path,
         )
 
+    research_draft_match = re.fullmatch(r"(?:研究草稿|图谱草稿|research draft)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
+    if research_draft_match:
+        symbol, market = research_draft_match.groups()
+        return _handle_research_draft(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            include_artifact_path=include_artifact_path,
+        )
+
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
 
@@ -335,6 +359,12 @@ def handle_command(
 
     if cleaned in PORTFOLIO_ANALYSIS_COMMANDS:
         return _handle_portfolio_analysis()
+
+    if cleaned in PORTFOLIO_RESEARCH_DRAFT_COMMANDS:
+        return _handle_portfolio_research(output_dir=output_dir, auto_import=False)
+
+    if cleaned in PORTFOLIO_GRAPH_BACKFILL_COMMANDS:
+        return _handle_portfolio_research(output_dir=output_dir, auto_import=True)
 
     if cleaned in PORTFOLIO_GRAPH_COMMANDS:
         return _handle_portfolio_graph_queue()
@@ -428,6 +458,7 @@ def is_query_command(command: str) -> bool:
     heuristic_intent = _heuristic_route_intent(normalized)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(r"(?:研究草稿|图谱草稿|research draft)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
         or normalized
         in {
             "查看候选心得",
@@ -447,6 +478,7 @@ def is_query_command(command: str) -> bool:
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
             *PORTFOLIO_GRAPH_COMMANDS,
+            *PORTFOLIO_RESEARCH_DRAFT_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
@@ -473,6 +505,12 @@ def is_maintenance_command(command: str) -> bool:
         or cleaned in {"富途登录", "修复富途", "富途登录修复", "OpenD登录", "opend登录"}
         or cleaned in {"富途重登录", "重登录富途", "OpenD重登录", "opend重登录"}
     )
+
+
+def is_research_write_command(command: str) -> bool:
+    cleaned = command.strip()
+    normalized = _normalize_natural_command(cleaned)
+    return normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
 
 
 def is_candidate_write_command(command: str) -> bool:
@@ -537,6 +575,114 @@ def _handle_analyze_stock(
         ok=True,
         message=analysis + "\n\n" + footer,
     )
+
+
+def _handle_research_draft(
+    symbol: str,
+    market: str,
+    output_dir: Path,
+    include_artifact_path: bool,
+) -> CommandResult:
+    result = run_single_stock_research(
+        symbol=symbol,
+        market=market,
+        company_name=None,
+        options=ResearchPipelineOptions(
+            output_dir=output_dir,
+            provider="openai",
+            auto_confirm_facts=False,
+            auto_import=False,
+            refresh=True,
+        ),
+    )
+    return CommandResult(ok=result.status not in {"failed"}, message=_render_research_result(result, include_artifact_path))
+
+
+def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandResult:
+    try:
+        payload = get_futu_positions()
+    except FutuProviderError as exc:
+        return CommandResult(ok=False, message=f"读取富途持仓失败，无法生成研究草稿：{exc}")
+
+    positions = []
+    for position in payload.get("positions") or []:
+        try:
+            qty = float(position.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty > 0:
+            positions.append(position)
+
+    results: list[ResearchPipelineResult] = []
+    for position in positions:
+        code = str(position.get("code") or "")
+        if "." in code:
+            market, symbol = code.split(".", 1)
+        else:
+            market, symbol = "", code
+        result = run_single_stock_research(
+            symbol=symbol,
+            market=market,
+            company_name=position.get("stock_name"),
+            options=ResearchPipelineOptions(
+                output_dir=output_dir,
+                provider="openai",
+                auto_confirm_facts=auto_import,
+                auto_import=auto_import,
+                import_needs_review=False,
+                refresh=False,
+            ),
+        )
+        results.append(result)
+
+    return CommandResult(ok=True, message=_render_portfolio_research_results(results, auto_import=auto_import))
+
+
+def _render_research_result(result: ResearchPipelineResult, include_artifact_path: bool) -> str:
+    lines = [
+        f"研究草稿：{result.symbol} {result.market}",
+        f"- 状态：{result.status}",
+        f"- 审核：{result.audit_status or 'n/a'}",
+    ]
+    if result.message:
+        lines.append(f"- 说明：{result.message}")
+    if include_artifact_path:
+        if result.draft_path:
+            lines.append(f"- 草稿：{result.draft_path}")
+        if result.review_path:
+            lines.append(f"- 审阅：{result.review_path}")
+        if result.audit_path:
+            lines.append(f"- 审核：{result.audit_path}")
+    if result.errors:
+        lines.append("- 错误：" + "；".join(result.errors[:3]))
+    if result.warnings:
+        lines.append("- 提醒：" + "；".join(result.warnings[:3]))
+    return "\n".join(lines)
+
+
+def _render_portfolio_research_results(results: list[ResearchPipelineResult], auto_import: bool) -> str:
+    imported = [item for item in results if item.status == "imported"]
+    skipped = [item for item in results if item.status == "skipped_existing"]
+    drafted = [item for item in results if item.status == "drafted"]
+    needs_review = [item for item in results if item.status == "needs_review"]
+    failed = [item for item in results if item.status in {"failed", "failed_audit"}]
+    title = "持仓图谱补全" if auto_import else "全持仓研究草稿"
+    lines = [
+        f"{title}结果：",
+        f"- 总数：{len(results)}",
+        f"- 已导入：{len(imported)}",
+        f"- 已跳过：{len(skipped)}",
+        f"- 已生成草稿：{len(drafted)}",
+        f"- 需人工复核：{len(needs_review)}",
+        f"- 失败：{len(failed)}",
+    ]
+    if imported:
+        lines.append("- 导入：" + "、".join(f"{item.symbol} {item.market}" for item in imported[:8]))
+    if needs_review:
+        lines.append("- 需复核：" + "、".join(f"{item.symbol} {item.market}" for item in needs_review[:8]))
+    if failed:
+        lines.append("- 失败：" + "、".join(f"{item.symbol} {item.market}: {item.message}" for item in failed[:5]))
+    return "\n".join(lines)
 
 
 def _analysis_footer(context: dict[str, Any], output_path: Path, include_artifact_path: bool) -> str:
@@ -2365,6 +2511,9 @@ def _help_text() -> str:
 - 我的持仓
 - 持仓分析
 - 持仓图谱
+- 研究草稿 09988 HK
+- 全持仓研究草稿
+- 持仓图谱补全
 - 今天仓位怎么看
 - 组合体检
 - 港股新股

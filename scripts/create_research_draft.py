@@ -9,6 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from investment_knowledge_mcp.research.draft_builder import build_stock_research_draft
+from investment_knowledge_mcp.research.models import merge_research_bundles
+from investment_knowledge_mcp.research.official_sources import OfficialResearchProvider
 from investment_knowledge_mcp.research.providers import collect_with_optional_providers
 
 
@@ -35,6 +37,11 @@ def main() -> None:
         help="Optional public webpage source as KEY=URL. Can be repeated.",
     )
     parser.add_argument(
+        "--official",
+        action="store_true",
+        help="Collect official sources from HKEX, SEC, issuer pages, or company IR before building the draft.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Output draft JSON path. Defaults to drafts/<SYMBOL>_<MARKET>_research_draft.json.",
@@ -48,6 +55,13 @@ def main() -> None:
         manual_source_file=args.manual_source_file,
         source_urls=args.source_url,
     )
+    if args.official:
+        official_bundle = OfficialResearchProvider().collect(
+            symbol=bundle.symbol,
+            market=bundle.market,
+            company_name=bundle.company_name,
+        )
+        bundle = merge_research_bundles(bundle, official_bundle)
     draft = build_stock_research_draft(bundle)
 
     output_path = args.output or default_output_path(bundle.symbol, bundle.market)

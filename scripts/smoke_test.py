@@ -18,10 +18,13 @@ from investment_knowledge_mcp.command_router import (
     is_candidate_write_command,
     is_maintenance_command,
     is_query_command,
+    is_research_write_command,
 )
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
+from investment_knowledge_mcp.research.audit import audit_research_draft
+from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.repository import (
     add_knowledge_item,
     add_source,
@@ -327,6 +330,9 @@ def main() -> None:
         assert "Missing Graph Stock" in graph_message
         assert not is_query_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_query_command("持仓图谱")
+        assert is_query_command(f"研究草稿 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        assert is_query_command("全持仓研究草稿")
+        assert is_research_write_command("持仓图谱补全")
         assert is_query_command("交易复盘")
         assert is_query_command("本月收益")
         assert is_query_command("补全交易记录 2026-05")
@@ -355,6 +361,38 @@ def main() -> None:
         recent_start, recent_end, _ = _resolve_trade_review_range("最近30天")
         assert recent_end == today
         assert (recent_end - recent_start).days == 29
+        draft_for_audit = {
+            "stock": {"symbol": "AUDIT", "market": "TEST", "name": "Audit Test"},
+            "sources": [
+                {
+                    "key": "official",
+                    "source_type": "annual_report",
+                    "title": "Audit Test Annual Report",
+                    "publisher": "SEC",
+                    "content_excerpt": "Revenue was 123 million. Gross margin was 45%.",
+                }
+            ],
+            "sectors": [
+                {
+                    "path": ["Audit", "Official"],
+                    "relation_type": "main",
+                    "confidence": 0.8,
+                    "source_key": "official",
+                }
+            ],
+            "knowledge_items": [
+                {
+                    "knowledge_type": "business",
+                    "content": "Revenue was 123 million.",
+                    "confidence": 0.8,
+                    "source_key": "official",
+                }
+            ],
+            "user_insights": [],
+        }
+        source_facts = extract_source_facts(draft_for_audit)
+        audit = audit_research_draft(draft_for_audit, source_facts)
+        assert audit.status == "pass"
         ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
         assert ytd_start.isoformat() == f"{today.year}-01-01"
         assert ytd_end == today
