@@ -145,6 +145,9 @@ install_worker_venv() {
   fi
   "$WORKER_HOME/venv/bin/pip" install -U pip
   "$WORKER_HOME/venv/bin/pip" install "psycopg[binary]>=3.2.0"
+  if [ -f "$INVESTMENT_DIR/requirements.txt" ]; then
+    "$WORKER_HOME/venv/bin/pip" install -r "$INVESTMENT_DIR/requirements.txt"
+  fi
 }
 
 write_worker_env() {

@@ -57,6 +57,10 @@ fi
 
 mkdir -p "$INVESTMENT_DIR/drafts/research_jobs"
 
+if [ -f "$INVESTMENT_DIR/requirements.txt" ]; then
+  "$WORKER_HOME/venv/bin/pip" install -r "$INVESTMENT_DIR/requirements.txt"
+fi
+
 cat > /etc/systemd/system/investment-research-agent-worker.service <<EOF
 [Unit]
 Description=InvestmentKnowledge Codex research agent worker
