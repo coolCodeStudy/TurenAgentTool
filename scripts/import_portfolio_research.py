@@ -67,9 +67,9 @@ def main() -> None:
     print(f"Summary written to {output}")
 
 
-def _active_positions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _active_positions(payload: Any) -> list[dict[str, Any]]:
     rows = []
-    for position in payload.get("positions") or []:
+    for position in _positions_from_snapshot(payload):
         try:
             qty = float(position.get("qty") or 0)
         except (TypeError, ValueError):
@@ -77,6 +77,16 @@ def _active_positions(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if qty > 0:
             rows.append(position)
     return rows
+
+
+def _positions_from_snapshot(payload: Any) -> list[dict[str, Any]]:
+    if hasattr(payload, "positions"):
+        positions = getattr(payload, "positions")
+        return list(positions) if isinstance(positions, list) else []
+    if isinstance(payload, dict):
+        positions = payload.get("positions") or []
+        return list(positions) if isinstance(positions, list) else []
+    return []
 
 
 def _split_position_code(code: str) -> tuple[str, str]:

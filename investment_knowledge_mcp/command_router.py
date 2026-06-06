@@ -605,7 +605,7 @@ def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandRe
         return CommandResult(ok=False, message=f"读取富途持仓失败，无法生成研究草稿：{exc}")
 
     positions = []
-    for position in payload.get("positions") or []:
+    for position in _positions_from_snapshot(payload):
         try:
             qty = float(position.get("qty") or 0)
         except (TypeError, ValueError):
@@ -636,6 +636,16 @@ def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandRe
         results.append(result)
 
     return CommandResult(ok=True, message=_render_portfolio_research_results(results, auto_import=auto_import))
+
+
+def _positions_from_snapshot(payload: Any) -> list[dict[str, Any]]:
+    if hasattr(payload, "positions"):
+        positions = getattr(payload, "positions")
+        return list(positions) if isinstance(positions, list) else []
+    if isinstance(payload, dict):
+        positions = payload.get("positions") or []
+        return list(positions) if isinstance(positions, list) else []
+    return []
 
 
 def _render_research_result(result: ResearchPipelineResult, include_artifact_path: bool) -> str:
