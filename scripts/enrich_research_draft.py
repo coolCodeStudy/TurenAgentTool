@@ -11,7 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from investment_knowledge_mcp.model_providers.base import EnrichmentRequest
 from investment_knowledge_mcp.model_providers.factory import create_model_provider
 from investment_knowledge_mcp.research.validation import validate_research_draft
-from scripts.build_research_prompt import PROMPT_TEMPLATE_PATH, build_prompt
+from scripts.build_research_prompt import PROMPT_TEMPLATE_PATH, build_prompt, load_prompt_template
 
 
 def default_output_path(draft_path: Path) -> Path:
@@ -50,7 +50,7 @@ def main() -> None:
         print("Draft must be a JSON object.", file=sys.stderr)
         raise SystemExit(1)
 
-    template = args.template.read_text(encoding="utf-8")
+    template = load_prompt_template(args.template)
     prompt = build_prompt(draft=draft, template=template)
     provider = create_model_provider(args.provider)
     enriched = provider.enrich_research_draft(EnrichmentRequest(draft=draft, prompt=prompt))

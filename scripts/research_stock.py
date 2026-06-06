@@ -10,7 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from investment_knowledge_mcp.research.draft_builder import build_stock_research_draft
 from investment_knowledge_mcp.research.providers import collect_with_optional_providers
-from scripts.build_research_prompt import PROMPT_TEMPLATE_PATH, build_prompt
+from scripts.build_research_prompt import build_prompt, load_prompt_template
 from scripts.create_research_draft import default_output_path
 
 
@@ -66,7 +66,7 @@ def main() -> None:
     draft_path.parent.mkdir(parents=True, exist_ok=True)
     draft_path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    template = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = load_prompt_template()
     prompt = build_prompt(draft=draft, template=template)
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(prompt, encoding="utf-8")

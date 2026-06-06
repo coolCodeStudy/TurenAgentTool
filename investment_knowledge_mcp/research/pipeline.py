@@ -13,7 +13,7 @@ from investment_knowledge_mcp.research.draft_builder import build_stock_research
 from investment_knowledge_mcp.research.official_sources import OfficialResearchProvider, normalize_symbol
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.research.validation import validate_research_draft
-from scripts.build_research_prompt import PROMPT_TEMPLATE_PATH, build_prompt
+from scripts.build_research_prompt import build_prompt, load_prompt_template
 from scripts.review_research_draft import build_review_markdown
 
 
@@ -140,7 +140,7 @@ def run_single_stock_research(
 
 
 def _enrich_draft(draft: dict[str, Any], provider_name: str) -> dict[str, Any]:
-    template = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = load_prompt_template()
     prompt = build_prompt(draft=draft, template=template)
     provider = create_model_provider(provider_name)
     return provider.enrich_research_draft(EnrichmentRequest(draft=draft, prompt=prompt))
