@@ -231,6 +231,10 @@ jobs:
                   curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
                 fi
               fi
+              if [ -f scripts/install_research_agent_worker_on_ecs.sh ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
+                sudo bash scripts/install_research_agent_worker_on_ecs.sh --start || true
+                systemctl status investment-research-agent-worker.service --no-pager || true
+              fi
               systemctl status hermes-gateway.service --no-pager || true
               journalctl -u hermes-gateway.service -n 160 --no-pager || true
             else
@@ -518,6 +522,10 @@ jobs:
             if [ -f /etc/investment-knowledge/ops-api.env ]; then
               . /etc/investment-knowledge/ops-api.env
               curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
+            fi
+            if [ -f scripts/install_research_agent_worker_on_ecs.sh ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
+              sudo bash scripts/install_research_agent_worker_on_ecs.sh --start || true
+              systemctl status investment-research-agent-worker.service --no-pager || true
             fi
 
             gzip -dc "$IMAGE_TAR" | $DOCKER load

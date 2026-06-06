@@ -44,6 +44,7 @@ from investment_knowledge_mcp.portfolio_graph import (
     build_portfolio_graph_queue,
     render_portfolio_graph_queue,
 )
+from investment_knowledge_mcp.research.jobs import create_research_job, list_research_jobs
 from investment_knowledge_mcp.research.pipeline import ResearchPipelineOptions, ResearchPipelineResult, run_single_stock_research
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
@@ -137,6 +138,22 @@ PORTFOLIO_GRAPH_BACKFILL_COMMANDS = {
     "补全持仓图谱",
     "全持仓图谱入库",
     "portfolio graph backfill",
+}
+
+RESEARCH_JOB_CREATE_COMMANDS = {
+    "创建持仓研究任务",
+    "创建全持仓研究任务",
+    "全持仓研究任务",
+    "portfolio research jobs",
+    "create portfolio research jobs",
+}
+
+RESEARCH_JOB_LIST_COMMANDS = {
+    "查看研究任务",
+    "研究任务",
+    "研究任务状态",
+    "research jobs",
+    "list research jobs",
 }
 
 SYSTEM_STATUS_COMMANDS = {
@@ -294,6 +311,12 @@ def handle_command(
             include_artifact_path=include_artifact_path,
         )
 
+    research_job_match = re.fullmatch(r"(?:创建研究任务|create research job)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
+    if research_job_match:
+        symbol, market = research_job_match.groups()
+        job = create_research_job(symbol=symbol, market=market, provider="codex", source="command")
+        return CommandResult(ok=True, message=_render_research_job_create_result([job], [], []))
+
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
 
@@ -363,6 +386,13 @@ def handle_command(
 
     if cleaned in PORTFOLIO_RESEARCH_DRAFT_COMMANDS:
         return _handle_portfolio_research(output_dir=output_dir, auto_import=False)
+
+    if cleaned in RESEARCH_JOB_CREATE_COMMANDS:
+        return _handle_create_portfolio_research_jobs()
+
+    if cleaned in RESEARCH_JOB_LIST_COMMANDS:
+        jobs = list_research_jobs(status="all", limit=20)
+        return CommandResult(ok=True, message=_render_research_jobs(jobs))
 
     if cleaned in PORTFOLIO_GRAPH_BACKFILL_COMMANDS:
         return _handle_portfolio_research(output_dir=output_dir, auto_import=True)
@@ -480,6 +510,7 @@ def is_query_command(command: str) -> bool:
             *PORTFOLIO_ANALYSIS_COMMANDS,
             *PORTFOLIO_GRAPH_COMMANDS,
             *PORTFOLIO_RESEARCH_DRAFT_COMMANDS,
+            *RESEARCH_JOB_LIST_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
@@ -511,7 +542,11 @@ def is_maintenance_command(command: str) -> bool:
 def is_research_write_command(command: str) -> bool:
     cleaned = command.strip()
     normalized = _normalize_natural_command(cleaned)
-    return normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
+    return bool(
+        normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
+        or normalized in RESEARCH_JOB_CREATE_COMMANDS
+        or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+    )
 
 
 def is_candidate_write_command(command: str) -> bool:
@@ -664,6 +699,49 @@ def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandRe
     return CommandResult(ok=True, message=_render_portfolio_research_results(results, auto_import=auto_import))
 
 
+def _handle_create_portfolio_research_jobs() -> CommandResult:
+    try:
+        payload = get_futu_positions()
+    except FutuProviderError as exc:
+        return CommandResult(ok=False, message=f"读取富途持仓失败，无法创建研究任务：{exc}")
+
+    created: list[dict[str, Any]] = []
+    skipped_existing: list[dict[str, Any]] = []
+    skipped_invalid: list[dict[str, Any]] = []
+    for position in _positions_from_snapshot(payload):
+        try:
+            qty = float(position.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty <= 0:
+            continue
+        code = str(position.get("code") or "")
+        if "." not in code:
+            skipped_invalid.append({"code": code, "reason": "missing market prefix"})
+            continue
+        market, symbol = code.split(".", 1)
+        market = market.upper()
+        symbol = symbol.upper()
+        if _stock_exists(symbol=symbol, market=market):
+            skipped_existing.append({"symbol": symbol, "market": market, "name": position.get("stock_name")})
+            continue
+        created.append(
+            create_research_job(
+                symbol=symbol,
+                market=market,
+                name=position.get("stock_name"),
+                provider="codex",
+                source_policy="broad_search",
+                auto_import=True,
+                import_needs_review=False,
+                refresh=False,
+                source="command",
+            )
+        )
+
+    return CommandResult(ok=True, message=_render_research_job_create_result(created, skipped_existing, skipped_invalid))
+
+
 def _portfolio_research_batch_limit() -> int:
     value = os.environ.get("PORTFOLIO_RESEARCH_BATCH_LIMIT", "").strip()
     if not value:
@@ -739,6 +817,42 @@ def _render_portfolio_research_results(results: list[ResearchPipelineResult], au
         lines.append("- 失败：" + "、".join(f"{item.symbol} {item.market}: {item.message}" for item in failed[:5]))
     if queued:
         lines.append("- 待下轮：" + "、".join(f"{item.symbol} {item.market}" for item in queued[:8]))
+    return "\n".join(lines)
+
+
+def _render_research_job_create_result(
+    created: list[dict[str, Any]],
+    skipped_existing: list[dict[str, Any]],
+    skipped_invalid: list[dict[str, Any]],
+) -> str:
+    lines = [
+        "Codex 研究任务已创建：",
+        f"- 新建/复用队列任务：{len(created)}",
+        f"- 已入库跳过：{len(skipped_existing)}",
+        f"- 无效持仓跳过：{len(skipped_invalid)}",
+    ]
+    if created:
+        lines.append("- 任务：" + "、".join(f"#{item['id']} {item['symbol']} {item['market']} {item['status']}" for item in created[:10]))
+    if skipped_existing:
+        lines.append("- 已跳过：" + "、".join(f"{item['symbol']} {item['market']}" for item in skipped_existing[:10]))
+    return "\n".join(lines)
+
+
+def _render_research_jobs(jobs: list[dict[str, Any]]) -> str:
+    if not jobs:
+        return "当前没有研究任务。"
+    counts: dict[str, int] = {}
+    for job in jobs:
+        status = str(job.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    lines = [
+        "研究任务状态：",
+        "- 汇总：" + "，".join(f"{status} {count}" for status, count in sorted(counts.items())),
+    ]
+    for job in jobs[:20]:
+        title = f"#{job['id']} {job['symbol']} {job['market']} {job.get('status')}"
+        summary = job.get("result_summary") or job.get("error") or ""
+        lines.append(f"- {title}" + (f"：{summary[:80]}" if summary else ""))
     return "\n".join(lines)
 
 
@@ -2570,6 +2684,8 @@ def _help_text() -> str:
 - 持仓图谱
 - 研究草稿 09988 HK
 - 全持仓研究草稿
+- 创建持仓研究任务
+- 查看研究任务
 - 持仓图谱补全
 - 今天仓位怎么看
 - 组合体检

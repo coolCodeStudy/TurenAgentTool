@@ -12,6 +12,7 @@ from investment_knowledge_mcp.command_router import (
     is_coding_task_command,
     is_maintenance_command,
     is_query_command,
+    is_research_write_command,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
@@ -452,6 +453,7 @@ def _is_safe_agent_command(command: str) -> bool:
         or is_maintenance_command(command)
         or is_candidate_write_command(command)
         or is_coding_task_command(command)
+        or is_research_write_command(command)
         or re.fullmatch(r"(?:确认候选心得|confirm candidate)\s+\d+", command, flags=re.IGNORECASE)
         or re.fullmatch(r"(?:拒绝候选心得|reject candidate)\s+\d+", command, flags=re.IGNORECASE)
     )
