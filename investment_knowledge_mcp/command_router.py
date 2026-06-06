@@ -53,6 +53,7 @@ DEFAULT_FX_TO_USD = {
     "USD": 1.0,
     "HKD": 1.0 / 7.8,
 }
+DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT = 3
 CHINESE_MONTHS = {
     "一": 1,
     "二": 2,
@@ -614,12 +615,36 @@ def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandRe
             positions.append(position)
 
     results: list[ResearchPipelineResult] = []
+    batch_limit = _portfolio_research_batch_limit()
+    processed_new = 0
     for position in positions:
         code = str(position.get("code") or "")
         if "." in code:
             market, symbol = code.split(".", 1)
         else:
             market, symbol = "", code
+        market = market.upper()
+        symbol = symbol.upper()
+        if _stock_exists(symbol=symbol, market=market):
+            results.append(
+                ResearchPipelineResult(
+                    symbol=symbol,
+                    market=market,
+                    status="skipped_existing",
+                    message=f"{symbol} {market} already exists in knowledge base.",
+                )
+            )
+            continue
+        if batch_limit > 0 and processed_new >= batch_limit:
+            results.append(
+                ResearchPipelineResult(
+                    symbol=symbol,
+                    market=market,
+                    status="queued",
+                    message="not processed in this batch",
+                )
+            )
+            continue
         result = run_single_stock_research(
             symbol=symbol,
             market=market,
@@ -634,8 +659,26 @@ def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandRe
             ),
         )
         results.append(result)
+        processed_new += 1
 
     return CommandResult(ok=True, message=_render_portfolio_research_results(results, auto_import=auto_import))
+
+
+def _portfolio_research_batch_limit() -> int:
+    value = os.environ.get("PORTFOLIO_RESEARCH_BATCH_LIMIT", "").strip()
+    if not value:
+        return DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT
+
+
+def _stock_exists(symbol: str, market: str) -> bool:
+    try:
+        return bool(repository.search_stock(symbol=symbol, market=market).get("stock"))
+    except Exception:
+        return False
 
 
 def _positions_from_snapshot(payload: Any) -> list[dict[str, Any]]:
@@ -676,6 +719,7 @@ def _render_portfolio_research_results(results: list[ResearchPipelineResult], au
     drafted = [item for item in results if item.status == "drafted"]
     needs_review = [item for item in results if item.status == "needs_review"]
     failed = [item for item in results if item.status in {"failed", "failed_audit"}]
+    queued = [item for item in results if item.status == "queued"]
     title = "持仓图谱补全" if auto_import else "全持仓研究草稿"
     lines = [
         f"{title}结果：",
@@ -685,6 +729,7 @@ def _render_portfolio_research_results(results: list[ResearchPipelineResult], au
         f"- 已生成草稿：{len(drafted)}",
         f"- 需人工复核：{len(needs_review)}",
         f"- 失败：{len(failed)}",
+        f"- 待下轮：{len(queued)}",
     ]
     if imported:
         lines.append("- 导入：" + "、".join(f"{item.symbol} {item.market}" for item in imported[:8]))
@@ -692,6 +737,8 @@ def _render_portfolio_research_results(results: list[ResearchPipelineResult], au
         lines.append("- 需复核：" + "、".join(f"{item.symbol} {item.market}" for item in needs_review[:8]))
     if failed:
         lines.append("- 失败：" + "、".join(f"{item.symbol} {item.market}: {item.message}" for item in failed[:5]))
+    if queued:
+        lines.append("- 待下轮：" + "、".join(f"{item.symbol} {item.market}" for item in queued[:8]))
     return "\n".join(lines)
 
 
