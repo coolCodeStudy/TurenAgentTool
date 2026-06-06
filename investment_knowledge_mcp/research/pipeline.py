@@ -20,7 +20,7 @@ from scripts.review_research_draft import build_review_markdown
 @dataclass(frozen=True)
 class ResearchPipelineOptions:
     output_dir: Path
-    provider: str = "openai"
+    provider: str = "none"
     auto_confirm_facts: bool = False
     auto_import: bool = False
     import_needs_review: bool = False

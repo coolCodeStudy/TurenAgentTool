@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements.txt
 
 COPY db ./db
 COPY investment_knowledge_mcp ./investment_knowledge_mcp
+COPY prompts ./prompts
 COPY scripts ./scripts
 
 EXPOSE 8000

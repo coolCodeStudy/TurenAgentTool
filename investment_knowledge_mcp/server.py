@@ -25,6 +25,8 @@ from investment_knowledge_mcp.ops_client import (
     render_recent_errors,
     render_service_logs,
 )
+from investment_knowledge_mcp.research.jobs import create_research_job as create_research_job_record
+from investment_knowledge_mcp.research.jobs import list_research_jobs as list_research_job_records
 
 
 config = get_config()
@@ -283,6 +285,98 @@ def list_coding_tasks(status: str | None = "pending", limit: int = 10) -> list[d
 
 
 @mcp.tool()
+def create_research_job(
+    symbol: str,
+    market: str,
+    name: str | None = None,
+    priority: str = "normal",
+    source_policy: str = "broad_search",
+    provider: str = "codex",
+    auto_import: bool = True,
+    import_needs_review: bool = False,
+    refresh: bool = False,
+    sender: str | None = None,
+    source: str = "codex",
+) -> dict[str, Any]:
+    """Create an async Codex-first stock research job. This queues work; it does not trade."""
+    return create_research_job_record(
+        symbol=symbol,
+        market=market,
+        name=name,
+        priority=priority,
+        source_policy=source_policy,
+        provider=provider,
+        auto_import=auto_import,
+        import_needs_review=import_needs_review,
+        refresh=refresh,
+        sender=sender,
+        source=source,
+    )
+
+
+@mcp.tool()
+def create_portfolio_research_jobs(
+    provider: str = "codex",
+    source_policy: str = "broad_search",
+    priority: str = "normal",
+    include_existing: bool = False,
+    refresh: bool = False,
+    limit: int | None = None,
+    sender: str | None = None,
+    source: str = "codex",
+) -> dict[str, Any]:
+    """Create async Codex-first research jobs for current Futu holdings."""
+    snapshot = get_futu_positions()
+    positions = [item for item in snapshot.positions if _positive_qty(item)]
+    if limit is not None:
+        positions = positions[: max(0, int(limit))]
+
+    created: list[dict[str, Any]] = []
+    skipped_existing: list[dict[str, Any]] = []
+    skipped_invalid: list[dict[str, Any]] = []
+    for position in positions:
+        code = str(position.get("code") or "")
+        if "." not in code:
+            skipped_invalid.append({"code": code, "reason": "missing market prefix"})
+            continue
+        market, symbol = code.split(".", 1)
+        market = market.upper()
+        symbol = symbol.upper()
+        if not include_existing and repository.search_stock(symbol=symbol, market=market).get("stock"):
+            skipped_existing.append({"symbol": symbol, "market": market, "name": position.get("stock_name")})
+            continue
+        created.append(
+            create_research_job_record(
+                symbol=symbol,
+                market=market,
+                name=position.get("stock_name"),
+                priority=priority,
+                source_policy=source_policy,
+                provider=provider,
+                auto_import=True,
+                import_needs_review=False,
+                refresh=refresh,
+                sender=sender,
+                source=source,
+            )
+        )
+    return {
+        "created_count": len(created),
+        "skipped_existing_count": len(skipped_existing),
+        "skipped_invalid_count": len(skipped_invalid),
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "skipped_invalid": skipped_invalid,
+    }
+
+
+@mcp.tool()
+def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[dict[str, Any]]:
+    """List async stock research jobs."""
+    return list_research_job_records(status=status, limit=limit)
+
+
+@mcp.tool()
 def claim_next_coding_task(worker_name: str = "codex-worker") -> dict[str, Any] | None:
     """Claim the next pending coding task for a trusted code worker."""
     return repository.claim_next_coding_task(worker_name=worker_name)
@@ -423,6 +517,13 @@ def import_stock_research_draft(
         draft=draft,
         confirmed_by_user=confirmed_by_user,
     )
+
+
+def _positive_qty(position: dict[str, Any]) -> bool:
+    try:
+        return float(position.get("qty") or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def main() -> None:

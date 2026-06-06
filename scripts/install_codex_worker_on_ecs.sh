@@ -200,6 +200,14 @@ CODEX_WORKER_NOTIFY_STATE_DIR=/var/lib/investment-knowledge-codex
 CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS=$CODEX_WORKER_STARTUP_ERROR_NOTIFY_COOLDOWN_SECONDS
 CODEX_WORKER_GIT_USER_NAME="InvestmentKnowledge Codex Worker"
 CODEX_WORKER_GIT_USER_EMAIL=codex-worker@users.noreply.github.com
+
+RESEARCH_WORKER_NAME=${RESEARCH_WORKER_NAME:-research-agent-worker}
+RESEARCH_WORK_DIR=$INVESTMENT_DIR
+RESEARCH_ARTIFACT_ROOT=$INVESTMENT_DIR/drafts/research_jobs
+RESEARCH_CODEX_MODEL=${RESEARCH_CODEX_MODEL:-$CODEX_WORKER_MODEL}
+RESEARCH_WORKER_DANGER_FULL_ACCESS=${RESEARCH_WORKER_DANGER_FULL_ACCESS:-$CODEX_WORKER_DANGER_FULL_ACCESS}
+RESEARCH_WORKER_POLL_SECONDS=${RESEARCH_WORKER_POLL_SECONDS:-30}
+RESEARCH_CODEX_TIMEOUT_SECONDS=${RESEARCH_CODEX_TIMEOUT_SECONDS:-3600}
 EOF
   chmod 600 "$WORKER_ENV"
 
@@ -229,13 +237,35 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
+  cat > /etc/systemd/system/investment-research-agent-worker.service <<EOF
+[Unit]
+Description=InvestmentKnowledge Codex research agent worker
+After=network-online.target docker.service turenagenttool_prod-postgres-1.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$INVESTMENT_DIR
+EnvironmentFile=$WORKER_ENV
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+UnsetEnvironment=DATABASE_URL
+ExecStart=$WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/research_agent_worker.py --loop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
   systemctl daemon-reload
   systemctl enable investment-codex-worker.service
+  systemctl enable investment-research-agent-worker.service
 }
 
 start_worker() {
   if [ "$START_WORKER" = "true" ]; then
     systemctl restart investment-codex-worker.service
+    systemctl restart investment-research-agent-worker.service
   fi
 }
 
@@ -245,10 +275,13 @@ Codex worker installed.
 
 Status:
   systemctl status investment-codex-worker.service --no-pager
+  systemctl status investment-research-agent-worker.service --no-pager
   journalctl -u investment-codex-worker.service -n 120 --no-pager
+  journalctl -u investment-research-agent-worker.service -n 120 --no-pager
 
 Run one task manually:
   $WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/codex_task_worker.py --once
+  $WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/research_agent_worker.py --once
 
 Worker env:
   $WORKER_ENV

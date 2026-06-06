@@ -21,7 +21,7 @@ from investment_knowledge_mcp.research.pipeline import (
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate/import research drafts for current portfolio positions.")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "drafts")
-    parser.add_argument("--provider", choices=["openai", "mock", "none"], default="openai")
+    parser.add_argument("--provider", choices=["openai", "mock", "none"], default="none")
     parser.add_argument("--auto-confirm-facts", action="store_true")
     parser.add_argument("--import", dest="auto_import", action="store_true", help="Import pass-audited drafts.")
     parser.add_argument("--import-needs-review", action="store_true", help="Also import needs_review drafts.")

@@ -590,7 +590,7 @@ def _handle_research_draft(
         company_name=None,
         options=ResearchPipelineOptions(
             output_dir=output_dir,
-            provider="openai",
+            provider="none",
             auto_confirm_facts=False,
             auto_import=False,
             refresh=True,
@@ -651,7 +651,7 @@ def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandRe
             company_name=position.get("stock_name"),
             options=ResearchPipelineOptions(
                 output_dir=output_dir,
-                provider="openai",
+                provider="none",
                 auto_confirm_facts=auto_import,
                 auto_import=auto_import,
                 import_needs_review=False,

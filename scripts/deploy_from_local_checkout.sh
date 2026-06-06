@@ -16,11 +16,15 @@ rm -rf \
   "$APP_DIR/db" \
   "$APP_DIR/docs" \
   "$APP_DIR/investment_knowledge_mcp" \
+  "$APP_DIR/prompts" \
   "$APP_DIR/scripts"
 
 cp -a "$SOURCE_DIR/db" "$APP_DIR/db"
 cp -a "$SOURCE_DIR/docs" "$APP_DIR/docs"
 cp -a "$SOURCE_DIR/investment_knowledge_mcp" "$APP_DIR/investment_knowledge_mcp"
+if [ -d "$SOURCE_DIR/prompts" ]; then
+  cp -a "$SOURCE_DIR/prompts" "$APP_DIR/prompts"
+fi
 cp -a "$SOURCE_DIR/scripts" "$APP_DIR/scripts"
 cp -a "$SOURCE_DIR/Dockerfile" "$APP_DIR/Dockerfile"
 cp -a "$SOURCE_DIR/requirements.txt" "$APP_DIR/requirements.txt"

@@ -248,3 +248,44 @@ CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(t
 CREATE INDEX IF NOT EXISTS idx_command_events_created_at ON command_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_coding_tasks_status_created_at ON coding_tasks(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ipo_reminder_events_sent_at ON ipo_reminder_events(sent_at DESC);
+
+CREATE TABLE IF NOT EXISTS research_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  market TEXT NOT NULL,
+  name TEXT,
+  status TEXT NOT NULL DEFAULT 'queued',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  source_policy TEXT NOT NULL DEFAULT 'broad_search',
+  provider TEXT NOT NULL DEFAULT 'codex',
+  auto_import BOOLEAN NOT NULL DEFAULT true,
+  import_needs_review BOOLEAN NOT NULL DEFAULT false,
+  refresh BOOLEAN NOT NULL DEFAULT false,
+  artifact_dir TEXT,
+  artifacts JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_discovery JSONB NOT NULL DEFAULT '{}'::jsonb,
+  result_summary TEXT,
+  error TEXT,
+  source TEXT,
+  sender TEXT,
+  worker_name TEXT,
+  worker_log TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  worker_started_at TIMESTAMPTZ,
+  worker_finished_at TIMESTAMPTZ,
+  CHECK (status IN ('queued', 'running', 'drafted', 'needs_review', 'imported', 'failed', 'cancelled')),
+  CHECK (priority IN ('low', 'normal', 'high')),
+  CHECK (source_policy IN ('official_first', 'broad_search', 'user_sources')),
+  CHECK (provider IN ('codex', 'openai', 'none'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_jobs_status_created_at
+  ON research_jobs(status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_research_jobs_symbol_market
+  ON research_jobs(symbol, market);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_research_jobs_active_unique
+  ON research_jobs(symbol, market)
+  WHERE status IN ('queued', 'running');
