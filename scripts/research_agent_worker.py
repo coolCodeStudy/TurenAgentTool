@@ -300,8 +300,6 @@ def run_codex(config: ResearchWorkerConfig, prompt: str, output_path: Path) -> N
         "exec",
         "--cd",
         str(config.work_dir),
-        "--ask-for-approval",
-        "never",
         "--output-last-message",
         str(output_path),
     ]

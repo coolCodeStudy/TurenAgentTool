@@ -427,8 +427,6 @@ def run_codex(config: WorkerConfig, prompt: str, output_path: Path) -> None:
         "exec",
         "--cd",
         str(config.work_dir),
-        "--ask-for-approval",
-        "never",
         "--output-last-message",
         str(output_path),
     ]

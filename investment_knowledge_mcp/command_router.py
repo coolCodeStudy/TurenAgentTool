@@ -44,7 +44,7 @@ from investment_knowledge_mcp.portfolio_graph import (
     build_portfolio_graph_queue,
     render_portfolio_graph_queue,
 )
-from investment_knowledge_mcp.research.jobs import create_research_job, list_research_jobs
+from investment_knowledge_mcp.research.jobs import create_research_job, list_research_jobs, requeue_research_jobs
 from investment_knowledge_mcp.research.pipeline import ResearchPipelineOptions, ResearchPipelineResult, run_single_stock_research
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
@@ -154,6 +154,12 @@ RESEARCH_JOB_LIST_COMMANDS = {
     "研究任务状态",
     "research jobs",
     "list research jobs",
+}
+
+RESEARCH_JOB_REQUEUE_COMMANDS = {
+    "重排失败研究任务",
+    "重试失败研究任务",
+    "requeue failed research jobs",
 }
 
 SYSTEM_STATUS_COMMANDS = {
@@ -394,6 +400,10 @@ def handle_command(
         jobs = list_research_jobs(status="all", limit=20)
         return CommandResult(ok=True, message=_render_research_jobs(jobs))
 
+    if cleaned in RESEARCH_JOB_REQUEUE_COMMANDS:
+        jobs = requeue_research_jobs(status="failed", limit=100)
+        return CommandResult(ok=True, message=f"已重排失败研究任务 {len(jobs)} 个。")
+
     if cleaned in PORTFOLIO_GRAPH_BACKFILL_COMMANDS:
         return _handle_portfolio_research(output_dir=output_dir, auto_import=True)
 
@@ -545,6 +555,7 @@ def is_research_write_command(command: str) -> bool:
     return bool(
         normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
+        or normalized in RESEARCH_JOB_REQUEUE_COMMANDS
         or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
     )
 

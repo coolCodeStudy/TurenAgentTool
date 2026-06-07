@@ -182,6 +182,35 @@ def update_research_job(
     return to_jsonable(row)
 
 
+def requeue_research_jobs(status: str = "failed", limit: int = 100) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 500))
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            WITH target_jobs AS (
+              SELECT id
+              FROM research_jobs
+              WHERE status = %s
+              ORDER BY updated_at DESC
+              LIMIT %s
+            )
+            UPDATE research_jobs AS job SET
+              status = 'queued',
+              error = NULL,
+              worker_name = NULL,
+              worker_started_at = NULL,
+              worker_finished_at = NULL,
+              updated_at = now(),
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), 'requeued by command')
+            FROM target_jobs
+            WHERE job.id = target_jobs.id
+            RETURNING job.*
+            """,
+            (status, limit),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
 def _normalize_symbol(symbol: str) -> str:
     return symbol.strip().upper()
 
