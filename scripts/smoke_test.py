@@ -24,6 +24,11 @@ from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
 from investment_knowledge_mcp.research.audit import audit_research_draft
+from investment_knowledge_mcp.research.official_sources import (
+    _classify_hkex_title,
+    _extract_hkex_stock_ids,
+    _hkex_title_search_urls,
+)
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.repository import (
     add_knowledge_item,
@@ -422,6 +427,15 @@ def main() -> None:
         assert "今日实时账户快照已保存/更新" in historical_message
         assert "查询区间暂未读取到已保存的历史账户快照" in historical_message
         assert "实时持仓浮盈亏（截至数据时间，非查询区间）" in historical_message
+        hkex_urls = _hkex_title_search_urls(symbol="01810", company_name="小米集团-W")
+        assert "stockId=190371" in hkex_urls[0]
+        assert _extract_hkex_stock_ids('href="/search/titlesearch.xhtml?stockId=1131"') == ["1131"]
+        assert _classify_hkex_title("Financial Statements/ESG Information - Annual Report") == ("annual_report", 0)
+        assert _classify_hkex_title("Announcements and Notices - Quarterly Results") == ("quarterly_results", 2)
+        assert _classify_hkex_title("Voluntary Announcement - HK$20 Billion On-Market Share Repurchase Program") == (
+            "announcement",
+            4,
+        )
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

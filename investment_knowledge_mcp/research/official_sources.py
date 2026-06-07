@@ -15,6 +15,13 @@ from investment_knowledge_mcp.research.providers import ResearchProvider, trim_t
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_EXCERPT_CHARS = 12000
+HKEX_STOCK_ID_CACHE: dict[str, str] = {
+    # Observed from successful Codex research jobs. HKEX title search is much
+    # more reliable with stockId than ticker text for some issuers.
+    "00532": "1131",
+    "01810": "190371",
+    "81810": "190371",
+}
 
 ETF_ISSUER_SOURCES: dict[str, list[SourceDocument]] = {
     "TLT": [
@@ -122,7 +129,8 @@ class OfficialResearchProvider(ResearchProvider):
         notes: list[str] = []
         candidates = _fetch_hkex_title_search(client, symbol=symbol, company_name=company_name)
         if candidates:
-            for candidate in candidates[: self.max_sources]:
+            hk_max_sources = max(self.max_sources, 4)
+            for candidate in candidates[:hk_max_sources]:
                 sources.append(_fetch_source_document(client, candidate, self.max_excerpt_chars))
             notes.append("HKEX title search returned official announcement candidates.")
         else:
@@ -293,60 +301,51 @@ def _fetch_hkex_title_search(
     symbol: str,
     company_name: str | None,
 ) -> list[FilingCandidate]:
-    del company_name
-    # HKEX title search endpoint is official and stable enough for v1. It returns
-    # JSON inside an HTML-compatible title-search service.
-    search_url = (
-        "https://www1.hkexnews.hk/search/titlesearch.xhtml"
-        f"?lang=en&category=0&market=SEHK&stock={quote_plus(symbol)}"
-    )
-    try:
-        response = client.get(search_url)
-        response.raise_for_status()
-    except Exception:
-        return []
+    search_urls = _hkex_title_search_urls(symbol=symbol, company_name=company_name)
+    seen_urls: set[str] = set(search_urls)
+    rows: list[dict[str, Any]] = []
+    for search_url in search_urls:
+        try:
+            response = client.get(search_url)
+            response.raise_for_status()
+        except Exception:
+            continue
 
-    text = response.text
-    payload = _extract_hkex_json(text)
-    if not payload:
-        return []
+        stock_ids = _extract_hkex_stock_ids(response.text)
+        for stock_id in stock_ids:
+            stock_id_url = _hkex_title_search_url(stock_id=stock_id)
+            if stock_id_url not in seen_urls:
+                seen_urls.add(stock_id_url)
+                search_urls.append(stock_id_url)
 
-    rows = payload.get("result") or payload.get("records") or []
-    if not isinstance(rows, list):
-        return []
+        payload = _extract_hkex_json(response.text)
+        if not payload:
+            continue
+        payload_rows = payload.get("result") or payload.get("records") or []
+        if isinstance(payload_rows, list):
+            rows.extend(row for row in payload_rows if isinstance(row, dict))
 
-    title_priority = [
-        ("annual_report", re.compile(r"annual report", re.I), 0),
-        ("annual_results", re.compile(r"annual results|final results", re.I), 1),
-        ("interim_results", re.compile(r"interim results|interim report", re.I), 2),
-        ("prospectus", re.compile(r"prospectus|listing document", re.I), 3),
-    ]
     candidates: list[tuple[int, FilingCandidate]] = []
     for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            continue
-        title = str(row.get("TITLE") or row.get("title") or row.get("headline") or "").strip()
+        title = _clean_hkex_title(row.get("TITLE") or row.get("title") or row.get("headline") or "")
         if not title:
             continue
-        matched = None
-        for source_type, pattern, priority in title_priority:
-            if pattern.search(title):
-                matched = (source_type, priority)
-                break
-        if not matched:
+        classification = _classify_hkex_title(title)
+        if not classification:
             continue
         url = _hkex_row_url(row)
         if not url:
             continue
         date_text = str(row.get("DATE") or row.get("date") or row.get("releaseDate") or "").strip()
         published_at = _parse_hkex_date(date_text)
-        key = f"hkex_{matched[0]}_{published_at[:10] if published_at else index}".replace("-", "_")
+        source_type, priority = classification
+        key = f"hkex_{source_type}_{published_at[:10] if published_at else index}".replace("-", "_")
         candidates.append(
             (
-                matched[1],
+                priority,
                 FilingCandidate(
                     key=key,
-                    source_type=matched[0],
+                    source_type=source_type,
                     title=title,
                     url=url,
                     publisher="HKEXnews",
@@ -356,7 +355,83 @@ def _fetch_hkex_title_search(
         )
     candidates.sort(key=lambda item: item[1].published_at or "", reverse=True)
     candidates.sort(key=lambda item: item[0])
-    return [candidate for _priority, candidate in candidates]
+    return _dedupe_hkex_candidates([candidate for _priority, candidate in candidates])
+
+
+def _hkex_title_search_urls(symbol: str, company_name: str | None) -> list[str]:
+    candidates = [symbol]
+    if symbol.isdigit():
+        candidates.append(str(int(symbol)))
+    if company_name:
+        candidates.append(company_name)
+
+    urls: list[str] = []
+    stock_id = HKEX_STOCK_ID_CACHE.get(symbol)
+    if stock_id:
+        urls.append(_hkex_title_search_url(stock_id=stock_id))
+    for stock in candidates:
+        cleaned = stock.strip()
+        if cleaned:
+            urls.append(_hkex_title_search_url(stock=cleaned))
+    return _dedupe_strings(urls)
+
+
+def _hkex_title_search_url(stock: str | None = None, stock_id: str | None = None) -> str:
+    base = "https://www1.hkexnews.hk/search/titlesearch.xhtml?lang=en&category=0&market=SEHK"
+    if stock_id:
+        return f"{base}&stockId={quote_plus(stock_id)}"
+    if stock:
+        return f"{base}&stock={quote_plus(stock)}"
+    return base
+
+
+def _extract_hkex_stock_ids(text: str) -> list[str]:
+    return _dedupe_strings(re.findall(r"stockId[\"'=:\s]+(\d+)", text, flags=re.I))
+
+
+def _clean_hkex_title(value: Any) -> str:
+    title = str(value or "")
+    title = re.sub(r"<[^>]+>", " ", title)
+    title = re.sub(r"\s+", " ", title)
+    return title.strip()
+
+
+def _classify_hkex_title(title: str) -> tuple[str, int] | None:
+    checks: list[tuple[str, re.Pattern[str], int]] = [
+        ("annual_report", re.compile(r"annual report", re.I), 0),
+        ("annual_results", re.compile(r"annual results|final results", re.I), 1),
+        ("quarterly_results", re.compile(r"quarterly results|three months ended", re.I), 2),
+        ("interim_results", re.compile(r"interim results|interim report|half-year", re.I), 3),
+        ("announcement", re.compile(r"repurchase|buy-?back|profit alert|inside information|business update", re.I), 4),
+        ("prospectus", re.compile(r"prospectus|listing document", re.I), 5),
+    ]
+    for source_type, pattern, priority in checks:
+        if pattern.search(title):
+            return source_type, priority
+    return None
+
+
+def _dedupe_hkex_candidates(candidates: list[FilingCandidate]) -> list[FilingCandidate]:
+    deduped: list[FilingCandidate] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = candidate.url or f"{candidate.title}:{candidate.published_at or ''}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def _extract_hkex_json(text: str) -> dict[str, Any] | None:
