@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 import re
 from typing import Any
@@ -532,7 +533,7 @@ def _fetch_hk_issuer_ir_candidates(client: httpx.Client, symbol: str) -> list[Fi
                 continue
             source_type, priority = classification
             published_at = _parse_issuer_date(item["title"]) or _parse_issuer_date(item["url"])
-            key = f"issuer_ir_{source_type}_{published_at[:10] if published_at else index}".replace("-", "_")
+            key = _issuer_ir_key(source_type=source_type, title=item["title"], url=item["url"], fallback_index=index)
             candidates.append(
                 (
                     priority,
@@ -582,6 +583,44 @@ def _extract_pdf_links(html: str, base_url: str) -> list[dict[str, str]]:
 def _title_from_pdf_url(url: str) -> str:
     filename = url.rstrip("/").rsplit("/", 1)[-1]
     return re.sub(r"[_-]+", " ", filename).removesuffix(".pdf").strip() or url
+
+
+def _issuer_ir_key(source_type: str, title: str, url: str, fallback_index: int) -> str:
+    report_year = _extract_report_year(title) or _extract_report_year(url)
+    fingerprint = _pdf_fingerprint(url) or hashlib.sha1(f"{title}|{url}".encode("utf-8")).hexdigest()[:10]
+    year_or_index = report_year or f"item_{fallback_index}"
+    return _slug_key(f"issuer_ir_{source_type}_{year_or_index}_{fingerprint}")
+
+
+def _extract_report_year(value: str) -> str | None:
+    match = re.search(r"(20\d{2}|19\d{2})", value)
+    if match:
+        return match.group(1)
+
+    normalized = value.translate(str.maketrans({"零": "〇", "○": "〇", "Ｏ": "〇", "O": "〇"}))
+    match = re.search(r"([一二三四五六七八九〇]{4})年", normalized)
+    if not match:
+        return None
+    digits = {"〇": "0", "一": "1", "二": "2", "三": "3", "四": "4", "五": "5", "六": "6", "七": "7", "八": "8", "九": "9"}
+    year = "".join(digits.get(char, "") for char in match.group(1))
+    if re.fullmatch(r"(20|19)\d{2}", year):
+        return year
+    return None
+
+
+def _pdf_fingerprint(url: str) -> str | None:
+    stem = url.rstrip("/").rsplit("/", 1)[-1].split("?", 1)[0]
+    stem = stem.removesuffix(".pdf").removesuffix(".PDF")
+    match = re.search(r"(\d{8,})", stem)
+    if match:
+        return match.group(1)[-24:]
+    slug = _slug_key(stem)
+    return slug[:24] if slug else None
+
+
+def _slug_key(value: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_").lower()
+    return re.sub(r"_+", "_", slug)
 
 
 def _classify_issuer_ir_title(title: str) -> tuple[str, int] | None:
