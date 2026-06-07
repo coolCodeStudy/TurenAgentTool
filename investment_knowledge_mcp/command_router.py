@@ -55,6 +55,8 @@ DEFAULT_FX_TO_USD = {
     "HKD": 1.0 / 7.8,
 }
 DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT = 1
+DEFAULT_RESEARCH_JOB_REQUEUE_LIMIT = 3
+MAX_RESEARCH_JOB_REQUEUE_LIMIT = 10
 CHINESE_MONTHS = {
     "一": 1,
     "二": 2,
@@ -400,9 +402,10 @@ def handle_command(
         jobs = list_research_jobs(status="all", limit=20)
         return CommandResult(ok=True, message=_render_research_jobs(jobs))
 
-    if cleaned in RESEARCH_JOB_REQUEUE_COMMANDS:
-        jobs = requeue_research_jobs(status="failed", limit=100)
-        return CommandResult(ok=True, message=f"已重排失败研究任务 {len(jobs)} 个。")
+    requeue_limit = _match_research_job_requeue_limit(cleaned)
+    if requeue_limit is not None:
+        jobs = requeue_research_jobs(status="failed", limit=requeue_limit)
+        return CommandResult(ok=True, message=f"已重排失败研究任务 {len(jobs)} 个，limit={requeue_limit}。")
 
     if cleaned in PORTFOLIO_GRAPH_BACKFILL_COMMANDS:
         return _handle_portfolio_research(output_dir=output_dir, auto_import=True)
@@ -555,7 +558,7 @@ def is_research_write_command(command: str) -> bool:
     return bool(
         normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
-        or normalized in RESEARCH_JOB_REQUEUE_COMMANDS
+        or _match_research_job_requeue_limit(normalized) is not None
         or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
     )
 
@@ -761,6 +764,20 @@ def _portfolio_research_batch_limit() -> int:
         return max(0, int(value))
     except ValueError:
         return DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT
+
+
+def _match_research_job_requeue_limit(command: str) -> int | None:
+    if command in RESEARCH_JOB_REQUEUE_COMMANDS:
+        return DEFAULT_RESEARCH_JOB_REQUEUE_LIMIT
+
+    match = re.fullmatch(
+        r"(?:重排失败研究任务|重试失败研究任务|requeue failed research jobs)\s+(\d{1,3})",
+        command,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return max(1, min(int(match.group(1)), MAX_RESEARCH_JOB_REQUEUE_LIMIT))
 
 
 def _stock_exists(symbol: str, market: str) -> bool:
