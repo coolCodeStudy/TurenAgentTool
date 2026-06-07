@@ -372,7 +372,15 @@ def main() -> None:
         assert recent_end == today
         assert (recent_end - recent_start).days == 29
         draft_for_audit = {
-            "stock": {"symbol": "AUDIT", "market": "TEST", "name": "Audit Test"},
+            "stock": {
+                "symbol": "AUDIT",
+                "market": "TEST",
+                "name": "Audit Test",
+                "core_business": "Audit fixture business.",
+                "equity_structure": "Audit fixture equity structure.",
+                "stock_character": "Audit fixture stock character.",
+                "notable_history": "Audit fixture notable history.",
+            },
             "sources": [
                 {
                     "key": "official",
@@ -403,6 +411,28 @@ def main() -> None:
         source_facts = extract_source_facts(draft_for_audit)
         audit = audit_research_draft(draft_for_audit, source_facts)
         assert audit.status == "pass"
+        hsi_draft = {
+            **draft_for_audit,
+            "sources": [
+                {
+                    "key": "official",
+                    "source_type": "index_review",
+                    "title": "Hang Seng Index Review Results",
+                    "publisher": "Hang Seng Indexes Company",
+                    "content_excerpt": "The review included 123 eligible securities.",
+                }
+            ],
+            "knowledge_items": [
+                {
+                    "knowledge_type": "research_source",
+                    "content": "The review included 123 eligible securities.",
+                    "confidence": 0.8,
+                    "source_key": "official",
+                }
+            ],
+        }
+        hsi_audit = audit_research_draft(hsi_draft)
+        assert hsi_audit.status == "pass"
         ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
         assert ytd_start.isoformat() == f"{today.year}-01-01"
         assert ytd_end == today

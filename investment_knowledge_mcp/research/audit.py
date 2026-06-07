@@ -20,6 +20,7 @@ OFFICIAL_PUBLISHERS = {
     "Sprott",
     "Meituan",
     "巨子生物",
+    "Hang Seng Indexes Company",
 }
 SECONDARY_PUBLISHER_PATTERNS = [
     re.compile(r"etnet|经济通|經濟通", re.I),
