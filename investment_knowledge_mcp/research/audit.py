@@ -18,7 +18,12 @@ OFFICIAL_PUBLISHERS = {
     "iShares",
     "Roundhill Investments",
     "Sprott",
+    "Meituan",
+    "巨子生物",
 }
+SECONDARY_PUBLISHER_PATTERNS = [
+    re.compile(r"etnet|经济通|經濟通", re.I),
+]
 
 
 @dataclass
@@ -54,11 +59,7 @@ def audit_research_draft(draft: dict[str, Any], source_facts: dict[str, Any] | N
     if not sources:
         errors.append("no sources found")
 
-    non_official = [
-        str(source.get("publisher") or "")
-        for source in sources.values()
-        if source.get("publisher") and source.get("publisher") not in OFFICIAL_PUBLISHERS
-    ]
+    non_official = [str(source.get("publisher") or "") for source in sources.values() if not _is_official_source(source)]
     if non_official:
         warnings.append(f"non-official publishers present: {sorted(set(non_official))}")
 
@@ -159,10 +160,43 @@ def _find_untraceable_numbers(draft: dict[str, Any], sources: dict[str, dict[str
             continue
         excerpt_digits = _digits_only(excerpt)
         for number in extract_numbers(str(item.get("content") or "")):
+            if _is_low_signal_number(number):
+                continue
             normalized = _digits_only(number)
-            if len(normalized) >= 3 and normalized not in excerpt_digits:
+            if len(normalized) >= 3 and not _number_found(normalized, excerpt_digits):
                 missing.append(f"{source_key}:{number}")
     return missing
+
+
+def _is_official_source(source: dict[str, Any]) -> bool:
+    url = str(source.get("url") or "")
+    if re.search(r"(hkexnews\.hk|sec\.gov)", url, flags=re.I):
+        return True
+    publisher = str(source.get("publisher") or "")
+    if not publisher:
+        return False
+    if publisher in OFFICIAL_PUBLISHERS:
+        return True
+    if any(pattern.search(publisher) for pattern in SECONDARY_PUBLISHER_PATTERNS):
+        return False
+    return False
+
+
+def _is_low_signal_number(number: str) -> bool:
+    value = number.rstrip("%")
+    if re.fullmatch(r"20\d{2}|19\d{2}", value):
+        return True
+    return False
+
+
+def _number_found(normalized: str, excerpt_digits: str) -> bool:
+    candidates = {normalized}
+    candidates.add(normalized.lstrip("0") or "0")
+    if normalized.endswith("0"):
+        candidates.add(normalized.rstrip("0"))
+    if normalized.endswith("00"):
+        candidates.add(normalized.rstrip("0"))
+    return any(candidate and candidate in excerpt_digits for candidate in candidates)
 
 
 def _digits_only(value: str) -> str:

@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 import re
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 
 import httpx
 
@@ -21,6 +21,37 @@ HKEX_STOCK_ID_CACHE: dict[str, str] = {
     "00532": "1131",
     "01810": "190371",
     "81810": "190371",
+    "03690": "198419",
+}
+
+HK_ISSUER_IR_PAGES: dict[str, list[str]] = {
+    # Observed from completed research-agent jobs. These issuer pages expose
+    # static PDF report links and are useful when HKEX title search misses.
+    "02367": [
+        "https://ir.xajuzi.com/list-l3s05l87/index.html/1/10",
+        "https://ir.xajuzi.com/list-8q4um8rx/index.html/1/10",
+    ],
+}
+
+HK_ISSUER_STATIC_SOURCES: dict[str, list[SourceDocument]] = {
+    "02367": [
+        SourceDocument(
+            key="company_ir_homepage",
+            source_type="company_ir",
+            title="Giant Biogene Investor Relations",
+            url="https://ir.xajuzi.com/",
+            publisher="巨子生物",
+        )
+    ],
+    "03690": [
+        SourceDocument(
+            key="company_about_us",
+            source_type="company_profile",
+            title="Meituan About Us",
+            url="https://about.meituan.com/en-US/about-us",
+            publisher="Meituan",
+        ),
+    ],
 }
 
 ETF_ISSUER_SOURCES: dict[str, list[SourceDocument]] = {
@@ -135,6 +166,20 @@ class OfficialResearchProvider(ResearchProvider):
             notes.append("HKEX title search returned official announcement candidates.")
         else:
             notes.append("HKEX title search returned no candidates; no HK official sources collected.")
+
+        static_sources = HK_ISSUER_STATIC_SOURCES.get(symbol, [])
+        if static_sources:
+            sources.extend(_fetch_static_sources(client, static_sources, self.max_excerpt_chars))
+            notes.append("curated issuer static sources collected.")
+
+        ir_candidates = _fetch_hk_issuer_ir_candidates(client, symbol=symbol)
+        if ir_candidates:
+            remaining_slots = max(self.max_sources + 2, 5) - len(sources)
+            for candidate in ir_candidates[: max(0, remaining_slots)]:
+                sources.append(_fetch_source_document(client, candidate, self.max_excerpt_chars))
+            notes.append("issuer IR report-list provider returned report candidates.")
+
+        sources = _dedupe_source_documents(sources)
         return ResearchBundle(symbol=symbol, market="HK", company_name=company_name, sources=sources, notes=notes)
 
 
@@ -398,12 +443,20 @@ def _clean_hkex_title(value: Any) -> str:
 
 def _classify_hkex_title(title: str) -> tuple[str, int] | None:
     checks: list[tuple[str, re.Pattern[str], int]] = [
-        ("annual_report", re.compile(r"annual report", re.I), 0),
-        ("annual_results", re.compile(r"annual results|final results", re.I), 1),
-        ("quarterly_results", re.compile(r"quarterly results|three months ended", re.I), 2),
-        ("interim_results", re.compile(r"interim results|interim report|half-year", re.I), 3),
-        ("announcement", re.compile(r"repurchase|buy-?back|profit alert|inside information|business update", re.I), 4),
-        ("prospectus", re.compile(r"prospectus|listing document", re.I), 5),
+        ("annual_report", re.compile(r"annual report|年报|年報", re.I), 0),
+        ("annual_results", re.compile(r"annual results|final results|年度业绩|年度業績", re.I), 1),
+        ("quarterly_results", re.compile(r"quarterly results|three months ended|季度业绩|季度業績", re.I), 2),
+        ("interim_results", re.compile(r"interim results|interim report|half-year|中期报告|中期報告", re.I), 3),
+        (
+            "announcement",
+            re.compile(
+                r"repurchase|buy-?back|profit alert|profit warning|inside information|business update|"
+                r"major transaction|acquisition|盈利警告|主要交易|收购|收購",
+                re.I,
+            ),
+            4,
+        ),
+        ("prospectus", re.compile(r"prospectus|listing document|全球发售|全球發售|招股", re.I), 5),
     ]
     for source_type, pattern, priority in checks:
         if pattern.search(title):
@@ -420,6 +473,18 @@ def _dedupe_hkex_candidates(candidates: list[FilingCandidate]) -> list[FilingCan
             continue
         seen.add(key)
         deduped.append(candidate)
+    return deduped
+
+
+def _dedupe_source_documents(sources: list[SourceDocument]) -> list[SourceDocument]:
+    deduped: list[SourceDocument] = []
+    seen: set[str] = set()
+    for source in sources:
+        key = source.url or source.key
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
     return deduped
 
 
@@ -450,6 +515,111 @@ def _extract_hkex_json(text: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _fetch_hk_issuer_ir_candidates(client: httpx.Client, symbol: str) -> list[FilingCandidate]:
+    pages = HK_ISSUER_IR_PAGES.get(symbol, [])
+    candidates: list[tuple[int, FilingCandidate]] = []
+    for page_url in pages:
+        try:
+            response = client.get(page_url)
+            response.raise_for_status()
+        except Exception:
+            continue
+        for index, item in enumerate(_extract_pdf_links(response.text, base_url=page_url)):
+            classification = _classify_issuer_ir_title(item["title"])
+            if not classification:
+                continue
+            source_type, priority = classification
+            published_at = _parse_issuer_date(item["title"]) or _parse_issuer_date(item["url"])
+            key = f"issuer_ir_{source_type}_{published_at[:10] if published_at else index}".replace("-", "_")
+            candidates.append(
+                (
+                    priority,
+                    FilingCandidate(
+                        key=key,
+                        source_type=source_type,
+                        title=item["title"],
+                        url=item["url"],
+                        publisher=_issuer_publisher(symbol),
+                        published_at=published_at,
+                    ),
+                )
+            )
+    candidates.sort(key=lambda item: item[1].published_at or "", reverse=True)
+    candidates.sort(key=lambda item: item[0])
+    return _dedupe_hkex_candidates([candidate for _priority, candidate in candidates])
+
+
+def _extract_pdf_links(html: str, base_url: str) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    anchor_pattern = re.compile(
+        r"<a\b[^>]*href=[\"'](?P<href>[^\"']+\.pdf(?:\?[^\"']*)?)[\"'][^>]*>(?P<label>.*?)</a>",
+        re.I | re.S,
+    )
+    for match in anchor_pattern.finditer(html):
+        href = match.group("href").strip()
+        label = _extract_html_text(match.group("label")).strip()
+        url = urljoin(base_url, href)
+        title = label or _title_from_pdf_url(url)
+        links.append({"title": _clean_hkex_title(title), "url": url})
+
+    for url in re.findall(r"https?://[^\s\"'<>]+\.pdf(?:\?[^\s\"'<>]+)?", html, flags=re.I):
+        cleaned_url = url.rstrip(").,;")
+        title = _title_from_pdf_url(cleaned_url)
+        links.append({"title": title, "url": cleaned_url})
+
+    deduped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for link in links:
+        if link["url"] in seen:
+            continue
+        seen.add(link["url"])
+        deduped.append(link)
+    return deduped
+
+
+def _title_from_pdf_url(url: str) -> str:
+    filename = url.rstrip("/").rsplit("/", 1)[-1]
+    return re.sub(r"[_-]+", " ", filename).removesuffix(".pdf").strip() or url
+
+
+def _classify_issuer_ir_title(title: str) -> tuple[str, int] | None:
+    checks: list[tuple[str, re.Pattern[str], int]] = [
+        ("annual_report", re.compile(r"annual report|年报|年報", re.I), 0),
+        ("interim_results", re.compile(r"interim report|interim results|中期报告|中期報告", re.I), 2),
+        ("quarterly_results", re.compile(r"quarterly results|three months ended|季度业绩|季度業績", re.I), 3),
+        ("prospectus", re.compile(r"prospectus|global offering|全球发售|全球發售|招股", re.I), 4),
+        ("announcement", re.compile(r"results|业绩|業績|公告|announcement", re.I), 5),
+    ]
+    for source_type, pattern, priority in checks:
+        if pattern.search(title):
+            return source_type, priority
+    return None
+
+
+def _issuer_publisher(symbol: str) -> str:
+    publishers = {
+        "02367": "巨子生物",
+        "03690": "Meituan",
+    }
+    return publishers.get(symbol, "Issuer IR")
+
+
+def _parse_issuer_date(value: str) -> str | None:
+    for pattern, fmt in (
+        (r"(20\d{2})[-_/](\d{1,2})[-_/](\d{1,2})", "%Y-%m-%d"),
+        (r"(20\d{2})(\d{2})(\d{2})", "%Y%m%d"),
+    ):
+        match = re.search(pattern, value)
+        if not match:
+            continue
+        raw = "-".join(match.groups()) if fmt == "%Y-%m-%d" else "".join(match.groups())
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%dT00:00:00+08:00")
+        except ValueError:
+            continue
+    return None
 
 
 def _hkex_row_url(row: dict[str, Any]) -> str | None:

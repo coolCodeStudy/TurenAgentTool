@@ -26,7 +26,10 @@ from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue
 from investment_knowledge_mcp.research.audit import audit_research_draft
 from investment_knowledge_mcp.research.official_sources import (
     _classify_hkex_title,
+    _classify_issuer_ir_title,
+    _extract_pdf_links,
     _extract_hkex_stock_ids,
+    _fetch_hk_issuer_ir_candidates,
     _hkex_title_search_urls,
 )
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
@@ -429,13 +432,37 @@ def main() -> None:
         assert "实时持仓浮盈亏（截至数据时间，非查询区间）" in historical_message
         hkex_urls = _hkex_title_search_urls(symbol="01810", company_name="小米集团-W")
         assert "stockId=190371" in hkex_urls[0]
+        meituan_hkex_urls = _hkex_title_search_urls(symbol="03690", company_name="美团-W")
+        assert "stockId=198419" in meituan_hkex_urls[0]
         assert _extract_hkex_stock_ids('href="/search/titlesearch.xhtml?stockId=1131"') == ["1131"]
         assert _classify_hkex_title("Financial Statements/ESG Information - Annual Report") == ("annual_report", 0)
         assert _classify_hkex_title("Announcements and Notices - Quarterly Results") == ("quarterly_results", 2)
+        assert _classify_hkex_title("公告及通告 - 年度業績公告") == ("annual_results", 1)
+        assert _classify_hkex_title("公告及通告 - 盈利警告") == ("announcement", 4)
         assert _classify_hkex_title("Voluntary Announcement - HK$20 Billion On-Market Share Repurchase Program") == (
             "announcement",
             4,
         )
+        assert _classify_issuer_ir_title("2025 年报") == ("annual_report", 0)
+        assert _classify_issuer_ir_title("Global Offering Prospectus") == ("prospectus", 4)
+        pdf_links = _extract_pdf_links(
+            '<a href="/resources/uploads/20260429/report.pdf">2025 年报</a>'
+            ' https://ir.xajuzi.com/resources/uploads/20250923/interim-report.pdf',
+            "https://ir.xajuzi.com/list-l3s05l87/index.html/1/10",
+        )
+        assert pdf_links[0]["url"] == "https://ir.xajuzi.com/resources/uploads/20260429/report.pdf"
+        assert pdf_links[0]["title"] == "2025 年报"
+        assert pdf_links[1]["url"] == "https://ir.xajuzi.com/resources/uploads/20250923/interim-report.pdf"
+        fake_ir_html = (
+            '<a href="/resources/uploads/20260429/annual-report.pdf">2025 年报</a>'
+            '<a href="/resources/uploads/20250923/interim-report.pdf">2025 中期报告</a>'
+        )
+        fake_ir_client = SimpleNamespace(
+            get=lambda _url: SimpleNamespace(text=fake_ir_html, raise_for_status=lambda: None)
+        )
+        ir_candidates = _fetch_hk_issuer_ir_candidates(fake_ir_client, symbol="02367")
+        assert ir_candidates[0].source_type == "annual_report"
+        assert ir_candidates[0].publisher == "巨子生物"
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")
