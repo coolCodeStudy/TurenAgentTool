@@ -476,7 +476,12 @@ def main() -> None:
             4,
         )
         assert _classify_issuer_ir_title("2025 年报") == ("annual_report", 0)
-        assert _classify_issuer_ir_title("Global Offering Prospectus") == ("prospectus", 4)
+        assert _classify_issuer_ir_title("Profit Warning") == ("profit_warning", 4)
+        assert _classify_issuer_ir_title("Discloseable Transaction - Acquisition of All Issued Shares") == (
+            "transaction_announcement",
+            5,
+        )
+        assert _classify_issuer_ir_title("Global Offering Prospectus") == ("prospectus", 7)
         assert _extract_report_year("二零二五年年报") == "2025"
         assert _issuer_ir_key(
             "annual_report",
@@ -509,6 +514,20 @@ def main() -> None:
         assert ir_candidates[0].source_type == "annual_report"
         assert ir_candidates[0].key == "issuer_ir_annual_report_2025_annual_report"
         assert ir_candidates[0].publisher == "巨子生物"
+        fake_todayir_html = (
+            '<section><h3>2025 Annual Report</h3>'
+            '<a href="https://media-meituan.todayir.com/20260424065602168712120049_en.pdf">PDF</a></section>'
+            '<section><h3>Profit Warning</h3>'
+            '<a href="https://media-meituan.todayir.com/20260213200801422012025140_en.pdf">View</a></section>'
+        )
+        fake_todayir_client = SimpleNamespace(
+            get=lambda _url: SimpleNamespace(text=fake_todayir_html, raise_for_status=lambda: None)
+        )
+        meituan_candidates = _fetch_hk_issuer_ir_candidates(fake_todayir_client, symbol="03690")
+        assert meituan_candidates[0].source_type == "annual_report"
+        assert meituan_candidates[0].title == "2025 Annual Report"
+        assert meituan_candidates[1].source_type == "profit_warning"
+        assert meituan_candidates[1].publisher == "Meituan"
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

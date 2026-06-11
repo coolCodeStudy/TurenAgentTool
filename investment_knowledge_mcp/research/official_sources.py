@@ -32,6 +32,11 @@ HK_ISSUER_IR_PAGES: dict[str, list[str]] = {
         "https://ir.xajuzi.com/list-l3s05l87/index.html/1/10",
         "https://ir.xajuzi.com/list-8q4um8rx/index.html/1/10",
     ],
+    "03690": [
+        "https://www.meituan.com/en-US/investor/reports",
+        "https://www.meituan.com/en-US/investor/results",
+        "https://www.meituan.com/en-US/investor/announcement",
+    ],
 }
 
 HK_ISSUER_STATIC_SOURCES: dict[str, list[SourceDocument]] = {
@@ -175,7 +180,7 @@ class OfficialResearchProvider(ResearchProvider):
 
         ir_candidates = _fetch_hk_issuer_ir_candidates(client, symbol=symbol)
         if ir_candidates:
-            remaining_slots = max(self.max_sources + 2, 5) - len(sources)
+            remaining_slots = max(self.max_sources + 4, 7) - len(sources)
             for candidate in ir_candidates[: max(0, remaining_slots)]:
                 sources.append(_fetch_source_document(client, candidate, self.max_excerpt_chars))
             notes.append("issuer IR report-list provider returned report candidates.")
@@ -264,7 +269,7 @@ def _extract_pdf_text(content: bytes) -> str:
 
         reader = PdfReader(io.BytesIO(content))
         pages = []
-        for page in reader.pages[:20]:
+        for page in reader.pages[:80]:
             pages.append(page.extract_text() or "")
         return "\n".join(pages)
     except Exception:
@@ -555,14 +560,14 @@ def _fetch_hk_issuer_ir_candidates(client: httpx.Client, symbol: str) -> list[Fi
 def _extract_pdf_links(html: str, base_url: str) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     anchor_pattern = re.compile(
-        r"<a\b[^>]*href=[\"'](?P<href>[^\"']+\.pdf(?:\?[^\"']*)?)[\"'][^>]*>(?P<label>.*?)</a>",
+        r"<a\b(?:(?!</a>).)*?href=[\"'](?P<href>[^\"'<>]+\.pdf(?:\?[^\"'<>]*)?)[\"'](?:(?!</a>).)*?>(?P<label>.*?)</a>",
         re.I | re.S,
     )
     for match in anchor_pattern.finditer(html):
         href = match.group("href").strip()
         label = _extract_html_text(match.group("label")).strip()
         url = urljoin(base_url, href)
-        title = label or _title_from_pdf_url(url)
+        title = _best_pdf_title(label=label, html=html, start=match.start(), end=match.end(), url=url)
         links.append({"title": _clean_hkex_title(title), "url": url})
 
     for url in re.findall(r"https?://[^\s\"'<>]+\.pdf(?:\?[^\s\"'<>]+)?", html, flags=re.I):
@@ -578,6 +583,66 @@ def _extract_pdf_links(html: str, base_url: str) -> list[dict[str, str]]:
         seen.add(link["url"])
         deduped.append(link)
     return deduped
+
+
+def _best_pdf_title(label: str, html: str, start: int, end: int, url: str) -> str:
+    label = _clean_hkex_title(label)
+    if _title_has_signal(label):
+        return label
+
+    before = html[max(0, start - 900) : start]
+    after = html[end : min(len(html), end + 300)]
+    heading = _nearest_heading(before)
+    if heading:
+        return heading
+    context = _extract_html_text(f"{before} {after}")
+    context = _clean_hkex_title(context)
+    title = _title_from_context(context)
+    return title or label or _title_from_pdf_url(url)
+
+
+def _nearest_heading(html_fragment: str) -> str | None:
+    headings = re.findall(r"<h[1-6]\b[^>]*>(.*?)</h[1-6]>", html_fragment, flags=re.I | re.S)
+    for heading in reversed(headings):
+        title = _clean_hkex_title(_extract_html_text(heading))
+        if _title_has_signal(title):
+            return title
+    return None
+
+
+def _title_has_signal(title: str) -> bool:
+    if len(title) >= 2 and re.search(
+        r"annual|interim|quarterly|results|report|prospectus|announcement|warning|acquisition|"
+        r"年报|年報|中期|季度|业绩|業績|公告|警告|收购|收購|章程",
+        title,
+        re.I,
+    ):
+        return True
+    return False
+
+
+def _title_from_context(context: str) -> str | None:
+    compact = re.sub(r"\s+", " ", context).strip()
+    if not compact:
+        return None
+    patterns = [
+        r"(20\d{2}\s+Annual Report)",
+        r"(Annual Report\s+20\d{2})",
+        r"((?:Announcement of the )?Results for the Three Months ended [A-Za-z]+\s+\d{1,2},\s+20\d{2})",
+        r"(Quarterly Results[^.]{0,80}20\d{2})",
+        r"(Interim Report\s+20\d{2})",
+        r"(Profit Warning)",
+        r"(Discloseable Transaction[^.]{0,140}Acquisition[^.]{0,140})",
+        r"(Memorandum and Articles of Association)",
+        r"(二零[一二三四五六七八九〇零]{2}年年报)",
+        r"(20\d{2}\s*年报)",
+        r"(20\d{2}\s*中期报告)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, compact, flags=re.I)
+        if match:
+            return _clean_hkex_title(match.group(1))
+    return None
 
 
 def _title_from_pdf_url(url: str) -> str:
@@ -628,8 +693,11 @@ def _classify_issuer_ir_title(title: str) -> tuple[str, int] | None:
         ("annual_report", re.compile(r"annual report|年报|年報", re.I), 0),
         ("interim_results", re.compile(r"interim report|interim results|中期报告|中期報告", re.I), 2),
         ("quarterly_results", re.compile(r"quarterly results|three months ended|季度业绩|季度業績", re.I), 3),
-        ("prospectus", re.compile(r"prospectus|global offering|全球发售|全球發售|招股", re.I), 4),
-        ("announcement", re.compile(r"results|业绩|業績|公告|announcement", re.I), 5),
+        ("profit_warning", re.compile(r"profit warning|profit alert|盈利警告|盈利预警", re.I), 4),
+        ("transaction_announcement", re.compile(r"discloseable transaction|major transaction|acquisition|收购|收購|主要交易", re.I), 5),
+        ("constitutional_document", re.compile(r"memorandum and articles|articles of association|章程", re.I), 6),
+        ("prospectus", re.compile(r"prospectus|global offering|全球发售|全球發售|招股", re.I), 7),
+        ("announcement", re.compile(r"results|业绩|業績|公告|announcement", re.I), 8),
     ]
     for source_type, pattern, priority in checks:
         if pattern.search(title):
