@@ -49,6 +49,7 @@ from investment_knowledge_mcp.research.audit import audit_research_draft, build_
 from investment_knowledge_mcp.research.jobs import (
     create_research_job,
     get_research_job,
+    list_research_jobs_for_stock,
     list_research_jobs,
     requeue_research_jobs,
     update_research_job,
@@ -673,19 +674,27 @@ def _handle_reaudit_research_job(job_id: int) -> CommandResult:
     if job is None:
         return CommandResult(ok=False, message=f"研究任务不存在：#{job_id}")
 
+    symbol = str(job.get("symbol") or "").upper()
+    market = str(job.get("market") or "").upper()
     artifact_dir_text = str(job.get("artifact_dir") or "")
     artifacts = job.get("artifacts") if isinstance(job.get("artifacts"), dict) else {}
     draft_path_text = str(artifacts.get("draft_path") or "")
     if not draft_path_text and artifact_dir_text:
-        symbol = str(job.get("symbol") or "").upper()
-        market = str(job.get("market") or "").upper()
         draft_path_text = str(Path(artifact_dir_text) / f"{symbol}_{market}_research_draft.json")
     if not draft_path_text:
         return CommandResult(ok=False, message=f"研究任务 #{job_id} 没有 draft_path，无法重新审核。")
 
     draft_path = Path(draft_path_text)
+    fallback_job_id = None
     if not draft_path.exists():
-        return CommandResult(ok=False, message=f"研究任务 #{job_id} 草稿文件不存在：{draft_path}")
+        fallback = _find_existing_reaudit_artifact(job_id=job_id, symbol=symbol, market=market)
+        if fallback is None:
+            return CommandResult(ok=False, message=f"研究任务 #{job_id} 草稿文件不存在：{draft_path}")
+        fallback_job, draft_path = fallback
+        fallback_job_id = int(fallback_job["id"])
+        fallback_artifacts = fallback_job.get("artifacts") if isinstance(fallback_job.get("artifacts"), dict) else {}
+        artifact_dir_text = str(fallback_job.get("artifact_dir") or draft_path.parent)
+        artifacts = {**artifacts, **fallback_artifacts, "draft_path": str(draft_path)}
 
     draft = json.loads(draft_path.read_text(encoding="utf-8"))
     if not isinstance(draft, dict):
@@ -693,8 +702,9 @@ def _handle_reaudit_research_job(job_id: int) -> CommandResult:
     draft["user_insights"] = []
     draft_path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    symbol = str(job.get("symbol") or draft.get("stock", {}).get("symbol") or "").upper()
-    market = str(job.get("market") or draft.get("stock", {}).get("market") or "").upper()
+    stock = draft.get("stock") if isinstance(draft.get("stock"), dict) else {}
+    symbol = str(job.get("symbol") or stock.get("symbol") or "").upper()
+    market = str(job.get("market") or stock.get("market") or "").upper()
     artifact_dir = Path(artifact_dir_text) if artifact_dir_text else draft_path.parent
     source_facts_path = Path(str(artifacts.get("source_facts_path") or artifact_dir / f"{symbol}_{market}_source_facts.json"))
     audit_path = Path(str(artifacts.get("audit_path") or artifact_dir / f"{symbol}_{market}_audit_report.md"))
@@ -703,6 +713,9 @@ def _handle_reaudit_research_job(job_id: int) -> CommandResult:
     source_facts = extract_source_facts(draft)
     validation = validate_research_draft(draft)
     audit = audit_research_draft(draft, source_facts=source_facts)
+    source_facts_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.parent.mkdir(parents=True, exist_ok=True)
     source_facts_path.write_text(json.dumps(source_facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     audit_path.write_text(build_audit_markdown(draft, source_facts, audit), encoding="utf-8")
     review_path.write_text(build_review_markdown(draft, draft_path), encoding="utf-8")
@@ -760,7 +773,29 @@ def _handle_reaudit_research_job(job_id: int) -> CommandResult:
     ]
     if imported_stock_id is not None:
         lines.append(f"- 已导入 stock_id：{imported_stock_id}")
+    if fallback_job_id is not None:
+        lines.append(f"- 使用可用草稿：job #{fallback_job_id}")
     return CommandResult(ok=status != "failed", message="\n".join(lines))
+
+
+def _find_existing_reaudit_artifact(
+    *,
+    job_id: int,
+    symbol: str,
+    market: str,
+) -> tuple[dict[str, Any], Path] | None:
+    for candidate in list_research_jobs_for_stock(symbol=symbol, market=market, limit=20):
+        if int(candidate["id"]) == job_id:
+            continue
+        artifacts = candidate.get("artifacts") if isinstance(candidate.get("artifacts"), dict) else {}
+        draft_path_text = str(artifacts.get("draft_path") or "")
+        if not draft_path_text and candidate.get("artifact_dir"):
+            draft_path_text = str(Path(str(candidate["artifact_dir"])) / f"{symbol}_{market}_research_draft.json")
+        if draft_path_text:
+            draft_path = Path(draft_path_text)
+            if draft_path.exists():
+                return candidate, draft_path
+    return None
 
 
 def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandResult:

@@ -113,6 +113,23 @@ def get_research_job(job_id: int) -> dict[str, Any] | None:
     return to_jsonable(row) if row else None
 
 
+def list_research_jobs_for_stock(symbol: str, market: str, limit: int = 20) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 100))
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM research_jobs
+            WHERE upper(symbol) = upper(%s)
+              AND upper(market) = upper(%s)
+            ORDER BY updated_at DESC, id DESC
+            LIMIT %s
+            """,
+            (symbol, market, limit),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
 def claim_next_research_job(worker_name: str = "research-agent-worker") -> dict[str, Any] | None:
     with transaction() as conn:
         row = conn.execute(
