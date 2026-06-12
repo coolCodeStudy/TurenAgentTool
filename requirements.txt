@@ -1,4 +1,5 @@
 certifi==2026.4.22
+beautifulsoup4>=4.12.3
 charset-normalizer==3.4.7
 dingtalk-stream==0.24.3
 futu-api>=9.4.5408

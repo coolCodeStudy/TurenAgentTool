@@ -230,7 +230,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INVESTMENT_DIR
 EnvironmentFile=$WORKER_ENV
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+Environment=VIRTUAL_ENV=$WORKER_HOME/venv
+Environment=PATH=$WORKER_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 UnsetEnvironment=DATABASE_URL
 ExecStart=$WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/codex_task_worker.py --loop
 Restart=always
@@ -250,7 +251,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INVESTMENT_DIR
 EnvironmentFile=$WORKER_ENV
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+Environment=VIRTUAL_ENV=$WORKER_HOME/venv
+Environment=PATH=$WORKER_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 UnsetEnvironment=DATABASE_URL
 ExecStart=$WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/research_agent_worker.py --loop
 Restart=always

@@ -435,6 +435,50 @@ def main() -> None:
         }
         hsi_audit = audit_research_draft(hsi_draft)
         assert hsi_audit.status == "pass"
+        trusted_hk_supplement_draft = {
+            **draft_for_audit,
+            "sources": [
+                {
+                    "key": "hkex",
+                    "source_type": "exchange_profile",
+                    "title": "HKEX Securities Quote",
+                    "publisher": "HKEX",
+                    "content_excerpt": "Meituan is listed on The Stock Exchange of Hong Kong.",
+                },
+                {
+                    "key": "hsi",
+                    "source_type": "index_factsheet",
+                    "title": "Hang Seng TECH Index Factsheet",
+                    "publisher": "Hang Seng Indexes Company Limited",
+                    "content_excerpt": "The factsheet included Meituan as a constituent.",
+                },
+                {
+                    "key": "samr",
+                    "source_type": "regulatory_action",
+                    "title": "SAMR Antitrust Penalty",
+                    "publisher": "河北省市场监督管理局（转载国家市场监督管理总局信息）",
+                    "content_excerpt": "The regulator published an antitrust administrative penalty.",
+                },
+            ],
+            "sectors": [
+                {
+                    "path": ["Audit", "Trusted HK"],
+                    "relation_type": "main",
+                    "confidence": 0.8,
+                    "source_key": "hkex",
+                }
+            ],
+            "knowledge_items": [
+                {
+                    "knowledge_type": "research_source",
+                    "content": "Trusted HK exchange, index and regulator sources should not trigger non-official warnings.",
+                    "confidence": 0.8,
+                    "source_key": "hkex",
+                }
+            ],
+        }
+        trusted_hk_audit = audit_research_draft(trusted_hk_supplement_draft)
+        assert trusted_hk_audit.status == "pass"
         ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
         assert ytd_start.isoformat() == f"{today.year}-01-01"
         assert ytd_end == today

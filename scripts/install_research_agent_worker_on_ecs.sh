@@ -71,7 +71,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INVESTMENT_DIR
 EnvironmentFile=$WORKER_ENV
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+Environment=VIRTUAL_ENV=$WORKER_HOME/venv
+Environment=PATH=$WORKER_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 Environment=RESEARCH_WORK_DIR=$INVESTMENT_DIR
 Environment=RESEARCH_ARTIFACT_ROOT=$INVESTMENT_DIR/drafts/research_jobs
 Environment=RESEARCH_WORKER_NAME=research-agent-worker

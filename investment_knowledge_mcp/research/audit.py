@@ -10,6 +10,7 @@ from investment_knowledge_mcp.research.validation import validate_research_draft
 
 
 OFFICIAL_PUBLISHERS = {
+    "HKEX",
     "HKEXnews",
     "SEC",
     "Lumentum",
@@ -21,9 +22,13 @@ OFFICIAL_PUBLISHERS = {
     "Meituan",
     "巨子生物",
     "Hang Seng Indexes Company",
+    "Hang Seng Indexes Company Limited",
 }
 SECONDARY_PUBLISHER_PATTERNS = [
     re.compile(r"etnet|经济通|經濟通", re.I),
+]
+OFFICIAL_PUBLISHER_PATTERNS = [
+    re.compile(r"(国家市场监督管理总局|市场监督管理局|SAMR)", re.I),
 ]
 
 
@@ -177,6 +182,8 @@ def _is_official_source(source: dict[str, Any]) -> bool:
     if not publisher:
         return False
     if publisher in OFFICIAL_PUBLISHERS:
+        return True
+    if any(pattern.search(publisher) for pattern in OFFICIAL_PUBLISHER_PATTERNS):
         return True
     if any(pattern.search(publisher) for pattern in SECONDARY_PUBLISHER_PATTERNS):
         return False
