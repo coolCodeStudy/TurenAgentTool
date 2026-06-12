@@ -31,9 +31,11 @@ from investment_knowledge_mcp.research.official_sources import (
     _extract_pdf_links,
     _extract_hkex_stock_ids,
     _fetch_hk_issuer_ir_candidates,
+    _select_hk_issuer_ir_candidates,
     _issuer_ir_key,
     _hkex_title_search_urls,
 )
+from investment_knowledge_mcp.research.official_sources import FilingCandidate
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.repository import (
     add_knowledge_item,
@@ -517,6 +519,8 @@ def main() -> None:
         fake_todayir_html = (
             '<section><h3>2025 Annual Report</h3>'
             '<a href="https://media-meituan.todayir.com/20260424065602168712120049_en.pdf">PDF</a></section>'
+            '<section><h3>Announcement of the Results for the Three Months ended March 31, 2026</h3>'
+            '<a href="https://media-meituan.todayir.com/20260601013460123456789012_en.pdf">PDF</a></section>'
             '<section><h3>Profit Warning</h3>'
             '<a href="https://media-meituan.todayir.com/20260213200801422012025140_en.pdf">View</a></section>'
         )
@@ -526,8 +530,34 @@ def main() -> None:
         meituan_candidates = _fetch_hk_issuer_ir_candidates(fake_todayir_client, symbol="03690")
         assert meituan_candidates[0].source_type == "annual_report"
         assert meituan_candidates[0].title == "2025 Annual Report"
-        assert meituan_candidates[1].source_type == "profit_warning"
+        assert meituan_candidates[1].source_type == "quarterly_results"
         assert meituan_candidates[1].publisher == "Meituan"
+        crowded_candidates = [
+            FilingCandidate(
+                key=f"annual_{year}",
+                source_type="annual_report",
+                title=f"{year} Annual Report",
+                url=f"https://example.invalid/{year}.pdf",
+                publisher="Issuer",
+                published_at=f"{year}-04-01T00:00:00+08:00",
+            )
+            for year in range(2026, 2020, -1)
+        ] + [
+            FilingCandidate(
+                key="q1_2026",
+                source_type="quarterly_results",
+                title="Announcement of the Results for the Three Months ended March 31, 2026",
+                url="https://example.invalid/q1-2026.pdf",
+                publisher="Issuer",
+                published_at="2026-06-01T00:00:00+08:00",
+            )
+        ]
+        selected_crowded_candidates = _select_hk_issuer_ir_candidates(crowded_candidates, limit=3)
+        assert [candidate.source_type for candidate in selected_crowded_candidates] == [
+            "annual_report",
+            "annual_report",
+            "quarterly_results",
+        ]
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

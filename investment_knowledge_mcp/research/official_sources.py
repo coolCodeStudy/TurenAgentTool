@@ -33,6 +33,7 @@ HK_ISSUER_IR_PAGES: dict[str, list[str]] = {
         "https://ir.xajuzi.com/list-8q4um8rx/index.html/1/10",
     ],
     "03690": [
+        "https://www.meituan.com/en-US/investor-relations",
         "https://www.meituan.com/en-US/investor/reports",
         "https://www.meituan.com/en-US/investor/results",
         "https://www.meituan.com/en-US/investor/announcement",
@@ -181,7 +182,7 @@ class OfficialResearchProvider(ResearchProvider):
         ir_candidates = _fetch_hk_issuer_ir_candidates(client, symbol=symbol)
         if ir_candidates:
             remaining_slots = max(self.max_sources + 4, 7) - len(sources)
-            for candidate in ir_candidates[: max(0, remaining_slots)]:
+            for candidate in _select_hk_issuer_ir_candidates(ir_candidates, limit=max(0, remaining_slots)):
                 sources.append(_fetch_source_document(client, candidate, self.max_excerpt_chars))
             notes.append("issuer IR report-list provider returned report candidates.")
 
@@ -555,6 +556,50 @@ def _fetch_hk_issuer_ir_candidates(client: httpx.Client, symbol: str) -> list[Fi
     candidates.sort(key=lambda item: item[1].published_at or "", reverse=True)
     candidates.sort(key=lambda item: item[0])
     return _dedupe_hkex_candidates([candidate for _priority, candidate in candidates])
+
+
+def _select_hk_issuer_ir_candidates(candidates: list[FilingCandidate], limit: int) -> list[FilingCandidate]:
+    if limit <= 0:
+        return []
+
+    selected: list[FilingCandidate] = []
+    selected_keys: set[str] = set()
+    quotas = [
+        ("annual_report", 2),
+        ("quarterly_results", 2),
+        ("annual_results", 1),
+        ("interim_results", 1),
+        ("profit_warning", 1),
+        ("transaction_announcement", 1),
+        ("announcement", 1),
+        ("prospectus", 1),
+        ("constitutional_document", 1),
+    ]
+
+    def add_candidate(candidate: FilingCandidate) -> bool:
+        if len(selected) >= limit or candidate.key in selected_keys:
+            return False
+        selected.append(candidate)
+        selected_keys.add(candidate.key)
+        return True
+
+    for source_type, quota in quotas:
+        count = 0
+        for candidate in candidates:
+            if candidate.source_type != source_type:
+                continue
+            if add_candidate(candidate):
+                count += 1
+                if count >= quota:
+                    break
+        if len(selected) >= limit:
+            return selected
+
+    for candidate in candidates:
+        add_candidate(candidate)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _extract_pdf_links(html: str, base_url: str) -> list[dict[str, str]]:
