@@ -100,6 +100,19 @@ def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[d
     return to_jsonable(rows)
 
 
+def get_research_job(job_id: int) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM research_jobs
+            WHERE id = %s
+            """,
+            (job_id,),
+        ).fetchone()
+    return to_jsonable(row) if row else None
+
+
 def claim_next_research_job(worker_name: str = "research-agent-worker") -> dict[str, Any] | None:
     with transaction() as conn:
         row = conn.execute(

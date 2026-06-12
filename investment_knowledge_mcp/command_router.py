@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import json
 import os
 from pathlib import Path
 import re
@@ -44,10 +45,20 @@ from investment_knowledge_mcp.portfolio_graph import (
     build_portfolio_graph_queue,
     render_portfolio_graph_queue,
 )
-from investment_knowledge_mcp.research.jobs import create_research_job, list_research_jobs, requeue_research_jobs
+from investment_knowledge_mcp.research.audit import audit_research_draft, build_audit_markdown
+from investment_knowledge_mcp.research.jobs import (
+    create_research_job,
+    get_research_job,
+    list_research_jobs,
+    requeue_research_jobs,
+    update_research_job,
+)
 from investment_knowledge_mcp.research.pipeline import ResearchPipelineOptions, ResearchPipelineResult, run_single_stock_research
+from investment_knowledge_mcp.research.source_facts import extract_source_facts
+from investment_knowledge_mcp.research.validation import validate_research_draft
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from scripts.build_analysis_context import render_stock_context
+from scripts.review_research_draft import build_review_markdown
 
 
 DEFAULT_FX_TO_USD = {
@@ -324,6 +335,14 @@ def handle_command(
         symbol, market = research_job_match.groups()
         job = create_research_job(symbol=symbol, market=market, provider="codex", source="command")
         return CommandResult(ok=True, message=_render_research_job_create_result([job], [], []))
+
+    reaudit_job_match = re.fullmatch(
+        r"(?:重新审核研究任务|重审研究任务|reaudit research job)\s+#?(\d+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if reaudit_job_match:
+        return _handle_reaudit_research_job(int(reaudit_job_match.group(1)))
 
     if cleaned in {"查看候选心得", "候选心得", "list candidates", "candidates"}:
         return _handle_list_candidates()
@@ -646,6 +665,101 @@ def _handle_research_draft(
         ),
     )
     return CommandResult(ok=result.status not in {"failed"}, message=_render_research_result(result, include_artifact_path))
+
+
+def _handle_reaudit_research_job(job_id: int) -> CommandResult:
+    job = get_research_job(job_id)
+    if job is None:
+        return CommandResult(ok=False, message=f"研究任务不存在：#{job_id}")
+
+    artifact_dir_text = str(job.get("artifact_dir") or "")
+    artifacts = job.get("artifacts") if isinstance(job.get("artifacts"), dict) else {}
+    draft_path_text = str(artifacts.get("draft_path") or "")
+    if not draft_path_text and artifact_dir_text:
+        symbol = str(job.get("symbol") or "").upper()
+        market = str(job.get("market") or "").upper()
+        draft_path_text = str(Path(artifact_dir_text) / f"{symbol}_{market}_research_draft.json")
+    if not draft_path_text:
+        return CommandResult(ok=False, message=f"研究任务 #{job_id} 没有 draft_path，无法重新审核。")
+
+    draft_path = Path(draft_path_text)
+    if not draft_path.exists():
+        return CommandResult(ok=False, message=f"研究任务 #{job_id} 草稿文件不存在：{draft_path}")
+
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    if not isinstance(draft, dict):
+        return CommandResult(ok=False, message=f"研究任务 #{job_id} 草稿不是 JSON object。")
+    draft["user_insights"] = []
+    draft_path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    symbol = str(job.get("symbol") or draft.get("stock", {}).get("symbol") or "").upper()
+    market = str(job.get("market") or draft.get("stock", {}).get("market") or "").upper()
+    artifact_dir = Path(artifact_dir_text) if artifact_dir_text else draft_path.parent
+    source_facts_path = Path(str(artifacts.get("source_facts_path") or artifact_dir / f"{symbol}_{market}_source_facts.json"))
+    audit_path = Path(str(artifacts.get("audit_path") or artifact_dir / f"{symbol}_{market}_audit_report.md"))
+    review_path = Path(str(artifacts.get("review_path") or artifact_dir / f"{symbol}_{market}_graph_review.md"))
+
+    source_facts = extract_source_facts(draft)
+    validation = validate_research_draft(draft)
+    audit = audit_research_draft(draft, source_facts=source_facts)
+    source_facts_path.write_text(json.dumps(source_facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    audit_path.write_text(build_audit_markdown(draft, source_facts, audit), encoding="utf-8")
+    review_path.write_text(build_review_markdown(draft, draft_path), encoding="utf-8")
+
+    errors = list(validation.errors) + list(audit.errors)
+    imported_stock_id = None
+    if errors:
+        status = "failed"
+        summary = "draft failed validation/audit after re-audit"
+    elif bool(job.get("auto_import")) and audit.status == "pass":
+        imported = repository.import_stock_research_draft(draft=draft, confirmed_by_user=True)
+        imported_stock_id = int(imported["stock"]["id"])
+        status = "imported"
+        summary = "draft re-audited and imported"
+    elif bool(job.get("auto_import")) and audit.status == "needs_review" and bool(job.get("import_needs_review")):
+        imported = repository.import_stock_research_draft(draft=draft, confirmed_by_user=True)
+        imported_stock_id = int(imported["stock"]["id"])
+        status = "imported"
+        summary = "needs_review draft imported by job setting after re-audit"
+    elif audit.status == "needs_review":
+        status = "needs_review"
+        summary = "draft re-audited but still needs review"
+    else:
+        status = "drafted"
+        summary = f"draft re-audited with audit_status={audit.status}"
+
+    new_artifacts = {
+        **artifacts,
+        "draft_path": str(draft_path),
+        "source_facts_path": str(source_facts_path),
+        "audit_path": str(audit_path),
+        "review_path": str(review_path),
+        "imported_stock_id": imported_stock_id,
+        "audit_status": audit.status,
+        "errors": errors,
+        "warnings": list(validation.warnings) + list(audit.warnings),
+    }
+    updated = update_research_job(
+        job_id=job_id,
+        status=status,
+        result_summary=summary,
+        error="; ".join(errors) if errors else None,
+        artifact_dir=str(artifact_dir),
+        artifacts=new_artifacts,
+        source_discovery=job.get("source_discovery") if isinstance(job.get("source_discovery"), dict) else None,
+        worker_log=f"command re-audited research job status={status} audit={audit.status}",
+    )
+
+    lines = [
+        f"研究任务 #{job_id} 已重新审核：{updated['symbol']} {updated['market']}",
+        f"- 状态：{status}",
+        f"- 审核：{audit.status}",
+        f"- errors：{len(errors)}",
+        f"- warnings：{len(new_artifacts['warnings'])}",
+    ]
+    if imported_stock_id is not None:
+        lines.append(f"- 已导入 stock_id：{imported_stock_id}")
+    return CommandResult(ok=status != "failed", message="\n".join(lines))
 
 
 def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandResult:
