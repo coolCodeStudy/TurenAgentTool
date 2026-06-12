@@ -579,6 +579,7 @@ def is_research_write_command(command: str) -> bool:
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
         or _match_research_job_requeue_limit(normalized) is not None
         or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(r"(?:重新审核研究任务|重审研究任务|reaudit research job)\s+#?\d+", normalized, flags=re.IGNORECASE)
     )
 
 
