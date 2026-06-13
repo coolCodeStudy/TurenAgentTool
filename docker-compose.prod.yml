@@ -30,6 +30,7 @@ services:
       - ./db:/app/db:ro
       - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
       - ./scripts:/app/scripts:ro
+      - ./drafts:/opt/investment-knowledge/drafts
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,6 +83,7 @@ services:
       - ./db:/app/db:ro
       - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
       - ./scripts:/app/scripts:ro
+      - ./drafts:/opt/investment-knowledge/drafts
     depends_on:
       postgres:
         condition: service_healthy
