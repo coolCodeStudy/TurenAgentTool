@@ -45,6 +45,13 @@ ISSUER_SOURCE_TYPES = {
     "web_page",
     "website",
 }
+NON_ISSUER_SOURCE_TYPES = {
+    "article",
+    "blog",
+    "media",
+    "news",
+    "research_report",
+}
 ISSUER_CDN_HOST_PATTERNS = [
     re.compile(r"(^|\.)q4cdn\.com$", re.I),
 ]
@@ -211,7 +218,8 @@ def _is_official_source(source: dict[str, Any]) -> bool:
 
 
 def _publisher_matches_source_host(*, source_type: str, publisher: str, url: str) -> bool:
-    if source_type not in ISSUER_SOURCE_TYPES:
+    cleaned_source_type = source_type.strip().lower()
+    if cleaned_source_type in NON_ISSUER_SOURCE_TYPES:
         return False
     host_match = re.search(r"https?://(?:www\.|investors\.)?([^/]+)", url, flags=re.I)
     if not host_match:
@@ -226,7 +234,7 @@ def _publisher_matches_source_host(*, source_type: str, publisher: str, url: str
         for token in re.findall(r"[A-Za-z0-9]+", publisher)
         if len(token) >= 4 and token.lower() not in {"holdings", "holding", "company", "corp", "inc", "limited", "group"}
     }
-    return any(token in host for token in publisher_tokens)
+    return cleaned_source_type in ISSUER_SOURCE_TYPES or any(token in host for token in publisher_tokens)
 
 
 def _is_low_signal_number(number: str) -> bool:

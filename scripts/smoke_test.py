@@ -563,6 +563,23 @@ def main() -> None:
         }
         issuer_cdn_audit = audit_research_draft(issuer_cdn_draft)
         assert issuer_cdn_audit.status == "pass"
+        issuer_unknown_type_draft = {
+            **issuer_host_draft,
+            "sources": [
+                {
+                    "key": "issuer_unknown",
+                    "source_type": "webcast",
+                    "title": "Issuer Webcast",
+                    "url": "https://investors.vertiv.com/events/default.aspx",
+                    "publisher": "Vertiv Holdings Co",
+                    "content_excerpt": "Revenue was 123 million. Gross margin was 45%.",
+                }
+            ],
+            "sectors": [{**issuer_host_draft["sectors"][0], "source_key": "issuer_unknown"}],
+            "knowledge_items": [{**issuer_host_draft["knowledge_items"][0], "source_key": "issuer_unknown"}],
+        }
+        issuer_unknown_type_audit = audit_research_draft(issuer_unknown_type_draft)
+        assert issuer_unknown_type_audit.status == "pass"
         media_source_draft = {
             **issuer_host_draft,
             "sources": [
