@@ -38,10 +38,16 @@ ISSUER_SOURCE_TYPES = {
     "company_site",
     "earnings_presentation",
     "earnings_release",
+    "homepage",
     "investor_presentation",
     "press_release",
     "quarterly_results",
+    "web_page",
+    "website",
 }
+ISSUER_CDN_HOST_PATTERNS = [
+    re.compile(r"(^|\.)q4cdn\.com$", re.I),
+]
 
 
 @dataclass
@@ -213,6 +219,8 @@ def _publisher_matches_source_host(*, source_type: str, publisher: str, url: str
     host = host_match.group(1).lower()
     if any(pattern.search(host) for pattern in SECONDARY_PUBLISHER_PATTERNS):
         return False
+    if any(pattern.search(host) for pattern in ISSUER_CDN_HOST_PATTERNS):
+        return bool(publisher.strip())
     publisher_tokens = {
         token.lower()
         for token in re.findall(r"[A-Za-z0-9]+", publisher)
