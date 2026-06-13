@@ -485,6 +485,36 @@ def main() -> None:
         }
         trusted_hk_audit = audit_research_draft(trusted_hk_supplement_draft)
         assert trusted_hk_audit.status == "pass"
+        issuer_ir_draft = {
+            **draft_for_audit,
+            "sources": [
+                {
+                    "key": "issuer_ir",
+                    "source_type": "earnings_release",
+                    "title": "Issuer Q1 Results",
+                    "publisher": "Vertiv Investor Relations / PRNewswire",
+                    "content_excerpt": "Revenue was 123 million. Gross margin was 45%.",
+                }
+            ],
+            "sectors": [
+                {
+                    "path": ["Audit", "Issuer IR"],
+                    "relation_type": "main",
+                    "confidence": 0.8,
+                    "source_key": "issuer_ir",
+                }
+            ],
+            "knowledge_items": [
+                {
+                    "knowledge_type": "research_source",
+                    "content": "Issuer investor relations sources should be treated as official company sources.",
+                    "confidence": 0.8,
+                    "source_key": "issuer_ir",
+                }
+            ],
+        }
+        issuer_ir_audit = audit_research_draft(issuer_ir_draft)
+        assert issuer_ir_audit.status == "pass"
         ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
         assert ytd_start.isoformat() == f"{today.year}-01-01"
         assert ytd_end == today

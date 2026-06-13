@@ -28,6 +28,7 @@ SECONDARY_PUBLISHER_PATTERNS = [
     re.compile(r"etnet|经济通|經濟通", re.I),
 ]
 OFFICIAL_PUBLISHER_PATTERNS = [
+    re.compile(r"\b(investor relations|issuer ir)\b", re.I),
     re.compile(r"(国家市场监督管理总局|市场监督管理局|SAMR)", re.I),
 ]
 
