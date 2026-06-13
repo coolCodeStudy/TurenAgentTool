@@ -226,9 +226,11 @@ def finalize_research_artifacts(
     source_facts_path = artifact_dir / f"{symbol}_{market}_source_facts.json"
     audit_path = artifact_dir / f"{symbol}_{market}_audit_report.md"
     review_path = artifact_dir / f"{symbol}_{market}_graph_review.md"
+    audit_markdown = build_audit_markdown(draft, source_facts, audit)
+    review_markdown = build_review_markdown(draft, draft_path)
     _write_json(source_facts_path, source_facts)
-    audit_path.write_text(build_audit_markdown(draft, source_facts, audit), encoding="utf-8")
-    review_path.write_text(build_review_markdown(draft, draft_path), encoding="utf-8")
+    audit_path.write_text(audit_markdown, encoding="utf-8")
+    review_path.write_text(review_markdown, encoding="utf-8")
 
     errors = list(validation.errors) + list(audit.errors)
     imported_stock_id = None
@@ -258,6 +260,11 @@ def finalize_research_artifacts(
         "review_path": str(review_path),
         "imported_stock_id": imported_stock_id,
         "audit_status": audit.status,
+        "draft_json": draft,
+        "source_facts_json": source_facts,
+        "audit_json": audit.to_dict(),
+        "audit_markdown": audit_markdown,
+        "review_markdown": review_markdown,
         "errors": errors,
         "warnings": list(validation.warnings) + list(audit.warnings),
     }
