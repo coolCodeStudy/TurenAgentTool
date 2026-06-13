@@ -31,6 +31,17 @@ OFFICIAL_PUBLISHER_PATTERNS = [
     re.compile(r"\b(investor relations|issuer ir)\b", re.I),
     re.compile(r"(国家市场监督管理总局|市场监督管理局|SAMR)", re.I),
 ]
+ISSUER_SOURCE_TYPES = {
+    "annual_report",
+    "announcement",
+    "company_profile",
+    "company_site",
+    "earnings_presentation",
+    "earnings_release",
+    "investor_presentation",
+    "press_release",
+    "quarterly_results",
+}
 
 
 @dataclass
@@ -188,7 +199,26 @@ def _is_official_source(source: dict[str, Any]) -> bool:
         return True
     if any(pattern.search(publisher) for pattern in SECONDARY_PUBLISHER_PATTERNS):
         return False
+    if _publisher_matches_source_host(source_type=str(source.get("source_type") or ""), publisher=publisher, url=url):
+        return True
     return False
+
+
+def _publisher_matches_source_host(*, source_type: str, publisher: str, url: str) -> bool:
+    if source_type not in ISSUER_SOURCE_TYPES:
+        return False
+    host_match = re.search(r"https?://(?:www\.|investors\.)?([^/]+)", url, flags=re.I)
+    if not host_match:
+        return False
+    host = host_match.group(1).lower()
+    if any(pattern.search(host) for pattern in SECONDARY_PUBLISHER_PATTERNS):
+        return False
+    publisher_tokens = {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9]+", publisher)
+        if len(token) >= 4 and token.lower() not in {"holdings", "holding", "company", "corp", "inc", "limited", "group"}
+    }
+    return any(token in host for token in publisher_tokens)
 
 
 def _is_low_signal_number(number: str) -> bool:

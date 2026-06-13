@@ -515,6 +515,54 @@ def main() -> None:
         }
         issuer_ir_audit = audit_research_draft(issuer_ir_draft)
         assert issuer_ir_audit.status == "pass"
+        issuer_host_draft = {
+            **draft_for_audit,
+            "sources": [
+                {
+                    "key": "issuer_home",
+                    "source_type": "company_profile",
+                    "title": "Issuer Company Profile",
+                    "url": "https://www.vertiv.com/en-us/",
+                    "publisher": "Vertiv Holdings Co",
+                    "content_excerpt": "Revenue was 123 million. Gross margin was 45%.",
+                }
+            ],
+            "sectors": [
+                {
+                    "path": ["Audit", "Issuer Host"],
+                    "relation_type": "main",
+                    "confidence": 0.8,
+                    "source_key": "issuer_home",
+                }
+            ],
+            "knowledge_items": [
+                {
+                    "knowledge_type": "research_source",
+                    "content": "Issuer host-matched company sources should be treated as official.",
+                    "confidence": 0.8,
+                    "source_key": "issuer_home",
+                }
+            ],
+        }
+        issuer_host_audit = audit_research_draft(issuer_host_draft)
+        assert issuer_host_audit.status == "pass"
+        media_source_draft = {
+            **issuer_host_draft,
+            "sources": [
+                {
+                    "key": "media",
+                    "source_type": "news",
+                    "title": "Media Story",
+                    "url": "https://www.reuters.com/markets/",
+                    "publisher": "Reuters",
+                    "content_excerpt": "Revenue was 123 million. Gross margin was 45%.",
+                }
+            ],
+            "sectors": [{**issuer_host_draft["sectors"][0], "source_key": "media"}],
+            "knowledge_items": [{**issuer_host_draft["knowledge_items"][0], "source_key": "media"}],
+        }
+        media_source_audit = audit_research_draft(media_source_draft)
+        assert media_source_audit.status == "needs_review"
         ytd_start, ytd_end, _ = _resolve_trade_review_range("今年以来")
         assert ytd_start.isoformat() == f"{today.year}-01-01"
         assert ytd_end == today
