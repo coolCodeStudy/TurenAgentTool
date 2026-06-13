@@ -391,7 +391,8 @@ def _fetch_hkex_title_search(
         date_text = str(row.get("DATE") or row.get("date") or row.get("releaseDate") or "").strip()
         published_at = _parse_hkex_date(date_text)
         source_type, priority = classification
-        key = f"hkex_{source_type}_{published_at[:10] if published_at else index}".replace("-", "_")
+        fingerprint = _pdf_fingerprint(url) or hashlib.sha1(f"{title}|{url}".encode("utf-8")).hexdigest()[:10]
+        key = f"hkex_{source_type}_{published_at[:10] if published_at else index}_{fingerprint}".replace("-", "_")
         candidates.append(
             (
                 priority,
@@ -475,7 +476,7 @@ def _dedupe_hkex_candidates(candidates: list[FilingCandidate]) -> list[FilingCan
     deduped: list[FilingCandidate] = []
     seen: set[str] = set()
     for candidate in candidates:
-        key = candidate.url or f"{candidate.title}:{candidate.published_at or ''}"
+        key = candidate.url or _candidate_semantic_key(candidate)
         if key in seen:
             continue
         seen.add(key)
@@ -486,13 +487,53 @@ def _dedupe_hkex_candidates(candidates: list[FilingCandidate]) -> list[FilingCan
 def _dedupe_source_documents(sources: list[SourceDocument]) -> list[SourceDocument]:
     deduped: list[SourceDocument] = []
     seen: set[str] = set()
+    seen_semantic: set[str] = set()
     for source in sources:
-        key = source.url or source.key
-        if key in seen:
+        url_key = _canonical_url(source.url or "") or source.key
+        semantic_key = _source_semantic_key(source)
+        if url_key in seen or semantic_key in seen_semantic:
             continue
-        seen.add(key)
+        seen.add(url_key)
+        seen_semantic.add(semantic_key)
         deduped.append(source)
     return deduped
+
+
+def _candidate_semantic_key(candidate: FilingCandidate) -> str:
+    return "|".join(
+        [
+            candidate.source_type,
+            _normalize_title_for_dedupe(candidate.title),
+            (candidate.published_at or "")[:10],
+        ]
+    )
+
+
+def _source_semantic_key(source: SourceDocument) -> str:
+    excerpt = source.content_excerpt or ""
+    excerpt_hash = hashlib.sha1(_normalize_title_for_dedupe(excerpt[:2000]).encode("utf-8")).hexdigest()[:12] if excerpt else ""
+    return "|".join(
+        [
+            source.source_type,
+            _normalize_title_for_dedupe(source.title),
+            (source.published_at or "")[:10],
+            excerpt_hash,
+        ]
+    )
+
+
+def _canonical_url(url: str) -> str:
+    cleaned = url.strip()
+    if not cleaned:
+        return ""
+    return cleaned.split("#", 1)[0].rstrip("/")
+
+
+def _normalize_title_for_dedupe(value: str) -> str:
+    cleaned = value.lower()
+    cleaned = re.sub(r"\b(?:pdf|view|download|english|chinese)\b", " ", cleaned)
+    cleaned = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:

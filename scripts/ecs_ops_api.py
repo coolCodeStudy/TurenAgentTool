@@ -116,6 +116,25 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": sanitize_text(str(exc))})
 
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if not self._authorized():
+            self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+            return
+
+        try:
+            payload = self._read_json_body()
+            if parsed.path == "/ops/service-action":
+                service = str(payload.get("service") or "")
+                action = str(payload.get("action") or "")
+                self._write_json(HTTPStatus.OK, {"ok": True, "data": control_service(service=service, action=action)})
+            else:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": sanitize_text(str(exc))})
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 
@@ -136,6 +155,19 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or "0")
+        if length <= 0:
+            return {}
+        body = self.rfile.read(length).decode("utf-8")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("invalid JSON body") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
 
 
 def build_system_status() -> dict[str, Any]:
@@ -221,6 +253,32 @@ def build_coding_status() -> dict[str, Any]:
     return {
         "worker": worker_status,
         "recent_logs": logs.get("logs", [])[-30:],
+    }
+
+
+def control_service(service: str, action: str) -> dict[str, Any]:
+    normalized = _normalize_service(service)
+    normalized_action = action.strip().lower().replace("_", "-")
+    if normalized not in SYSTEMD_SERVICES:
+        raise ValueError(f"unsupported systemd service: {service}")
+    if normalized_action not in {"start", "stop", "restart", "status"}:
+        raise ValueError(f"unsupported service action: {action}")
+
+    unit = SYSTEMD_SERVICES[normalized]
+    if normalized_action == "status":
+        result = _run(["systemctl", "is-active", unit])
+    else:
+        result = _run(["systemctl", normalized_action, unit])
+    status = _check_systemd(normalized, unit)
+    return {
+        "service": normalized,
+        "unit": unit,
+        "action": normalized_action,
+        "ok": result.ok if normalized_action != "status" else status["ok"],
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "status": status,
     }
 
 

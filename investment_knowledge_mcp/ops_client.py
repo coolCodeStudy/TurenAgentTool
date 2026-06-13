@@ -40,6 +40,34 @@ class OpsClient:
         data = payload.get("data")
         return data if isinstance(data, dict) else {"value": data}
 
+    def post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"{self.base_url.rstrip('/')}{path}"
+        body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+        request = Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise OpsClientError(f"Ops API returned HTTP {exc.code}: {error_body}") from exc
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise OpsClientError(f"Ops API request failed: {exc}") from exc
+
+        if not isinstance(response_payload, dict):
+            raise OpsClientError("Ops API returned a non-object JSON payload")
+        if not response_payload.get("ok"):
+            raise OpsClientError(str(response_payload.get("error") or "Ops API request failed"))
+        data = response_payload.get("data")
+        return data if isinstance(data, dict) else {"value": data}
+
 
 def get_ops_client(config: AppConfig | None = None) -> OpsClient:
     config = config or get_config()
@@ -68,6 +96,30 @@ def fetch_service_logs(service: str, lines: int = 120) -> dict[str, Any]:
 
 def fetch_coding_status() -> dict[str, Any]:
     return get_ops_client().get("/ops/coding-status")
+
+
+def control_cloud_service(service: str, action: str) -> dict[str, Any]:
+    return get_ops_client().post("/ops/service-action", {"service": service, "action": action})
+
+
+def render_cloud_service_control(service: str, action: str) -> str:
+    try:
+        data = control_cloud_service(service=service, action=action)
+    except OpsClientError as exc:
+        return f"{service} {action} 暂不可用：{exc}"
+
+    status = data.get("status") if isinstance(data.get("status"), dict) else {}
+    ok = bool(data.get("ok"))
+    lines = [
+        f"云端服务控制：{data.get('service') or service}",
+        f"- 动作：{data.get('action') or action}",
+        f"- 执行：{'OK' if ok else 'FAIL'}",
+        f"- 当前状态：{status.get('message') or '-'}",
+    ]
+    stderr = str(data.get("stderr") or "").strip()
+    if stderr:
+        lines.append(f"- stderr：{stderr[:240]}")
+    return "\n".join(lines)
 
 
 def render_cloud_system_status() -> str:

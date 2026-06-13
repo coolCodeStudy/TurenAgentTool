@@ -27,6 +27,7 @@ from investment_knowledge_mcp.research.audit import audit_research_draft
 from investment_knowledge_mcp.research.official_sources import (
     _classify_hkex_title,
     _classify_issuer_ir_title,
+    _dedupe_source_documents,
     _extract_report_year,
     _extract_pdf_links,
     _extract_hkex_stock_ids,
@@ -35,6 +36,7 @@ from investment_knowledge_mcp.research.official_sources import (
     _issuer_ir_key,
     _hkex_title_search_urls,
 )
+from investment_knowledge_mcp.research.models import SourceDocument
 from investment_knowledge_mcp.research.official_sources import FilingCandidate
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.repository import (
@@ -346,6 +348,9 @@ def main() -> None:
         assert is_query_command("全持仓研究草稿")
         assert is_research_write_command("持仓图谱补全")
         assert is_research_write_command("重新审核研究任务 33")
+        assert is_research_write_command("取消研究任务 33")
+        assert is_maintenance_command("停止研究worker")
+        assert is_maintenance_command("启动研究worker")
         assert is_query_command("交易复盘")
         assert is_query_command("本月收益")
         assert is_query_command("补全交易记录 2026-05")
@@ -542,6 +547,35 @@ def main() -> None:
             "https://ir.xajuzi.com/resources/uploads/20240912/1834168936008593408.pdf",
             0,
         ) == "issuer_ir_annual_report_2022_1834168936008593408"
+        assert _issuer_ir_key(
+            "quarterly_results",
+            "Announcement of the Results for the Three Months ended March 31, 2026",
+            "https://media-meituan.todayir.com/202606011753301715997254_en.pdf",
+            0,
+        ) == "issuer_ir_quarterly_results_2026_202606011753301715997254"
+        duplicate_sources = _dedupe_source_documents(
+            [
+                SourceDocument(
+                    key="a",
+                    source_type="annual_report",
+                    title="2025 Annual Report",
+                    url="https://example.invalid/report.pdf",
+                    publisher="Issuer",
+                    published_at="2026-04-24T00:00:00+08:00",
+                    content_excerpt="Revenue was 123.",
+                ),
+                SourceDocument(
+                    key="b",
+                    source_type="annual_report",
+                    title="2025 Annual Report PDF",
+                    url="https://example.invalid/report.pdf#page=1",
+                    publisher="Issuer",
+                    published_at="2026-04-24T00:00:00+08:00",
+                    content_excerpt="Revenue was 123.",
+                ),
+            ]
+        )
+        assert len(duplicate_sources) == 1
         pdf_links = _extract_pdf_links(
             '<a href="/resources/uploads/20260429/report.pdf">2025 年报</a>'
             ' https://ir.xajuzi.com/resources/uploads/20250923/interim-report.pdf',

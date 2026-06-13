@@ -36,6 +36,9 @@ class ResearchWorkerConfig:
     codex_timeout_seconds: int
     poll_seconds: int
     danger_full_access: bool
+    skip_codex_when_seed_passes: bool
+    seed_min_sources_for_skip: int
+    seed_min_knowledge_items_for_skip: int
 
 
 def main() -> None:
@@ -86,6 +89,9 @@ def load_config() -> ResearchWorkerConfig:
         codex_timeout_seconds=int(os.getenv("RESEARCH_CODEX_TIMEOUT_SECONDS", "3600")),
         poll_seconds=int(os.getenv("RESEARCH_WORKER_POLL_SECONDS", "30")),
         danger_full_access=_env_bool("RESEARCH_WORKER_DANGER_FULL_ACCESS", default=True),
+        skip_codex_when_seed_passes=_env_bool("RESEARCH_SKIP_CODEX_WHEN_SEED_PASSES", default=True),
+        seed_min_sources_for_skip=int(os.getenv("RESEARCH_SEED_MIN_SOURCES_FOR_SKIP", "3")),
+        seed_min_knowledge_items_for_skip=int(os.getenv("RESEARCH_SEED_MIN_KNOWLEDGE_ITEMS_FOR_SKIP", "1")),
     )
 
 
@@ -151,16 +157,23 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
     _write_initial_discovery_notes(discovery_path, job=job, seed=seed)
 
     if provider == "codex":
-        output_path = artifact_dir / "codex_final.txt"
-        prompt = build_codex_research_prompt(
-            job=job,
-            draft_path=seed.draft_path,
-            source_facts_path=seed.source_facts_path,
-            audit_path=seed.audit_path,
-            review_path=seed.review_path,
-            discovery_path=discovery_path,
-        )
-        run_codex(config, prompt=prompt, output_path=output_path)
+        if _seed_is_sufficient_for_codex_skip(config, seed):
+            _append_discovery_note(
+                discovery_path,
+                "## Codex Skip",
+                "- official-source seed passed audit and met minimum source/fact thresholds; Codex enrichment skipped by budget gate.",
+            )
+        else:
+            output_path = artifact_dir / "codex_final.txt"
+            prompt = build_codex_research_prompt(
+                job=job,
+                draft_path=seed.draft_path,
+                source_facts_path=seed.source_facts_path,
+                audit_path=seed.audit_path,
+                review_path=seed.review_path,
+                discovery_path=discovery_path,
+            )
+            run_codex(config, prompt=prompt, output_path=output_path)
     elif provider != "none":
         raise ValueError(f"unsupported research provider: {provider}")
 
@@ -254,7 +267,7 @@ def finalize_research_artifacts(
         "error": "; ".join(errors) if errors else None,
         "artifacts": artifacts,
         "source_discovery": _source_discovery_payload(discovery_path),
-        "worker_log": f"codex research finalized status={status} audit={audit.status}",
+        "worker_log": f"research finalized status={status} audit={audit.status}",
     }
 
 
@@ -337,6 +350,28 @@ def _write_initial_discovery_notes(path: Path, job: dict[str, Any], seed: Any) -
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _append_discovery_note(path: Path, heading: str, line: str) -> None:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    path.write_text(existing.rstrip() + f"\n\n{heading}\n{line}\n", encoding="utf-8")
+
+
+def _seed_is_sufficient_for_codex_skip(config: ResearchWorkerConfig, seed: Any) -> bool:
+    if not config.skip_codex_when_seed_passes or seed.audit_status != "pass" or seed.draft_path is None:
+        return False
+    try:
+        draft = json.loads(Path(seed.draft_path).read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(draft, dict):
+        return False
+    sources = draft.get("sources") if isinstance(draft.get("sources"), list) else []
+    knowledge_items = draft.get("knowledge_items") if isinstance(draft.get("knowledge_items"), list) else []
+    return (
+        len(sources) >= config.seed_min_sources_for_skip
+        and len(knowledge_items) >= config.seed_min_knowledge_items_for_skip
+    )
 
 
 def _source_discovery_payload(path: Path) -> dict[str, Any]:

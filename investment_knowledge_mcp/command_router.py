@@ -31,6 +31,7 @@ from investment_knowledge_mcp.futu_opend_control import (
     submit_phone_verify_code,
 )
 from investment_knowledge_mcp.ops_client import (
+    render_cloud_service_control,
     render_cloud_coding_status,
     render_cloud_system_status,
     render_recent_errors,
@@ -47,6 +48,9 @@ from investment_knowledge_mcp.portfolio_graph import (
 )
 from investment_knowledge_mcp.research.audit import audit_research_draft, build_audit_markdown
 from investment_knowledge_mcp.research.jobs import (
+    ACTIVE_STATUSES,
+    cancel_research_job,
+    count_research_jobs,
     create_research_job,
     get_research_job,
     list_research_jobs_for_stock,
@@ -67,8 +71,9 @@ DEFAULT_FX_TO_USD = {
     "HKD": 1.0 / 7.8,
 }
 DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT = 1
-DEFAULT_RESEARCH_JOB_REQUEUE_LIMIT = 3
-MAX_RESEARCH_JOB_REQUEUE_LIMIT = 10
+DEFAULT_RESEARCH_JOB_REQUEUE_LIMIT = 1
+MAX_RESEARCH_JOB_REQUEUE_LIMIT = 3
+DEFAULT_MAX_ACTIVE_CODEX_RESEARCH_JOBS = 1
 CHINESE_MONTHS = {
     "一": 1,
     "二": 2,
@@ -267,10 +272,34 @@ RECENT_ERRORS_COMMANDS = {
     "recent errors",
 }
 
+RESEARCH_WORKER_STOP_COMMANDS = {
+    "停止研究worker",
+    "暂停研究worker",
+    "停止研究任务worker",
+    "stop research worker",
+    "pause research worker",
+}
+
+RESEARCH_WORKER_START_COMMANDS = {
+    "启动研究worker",
+    "恢复研究worker",
+    "启动研究任务worker",
+    "start research worker",
+    "resume research worker",
+}
+
+RESEARCH_WORKER_RESTART_COMMANDS = {
+    "重启研究worker",
+    "restart research worker",
+}
+
 SERVICE_LOG_COMMANDS = {
     "worker日志": "codex-worker",
     "codex日志": "codex-worker",
     "codex worker日志": "codex-worker",
+    "research日志": "research-agent-worker",
+    "研究worker日志": "research-agent-worker",
+    "research worker日志": "research-agent-worker",
     "hermes日志": "hermes",
     "mcp日志": "mcp",
     "钉钉日志": "dingtalk-stream-bot",
@@ -334,8 +363,22 @@ def handle_command(
     research_job_match = re.fullmatch(r"(?:创建研究任务|create research job)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
     if research_job_match:
         symbol, market = research_job_match.groups()
-        job = create_research_job(symbol=symbol, market=market, provider="codex", source="command")
+        budget_error = _research_budget_error(provider="codex", requested=1)
+        if budget_error:
+            return CommandResult(ok=False, message=budget_error)
+        try:
+            job = _create_codex_research_job(symbol=symbol, market=market, source="command")
+        except RuntimeError as exc:
+            return CommandResult(ok=False, message=str(exc))
         return CommandResult(ok=True, message=_render_research_job_create_result([job], [], []))
+
+    cancel_job_match = re.fullmatch(
+        r"(?:取消研究任务|停止研究任务|cancel research job)\s+#?(\d+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if cancel_job_match:
+        return _handle_cancel_research_job(int(cancel_job_match.group(1)))
 
     reaudit_job_match = re.fullmatch(
         r"(?:重新审核研究任务|重审研究任务|reaudit research job)\s+#?(\d+)",
@@ -362,6 +405,15 @@ def handle_command(
 
     if cleaned in SERVICE_LOG_COMMANDS:
         return CommandResult(ok=True, message=render_service_logs(SERVICE_LOG_COMMANDS[cleaned]))
+
+    if cleaned in RESEARCH_WORKER_STOP_COMMANDS:
+        return CommandResult(ok=True, message=render_cloud_service_control("research-agent-worker", "stop"))
+
+    if cleaned in RESEARCH_WORKER_START_COMMANDS:
+        return CommandResult(ok=True, message=render_cloud_service_control("research-agent-worker", "start"))
+
+    if cleaned in RESEARCH_WORKER_RESTART_COMMANDS:
+        return CommandResult(ok=True, message=render_cloud_service_control("research-agent-worker", "restart"))
 
     service_log_match = re.fullmatch(
         r"(?:服务日志|查看服务日志|service logs?)\s+([a-zA-Z0-9_-]+)",
@@ -424,6 +476,9 @@ def handle_command(
 
     requeue_limit = _match_research_job_requeue_limit(cleaned)
     if requeue_limit is not None:
+        budget_error = _research_budget_error(provider="codex", requested=requeue_limit)
+        if budget_error:
+            return CommandResult(ok=False, message=budget_error)
         jobs = requeue_research_jobs(status="failed", limit=requeue_limit)
         return CommandResult(ok=True, message=f"已重排失败研究任务 {len(jobs)} 个，limit={requeue_limit}。")
 
@@ -564,11 +619,15 @@ def is_query_command(command: str) -> bool:
 
 def is_maintenance_command(command: str) -> bool:
     cleaned = command.strip()
+    normalized = _normalize_natural_command(cleaned)
     return bool(
         re.fullmatch(r"(?:富途验证码|OpenD验证码|opend验证码)\s+\d{4,8}", cleaned, flags=re.IGNORECASE)
         or cleaned in {"请求富途验证码", "富途请求验证码", "OpenD请求验证码", "opend请求验证码"}
         or cleaned in {"富途登录", "修复富途", "富途登录修复", "OpenD登录", "opend登录"}
         or cleaned in {"富途重登录", "重登录富途", "OpenD重登录", "opend重登录"}
+        or normalized in RESEARCH_WORKER_STOP_COMMANDS
+        or normalized in RESEARCH_WORKER_START_COMMANDS
+        or normalized in RESEARCH_WORKER_RESTART_COMMANDS
     )
 
 
@@ -580,6 +639,7 @@ def is_research_write_command(command: str) -> bool:
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
         or _match_research_job_requeue_limit(normalized) is not None
         or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(r"(?:取消研究任务|停止研究任务|cancel research job)\s+#?\d+", normalized, flags=re.IGNORECASE)
         or re.fullmatch(r"(?:重新审核研究任务|重审研究任务|reaudit research job)\s+#?\d+", normalized, flags=re.IGNORECASE)
     )
 
@@ -798,6 +858,19 @@ def _find_existing_reaudit_artifact(
     return None
 
 
+def _handle_cancel_research_job(job_id: int) -> CommandResult:
+    cancelled = cancel_research_job(job_id, reason="cancelled by command")
+    if cancelled is None:
+        job = get_research_job(job_id)
+        if job is None:
+            return CommandResult(ok=False, message=f"研究任务不存在：#{job_id}")
+        return CommandResult(ok=False, message=f"研究任务 #{job_id} 当前状态是 {job.get('status')}，不能取消。")
+    return CommandResult(
+        ok=True,
+        message=f"已取消研究任务 #{cancelled['id']}：{cancelled['symbol']} {cancelled['market']}。",
+    )
+
+
 def _handle_portfolio_research(output_dir: Path, auto_import: bool) -> CommandResult:
     try:
         payload = get_futu_positions()
@@ -889,21 +962,72 @@ def _handle_create_portfolio_research_jobs() -> CommandResult:
         if _stock_exists(symbol=symbol, market=market):
             skipped_existing.append({"symbol": symbol, "market": market, "name": position.get("stock_name")})
             continue
-        created.append(
-            create_research_job(
-                symbol=symbol,
-                market=market,
-                name=position.get("stock_name"),
-                provider="codex",
-                source_policy="broad_search",
-                auto_import=True,
-                import_needs_review=False,
-                refresh=False,
-                source="command",
+        budget_error = _research_budget_error(provider="codex", requested=len(created) + 1)
+        if budget_error:
+            skipped_invalid.append({"code": code, "reason": budget_error})
+            continue
+        try:
+            created.append(
+                _create_codex_research_job(
+                    symbol=symbol,
+                    market=market,
+                    name=position.get("stock_name"),
+                    source="command",
+                    refresh=False,
+                )
             )
-        )
+        except RuntimeError as exc:
+            skipped_invalid.append({"code": code, "reason": str(exc)})
+            continue
 
     return CommandResult(ok=True, message=_render_research_job_create_result(created, skipped_existing, skipped_invalid))
+
+
+def _create_codex_research_job(
+    *,
+    symbol: str,
+    market: str,
+    name: str | None = None,
+    source: str | None = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    return create_research_job(
+        symbol=symbol,
+        market=market,
+        name=name,
+        provider="codex",
+        source_policy="broad_search",
+        auto_import=True,
+        import_needs_review=False,
+        refresh=refresh,
+        source=source,
+    )
+
+
+def _research_budget_error(provider: str, requested: int = 1) -> str | None:
+    if provider != "codex":
+        return None
+    max_active = _max_active_codex_research_jobs()
+    if max_active < 0:
+        return None
+    active = count_research_jobs(statuses=ACTIVE_STATUSES, provider="codex")
+    if active + max(0, requested) > max_active:
+        return (
+            "Codex research budget gate 已阻止创建/重排任务："
+            f"当前 active={active}，requested={requested}，max_active={max_active}。"
+            "请先查看研究任务、取消/完成现有任务，或临时调整 RESEARCH_CODEX_MAX_ACTIVE_JOBS。"
+        )
+    return None
+
+
+def _max_active_codex_research_jobs() -> int:
+    value = os.environ.get("RESEARCH_CODEX_MAX_ACTIVE_JOBS", "").strip()
+    if not value:
+        return DEFAULT_MAX_ACTIVE_CODEX_RESEARCH_JOBS
+    try:
+        return int(value)
+    except ValueError:
+        return DEFAULT_MAX_ACTIVE_CODEX_RESEARCH_JOBS
 
 
 def _portfolio_research_batch_limit() -> int:

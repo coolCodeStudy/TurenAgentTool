@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import os
 
 from psycopg.types.json import Jsonb
 
@@ -10,6 +11,7 @@ from investment_knowledge_mcp.serialization import to_jsonable
 
 TERMINAL_STATUSES = {"drafted", "needs_review", "imported", "failed", "cancelled"}
 ACTIVE_STATUSES = {"queued", "running"}
+DEFAULT_CODEX_MAX_ACTIVE_JOBS = 1
 
 
 def create_research_job(
@@ -46,6 +48,23 @@ def create_research_job(
         ).fetchone()
         if existing is not None:
             return to_jsonable(existing)
+
+        if provider == "codex":
+            max_active = _max_active_codex_jobs()
+            if max_active >= 0:
+                active_count = conn.execute(
+                    """
+                    SELECT count(*) AS count
+                    FROM research_jobs
+                    WHERE provider = 'codex'
+                      AND status IN ('queued', 'running')
+                    """
+                ).fetchone()
+                if int(active_count["count"] if active_count else 0) >= max_active:
+                    raise RuntimeError(
+                        "Codex research budget gate blocked job creation: "
+                        f"active={int(active_count['count'] if active_count else 0)}, max_active={max_active}"
+                    )
 
         row = conn.execute(
             """
@@ -113,6 +132,41 @@ def get_research_job(job_id: int) -> dict[str, Any] | None:
     return to_jsonable(row) if row else None
 
 
+def count_research_jobs(statuses: set[str] | None = None, provider: str | None = None) -> int:
+    with transaction() as conn:
+        if statuses and provider:
+            row = conn.execute(
+                """
+                SELECT count(*) AS count
+                FROM research_jobs
+                WHERE status = ANY(%s)
+                  AND provider = %s
+                """,
+                (list(statuses), provider),
+            ).fetchone()
+        elif statuses:
+            row = conn.execute(
+                """
+                SELECT count(*) AS count
+                FROM research_jobs
+                WHERE status = ANY(%s)
+                """,
+                (list(statuses),),
+            ).fetchone()
+        elif provider:
+            row = conn.execute(
+                """
+                SELECT count(*) AS count
+                FROM research_jobs
+                WHERE provider = %s
+                """,
+                (provider,),
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT count(*) AS count FROM research_jobs").fetchone()
+    return int(row["count"] if row else 0)
+
+
 def list_research_jobs_for_stock(symbol: str, market: str, limit: int = 20) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 100))
     with transaction() as conn:
@@ -128,6 +182,26 @@ def list_research_jobs_for_stock(symbol: str, market: str, limit: int = 20) -> l
             (symbol, market, limit),
         ).fetchall()
     return to_jsonable(rows)
+
+
+def cancel_research_job(job_id: int, reason: str | None = None) -> dict[str, Any] | None:
+    note = reason or "cancelled by command"
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE research_jobs SET
+              status = 'cancelled',
+              error = %s,
+              worker_finished_at = now(),
+              updated_at = now(),
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text)
+            WHERE id = %s
+              AND status IN ('queued', 'running')
+            RETURNING *
+            """,
+            (note, note, job_id),
+        ).fetchone()
+    return to_jsonable(row) if row else None
 
 
 def claim_next_research_job(worker_name: str = "research-agent-worker") -> dict[str, Any] | None:
@@ -213,7 +287,7 @@ def update_research_job(
 
 
 def requeue_research_jobs(status: str = "failed", limit: int = 100) -> list[dict[str, Any]]:
-    limit = max(1, min(int(limit), 500))
+    limit = max(1, min(int(limit), 10))
     with transaction() as conn:
         rows = conn.execute(
             """
@@ -252,3 +326,13 @@ def _normalize_market(market: str) -> str:
 def _normalize_choice(value: str, allowed: set[str], default: str) -> str:
     cleaned = (value or "").strip().lower()
     return cleaned if cleaned in allowed else default
+
+
+def _max_active_codex_jobs() -> int:
+    value = os.environ.get("RESEARCH_CODEX_MAX_ACTIVE_JOBS", "").strip()
+    if not value:
+        return DEFAULT_CODEX_MAX_ACTIVE_JOBS
+    try:
+        return int(value)
+    except ValueError:
+        return DEFAULT_CODEX_MAX_ACTIVE_JOBS
