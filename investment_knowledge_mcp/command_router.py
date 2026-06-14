@@ -228,6 +228,9 @@ PERFORMANCE_ESTIMATE_COMMANDS = {
 
 WEEKLY_REVIEW_COMMANDS = {
     "本周复盘",
+    "这周复盘",
+    "本星期复盘",
+    "这个星期复盘",
     "周复盘",
     "weekly review",
 }
@@ -2081,6 +2084,10 @@ def _match_trade_review_command(command: str) -> str | None:
 
 def _match_weekly_review_command(command: str) -> str | None:
     compact = command.strip()
+    if compact in {"上周复盘", "上星期复盘", "上个星期复盘"}:
+        return "上周"
+    if compact in {"复盘上周", "复盘上星期", "复盘上个星期"}:
+        return "上周"
     if compact in WEEKLY_REVIEW_COMMANDS:
         return ""
     for prefix in WEEKLY_REVIEW_COMMANDS | {"复盘"}:
