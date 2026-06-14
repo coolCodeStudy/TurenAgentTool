@@ -16,6 +16,7 @@ from investment_knowledge_mcp.analysis_provider import (
     generate_stock_analysis_with_openai,
     route_command_intent_with_openai,
 )
+from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_cash_flows,
@@ -169,6 +170,7 @@ RESEARCH_JOB_CREATE_COMMANDS = {
 
 RESEARCH_JOB_LIST_COMMANDS = {
     "查看研究任务",
+    "列出研究任务",
     "研究任务",
     "研究任务状态",
     "research jobs",
@@ -339,6 +341,30 @@ def handle_command(
     ambiguous_match = re.fullmatch(r"__AMBIGUOUS_STOCK__\s+(.+)", cleaned)
     if ambiguous_match:
         return CommandResult(ok=False, message=f"匹配到多个股票，请说得更具体一点：{ambiguous_match.group(1)}")
+
+    stock_detail_match = re.fullmatch(
+        r"(?:分析详情|查看详情|股票详情|inspect detail|analyze detail)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if stock_detail_match:
+        symbol, market = stock_detail_match.groups()
+        return _handle_analyze_stock(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            include_artifact_path=include_artifact_path,
+            detail=True,
+        )
+
+    stock_inspect_match = re.fullmatch(
+        r"(?:查看股票|inspect|stock inspect)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if stock_inspect_match:
+        symbol, market = stock_inspect_match.groups()
+        return _handle_stock_decision_card(symbol=symbol, market=market)
 
     stock_match = re.fullmatch(r"(?:分析|analyze)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
     if stock_match:
@@ -577,6 +603,16 @@ def is_query_command(command: str) -> bool:
     heuristic_intent = _heuristic_route_intent(normalized)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(
+            r"(?:查看股票|inspect|stock inspect)\s+\S+\s+\S+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
+            r"(?:分析详情|查看详情|股票详情|inspect detail|analyze detail)\s+\S+\s+\S+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
         or re.fullmatch(r"(?:研究草稿|图谱草稿|research draft)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
         or normalized
         in {
@@ -686,6 +722,7 @@ def _handle_analyze_stock(
     market: str,
     output_dir: Path,
     include_artifact_path: bool,
+    detail: bool = False,
 ) -> CommandResult:
     context = repository.get_stock_context(symbol=symbol, market=market)
     if not context.get("stock"):
@@ -694,6 +731,18 @@ def _handle_analyze_stock(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{symbol.upper()}_{market.upper()}_analysis_context.md"
     output_path.write_text(render_stock_context(context) + "\n", encoding="utf-8")
+
+    if not detail:
+        card = build_stock_decision_card(context, latest_research_job=_latest_research_job(symbol, market))
+        footer = _analysis_footer(
+            context=context,
+            output_path=output_path,
+            include_artifact_path=include_artifact_path,
+        )
+        return CommandResult(
+            ok=True,
+            message=render_stock_decision_card(card) + "\n\n" + footer,
+        )
 
     fallback_analysis = _render_stock_brief_analysis(context)
     analysis = _generate_stock_analysis(context=context, fallback=fallback_analysis)
@@ -706,6 +755,19 @@ def _handle_analyze_stock(
         ok=True,
         message=analysis + "\n\n" + footer,
     )
+
+
+def _handle_stock_decision_card(symbol: str, market: str) -> CommandResult:
+    context = repository.get_stock_context(symbol=symbol, market=market)
+    if not context.get("stock"):
+        return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+    card = build_stock_decision_card(context, latest_research_job=_latest_research_job(symbol, market))
+    return CommandResult(ok=True, message=render_stock_decision_card(card))
+
+
+def _latest_research_job(symbol: str, market: str) -> dict[str, Any] | None:
+    jobs = list_research_jobs_for_stock(symbol=symbol, market=market, limit=1)
+    return jobs[0] if jobs else None
 
 
 def _handle_research_draft(
@@ -1020,6 +1082,8 @@ def _create_codex_research_job(
         import_needs_review=False,
         refresh=refresh,
         source=source,
+        execution_location="cloud_worker",
+        created_from="command_router",
     )
 
 
@@ -1147,13 +1211,20 @@ def _render_research_job_create_result(
     skipped_invalid: list[dict[str, Any]],
 ) -> str:
     lines = [
-        "Codex 研究任务已创建：",
+        "Codex 研究任务已创建（默认由 cloud_worker 执行）：",
         f"- 新建/复用队列任务：{len(created)}",
         f"- 已入库跳过：{len(skipped_existing)}",
         f"- 无效持仓跳过：{len(skipped_invalid)}",
     ]
     if created:
-        lines.append("- 任务：" + "、".join(f"#{item['id']} {item['symbol']} {item['market']} {item['status']}" for item in created[:10]))
+        lines.append(
+            "- 任务："
+            + "、".join(
+                f"#{item['id']} {item['symbol']} {item['market']} {item['status']} "
+                f"{item.get('execution_location') or 'cloud_worker'}"
+                for item in created[:10]
+            )
+        )
     if skipped_existing:
         lines.append("- 已跳过：" + "、".join(f"{item['symbol']} {item['market']}" for item in skipped_existing[:10]))
     return "\n".join(lines)
@@ -1171,10 +1242,34 @@ def _render_research_jobs(jobs: list[dict[str, Any]]) -> str:
         "- 汇总：" + "，".join(f"{status} {count}" for status, count in sorted(counts.items())),
     ]
     for job in jobs[:20]:
-        title = f"#{job['id']} {job['symbol']} {job['market']} {job.get('status')}"
+        execution_location = job.get("execution_location") or "unknown"
+        worker = job.get("worker_name") or "-"
+        artifact_flags = job.get("artifacts") if isinstance(job.get("artifacts"), dict) else {}
+        artifact_text = "/".join(key for key, exists in artifact_flags.items() if exists) or "none"
+        import_status = job.get("import_status") or "-"
+        token_usage = _format_token_usage(job.get("token_usage"))
+        warnings_count = job.get("warnings_count", 0)
+        title = (
+            f"#{job['id']} {job['symbol']} {job['market']} {job.get('status')} "
+            f"loc={execution_location} worker={worker}"
+        )
         summary = job.get("result_summary") or job.get("error") or ""
-        lines.append(f"- {title}" + (f"：{summary[:80]}" if summary else ""))
+        details = (
+            f"provider={job.get('provider')} source_policy={job.get('source_policy')} "
+            f"audit={job.get('audit_status') or 'unknown'} warnings={warnings_count} "
+            f"token_usage={token_usage} artifacts={artifact_text} import={import_status}"
+        )
+        lines.append(f"- {title}；{details}" + (f"：{summary[:80]}" if summary else ""))
     return "\n".join(lines)
+
+
+def _format_token_usage(token_usage: Any) -> str:
+    if not isinstance(token_usage, dict) or not token_usage:
+        return "unknown"
+    for key in ("total_tokens", "total", "input_tokens", "output_tokens"):
+        if token_usage.get(key) is not None:
+            return str(token_usage[key])
+    return "present"
 
 
 def _analysis_footer(context: dict[str, Any], output_path: Path, include_artifact_path: bool) -> str:

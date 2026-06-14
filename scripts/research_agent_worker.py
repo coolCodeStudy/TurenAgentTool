@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -104,7 +105,13 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
     artifact_dir = config.artifact_root / f"job_{job_id}_{symbol}_{market}"
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Processing research job #{job_id}: {symbol} {market} provider={provider}", flush=True)
+    started_at = datetime.now(UTC).isoformat()
+    execution_location = str(job.get("execution_location") or "cloud_worker")
+    print(
+        f"Processing research job #{job_id}: {symbol} {market} provider={provider} "
+        f"execution_location={execution_location} worker={config.worker_name}",
+        flush=True,
+    )
     if provider == "openai":
         result = run_single_stock_research(
             symbol=symbol,
@@ -125,7 +132,17 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
             result_summary=result.message,
             error="; ".join(result.errors) if result.errors else None,
             artifact_dir=str(artifact_dir),
-            artifacts=result.to_summary(),
+            artifact_location=str(artifact_dir),
+            artifacts={
+                **result.to_summary(),
+                "execution": _execution_metadata(
+                    job=job,
+                    config=config,
+                    artifact_dir=artifact_dir,
+                    started_at=started_at,
+                ),
+                "import_status": _import_status_from_result(result),
+            },
             worker_log=f"openai provider finished with status={result.status} audit={result.audit_status}",
         )
         return
@@ -148,7 +165,18 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
             status="failed",
             error=seed.message,
             artifact_dir=str(artifact_dir),
-            artifacts=seed.to_summary(),
+            artifact_location=str(artifact_dir),
+            artifacts={
+                **seed.to_summary(),
+                "execution": _execution_metadata(
+                    job=job,
+                    config=config,
+                    artifact_dir=artifact_dir,
+                    started_at=started_at,
+                ),
+                "artifact_location": str(artifact_dir),
+                "import_status": "not_imported",
+            },
             worker_log="official-source seed stage failed",
         )
         return
@@ -182,6 +210,12 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
         artifact_dir=artifact_dir,
         draft_path=seed.draft_path,
         discovery_path=discovery_path,
+        execution_metadata=_execution_metadata(
+            job=job,
+            config=config,
+            artifact_dir=artifact_dir,
+            started_at=started_at,
+        ),
     )
     update_research_job(
         job_id=job_id,
@@ -189,6 +223,7 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
         result_summary=final["summary"],
         error=final.get("error"),
         artifact_dir=str(artifact_dir),
+        artifact_location=str(artifact_dir),
         artifacts=final["artifacts"],
         source_discovery=final["source_discovery"],
         worker_log=final["worker_log"],
@@ -200,6 +235,7 @@ def finalize_research_artifacts(
     artifact_dir: Path,
     draft_path: Path | None,
     discovery_path: Path,
+    execution_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     if draft_path is None or not draft_path.exists():
         return {
@@ -254,11 +290,14 @@ def finalize_research_artifacts(
         summary = "draft generated but needs review"
 
     artifacts = {
+        "execution": execution_metadata,
         "draft_path": str(draft_path),
         "source_facts_path": str(source_facts_path),
         "audit_path": str(audit_path),
         "review_path": str(review_path),
+        "artifact_location": str(artifact_dir),
         "imported_stock_id": imported_stock_id,
+        "import_status": "imported" if imported_stock_id is not None else ("pending_review" if status == "needs_review" else "not_imported"),
         "audit_status": audit.status,
         "draft_json": draft,
         "source_facts_json": source_facts,
@@ -276,6 +315,35 @@ def finalize_research_artifacts(
         "source_discovery": _source_discovery_payload(discovery_path),
         "worker_log": f"research finalized status={status} audit={audit.status}",
     }
+
+
+def _execution_metadata(
+    job: dict[str, Any],
+    config: ResearchWorkerConfig,
+    artifact_dir: Path,
+    started_at: str,
+) -> dict[str, Any]:
+    return {
+        "execution_location": job.get("execution_location") or "cloud_worker",
+        "worker_name": config.worker_name,
+        "created_from": job.get("created_from"),
+        "requested_by": job.get("requested_by") or job.get("sender"),
+        "artifact_location": str(artifact_dir),
+        "started_at": started_at,
+        "finished_at": datetime.now(UTC).isoformat(),
+        "provider": job.get("provider") or "codex",
+        "source_policy": job.get("source_policy") or "broad_search",
+    }
+
+
+def _import_status_from_result(result: Any) -> str:
+    if getattr(result, "imported_stock_id", None) is not None:
+        return "imported"
+    if getattr(result, "status", None) == "needs_review":
+        return "pending_review"
+    if getattr(result, "status", None) == "imported":
+        return "imported"
+    return "not_imported"
 
 
 def build_codex_research_prompt(

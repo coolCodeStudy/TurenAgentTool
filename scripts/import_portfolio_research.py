@@ -28,7 +28,19 @@ def main() -> None:
     parser.add_argument("--refresh", action="store_true", help="Refresh stocks that already exist.")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--summary-output", type=Path)
+    parser.add_argument(
+        "--confirm-local-batch",
+        action="store_true",
+        help="Required because this script runs batch research in the local Codex environment.",
+    )
     args = parser.parse_args()
+
+    print("Execution location: local_codex")
+    if not args.confirm_local_batch:
+        raise SystemExit(
+            "Refusing to run local batch research without --confirm-local-batch. "
+            "Use scripts/create_research_jobs.py to enqueue cloud_worker jobs instead."
+        )
 
     run_schema()
     positions = get_futu_positions()

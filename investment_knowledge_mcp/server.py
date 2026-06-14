@@ -16,6 +16,7 @@ from investment_knowledge_mcp.command_router import (
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
+from investment_knowledge_mcp.display import build_stock_decision_card
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 from investment_knowledge_mcp.ops_client import (
     fetch_cloud_system_status,
@@ -28,6 +29,7 @@ from investment_knowledge_mcp.ops_client import (
 )
 from investment_knowledge_mcp.research.jobs import create_research_job as create_research_job_record
 from investment_knowledge_mcp.research.jobs import list_research_jobs as list_research_job_records
+from investment_knowledge_mcp.research.jobs import list_research_jobs_for_stock
 
 
 config = get_config()
@@ -43,6 +45,15 @@ mcp = FastMCP(
 def search_stock(symbol: str, market: str) -> dict[str, Any]:
     """Search a stock profile with linked sectors, knowledge, and user insights."""
     return repository.search_stock(symbol=symbol, market=market)
+
+
+@mcp.tool()
+def inspect_stock_decision_card(symbol: str, market: str) -> dict[str, Any]:
+    """Build the default Level 1 decision card for a stock without expanding evidence."""
+    context = repository.get_stock_context(symbol=symbol, market=market)
+    jobs = list_research_jobs_for_stock(symbol=symbol, market=market, limit=1)
+    latest_job = jobs[0] if jobs else None
+    return build_stock_decision_card(context, latest_research_job=latest_job)
 
 
 @mcp.tool()
@@ -312,6 +323,9 @@ def create_research_job(
         refresh=refresh,
         sender=sender,
         source=source,
+        execution_location="cloud_worker",
+        created_from="mcp_tool",
+        requested_by=sender,
     )
 
 
@@ -359,6 +373,9 @@ def create_portfolio_research_jobs(
                 refresh=refresh,
                 sender=sender,
                 source=source,
+                execution_location="cloud_worker",
+                created_from="mcp_tool",
+                requested_by=sender,
             )
         )
     return {
@@ -372,9 +389,9 @@ def create_portfolio_research_jobs(
 
 
 @mcp.tool()
-def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[dict[str, Any]]:
+def list_research_jobs(status: str | None = "queued", limit: int = 20, verbose: bool = False) -> list[dict[str, Any]]:
     """List async stock research jobs."""
-    return list_research_job_records(status=status, limit=limit)
+    return list_research_job_records(status=status, limit=limit, verbose=verbose)
 
 
 @mcp.tool()

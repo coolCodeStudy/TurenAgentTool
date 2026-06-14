@@ -268,6 +268,10 @@ CREATE TABLE IF NOT EXISTS research_jobs (
   error TEXT,
   source TEXT,
   sender TEXT,
+  execution_location TEXT NOT NULL DEFAULT 'cloud_worker',
+  requested_by TEXT,
+  created_from TEXT,
+  artifact_location TEXT,
   worker_name TEXT,
   worker_log TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -276,9 +280,28 @@ CREATE TABLE IF NOT EXISTS research_jobs (
   worker_finished_at TIMESTAMPTZ,
   CHECK (status IN ('queued', 'running', 'drafted', 'needs_review', 'imported', 'failed', 'cancelled')),
   CHECK (priority IN ('low', 'normal', 'high')),
-  CHECK (source_policy IN ('official_first', 'broad_search', 'user_sources')),
-  CHECK (provider IN ('codex', 'openai', 'none'))
+  CHECK (source_policy IN ('official_only', 'official_first', 'broad_search', 'user_sources')),
+  CHECK (provider IN ('codex', 'openai', 'none')),
+  CHECK (execution_location IN ('cloud_worker', 'local_codex', 'manual_import', 'import_only'))
 );
+
+DO $$
+BEGIN
+  ALTER TABLE research_jobs ADD COLUMN IF NOT EXISTS execution_location TEXT NOT NULL DEFAULT 'cloud_worker';
+  ALTER TABLE research_jobs ADD COLUMN IF NOT EXISTS requested_by TEXT;
+  ALTER TABLE research_jobs ADD COLUMN IF NOT EXISTS created_from TEXT;
+  ALTER TABLE research_jobs ADD COLUMN IF NOT EXISTS artifact_location TEXT;
+
+  ALTER TABLE research_jobs DROP CONSTRAINT IF EXISTS research_jobs_source_policy_check;
+  ALTER TABLE research_jobs
+    ADD CONSTRAINT research_jobs_source_policy_check
+    CHECK (source_policy IN ('official_only', 'official_first', 'broad_search', 'user_sources'));
+
+  ALTER TABLE research_jobs DROP CONSTRAINT IF EXISTS research_jobs_execution_location_check;
+  ALTER TABLE research_jobs
+    ADD CONSTRAINT research_jobs_execution_location_check
+    CHECK (execution_location IN ('cloud_worker', 'local_codex', 'manual_import', 'import_only'));
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_research_jobs_status_created_at
   ON research_jobs(status, created_at DESC);

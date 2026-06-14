@@ -12,6 +12,8 @@ from investment_knowledge_mcp.serialization import to_jsonable
 TERMINAL_STATUSES = {"drafted", "needs_review", "imported", "failed", "cancelled"}
 ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_CODEX_MAX_ACTIVE_JOBS = 1
+SOURCE_POLICIES = {"official_only", "official_first", "broad_search", "user_sources"}
+EXECUTION_LOCATIONS = {"cloud_worker", "local_codex", "manual_import", "import_only"}
 
 
 def create_research_job(
@@ -26,12 +28,18 @@ def create_research_job(
     refresh: bool = False,
     source: str | None = None,
     sender: str | None = None,
+    execution_location: str = "cloud_worker",
+    created_from: str | None = None,
+    requested_by: str | None = None,
 ) -> dict[str, Any]:
     symbol = _normalize_symbol(symbol)
     market = _normalize_market(market)
     priority = _normalize_choice(priority, {"low", "normal", "high"}, "normal")
-    source_policy = _normalize_choice(source_policy, {"official_first", "broad_search", "user_sources"}, "broad_search")
+    source_policy = _normalize_choice(source_policy, SOURCE_POLICIES, "broad_search")
     provider = _normalize_choice(provider, {"codex", "openai", "none"}, "codex")
+    execution_location = _normalize_choice(execution_location, EXECUTION_LOCATIONS, "cloud_worker")
+    created_from = created_from or _created_from_source(source)
+    requested_by = requested_by or sender
 
     with transaction() as conn:
         existing = conn.execute(
@@ -70,9 +78,10 @@ def create_research_job(
             """
             INSERT INTO research_jobs (
               symbol, market, name, priority, source_policy, provider,
-              auto_import, import_needs_review, refresh, source, sender
+              auto_import, import_needs_review, refresh, source, sender,
+              execution_location, created_from, requested_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -87,36 +96,23 @@ def create_research_job(
                 refresh,
                 source,
                 sender,
+                execution_location,
+                created_from,
+                requested_by,
             ),
         ).fetchone()
     return to_jsonable(row)
 
 
-def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[dict[str, Any]]:
+def list_research_jobs(status: str | None = "queued", limit: int = 20, verbose: bool = False) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 100))
     with transaction() as conn:
-        if status is None or status == "all":
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM research_jobs
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM research_jobs
-                WHERE status = %s
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (status, limit),
-            ).fetchall()
-    return to_jsonable(rows)
+        rows = conn.execute(
+            _list_research_jobs_sql(status=status, verbose=verbose),
+            (limit,) if status is None or status == "all" else (status, limit),
+        ).fetchall()
+    jobs = to_jsonable(rows)
+    return jobs if verbose else [_summarize_research_job(job) for job in jobs]
 
 
 def get_research_job(job_id: int) -> dict[str, Any] | None:
@@ -224,6 +220,7 @@ def claim_next_research_job(worker_name: str = "research-agent-worker") -> dict[
             )
             UPDATE research_jobs AS job SET
               status = 'running',
+              execution_location = COALESCE(NULLIF(execution_location, ''), 'cloud_worker'),
               worker_name = %s,
               worker_started_at = COALESCE(worker_started_at, now()),
               updated_at = now(),
@@ -246,6 +243,7 @@ def update_research_job(
     artifacts: dict[str, Any] | None = None,
     source_discovery: dict[str, Any] | None = None,
     worker_log: str | None = None,
+    artifact_location: str | None = None,
 ) -> dict[str, Any]:
     status = _normalize_choice(status, {"queued", "running", *TERMINAL_STATUSES}, "failed")
     with transaction() as conn:
@@ -256,6 +254,7 @@ def update_research_job(
               result_summary = COALESCE(%s, result_summary),
               error = %s,
               artifact_dir = COALESCE(%s, artifact_dir),
+              artifact_location = COALESCE(%s, artifact_location, %s),
               artifacts = CASE WHEN %s::jsonb IS NULL THEN artifacts ELSE %s::jsonb END,
               source_discovery = CASE WHEN %s::jsonb IS NULL THEN source_discovery ELSE %s::jsonb END,
               worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), NULLIF(%s, '')),
@@ -271,6 +270,8 @@ def update_research_job(
                 status,
                 result_summary,
                 error,
+                artifact_dir,
+                artifact_location,
                 artifact_dir,
                 Jsonb(artifacts) if artifacts is not None else None,
                 Jsonb(artifacts) if artifacts is not None else None,
@@ -326,6 +327,79 @@ def _normalize_market(market: str) -> str:
 def _normalize_choice(value: str, allowed: set[str], default: str) -> str:
     cleaned = (value or "").strip().lower()
     return cleaned if cleaned in allowed else default
+
+
+def _list_research_jobs_sql(status: str | None, verbose: bool) -> str:
+    columns = "*" if verbose else """
+                id, symbol, market, name, status, priority, source_policy, provider,
+                auto_import, import_needs_review, refresh, result_summary, error,
+                source, sender, execution_location, requested_by, created_from,
+                worker_name, created_at, updated_at,
+                worker_started_at, worker_finished_at,
+                artifact_dir, artifact_location,
+                artifacts ? 'draft_path' AS has_draft_artifact,
+                artifacts ? 'source_facts_path' AS has_source_facts_artifact,
+                artifacts ? 'audit_path' AS has_audit_artifact,
+                artifacts ? 'review_path' AS has_review_artifact,
+                artifacts ->> 'audit_status' AS audit_status,
+                artifacts -> 'warnings' AS warnings,
+                artifacts -> 'errors' AS errors,
+                COALESCE(
+                  artifacts -> 'token_usage',
+                  artifacts -> 'usage',
+                  source_discovery -> 'token_usage',
+                  source_discovery -> 'usage'
+                ) AS token_usage,
+                COALESCE(
+                  artifacts ->> 'import_status',
+                  CASE WHEN artifacts ? 'imported_stock_id' AND artifacts ->> 'imported_stock_id' <> 'null' THEN 'imported' END,
+                  CASE WHEN auto_import THEN 'pending' ELSE 'disabled' END
+                ) AS import_status
+                """
+    where = "" if status is None or status == "all" else "WHERE status = %s"
+    return f"""
+            SELECT {columns}
+            FROM research_jobs
+            {where}
+            ORDER BY created_at DESC
+            LIMIT %s
+            """
+
+
+def _summarize_research_job(job: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(job)
+    warnings = job.get("warnings") if isinstance(job.get("warnings"), list) else []
+    errors = job.get("errors") if isinstance(job.get("errors"), list) else []
+    summary.pop("warnings", None)
+    summary.pop("errors", None)
+    has_draft_artifact = bool(summary.pop("has_draft_artifact", False))
+    has_source_facts_artifact = bool(summary.pop("has_source_facts_artifact", False))
+    has_audit_artifact = bool(summary.pop("has_audit_artifact", False))
+    has_review_artifact = bool(summary.pop("has_review_artifact", False))
+    return {
+        **summary,
+        "warnings_count": len(warnings),
+        "warnings_preview": warnings[:3],
+        "errors_count": len(errors),
+        "errors_preview": errors[:3],
+        "artifacts": {
+            "draft": has_draft_artifact,
+            "source_facts": has_source_facts_artifact,
+            "audit": has_audit_artifact,
+            "review": has_review_artifact,
+        },
+    }
+
+
+def _created_from_source(source: str | None) -> str:
+    cleaned = (source or "").strip().lower()
+    if cleaned in {"command", "command_router", "hermes"}:
+        return "command_router"
+    if cleaned in {"script", "cli"}:
+        return "script"
+    if cleaned in {"codex", "codex_desktop", "codex-app"}:
+        return "codex_desktop"
+    return "mcp_tool"
 
 
 def _max_active_codex_jobs() -> int:

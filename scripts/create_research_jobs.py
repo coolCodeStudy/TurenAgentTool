@@ -13,12 +13,17 @@ from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 from investment_knowledge_mcp.research.jobs import create_research_job
+from scripts.db_write_guard import db_target_summary, ensure_not_default_local_write
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create Codex-first research jobs from current Futu holdings.")
     parser.add_argument("--provider", choices=["codex", "openai", "none"], default="codex")
-    parser.add_argument("--source-policy", choices=["official_first", "broad_search", "user_sources"], default="broad_search")
+    parser.add_argument(
+        "--source-policy",
+        choices=["official_only", "official_first", "broad_search", "user_sources"],
+        default="broad_search",
+    )
     parser.add_argument("--priority", choices=["low", "normal", "high"], default="normal")
     parser.add_argument("--include-existing", action="store_true", help="Also enqueue stocks already in the knowledge base.")
     parser.add_argument("--refresh", action="store_true", help="Refresh existing stock research when jobs run.")
@@ -26,8 +31,15 @@ def main() -> None:
     parser.add_argument("--sender", default="codex")
     parser.add_argument("--source", default="codex")
     parser.add_argument("--summary-output", type=Path, default=PROJECT_ROOT / "drafts" / "research_jobs_summary.json")
+    parser.add_argument(
+        "--allow-local-db",
+        action="store_true",
+        help="Allow writes to the default local dev database target.",
+    )
     args = parser.parse_args()
 
+    ensure_not_default_local_write(allow_local_db=args.allow_local_db)
+    print("Execution location: cloud_worker")
     run_schema()
     snapshot = get_futu_positions()
     positions = _active_positions(snapshot)
@@ -61,6 +73,9 @@ def main() -> None:
             refresh=args.refresh,
             source=args.source,
             sender=args.sender,
+            execution_location="cloud_worker",
+            created_from="script",
+            requested_by=args.sender,
         )
         created.append(job)
 
@@ -74,6 +89,7 @@ def main() -> None:
     }
     args.summary_output.parent.mkdir(parents=True, exist_ok=True)
     args.summary_output.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"DB target: {db_target_summary()}")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"Summary written to {args.summary_output}")
 

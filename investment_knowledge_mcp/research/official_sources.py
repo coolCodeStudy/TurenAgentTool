@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
+import html as html_module
 import json
 import re
 from typing import Any
@@ -91,6 +92,48 @@ ETF_ISSUER_SOURCES: dict[str, list[SourceDocument]] = {
     ],
 }
 
+US_ISSUER_IR_PAGES: dict[str, list[SourceDocument]] = {
+    "MU": [
+        SourceDocument(
+            key="issuer_ir_quarterly_results_page",
+            source_type="quarterly_results",
+            title="Micron Technology Quarterly Results",
+            url="https://investors.micron.com/financial-information/quarterly-results",
+            publisher="Micron Technology",
+        ),
+        SourceDocument(
+            key="issuer_ir_annual_reports_page",
+            source_type="annual_report",
+            title="Micron Technology Annual Reports",
+            url="https://investors.micron.com/financial-information/annual-reports",
+            publisher="Micron Technology",
+        ),
+    ],
+    "MRVL": [
+        SourceDocument(
+            key="issuer_ir_financial_results_page",
+            source_type="quarterly_results",
+            title="Marvell Technology Financial Results",
+            url="https://investor.marvell.com/financial-information/financial-results",
+            publisher="Marvell Technology",
+        ),
+        SourceDocument(
+            key="issuer_ir_annual_reports_page",
+            source_type="annual_report",
+            title="Marvell Technology Annual Reports",
+            url="https://investor.marvell.com/sec-filings/annual-reports",
+            publisher="Marvell Technology",
+        ),
+        SourceDocument(
+            key="issuer_ir_quarterly_reports_page",
+            source_type="quarterly_results",
+            title="Marvell Technology Quarterly Reports",
+            url="https://investor.marvell.com/sec-filings/quarterly-reports",
+            publisher="Marvell Technology",
+        ),
+    ],
+}
+
 
 @dataclass(frozen=True)
 class FilingCandidate:
@@ -154,12 +197,17 @@ class OfficialResearchProvider(ResearchProvider):
         else:
             notes.append("SEC CIK lookup failed; no SEC sources collected.")
 
-        if company_name:
-            ir_source = _guess_company_ir_source(client, symbol=symbol, company_name=company_name, max_chars=self.max_excerpt_chars)
-            if ir_source:
-                sources.append(ir_source)
-                notes.append("company IR source guessed from company name.")
+        ir_sources = _fetch_us_issuer_ir_sources(
+            client,
+            symbol=symbol,
+            company_name=company_name,
+            max_chars=self.max_excerpt_chars,
+        )
+        if ir_sources:
+            sources.extend(ir_sources)
+            notes.append("issuer IR financial-report pages collected.")
 
+        sources = _dedupe_source_documents(sources)
         return ResearchBundle(symbol=symbol, market="US", company_name=company_name, sources=sources, notes=notes)
 
     def _collect_hk(self, client: httpx.Client, symbol: str, company_name: str | None) -> ResearchBundle:
@@ -245,6 +293,8 @@ def _fetch_source_document(client: httpx.Client, candidate: FilingCandidate, max
             excerpt = _extract_pdf_text(response.content)
         else:
             excerpt = _extract_html_text(response.text)
+        if _is_sec_filing_url(candidate.url):
+            excerpt = _select_sec_filing_excerpt(excerpt, source_type=candidate.source_type, max_chars=max_chars)
     except Exception as exc:  # pragma: no cover - defensive network fallback
         notes = f"fetch failed: {exc}"
 
@@ -278,13 +328,135 @@ def _extract_pdf_text(content: bytes) -> str:
 
 
 def _extract_html_text(html: str) -> str:
+    if _looks_like_sec_ixbrl(html):
+        return _extract_sec_ixbrl_text(html)
     try:
-        from investment_knowledge_mcp.research.providers import extract_html_title_and_text
+        from bs4 import BeautifulSoup  # type: ignore
 
-        _title, text = extract_html_title_and_text(html)
-        return text
+        soup = BeautifulSoup(html, "html.parser")
+        _remove_low_signal_html_nodes(soup)
+        return _normalize_extracted_text(soup.get_text(" ", strip=True))
     except Exception:
-        return re.sub(r"<[^>]+>", " ", html)
+        try:
+            from investment_knowledge_mcp.research.providers import extract_html_title_and_text
+
+            _title, text = extract_html_title_and_text(html)
+            return _normalize_extracted_text(text)
+        except Exception:
+            return _normalize_extracted_text(re.sub(r"<[^>]+>", " ", html))
+
+
+def _looks_like_sec_ixbrl(html: str) -> bool:
+    head = html[:20000].lower()
+    return "www.xbrl.org" in head or "ix:nonfraction" in head or "ix:nonnumeric" in head or "inline xbrl" in head
+
+
+def _extract_sec_ixbrl_text(html: str) -> str:
+    html = _strip_ixbrl_hidden_blocks(html)
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+    except Exception:
+        return _normalize_extracted_text(re.sub(r"<[^>]+>", " ", html))
+
+    soup = BeautifulSoup(html, "html.parser")
+    _remove_low_signal_html_nodes(soup)
+    for node in soup.find_all(True):
+        name = (node.name or "").lower()
+        if name.startswith("ix:") and name not in {"ix:nonnumeric", "ix:nonfraction"}:
+            node.decompose()
+            continue
+        if node.get("continuedat"):
+            node.attrs.pop("continuedat", None)
+        if node.get("contextref"):
+            node.attrs.pop("contextref", None)
+        if node.get("unitref"):
+            node.attrs.pop("unitref", None)
+        if node.get("decimals"):
+            node.attrs.pop("decimals", None)
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\bInline XBRL Viewer\b", " ", text, flags=re.I)
+    text = re.sub(r"\bixviewer\b", " ", text, flags=re.I)
+    return _normalize_extracted_text(text)
+
+
+def _normalize_extracted_text(text: str) -> str:
+    return re.sub(r"\s+", " ", html_module.unescape(text)).strip()
+
+
+def _strip_ixbrl_hidden_blocks(html: str) -> str:
+    cleaned = html
+    for tag in ("header", "hidden", "references", "resources"):
+        cleaned = re.sub(rf"<ix:{tag}\b[^>]*>.*?</ix:{tag}>", " ", cleaned, flags=re.I | re.S)
+    return cleaned
+
+
+def _is_sec_filing_url(url: str) -> bool:
+    return bool(re.search(r"https?://www\.sec\.gov/Archives/edgar/data/", url, flags=re.I))
+
+
+def _select_sec_filing_excerpt(text: str, source_type: str, max_chars: int) -> str:
+    normalized = _normalize_extracted_text(text)
+    if not normalized:
+        return ""
+
+    if source_type == "annual_report":
+        patterns = [
+            r"\bITEM\s+1\.?\s+BUSINESS\b",
+            r"\bITEM\s+7\.?\s+MANAGEMENT['’]S DISCUSSION AND ANALYSIS\b",
+            r"\bCONSOLIDATED STATEMENTS? OF OPERATIONS\b",
+        ]
+    elif source_type == "quarterly_results":
+        patterns = [
+            r"\bCONDENSED CONSOLIDATED STATEMENTS? OF OPERATIONS\b",
+            r"\bRESULTS OF OPERATIONS\b",
+            r"\bLIQUIDITY AND CAPITAL RESOURCES\b",
+        ]
+    else:
+        patterns = [
+            r"\bITEM\s+2\.0?2\b",
+            r"\bITEM\s+5\.0?7\b",
+            r"\bITEM\s+8\.0?1\b",
+        ]
+
+    snippets: list[str] = []
+    snippet_chars = max(1800, max_chars // max(1, len(patterns)))
+    for pattern in patterns:
+        section_start = _find_sec_section_start(normalized, pattern)
+        if section_start is None:
+            continue
+        start = max(0, section_start - 200)
+        end = min(len(normalized), section_start + snippet_chars)
+        snippets.append(normalized[start:end].strip())
+
+    if not snippets:
+        return normalized
+
+    selected = "\n\n".join(_dedupe_strings(snippets))
+    return selected if len(selected) <= max_chars else selected[:max_chars].rstrip() + "..."
+
+
+def _find_sec_section_start(text: str, pattern: str) -> int | None:
+    matches = list(re.finditer(pattern, text, flags=re.I))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        return matches[1].start()
+    return matches[0].start()
+
+
+def _remove_low_signal_html_nodes(soup: Any) -> None:
+    for node in soup.find_all(["script", "style", "noscript", "template", "svg", "nav", "footer"]):
+        node.decompose()
+    for node in soup.find_all(True):
+        name = (node.name or "").lower()
+        style = str(node.get("style") or "").lower().replace(" ", "")
+        classes = " ".join(str(item).lower() for item in (node.get("class") or []))
+        if name in {"ix:header", "ix:hidden", "ix:references", "ix:resources"}:
+            node.decompose()
+        elif node.has_attr("hidden") or "display:none" in style or "visibility:hidden" in style:
+            node.decompose()
+        elif "screen-reader" in classes or "sr-only" in classes:
+            node.decompose()
 
 
 def _lookup_sec_cik(client: httpx.Client, symbol: str) -> str | None:
@@ -310,7 +482,7 @@ def _fetch_sec_recent_filings(client: httpx.Client, cik: str) -> list[FilingCand
     docs = recent.get("primaryDocument", [])
 
     priority = {"10-K": 0, "20-F": 0, "10-Q": 1, "8-K": 2, "6-K": 2}
-    candidates: list[tuple[int, FilingCandidate]] = []
+    candidates: list[tuple[int, str, FilingCandidate]] = []
     for form, accession, filing_date, doc in zip(forms, accession_numbers, dates, docs):
         if form not in priority or not accession or not doc:
             continue
@@ -321,6 +493,7 @@ def _fetch_sec_recent_filings(client: httpx.Client, cik: str) -> list[FilingCand
         candidates.append(
             (
                 priority[form],
+                str(filing_date or ""),
                 FilingCandidate(
                     key=key,
                     source_type=source_type,
@@ -331,9 +504,40 @@ def _fetch_sec_recent_filings(client: httpx.Client, cik: str) -> list[FilingCand
                 ),
             )
         )
-    candidates.sort(key=lambda item: item[1].published_at or "", reverse=True)
-    candidates.sort(key=lambda item: item[0])
-    return [candidate for _priority, candidate in candidates]
+    return _select_sec_recent_filing_candidates(candidates)
+
+
+def _select_sec_recent_filing_candidates(
+    candidates: list[tuple[int, str, FilingCandidate]],
+) -> list[FilingCandidate]:
+    by_recency = sorted(candidates, key=lambda item: item[1], reverse=True)
+
+    selected: list[FilingCandidate] = []
+    selected_keys: set[str] = set()
+
+    def add(candidate: FilingCandidate) -> None:
+        if candidate.key in selected_keys:
+            return
+        selected.append(candidate)
+        selected_keys.add(candidate.key)
+
+    for source_type in ("annual_report", "quarterly_results"):
+        matching = [item for item in by_recency if item[2].source_type == source_type]
+        if matching:
+            add(matching[0][2])
+
+    for priority in sorted({item[0] for item in candidates if item[0] > 1}):
+        for _priority, _date, candidate in sorted(
+            [item for item in candidates if item[0] == priority],
+            key=lambda item: item[1],
+            reverse=True,
+        ):
+            add(candidate)
+            if len(selected) >= 5:
+                break
+        if len(selected) >= 5:
+            break
+    return selected
 
 
 def _guess_company_ir_source(
@@ -346,6 +550,23 @@ def _guess_company_ir_source(
     # Keep v1 conservative: do not scrape search engines. Future versions can add
     # a curated IR-domain map. SEC/issuer sources remain the official default.
     return None
+
+
+def _fetch_us_issuer_ir_sources(
+    client: httpx.Client,
+    symbol: str,
+    company_name: str | None,
+    max_chars: int,
+) -> list[SourceDocument]:
+    pages = US_ISSUER_IR_PAGES.get(symbol, [])
+    if not pages:
+        guessed = (
+            _guess_company_ir_source(client, symbol=symbol, company_name=company_name, max_chars=max_chars)
+            if company_name
+            else None
+        )
+        return [guessed] if guessed else []
+    return _fetch_static_sources(client, pages, max_chars)
 
 
 def _fetch_hkex_title_search(

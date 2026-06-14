@@ -52,6 +52,8 @@ class ResearchPipelineResult:
             "draft_path": str(self.draft_path) if self.draft_path else None,
             "review_path": str(self.review_path) if self.review_path else None,
             "audit_path": str(self.audit_path) if self.audit_path else None,
+            "source_facts_path": str(self.source_facts_path) if self.source_facts_path else None,
+            "import_status": "imported" if self.imported_stock_id is not None else "not_imported",
             "message": self.message,
             "errors": self.errors,
             "warnings": self.warnings,

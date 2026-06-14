@@ -24,15 +24,18 @@ from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
 from investment_knowledge_mcp.research.audit import audit_research_draft
+from investment_knowledge_mcp.research.jobs import create_research_job, list_research_jobs, update_research_job
 from investment_knowledge_mcp.research.official_sources import (
     _classify_hkex_title,
     _classify_issuer_ir_title,
     _dedupe_source_documents,
+    _extract_sec_ixbrl_text,
     _extract_report_year,
     _extract_pdf_links,
     _extract_hkex_stock_ids,
     _fetch_hk_issuer_ir_candidates,
     _select_hk_issuer_ir_candidates,
+    _select_sec_recent_filing_candidates,
     _issuer_ir_key,
     _hkex_title_search_urls,
 )
@@ -71,6 +74,8 @@ SMOKE_ROUTER_CANDIDATE = "Smoke test verifies command router candidate proposal.
 SMOKE_ROUTER_PORTFOLIO_INSIGHT = "Smoke test verifies command router portfolio insight recording."
 SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy candidate proposal."
 SMOKE_ROUTER_NATURAL_MEMORY = "我觉得 Smoke Test 的组合管理成本需要被系统识别并沉淀。"
+SMOKE_JOB_SYMBOL = "SMOKEJOB"
+SMOKE_JOB_MARKET = "TEST"
 
 
 def cleanup_smoke_data() -> None:
@@ -136,6 +141,13 @@ def cleanup_smoke_data() -> None:
             conn.execute("DELETE FROM stocks WHERE id = %s", (stock["id"],))
 
         conn.execute("DELETE FROM sources WHERE url = %s", (SMOKE_SOURCE_URL,))
+        conn.execute(
+            """
+            DELETE FROM research_jobs
+            WHERE symbol = %s AND market = %s
+            """,
+            (SMOKE_JOB_SYMBOL, SMOKE_JOB_MARKET),
+        )
         conn.execute(
             """
             DELETE FROM sectors
@@ -266,7 +278,7 @@ def main() -> None:
                 output_dir=Path(tmp_dir),
             )
             assert analyze_result.ok
-            assert "核心判断" in analyze_result.message
+            assert SMOKE_SYMBOL in analyze_result.message
             assert (Path(tmp_dir) / f"{SMOKE_SYMBOL}_{SMOKE_MARKET}_analysis_context.md").exists()
 
             natural_analyze_result = handle_command(
@@ -316,6 +328,35 @@ def main() -> None:
             )
         )
         graph_message = render_portfolio_graph_queue(graph_context)
+        old_budget_gate = os.environ.get("RESEARCH_CODEX_MAX_ACTIVE_JOBS")
+        os.environ["RESEARCH_CODEX_MAX_ACTIVE_JOBS"] = "-1"
+        research_job = create_research_job(
+            symbol=SMOKE_JOB_SYMBOL,
+            market=SMOKE_JOB_MARKET,
+            name="Smoke Research Job",
+            source="smoke_test",
+            sender="smoke",
+        )
+        updated_research_job = update_research_job(
+            job_id=int(research_job["id"]),
+            status="drafted",
+            artifact_dir="/tmp/smoke-research-job",
+            artifacts={
+                "draft_path": "/tmp/smoke-research-job/draft.json",
+                "source_facts_path": "/tmp/smoke-research-job/source_facts.json",
+                "audit_path": "/tmp/smoke-research-job/audit.md",
+                "review_path": "/tmp/smoke-research-job/review.md",
+                "warnings": ["smoke warning"],
+                "import_status": "not_imported",
+                "token_usage": {"total_tokens": 12},
+            },
+        )
+        research_job_summaries = list_research_jobs(status="all", limit=10)
+        smoke_research_summary = next(item for item in research_job_summaries if item["id"] == research_job["id"])
+        if old_budget_gate is None:
+            os.environ.pop("RESEARCH_CODEX_MAX_ACTIVE_JOBS", None)
+        else:
+            os.environ["RESEARCH_CODEX_MAX_ACTIVE_JOBS"] = old_budget_gate
 
         assert repeated_source["id"] == source["id"]
         assert repeated_knowledge["id"] == knowledge["id"]
@@ -342,13 +383,23 @@ def main() -> None:
         assert graph_context["summary"]["sector_linked_count"] == 1
         assert "持仓图谱队列" in graph_message
         assert "Missing Graph Stock" in graph_message
+        assert research_job["execution_location"] == "cloud_worker"
+        assert research_job["created_from"] == "mcp_tool"
+        assert updated_research_job["artifact_location"] == "/tmp/smoke-research-job"
+        assert smoke_research_summary["execution_location"] == "cloud_worker"
+        assert smoke_research_summary["artifacts"]["draft"]
+        assert smoke_research_summary["artifacts"]["audit"]
+        assert smoke_research_summary["warnings_count"] == 1
+        assert smoke_research_summary["import_status"] == "not_imported"
         assert not is_query_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_query_command("持仓图谱")
         assert is_query_command(f"研究草稿 {SMOKE_SYMBOL} {SMOKE_MARKET}")
         assert is_query_command("全持仓研究草稿")
+        assert is_query_command("列出研究任务")
         assert is_research_write_command("持仓图谱补全")
         assert is_research_write_command("重新审核研究任务 33")
         assert is_research_write_command("取消研究任务 33")
+        assert not is_research_write_command("列出研究任务")
         assert is_maintenance_command("停止研究worker")
         assert is_maintenance_command("启动研究worker")
         assert is_query_command("交易复盘")
@@ -749,6 +800,63 @@ def main() -> None:
             "annual_report",
             "quarterly_results",
         ]
+        sec_candidates = [
+            (
+                0,
+                "2024-10-01",
+                FilingCandidate(
+                    key="sec_10k_2024",
+                    source_type="annual_report",
+                    title="Issuer 10-K filed 2024-10-01",
+                    url="https://www.sec.gov/Archives/edgar/data/1/old/old.htm",
+                    publisher="SEC",
+                    published_at="2024-10-01T00:00:00-04:00",
+                ),
+            ),
+            (
+                0,
+                "2025-10-01",
+                FilingCandidate(
+                    key="sec_10k_2025",
+                    source_type="annual_report",
+                    title="Issuer 10-K filed 2025-10-01",
+                    url="https://www.sec.gov/Archives/edgar/data/1/new/new.htm",
+                    publisher="SEC",
+                    published_at="2025-10-01T00:00:00-04:00",
+                ),
+            ),
+            (
+                1,
+                "2026-03-01",
+                FilingCandidate(
+                    key="sec_10q_2026_q1",
+                    source_type="quarterly_results",
+                    title="Issuer 10-Q filed 2026-03-01",
+                    url="https://www.sec.gov/Archives/edgar/data/1/q1/q1.htm",
+                    publisher="SEC",
+                    published_at="2026-03-01T00:00:00-04:00",
+                ),
+            ),
+        ]
+        selected_sec_candidates = _select_sec_recent_filing_candidates(sec_candidates)
+        assert [candidate.key for candidate in selected_sec_candidates[:2]] == ["sec_10k_2025", "sec_10q_2026_q1"]
+        assert "sec_10k_2024" not in {candidate.key for candidate in selected_sec_candidates}
+        ixbrl_text = _extract_sec_ixbrl_text(
+            """
+            <html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL">
+              <body>
+                <ix:header><ix:hidden>hidden taxonomy noise 999</ix:hidden></ix:header>
+                <script>bad()</script>
+                <div>Item 1. Business</div>
+                <ix:nonNumeric contextRef="c1">Data center revenue increased.</ix:nonNumeric>
+                <ix:nonFraction contextRef="c1" unitRef="usd">1234</ix:nonFraction>
+              </body>
+            </html>
+            """
+        )
+        assert "hidden taxonomy noise" not in ixbrl_text
+        assert "Data center revenue increased." in ixbrl_text
+        assert "1234" in ixbrl_text
         assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")

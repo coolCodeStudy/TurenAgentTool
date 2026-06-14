@@ -50,6 +50,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    print("Execution location: local_codex")
     bundle = collect_with_optional_providers(
         symbol=args.symbol,
         market=args.market,
