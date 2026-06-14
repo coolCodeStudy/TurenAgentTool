@@ -684,6 +684,68 @@ def list_account_snapshots(
     return to_jsonable(rows)
 
 
+def upsert_review_report(
+    report_date: str,
+    summary: str,
+    portfolio_snapshot: dict[str, Any] | None = None,
+    risks: list[dict[str, Any]] | None = None,
+    opportunities: list[dict[str, Any]] | None = None,
+    new_knowledge_candidates: list[dict[str, Any]] | None = None,
+    report_type: str = "daily",
+    period_start: str | None = None,
+    period_end: str | None = None,
+    source_status: dict[str, Any] | None = None,
+    highlights: list[dict[str, Any]] | None = None,
+    blowups: list[dict[str, Any]] | None = None,
+    holdings_table: list[dict[str, Any]] | None = None,
+    next_week: list[dict[str, Any]] | None = None,
+    story: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO review_reports (
+              report_date, portfolio_snapshot, summary, risks, opportunities,
+              new_knowledge_candidates, report_type, period_start, period_end,
+              source_status, highlights, blowups, holdings_table, next_week, story
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (report_type, period_start, period_end) DO UPDATE SET
+              report_date = EXCLUDED.report_date,
+              portfolio_snapshot = EXCLUDED.portfolio_snapshot,
+              summary = EXCLUDED.summary,
+              risks = EXCLUDED.risks,
+              opportunities = EXCLUDED.opportunities,
+              new_knowledge_candidates = EXCLUDED.new_knowledge_candidates,
+              source_status = EXCLUDED.source_status,
+              highlights = EXCLUDED.highlights,
+              blowups = EXCLUDED.blowups,
+              holdings_table = EXCLUDED.holdings_table,
+              next_week = EXCLUDED.next_week,
+              story = EXCLUDED.story
+            RETURNING *
+            """,
+            (
+                report_date,
+                Jsonb(portfolio_snapshot or {}),
+                summary,
+                Jsonb(risks or []),
+                Jsonb(opportunities or []),
+                Jsonb(new_knowledge_candidates or []),
+                report_type,
+                period_start,
+                period_end,
+                Jsonb(source_status or {}),
+                Jsonb(highlights or []),
+                Jsonb(blowups or []),
+                Jsonb(holdings_table or []),
+                Jsonb(next_week or []),
+                Jsonb(story or {}),
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
 def upsert_trade_records(
     deals: list[dict[str, Any]],
     source: str = "futu",
@@ -735,6 +797,25 @@ def upsert_trade_records(
             inserted_or_updated += 1
 
     return {"synced_count": inserted_or_updated}
+
+
+def list_trade_records(
+    start: str,
+    end: str,
+    source: str = "futu",
+) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM trade_records
+            WHERE source = %s
+              AND trade_date BETWEEN %s AND %s
+            ORDER BY trade_date ASC, create_time ASC, id ASC
+            """,
+            (source, start, end),
+        ).fetchall()
+    return to_jsonable(rows)
 
 
 def count_trade_records(

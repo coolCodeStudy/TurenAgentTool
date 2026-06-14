@@ -57,6 +57,7 @@ def run_account_snapshot_once(logger: logging.Logger | None = None, snapshot_dat
     today = snapshot_date or datetime.now(SHANGHAI_TZ).date()
     trade_snapshot = get_futu_trade_history(start=today.isoformat(), end=today.isoformat())
     position_snapshot = get_futu_positions()
+    trade_result = repository.upsert_trade_records(trade_snapshot.deals)
     fetched_at = trade_snapshot.fetched_at.astimezone(SHANGHAI_TZ)
     row = repository.upsert_account_snapshot(
         snapshot_date=today.isoformat(),
@@ -68,9 +69,16 @@ def run_account_snapshot_once(logger: logging.Logger | None = None, snapshot_dat
             "task": "daily_account_snapshot",
             "account_error": trade_snapshot.account_error,
             "position_count": len(position_snapshot.positions),
+            "trade_count": len(trade_snapshot.deals),
+            "trade_synced_count": trade_result["synced_count"],
         },
     )
-    logger.info("saved account snapshot: date=%s id=%s", row.get("snapshot_date"), row.get("id"))
+    logger.info(
+        "saved account snapshot: date=%s id=%s trades=%s",
+        row.get("snapshot_date"),
+        row.get("id"),
+        trade_result["synced_count"],
+    )
     return row
 
 
