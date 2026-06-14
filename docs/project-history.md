@@ -1,0 +1,42 @@
+# Project History
+
+This file preserves durable milestones extracted from the retired daily records.
+It is intentionally not a day-by-day log.
+
+## MVP And Messaging
+
+- The local MVP established PostgreSQL/pgvector, stock profiles, sectors, knowledge items, user insights, candidate insights, OpenAI analysis, and DingTalk Stream bot integration.
+- DingTalk Stream bot became the main group-message entry because ordinary outgoing webhooks can send messages but are not enough for receiving interactive commands.
+- DingTalk write commands were restricted behind sender allowlists; query commands remained broadly available.
+
+## Cloud Runtime
+
+- The first cloud deployment path used GitHub Actions to package source and build/upload Docker images to ECS, avoiding unreliable direct pulls from ECS.
+- Production database connection moved from hand-built `DATABASE_URL` strings to structured PostgreSQL environment variables after special characters in passwords caused host parsing failures.
+- The primary runtime later moved to Singapore ECS because it could reach OpenAI reliably; the older domestic ECS path was not kept as the main runtime.
+- The current main ops path is `Codex App -> InvestmentKnowledge MCP /mcp -> ECS internal Ops API`. Hermes remains optional rather than the primary dependency.
+
+## Futu/OpenD
+
+- Futu OpenD was stabilized with a simple systemd setup: OpenD listens on `127.0.0.1:11111`, with a host/Docker bridge proxy exposed on `11112`.
+- Container access uses `host.docker.internal` so app containers can reach the host OpenD proxy.
+- Futu position queries are read-only and SDK-call parameters are filtered against the installed SDK signature.
+
+## Portfolio And Review
+
+- Portfolio display and analysis were adjusted for multi-currency holdings: HKD and USD should not be naively summed when FX conversion is unavailable.
+- The product direction shifted away from daily long reports toward lower-friction portfolio review, weekly review, account snapshots, cash-flow adjustment, and knowledge-assisted interpretation.
+- Account snapshots and trade records are the intended foundation for stricter monthly/weekly return attribution.
+
+## Research Pipeline
+
+- A Codex-first research job pipeline was introduced for queued stock research, artifacts, review/audit, import status, and worker observability.
+- Cloud research worker execution became the default path, with execution metadata such as `execution_location`, `worker`, artifact flags, warnings, token usage, and import status visible in job lists.
+- Task 2 was validated with a real cloud research sample: ASML US completed queueing, claiming, source expansion, draft, audit/review, artifact writeback, and import.
+- Task 3 changed default stock display to Level 1 decision cards while keeping full evidence and artifacts available through explicit detail/verbose paths.
+
+## Known Open Items
+
+- `/mcp` public access protection remains a security TODO; short-term deployments rely on network/security-group restrictions.
+- Research worker stability, retry behavior, artifact access, and queue capacity remain ongoing control-plane concerns.
+- Weekly/monthly performance review still needs a stronger data foundation around account snapshots, trades, cash flow, and FX.

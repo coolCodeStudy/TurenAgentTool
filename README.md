@@ -4,6 +4,9 @@ InvestmentKnowledge MCP 是投资知识图谱系统的第一阶段后端骨架�
 
 ## 文档入口
 
+- Agent 操作守则：[AGENTS.md](AGENTS.md)
+- Agent 经验库：[docs/agent-lessons.md](docs/agent-lessons.md)
+- 项目历史里程碑：[docs/project-history.md](docs/project-history.md)
 - 原始需求：[我的需求.md](我的需求.md)
 - 当前工程状态：[docs/当前工程状态.md](docs/当前工程状态.md)
 - 个股录入工作流：[docs/个股录入工作流.md](docs/个股录入工作流.md)
