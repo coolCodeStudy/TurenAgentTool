@@ -12,6 +12,7 @@ from investment_knowledge_mcp.serialization import to_jsonable
 TERMINAL_STATUSES = {"drafted", "needs_review", "imported", "failed", "cancelled"}
 ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_CODEX_MAX_ACTIVE_JOBS = 1
+EXECUTION_LOCATIONS = {"cloud_worker", "local_codex", "manual", "import_only"}
 
 
 def create_research_job(
@@ -26,12 +27,14 @@ def create_research_job(
     refresh: bool = False,
     source: str | None = None,
     sender: str | None = None,
+    execution_location: str = "cloud_worker",
 ) -> dict[str, Any]:
     symbol = _normalize_symbol(symbol)
     market = _normalize_market(market)
     priority = _normalize_choice(priority, {"low", "normal", "high"}, "normal")
     source_policy = _normalize_choice(source_policy, {"official_first", "broad_search", "user_sources"}, "broad_search")
     provider = _normalize_choice(provider, {"codex", "openai", "none"}, "codex")
+    execution_location = _normalize_choice(execution_location, EXECUTION_LOCATIONS, "cloud_worker")
 
     with transaction() as conn:
         existing = conn.execute(
@@ -70,9 +73,9 @@ def create_research_job(
             """
             INSERT INTO research_jobs (
               symbol, market, name, priority, source_policy, provider,
-              auto_import, import_needs_review, refresh, source, sender
+              auto_import, import_needs_review, refresh, source, sender, execution_location
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -87,6 +90,7 @@ def create_research_job(
                 refresh,
                 source,
                 sender,
+                execution_location,
             ),
         ).fetchone()
     return to_jsonable(row)
@@ -194,7 +198,7 @@ def cancel_research_job(job_id: int, reason: str | None = None) -> dict[str, Any
               error = %s,
               worker_finished_at = now(),
               updated_at = now(),
-              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text)
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text || ' at execution_location=' || execution_location)
             WHERE id = %s
               AND status IN ('queued', 'running')
             RETURNING *
@@ -227,7 +231,7 @@ def claim_next_research_job(worker_name: str = "research-agent-worker") -> dict[
               worker_name = %s,
               worker_started_at = COALESCE(worker_started_at, now()),
               updated_at = now(),
-              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text)
+              worker_log = concat_ws(E'\n', NULLIF(worker_log, ''), %s::text || ' at execution_location=' || job.execution_location)
             FROM next_job
             WHERE job.id = next_job.id
             RETURNING job.*

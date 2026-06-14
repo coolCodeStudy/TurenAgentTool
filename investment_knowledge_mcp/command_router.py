@@ -372,6 +372,14 @@ def handle_command(
             return CommandResult(ok=False, message=str(exc))
         return CommandResult(ok=True, message=_render_research_job_create_result([job], [], []))
 
+    research_job_detail_match = re.fullmatch(
+        r"(?:研究任务详情|研究任务|research job)\s+#?(\d+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if research_job_detail_match:
+        return _handle_research_job_detail(int(research_job_detail_match.group(1)))
+
     cancel_job_match = re.fullmatch(
         r"(?:取消研究任务|停止研究任务|cancel research job)\s+#?(\d+)",
         cleaned,
@@ -611,6 +619,7 @@ def is_query_command(command: str) -> bool:
         }
         or heuristic_intent.get("intent")
         in {"portfolio_analysis", "portfolio_positions", "portfolio_graph", "system_status", "ipo_status", "trade_review"}
+        or re.fullmatch(r"(?:研究任务详情|研究任务|research job)\s+#?\d+", normalized, flags=re.IGNORECASE)
         or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
@@ -1020,7 +1029,15 @@ def _create_codex_research_job(
         import_needs_review=False,
         refresh=refresh,
         source=source,
+        execution_location="cloud_worker",
     )
+
+
+def _handle_research_job_detail(job_id: int) -> CommandResult:
+    job = get_research_job(job_id)
+    if job is None:
+        return CommandResult(ok=False, message=f"研究任务不存在：#{job_id}")
+    return CommandResult(ok=True, message=_render_research_job_detail(job))
 
 
 def _research_budget_error(provider: str, requested: int = 1) -> str | None:
@@ -1148,12 +1165,19 @@ def _render_research_job_create_result(
 ) -> str:
     lines = [
         "Codex 研究任务已创建：",
+        "- execution_location：cloud_worker",
         f"- 新建/复用队列任务：{len(created)}",
         f"- 已入库跳过：{len(skipped_existing)}",
         f"- 无效持仓跳过：{len(skipped_invalid)}",
     ]
     if created:
-        lines.append("- 任务：" + "、".join(f"#{item['id']} {item['symbol']} {item['market']} {item['status']}" for item in created[:10]))
+        lines.append(
+            "- 任务："
+            + "、".join(
+                f"#{item['id']} {item['symbol']} {item['market']} {item['status']} location={_job_execution_location(item)}"
+                for item in created[:10]
+            )
+        )
     if skipped_existing:
         lines.append("- 已跳过：" + "、".join(f"{item['symbol']} {item['market']}" for item in skipped_existing[:10]))
     return "\n".join(lines)
@@ -1172,9 +1196,45 @@ def _render_research_jobs(jobs: list[dict[str, Any]]) -> str:
     ]
     for job in jobs[:20]:
         title = f"#{job['id']} {job['symbol']} {job['market']} {job.get('status')}"
+        details = [
+            f"location={_job_execution_location(job)}",
+        ]
+        if job.get("worker_name"):
+            details.append(f"worker={job['worker_name']}")
+        if job.get("artifact_dir"):
+            details.append(f"artifact={job['artifact_dir']}")
+        if job.get("worker_started_at"):
+            details.append(f"started={job['worker_started_at']}")
+        if job.get("worker_finished_at"):
+            details.append(f"finished={job['worker_finished_at']}")
         summary = job.get("result_summary") or job.get("error") or ""
-        lines.append(f"- {title}" + (f"：{summary[:80]}" if summary else ""))
+        lines.append(f"- {title} ({', '.join(details)})" + (f"：{summary[:80]}" if summary else ""))
     return "\n".join(lines)
+
+
+def _render_research_job_detail(job: dict[str, Any]) -> str:
+    artifacts = job.get("artifacts") if isinstance(job.get("artifacts"), dict) else {}
+    artifact_path = job.get("artifact_dir") or artifacts.get("draft_path") or artifacts.get("artifact_url")
+    lines = [
+        f"研究任务 #{job['id']}：{job['symbol']} {job['market']}",
+        f"- 状态：{job.get('status')}",
+        f"- execution_location：{_job_execution_location(job)}",
+        f"- worker_name：{job.get('worker_name') or 'n/a'}",
+        f"- artifact：{artifact_path or 'n/a'}",
+        f"- started_at：{job.get('worker_started_at') or 'n/a'}",
+        f"- finished_at：{job.get('worker_finished_at') or 'n/a'}",
+    ]
+    if job.get("result_summary"):
+        lines.append(f"- 结果：{job['result_summary']}")
+    if job.get("error"):
+        lines.append(f"- 错误：{job['error']}")
+    if job.get("worker_log"):
+        lines.append("- worker_log：" + str(job["worker_log"]).splitlines()[-1][:160])
+    return "\n".join(lines)
+
+
+def _job_execution_location(job: dict[str, Any]) -> str:
+    return str(job.get("execution_location") or "cloud_worker")
 
 
 def _analysis_footer(context: dict[str, Any], output_path: Path, include_artifact_path: bool) -> str:

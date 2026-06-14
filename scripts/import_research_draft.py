@@ -27,6 +27,8 @@ def main() -> None:
     result = import_stock_research_draft(draft=draft, confirmed_by_user=args.confirmed)
 
     print("Research draft imported.")
+    print("execution_location: import_only")
+    print("note: direct draft import does not create or imply a cloud_worker research job.")
     print(
         json.dumps(
             {

@@ -61,6 +61,7 @@ def main() -> None:
             refresh=args.refresh,
             source=args.source,
             sender=args.sender,
+            execution_location="cloud_worker",
         )
         created.append(job)
 
@@ -75,6 +76,7 @@ def main() -> None:
     args.summary_output.parent.mkdir(parents=True, exist_ok=True)
     args.summary_output.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print("execution_location=cloud_worker")
     print(f"Summary written to {args.summary_output}")
 
 

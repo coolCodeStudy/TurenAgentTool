@@ -67,6 +67,7 @@ def main() -> None:
     output_path = args.output or default_output_path(bundle.symbol, bundle.market)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print("execution_location: local_codex")
     print(f"Research draft skeleton written to {output_path}")
 
 

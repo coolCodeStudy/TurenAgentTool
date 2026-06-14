@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS research_jobs (
   error TEXT,
   source TEXT,
   sender TEXT,
+  execution_location TEXT NOT NULL DEFAULT 'cloud_worker',
   worker_name TEXT,
   worker_log TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -277,8 +278,26 @@ CREATE TABLE IF NOT EXISTS research_jobs (
   CHECK (status IN ('queued', 'running', 'drafted', 'needs_review', 'imported', 'failed', 'cancelled')),
   CHECK (priority IN ('low', 'normal', 'high')),
   CHECK (source_policy IN ('official_first', 'broad_search', 'user_sources')),
-  CHECK (provider IN ('codex', 'openai', 'none'))
+  CHECK (provider IN ('codex', 'openai', 'none')),
+  CHECK (execution_location IN ('cloud_worker', 'local_codex', 'manual', 'import_only'))
 );
+
+ALTER TABLE research_jobs
+  ADD COLUMN IF NOT EXISTS execution_location TEXT NOT NULL DEFAULT 'cloud_worker';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'research_jobs_execution_location_check'
+      AND conrelid = 'research_jobs'::regclass
+  ) THEN
+    ALTER TABLE research_jobs
+      ADD CONSTRAINT research_jobs_execution_location_check
+      CHECK (execution_location IN ('cloud_worker', 'local_codex', 'manual', 'import_only'));
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_research_jobs_status_created_at
   ON research_jobs(status, created_at DESC);

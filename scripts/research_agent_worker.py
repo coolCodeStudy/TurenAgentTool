@@ -104,7 +104,13 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
     artifact_dir = config.artifact_root / f"job_{job_id}_{symbol}_{market}"
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Processing research job #{job_id}: {symbol} {market} provider={provider}", flush=True)
+    execution_location = str(job.get("execution_location") or "cloud_worker")
+    print(
+        f"Processing research job #{job_id}: {symbol} {market} "
+        f"provider={provider} execution_location={execution_location} "
+        f"worker_name={config.worker_name} artifact_dir={artifact_dir}",
+        flush=True,
+    )
     if provider == "openai":
         result = run_single_stock_research(
             symbol=symbol,
@@ -126,7 +132,10 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
             error="; ".join(result.errors) if result.errors else None,
             artifact_dir=str(artifact_dir),
             artifacts=result.to_summary(),
-            worker_log=f"openai provider finished with status={result.status} audit={result.audit_status}",
+            worker_log=(
+                f"openai provider finished with status={result.status} audit={result.audit_status} "
+                f"execution_location={execution_location} worker_name={config.worker_name} artifact_dir={artifact_dir}"
+            ),
         )
         return
 
@@ -149,7 +158,10 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
             error=seed.message,
             artifact_dir=str(artifact_dir),
             artifacts=seed.to_summary(),
-            worker_log="official-source seed stage failed",
+            worker_log=(
+                "official-source seed stage failed "
+                f"execution_location={execution_location} worker_name={config.worker_name} artifact_dir={artifact_dir}"
+            ),
         )
         return
 
@@ -191,7 +203,10 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
         artifact_dir=str(artifact_dir),
         artifacts=final["artifacts"],
         source_discovery=final["source_discovery"],
-        worker_log=final["worker_log"],
+        worker_log=(
+            f"{final['worker_log']} execution_location={execution_location} "
+            f"worker_name={config.worker_name} artifact_dir={artifact_dir}"
+        ),
     )
 
 

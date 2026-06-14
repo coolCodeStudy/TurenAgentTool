@@ -298,6 +298,7 @@ def create_research_job(
     refresh: bool = False,
     sender: str | None = None,
     source: str = "codex",
+    execution_location: str = "cloud_worker",
 ) -> dict[str, Any]:
     """Create an async Codex-first stock research job. This queues work; it does not trade."""
     return create_research_job_record(
@@ -312,6 +313,7 @@ def create_research_job(
         refresh=refresh,
         sender=sender,
         source=source,
+        execution_location=execution_location,
     )
 
 
@@ -325,6 +327,7 @@ def create_portfolio_research_jobs(
     limit: int | None = None,
     sender: str | None = None,
     source: str = "codex",
+    execution_location: str = "cloud_worker",
 ) -> dict[str, Any]:
     """Create async Codex-first research jobs for current Futu holdings."""
     snapshot = get_futu_positions()
@@ -359,6 +362,7 @@ def create_portfolio_research_jobs(
                 refresh=refresh,
                 sender=sender,
                 source=source,
+                execution_location=execution_location,
             )
         )
     return {

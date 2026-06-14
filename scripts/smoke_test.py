@@ -346,6 +346,7 @@ def main() -> None:
         assert is_query_command("持仓图谱")
         assert is_query_command(f"研究草稿 {SMOKE_SYMBOL} {SMOKE_MARKET}")
         assert is_query_command("全持仓研究草稿")
+        assert is_query_command("研究任务 #33")
         assert is_research_write_command("持仓图谱补全")
         assert is_research_write_command("重新审核研究任务 33")
         assert is_research_write_command("取消研究任务 33")

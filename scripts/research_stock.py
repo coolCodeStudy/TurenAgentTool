@@ -72,6 +72,7 @@ def main() -> None:
     prompt_path.write_text(prompt, encoding="utf-8")
 
     print("Research workflow prepared.")
+    print("- execution_location: local_codex")
     print(f"- Draft skeleton: {draft_path}")
     print(f"- Model prompt: {prompt_path}")
     print()
