@@ -405,6 +405,9 @@ def main() -> None:
         assert is_query_command("交易复盘")
         assert is_query_command("本月收益")
         assert is_query_command("补全交易记录 2026-05")
+        assert is_query_command("本周复盘")
+        assert is_query_command("复盘 2026-06-01 2026-06-07")
+        assert is_query_command("查看下周节奏")
         assert _extract_time_range_text("5月收益") == "5月"
         assert _extract_time_range_text("五月份收益") == "五月份"
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()

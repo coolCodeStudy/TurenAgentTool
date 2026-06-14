@@ -129,14 +129,50 @@ ALTER TABLE candidate_insights
 
 CREATE TABLE IF NOT EXISTS review_reports (
   id BIGSERIAL PRIMARY KEY,
-  report_date DATE NOT NULL UNIQUE,
+  report_date DATE NOT NULL,
   portfolio_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   summary TEXT NOT NULL,
   risks JSONB NOT NULL DEFAULT '[]'::jsonb,
   opportunities JSONB NOT NULL DEFAULT '[]'::jsonb,
   new_knowledge_candidates JSONB NOT NULL DEFAULT '[]'::jsonb,
+  period_start DATE,
+  period_end DATE,
+  report_type TEXT NOT NULL DEFAULT 'daily',
+  source_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+  highlights JSONB NOT NULL DEFAULT '[]'::jsonb,
+  blowups JSONB NOT NULL DEFAULT '[]'::jsonb,
+  holdings_table JSONB NOT NULL DEFAULT '[]'::jsonb,
+  next_week JSONB NOT NULL DEFAULT '[]'::jsonb,
+  story TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE review_reports
+  ADD COLUMN IF NOT EXISTS period_start DATE,
+  ADD COLUMN IF NOT EXISTS period_end DATE,
+  ADD COLUMN IF NOT EXISTS report_type TEXT NOT NULL DEFAULT 'daily',
+  ADD COLUMN IF NOT EXISTS source_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS highlights JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS blowups JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS holdings_table JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS next_week JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS story TEXT NOT NULL DEFAULT '';
+
+UPDATE review_reports
+SET period_start = COALESCE(period_start, report_date),
+    period_end = COALESCE(period_end, report_date),
+    report_type = COALESCE(NULLIF(report_type, ''), 'daily')
+WHERE period_start IS NULL OR period_end IS NULL OR report_type IS NULL OR report_type = '';
+
+ALTER TABLE review_reports
+  ALTER COLUMN period_start SET NOT NULL,
+  ALTER COLUMN period_end SET NOT NULL;
+
+ALTER TABLE review_reports
+  DROP CONSTRAINT IF EXISTS review_reports_report_date_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_type_period
+  ON review_reports (report_type, period_start, period_end);
 
 CREATE TABLE IF NOT EXISTS account_snapshots (
   id BIGSERIAL PRIMARY KEY,

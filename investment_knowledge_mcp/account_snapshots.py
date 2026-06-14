@@ -58,6 +58,16 @@ def run_account_snapshot_once(logger: logging.Logger | None = None, snapshot_dat
     trade_snapshot = get_futu_trade_history(start=today.isoformat(), end=today.isoformat())
     position_snapshot = get_futu_positions()
     fetched_at = trade_snapshot.fetched_at.astimezone(SHANGHAI_TZ)
+    trade_count = len(trade_snapshot.deals)
+    try:
+        trade_sync_result = repository.upsert_trade_records(trade_snapshot.deals)
+        trade_synced_count = int(trade_sync_result.get("synced_count") or 0)
+    except Exception as exc:
+        trade_synced_count = 0
+        logger.exception("failed to sync trade records for account snapshot: date=%s", today)
+        trade_sync_error = str(exc)
+    else:
+        trade_sync_error = None
     row = repository.upsert_account_snapshot(
         snapshot_date=today.isoformat(),
         account_info=trade_snapshot.account_info or {},
@@ -68,6 +78,9 @@ def run_account_snapshot_once(logger: logging.Logger | None = None, snapshot_dat
             "task": "daily_account_snapshot",
             "account_error": trade_snapshot.account_error,
             "position_count": len(position_snapshot.positions),
+            "trade_count": trade_count,
+            "trade_synced_count": trade_synced_count,
+            "trade_sync_error": trade_sync_error,
         },
     )
     logger.info("saved account snapshot: date=%s id=%s", row.get("snapshot_date"), row.get("id"))

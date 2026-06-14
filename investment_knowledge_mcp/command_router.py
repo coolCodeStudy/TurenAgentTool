@@ -63,6 +63,11 @@ from investment_knowledge_mcp.research.pipeline import ResearchPipelineOptions, 
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.research.validation import validate_research_draft
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
+from investment_knowledge_mcp.weekly_review import (
+    build_and_save_weekly_review,
+    render_weekly_review_markdown,
+    resolve_weekly_review_range,
+)
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
 
@@ -229,6 +234,12 @@ TRADE_BACKFILL_COMMANDS = {
     "补全交易记录",
     "同步交易记录",
     "回补交易记录",
+}
+
+WEEKLY_REVIEW_COMMANDS = {
+    "本周复盘",
+    "周复盘",
+    "查看下周节奏",
 }
 
 CODING_TASK_LIST_COMMANDS = {
@@ -524,6 +535,10 @@ def handle_command(
     if trade_backfill_match is not None:
         return _handle_trade_backfill(time_range_text=trade_backfill_match)
 
+    weekly_review_match = _match_weekly_review_command(cleaned)
+    if weekly_review_match is not None:
+        return _handle_weekly_review(time_range_text=weekly_review_match)
+
     performance_match = _match_performance_estimate_command(cleaned)
     if performance_match is not None:
         return _handle_performance_estimate(time_range_text=performance_match)
@@ -638,6 +653,7 @@ def is_query_command(command: str) -> bool:
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
+            *WEEKLY_REVIEW_COMMANDS,
             "港股新股",
             "港股IPO",
             "港股ipo",
@@ -647,6 +663,7 @@ def is_query_command(command: str) -> bool:
         }
         or heuristic_intent.get("intent")
         in {"portfolio_analysis", "portfolio_positions", "portfolio_graph", "system_status", "ipo_status", "trade_review"}
+        or _match_weekly_review_command(normalized) is not None
         or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
@@ -2072,6 +2089,27 @@ def _match_trade_backfill_command(command: str) -> str | None:
         if compact.startswith(prefix + " "):
             return compact[len(prefix) :].strip()
     return None
+
+
+def _match_weekly_review_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in WEEKLY_REVIEW_COMMANDS:
+        return ""
+    for prefix in WEEKLY_REVIEW_COMMANDS | {"复盘"}:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    if re.fullmatch(r"复盘\s+\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{4}[-/]\d{1,2}[-/]\d{1,2}", compact):
+        return compact.replace("复盘", "", 1).strip()
+    return None
+
+
+def _handle_weekly_review(time_range_text: str | None = None) -> CommandResult:
+    try:
+        start, end, _ = resolve_weekly_review_range(time_range_text)
+        report = build_and_save_weekly_review(start=start, end=end)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"生成本周复盘失败：{exc}")
+    return CommandResult(ok=True, message=render_weekly_review_markdown(report))
 
 
 def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:

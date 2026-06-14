@@ -755,6 +755,88 @@ def count_trade_records(
     return int(row["count"] if row else 0)
 
 
+def list_trade_records(
+    start: str,
+    end: str,
+    source: str = "futu",
+) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM trade_records
+            WHERE source = %s
+              AND trade_date BETWEEN %s AND %s
+            ORDER BY trade_date ASC, create_time ASC, id ASC
+            """,
+            (source, start, end),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
+def upsert_review_report(
+    *,
+    report_type: str,
+    period_start: str,
+    period_end: str,
+    summary: str,
+    portfolio_snapshot: dict[str, Any] | None = None,
+    risks: list[dict[str, Any]] | None = None,
+    opportunities: list[dict[str, Any]] | None = None,
+    new_knowledge_candidates: list[dict[str, Any]] | None = None,
+    source_status: dict[str, Any] | None = None,
+    highlights: list[dict[str, Any]] | None = None,
+    blowups: list[dict[str, Any]] | None = None,
+    holdings_table: list[dict[str, Any]] | None = None,
+    next_week: list[dict[str, Any]] | None = None,
+    story: str = "",
+) -> dict[str, Any]:
+    cleaned_type = (report_type or "").strip() or "weekly"
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO review_reports (
+              report_date, period_start, period_end, report_type,
+              portfolio_snapshot, summary, risks, opportunities, new_knowledge_candidates,
+              source_status, highlights, blowups, holdings_table, next_week, story
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (report_type, period_start, period_end) DO UPDATE SET
+              report_date = EXCLUDED.report_date,
+              portfolio_snapshot = EXCLUDED.portfolio_snapshot,
+              summary = EXCLUDED.summary,
+              risks = EXCLUDED.risks,
+              opportunities = EXCLUDED.opportunities,
+              new_knowledge_candidates = EXCLUDED.new_knowledge_candidates,
+              source_status = EXCLUDED.source_status,
+              highlights = EXCLUDED.highlights,
+              blowups = EXCLUDED.blowups,
+              holdings_table = EXCLUDED.holdings_table,
+              next_week = EXCLUDED.next_week,
+              story = EXCLUDED.story
+            RETURNING *
+            """,
+            (
+                period_end,
+                period_start,
+                period_end,
+                cleaned_type,
+                Jsonb(portfolio_snapshot or {}),
+                summary,
+                Jsonb(risks or []),
+                Jsonb(opportunities or []),
+                Jsonb(new_knowledge_candidates or []),
+                Jsonb(source_status or {}),
+                Jsonb(highlights or []),
+                Jsonb(blowups or []),
+                Jsonb(holdings_table or []),
+                Jsonb(next_week or []),
+                story,
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
 def _normalize_trade_record(deal: dict[str, Any]) -> dict[str, Any]:
     create_time = _clean_optional_text(str(deal.get("create_time") or "")) if deal.get("create_time") is not None else None
     deal_id = _clean_optional_text(str(deal.get("deal_id") or "")) if deal.get("deal_id") is not None else None
