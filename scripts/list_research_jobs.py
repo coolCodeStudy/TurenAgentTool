@@ -16,11 +16,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="List async research jobs.")
     parser.add_argument("--status", default="all", help="Job status, or all.")
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--verbose", action="store_true", help="Include full artifacts and raw job fields.")
     args = parser.parse_args()
 
     run_schema()
     status = None if args.status == "all" else args.status
-    rows = list_research_jobs(status=status, limit=args.limit)
+    rows = list_research_jobs(status=status, limit=args.limit, verbose=args.verbose)
     print(json.dumps(rows, ensure_ascii=False, indent=2))
 
 

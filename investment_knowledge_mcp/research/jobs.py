@@ -92,7 +92,11 @@ def create_research_job(
     return to_jsonable(row)
 
 
-def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[dict[str, Any]]:
+def list_research_jobs(
+    status: str | None = "queued",
+    limit: int = 20,
+    verbose: bool = False,
+) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 100))
     with transaction() as conn:
         if status is None or status == "all":
@@ -116,7 +120,10 @@ def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[d
                 """,
                 (status, limit),
             ).fetchall()
-    return to_jsonable(rows)
+    jsonable_rows = to_jsonable(rows)
+    if verbose:
+        return jsonable_rows
+    return [_summarize_research_job(row) for row in jsonable_rows]
 
 
 def get_research_job(job_id: int) -> dict[str, Any] | None:
@@ -182,6 +189,60 @@ def list_research_jobs_for_stock(symbol: str, market: str, limit: int = 20) -> l
             (symbol, market, limit),
         ).fetchall()
     return to_jsonable(rows)
+
+
+def _summarize_research_job(row: dict[str, Any]) -> dict[str, Any]:
+    artifacts = row.get("artifacts") if isinstance(row.get("artifacts"), dict) else {}
+    source_discovery = row.get("source_discovery") if isinstance(row.get("source_discovery"), dict) else {}
+    warnings = artifacts.get("warnings") if isinstance(artifacts.get("warnings"), list) else []
+    errors = artifacts.get("errors") if isinstance(artifacts.get("errors"), list) else []
+    imported_stock_id = artifacts.get("imported_stock_id")
+    artifact_status = {
+        "draft": bool(artifacts.get("draft_path") or artifacts.get("draft_json")),
+        "source_facts": bool(artifacts.get("source_facts_path") or artifacts.get("source_facts_json")),
+        "audit": bool(artifacts.get("audit_path") or artifacts.get("audit_json") or artifacts.get("audit_markdown")),
+        "review": bool(artifacts.get("review_path") or artifacts.get("review_markdown")),
+    }
+    return {
+        "id": row.get("id"),
+        "status": row.get("status"),
+        "symbol": row.get("symbol"),
+        "market": row.get("market"),
+        "name": row.get("name"),
+        "provider": row.get("provider"),
+        "source_policy": row.get("source_policy"),
+        "execution_location": _research_execution_location(row),
+        "audit_status": artifacts.get("audit_status"),
+        "warnings_count": len(warnings),
+        "errors_count": len(errors),
+        "token_usage": artifacts.get("token_usage") or source_discovery.get("token_usage"),
+        "artifact_status": artifact_status,
+        "artifact_exists": any(artifact_status.values()),
+        "import_status": {
+            "auto_import": row.get("auto_import"),
+            "import_needs_review": row.get("import_needs_review"),
+            "imported": imported_stock_id is not None,
+            "imported_stock_id": imported_stock_id,
+        },
+        "result_summary": row.get("result_summary"),
+        "error": row.get("error"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "worker_started_at": row.get("worker_started_at"),
+        "worker_finished_at": row.get("worker_finished_at"),
+    }
+
+
+def _research_execution_location(row: dict[str, Any]) -> str:
+    worker_name = str(row.get("worker_name") or "").strip()
+    provider = str(row.get("provider") or "").strip()
+    if worker_name:
+        return worker_name
+    if provider == "codex":
+        return "codex-worker"
+    if provider:
+        return provider
+    return "unknown"
 
 
 def cancel_research_job(job_id: int, reason: str | None = None) -> dict[str, Any] | None:

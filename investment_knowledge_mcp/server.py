@@ -46,6 +46,28 @@ def search_stock(symbol: str, market: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def search_stock_summary(
+    symbol: str,
+    market: str,
+    include_knowledge_items: bool = False,
+    include_sources: bool = False,
+    include_audit: bool = False,
+    verbose: bool = False,
+    full: bool = False,
+) -> dict[str, Any]:
+    """Search a stock as a Level 1 decision card, with optional evidence expansion."""
+    return repository.search_stock_summary(
+        symbol=symbol,
+        market=market,
+        include_knowledge_items=include_knowledge_items,
+        include_sources=include_sources,
+        include_audit=include_audit,
+        verbose=verbose,
+        full=full,
+    )
+
+
+@mcp.tool()
 def get_stock_context(symbol: str, market: str) -> dict[str, Any]:
     """Build analysis context for a stock, including sectors and relevant user memory."""
     return repository.get_stock_context(symbol=symbol, market=market)
@@ -372,9 +394,13 @@ def create_portfolio_research_jobs(
 
 
 @mcp.tool()
-def list_research_jobs(status: str | None = "queued", limit: int = 20) -> list[dict[str, Any]]:
-    """List async stock research jobs."""
-    return list_research_job_records(status=status, limit=limit)
+def list_research_jobs(
+    status: str | None = "queued",
+    limit: int = 20,
+    verbose: bool = False,
+) -> list[dict[str, Any]]:
+    """List async stock research jobs. Defaults to compact rows; verbose returns full artifacts."""
+    return list_research_job_records(status=status, limit=limit, verbose=verbose)
 
 
 @mcp.tool()

@@ -340,6 +340,20 @@ def handle_command(
     if ambiguous_match:
         return CommandResult(ok=False, message=f"匹配到多个股票，请说得更具体一点：{ambiguous_match.group(1)}")
 
+    stock_detail_match = re.fullmatch(
+        r"(?:分析完整|完整分析|分析详情|查看详情|analyze full|analyze verbose)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if stock_detail_match:
+        symbol, market = stock_detail_match.groups()
+        return _handle_analyze_stock_detail(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            include_artifact_path=include_artifact_path,
+        )
+
     stock_match = re.fullmatch(r"(?:分析|analyze)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
     if stock_match:
         symbol, market = stock_match.groups()
@@ -682,6 +696,18 @@ def is_coding_task_command(command: str) -> bool:
 
 
 def _handle_analyze_stock(
+    symbol: str,
+    market: str,
+    output_dir: Path,
+    include_artifact_path: bool,
+) -> CommandResult:
+    summary = repository.search_stock_summary(symbol=symbol, market=market)
+    if not summary.get("stock"):
+        return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+    return CommandResult(ok=True, message=_render_stock_level_1_summary(summary))
+
+
+def _handle_analyze_stock_detail(
     symbol: str,
     market: str,
     output_dir: Path,
@@ -1171,9 +1197,83 @@ def _render_research_jobs(jobs: list[dict[str, Any]]) -> str:
         "- 汇总：" + "，".join(f"{status} {count}" for status, count in sorted(counts.items())),
     ]
     for job in jobs[:20]:
+        artifact_status = job.get("artifact_status") if isinstance(job.get("artifact_status"), dict) else {}
+        import_status = job.get("import_status") if isinstance(job.get("import_status"), dict) else {}
+        artifacts = ",".join(key for key, exists in artifact_status.items() if exists) or "none"
+        imported = "imported" if import_status.get("imported") else "not_imported"
+        token_usage = job.get("token_usage") or "n/a"
         title = f"#{job['id']} {job['symbol']} {job['market']} {job.get('status')}"
+        details = (
+            f"provider={job.get('provider') or 'n/a'}，"
+            f"policy={job.get('source_policy') or 'n/a'}，"
+            f"exec={job.get('execution_location') or 'n/a'}，"
+            f"audit={job.get('audit_status') or 'n/a'}，"
+            f"warnings={job.get('warnings_count', 0)}，"
+            f"tokens={token_usage}，"
+            f"artifacts={artifacts}，"
+            f"{imported}"
+        )
         summary = job.get("result_summary") or job.get("error") or ""
-        lines.append(f"- {title}" + (f"：{summary[:80]}" if summary else ""))
+        lines.append(f"- {title}：{details}" + (f"；{summary[:80]}" if summary else ""))
+    return "\n".join(lines)
+
+
+def _render_stock_level_1_summary(summary: dict[str, Any]) -> str:
+    stock = summary["stock"]
+    level_1 = summary.get("level_1_summary") or {}
+    counts = summary.get("counts") or {}
+    display_name = stock.get("name") or stock["symbol"]
+    lines = [
+        f"{display_name} ({stock['symbol']} {stock['market']})",
+        "",
+        "股票画像：",
+        f"- 核心业务：{stock.get('core_business') or '暂无'}",
+        f"- 股权结构：{stock.get('equity_structure') or '暂无'}",
+        f"- 股性：{stock.get('stock_character') or '暂无'}",
+        f"- 突出历史：{stock.get('notable_history') or '暂无'}",
+        "",
+        "Level 1 决策卡片：",
+        f"- 一句话 thesis：{level_1.get('one_line_thesis') or '暂无'}",
+        "- 关键驱动：",
+    ]
+    lines.extend(_bullet_lines(level_1.get("key_drivers") or [], empty="暂无明确驱动。"))
+    lines.extend(["- 核心风险："])
+    lines.extend(_bullet_lines(level_1.get("core_risks") or [], empty="暂无明确风险。"))
+    lines.extend(["- 观察项："])
+    lines.extend(_bullet_lines(level_1.get("watch_items") or [], empty="暂无明确观察项。"))
+
+    freshness = level_1.get("data_freshness") if isinstance(level_1.get("data_freshness"), dict) else {}
+    source_status = level_1.get("source_status") if isinstance(level_1.get("source_status"), dict) else {}
+    audit_status = level_1.get("audit_status") if isinstance(level_1.get("audit_status"), dict) else {}
+    lines.extend(
+        [
+            "",
+            "数据状态：",
+            (
+                f"- freshness：{freshness.get('summary') or 'unknown'}；"
+                f"stale={freshness.get('stale_count', 0)}；"
+                f"earliest_stale_after={freshness.get('earliest_stale_after') or 'n/a'}"
+            ),
+            (
+                f"- sources：{source_status.get('summary') or 'unknown'}；"
+                f"sources={source_status.get('source_count', 0)}；"
+                f"knowledge_with_source={source_status.get('knowledge_items_with_source_count', 0)}"
+            ),
+            (
+                f"- audit：{audit_status.get('summary') or 'unknown'}；"
+                f"job=#{audit_status.get('latest_job_id') or 'n/a'}；"
+                f"warnings={audit_status.get('warnings_count', 0)}"
+            ),
+            (
+                f"- counts：sectors={counts.get('sectors', 0)}，"
+                f"knowledge_items={counts.get('knowledge_items', 0)}，"
+                f"user_insights={counts.get('user_insights', 0)}，"
+                f"sources={counts.get('sources', 0)}"
+            ),
+            "",
+            "需要完整证据时使用：分析详情 SYMBOL MARKET，或 MCP search_stock/search_stock_summary(verbose=true)。",
+        ]
+    )
     return "\n".join(lines)
 
 

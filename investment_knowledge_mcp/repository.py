@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from psycopg import Connection
@@ -1435,6 +1436,307 @@ def search_stock(symbol: str, market: str) -> dict[str, Any]:
             "user_insights": user_insights,
         }
     )
+
+
+def search_stock_summary(
+    symbol: str,
+    market: str,
+    include_knowledge_items: bool = False,
+    include_sources: bool = False,
+    include_audit: bool = False,
+    verbose: bool = False,
+    full: bool = False,
+) -> dict[str, Any]:
+    """Return a Level 1 decision view while preserving optional evidence expansion."""
+    include_knowledge_items = include_knowledge_items or verbose or full
+    include_sources = include_sources or verbose or full
+    include_audit = include_audit or verbose or full
+
+    with transaction() as conn:
+        stock = _get_stock_in_conn(conn, symbol=symbol, market=market)
+        if stock is None:
+            return {
+                "stock": None,
+                "level_1_summary": None,
+                "counts": {
+                    "sectors": 0,
+                    "knowledge_items": 0,
+                    "user_insights": 0,
+                    "sources": 0,
+                    "research_jobs": 0,
+                },
+            }
+
+        sectors = conn.execute(
+            """
+            SELECT
+              ssr.id AS relation_id,
+              ssr.relation_type,
+              ssr.confidence,
+              ssr.source_id,
+              ssr.confirmed_by_user,
+              s.id,
+              s.name,
+              s.parent_id,
+              s.description,
+              s.recent_status
+            FROM stock_sector_relations ssr
+            JOIN sectors s ON s.id = ssr.sector_id
+            WHERE ssr.stock_id = %s
+            ORDER BY ssr.relation_type, s.name
+            """,
+            (stock["id"],),
+        ).fetchall()
+
+        knowledge_items = conn.execute(
+            """
+            SELECT *
+            FROM knowledge_items
+            WHERE target_type = 'stock' AND target_id = %s
+            ORDER BY confirmed_by_user DESC, confidence DESC, created_at DESC
+            """,
+            (stock["id"],),
+        ).fetchall()
+
+        user_insights = conn.execute(
+            """
+            SELECT *
+            FROM user_insights
+            WHERE target_type = 'stock' AND target_id = %s
+            ORDER BY created_at DESC
+            """,
+            (stock["id"],),
+        ).fetchall()
+
+        sources = _get_stock_sources_in_conn(conn, stock_id=stock["id"])
+        latest_job = _get_latest_research_job_for_stock_in_conn(
+            conn,
+            symbol=stock["symbol"],
+            market=stock["market"],
+        )
+        job_count_row = conn.execute(
+            """
+            SELECT count(*) AS count
+            FROM research_jobs
+            WHERE upper(symbol) = upper(%s)
+              AND upper(market) = upper(%s)
+            """,
+            (stock["symbol"], stock["market"]),
+        ).fetchone()
+
+    level_1_summary = _build_level_1_stock_summary(
+        stock=stock,
+        knowledge_items=knowledge_items,
+        sources=sources,
+        latest_job=latest_job,
+    )
+    result: dict[str, Any] = {
+        "stock": stock,
+        "level_1_summary": level_1_summary,
+        "counts": {
+            "sectors": len(sectors),
+            "knowledge_items": len(knowledge_items),
+            "user_insights": len(user_insights),
+            "sources": len(sources),
+            "research_jobs": int(job_count_row["count"] if job_count_row else 0),
+        },
+    }
+    if include_knowledge_items:
+        result["knowledge_items"] = knowledge_items
+        result["sectors"] = sectors
+        result["user_insights"] = user_insights
+    if include_sources:
+        result["sources"] = sources
+    if include_audit:
+        result["latest_research_job"] = latest_job
+    if full:
+        result["search_result"] = {
+            "stock": stock,
+            "sectors": sectors,
+            "knowledge_items": knowledge_items,
+            "user_insights": user_insights,
+        }
+    return to_jsonable(result)
+
+
+def _get_stock_sources_in_conn(conn: Connection, stock_id: int) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT DISTINCT s.*
+        FROM sources s
+        WHERE s.id IN (
+          SELECT source_id
+          FROM knowledge_items
+          WHERE target_type = 'stock'
+            AND target_id = %s
+            AND source_id IS NOT NULL
+          UNION
+          SELECT source_id
+          FROM stock_sector_relations
+          WHERE stock_id = %s
+            AND source_id IS NOT NULL
+        )
+        ORDER BY s.published_at DESC NULLS LAST, s.created_at DESC
+        """,
+        (stock_id, stock_id),
+    ).fetchall()
+
+
+def _get_latest_research_job_for_stock_in_conn(
+    conn: Connection,
+    symbol: str,
+    market: str,
+) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT *
+        FROM research_jobs
+        WHERE upper(symbol) = upper(%s)
+          AND upper(market) = upper(%s)
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (symbol, market),
+    ).fetchone()
+
+
+def _build_level_1_stock_summary(
+    *,
+    stock: dict[str, Any],
+    knowledge_items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    latest_job: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "one_line_thesis": _one_line_thesis(stock=stock, knowledge_items=knowledge_items),
+        "key_drivers": _pick_knowledge_lines(
+            knowledge_items,
+            {"business", "sector_logic", "announcement", "equity_structure", "history"},
+            limit=3,
+        ),
+        "core_risks": _pick_knowledge_lines(knowledge_items, {"risk"}, limit=3),
+        "watch_items": _pick_knowledge_lines(knowledge_items, {"watch_item"}, limit=3),
+        "data_freshness": _summarize_data_freshness(knowledge_items),
+        "source_status": _summarize_source_status(knowledge_items=knowledge_items, sources=sources),
+        "audit_status": _summarize_audit_status(latest_job),
+    }
+
+
+def _one_line_thesis(stock: dict[str, Any], knowledge_items: list[dict[str, Any]]) -> str:
+    core_business = _clean_summary_text(stock.get("core_business"))
+    stock_character = _clean_summary_text(stock.get("stock_character"))
+    if core_business and stock_character:
+        return f"{core_business}；{stock_character}"
+    if core_business:
+        return core_business
+    if stock_character:
+        return stock_character
+    for item in knowledge_items:
+        if item.get("knowledge_type") in {"business", "sector_logic"}:
+            return _clean_summary_text(item.get("content")) or "暂无一句话 thesis。"
+    return "暂无一句话 thesis。"
+
+
+def _pick_knowledge_lines(
+    knowledge_items: list[dict[str, Any]],
+    knowledge_types: set[str],
+    limit: int,
+) -> list[str]:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for item in knowledge_items:
+        if str(item.get("knowledge_type") or "") not in knowledge_types:
+            continue
+        content = _clean_summary_text(item.get("content"))
+        if not content or content in seen:
+            continue
+        seen.add(content)
+        lines.append(content)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _clean_summary_text(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text[:240]
+
+
+def _summarize_data_freshness(knowledge_items: list[dict[str, Any]]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    stale_after_values = [item.get("stale_after") for item in knowledge_items if item.get("stale_after") is not None]
+    stale_count = 0
+    parsed_values: list[datetime] = []
+    for value in stale_after_values:
+        parsed = _coerce_datetime(value)
+        if parsed is None:
+            continue
+        parsed_values.append(parsed)
+        if parsed <= now:
+            stale_count += 1
+    earliest = min(parsed_values).isoformat() if parsed_values else None
+    if not knowledge_items:
+        summary = "no_knowledge_items"
+    elif not parsed_values:
+        summary = "no_stale_after_set"
+    elif stale_count:
+        summary = f"{stale_count} stale knowledge items"
+    else:
+        summary = "fresh_until_next_stale_after"
+    return {
+        "summary": summary,
+        "knowledge_items": len(knowledge_items),
+        "stale_after_count": len(parsed_values),
+        "stale_count": stale_count,
+        "earliest_stale_after": earliest,
+    }
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
+def _summarize_source_status(
+    *,
+    knowledge_items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    with_source = [item for item in knowledge_items if item.get("source_id") is not None]
+    source_with_url = [source for source in sources if source.get("url")]
+    return {
+        "summary": "has_sources" if sources else "no_sources",
+        "source_count": len(sources),
+        "source_with_url_count": len(source_with_url),
+        "knowledge_items_with_source_count": len(with_source),
+        "knowledge_items_missing_source_count": max(0, len(knowledge_items) - len(with_source)),
+    }
+
+
+def _summarize_audit_status(latest_job: dict[str, Any] | None) -> dict[str, Any]:
+    if latest_job is None:
+        return {"summary": "no_research_job", "latest_job_id": None, "audit_status": None, "warnings_count": 0}
+    artifacts = latest_job.get("artifacts") if isinstance(latest_job.get("artifacts"), dict) else {}
+    warnings = artifacts.get("warnings") if isinstance(artifacts.get("warnings"), list) else []
+    audit_status = artifacts.get("audit_status")
+    return {
+        "summary": audit_status or latest_job.get("status") or "unknown",
+        "latest_job_id": latest_job.get("id"),
+        "job_status": latest_job.get("status"),
+        "audit_status": audit_status,
+        "warnings_count": len(warnings),
+    }
 
 
 def resolve_stock_reference(query: str) -> list[dict[str, Any]]:
