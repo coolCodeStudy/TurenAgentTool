@@ -426,9 +426,9 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
                 "needs_decision": "是",
             }
         )
-    top_loss = sorted(position_changes, key=lambda row: row["pl_val_delta"])[:3]
+    top_loss = sorted(position_changes, key=_rank_amount)[:3]
     if top_loss:
-        names = "、".join(f"{item['name']} {item['code']}" for item in top_loss if item["pl_val_delta"] < 0)
+        names = "、".join(f"{item['name']} {item['code']}" for item in top_loss if _rank_amount(item) < 0)
         if names:
             items.append(
                 {
@@ -471,8 +471,8 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
 
 
 def _build_story(context_warnings: list[str], position_changes: list[dict[str, Any]]) -> dict[str, Any]:
-    leaders = [item for item in sorted(position_changes, key=lambda row: row["pl_val_delta"], reverse=True)[:3] if item["pl_val_delta"] > 0]
-    laggards = [item for item in sorted(position_changes, key=lambda row: row["pl_val_delta"])[:3] if item["pl_val_delta"] < 0]
+    leaders = [item for item in sorted(position_changes, key=_rank_amount, reverse=True)[:3] if _rank_amount(item) > 0]
+    laggards = [item for item in sorted(position_changes, key=_rank_amount)[:3] if _rank_amount(item) < 0]
     return {
         "mainline": _names(leaders) or "本周缺少足够快照，暂不归纳主线。",
         "negative_signals": _names(laggards) or "暂未从快照差分中识别明显拖累项。",

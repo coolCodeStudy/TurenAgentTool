@@ -573,6 +573,8 @@ def main() -> None:
         assert weekly_context["blowups"][0]["code"] == "TEST.LOSS"
         assert weekly_context["blowups"][0]["movement"] == "加仓"
         assert any(item["code"] == "TEST.CUT" and item["type"] == "割肉清仓" for item in weekly_context["blowups"])
+        assert "TEST.CUT" not in weekly_context["story"]["mainline"]
+        assert "TEST.CUT" in weekly_context["story"]["negative_signals"]
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_markdown
         assert "指数数据源未接入" in weekly_markdown
         weekly_result = build_weekly_review(start=weekly_start, end=weekly_end, save=True)
