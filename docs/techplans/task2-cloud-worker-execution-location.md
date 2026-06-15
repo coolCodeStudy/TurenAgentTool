@@ -4,7 +4,9 @@
 
 上一轮组合覆盖中，Codex desktop session 在本地完成了来源抓取、SEC/HKEX/PDF 清洗、draft 生成、audit/review，然后通过 MCP 工具导入 InvestmentKnowledge 数据库。这个流程能跑通，但执行位置不透明：用户没有明确选择“本地跑批量研究”，也无法在任务状态里直接看到任务到底是在本地 Codex、云主机 worker，还是仅执行导入。
 
-更大的问题是：本地跑出来的来源定位、清洗、audit/review 和导入经验，如果只停留在本地脚本和手工操作里，云主机 worker 不会自动获得这些能力。后续批量研究和组合刷新应默认由云主机 worker 执行，并且云端 worker 必须复用同一套产品化后的研究流水线。本地 Codex 主要用于调试、少量补洞、人工审阅、工具修复和导入已确认 draft。
+更大的问题是：本地跑出来的来源定位、清洗、audit/review 和导入经验，如果只停留在本地脚本和手工操作里，云主机 worker 不会自动获得这些能力。后续批量研究和组合刷新应默认由云主机 worker 执行，并且云端 worker 必须复用同一套产品化后的研究流水线。
+
+硬性原则：永远不要在用户的 Mac 上执行股票研究。Codex desktop/Mac 只作为控制面使用，可以编辑代码、创建云端研究任务、查询云端任务状态、审阅云端产物、运行不触发研究的本地测试；不能作为 source collection、draft enrichment、audit/review generation 或 portfolio research 的执行面。
 
 ## 核心目的
 
@@ -23,7 +25,7 @@ Task 2 的核心不是单纯增加 `execution_location` 字段，也不是写一
 3. 云端 worker 能完成 source collection、draft enrichment、validation、audit、review、artifact 持久化和可选 import。
 4. 本地 Codex 能查询云端任务状态、artifact 摘要、token usage、warnings 和 import 状态。
 5. 所有研究任务都能显示 `execution_location`，避免本地结果和云端结果混淆。
-6. 本地脚本执行时明确提示 `local_codex`，并对批量本地执行加显式确认。
+6. 本地脚本不能作为股票研究执行入口；本地只允许创建/查询云端任务、审阅云端产物或运行不触发研究的测试。
 
 ## 非目标
 
@@ -93,10 +95,10 @@ finished_at: timestamptz | null
 5. 在创建 research job 的统一入口里设置默认 `execution_location=cloud_worker`。
 6. `create_portfolio_research_jobs` 默认创建云端任务，不在本地直接跑研究。
 7. `research_agent_worker.py` 领取任务时写入 `worker_name`、`started_at`、`finished_at`。
-8. 本地脚本输出中增加 execution banner，并对批量本地研究加显式确认：
-   - `research_stock.py`: `execution_location=local_codex`
-   - `create_research_draft.py`: `execution_location=local_codex`
-   - `import_research_draft.py`: `execution_location=manual_import` 或 `import_only`
+8. 本地脚本边界：
+   - `research_stock.py`、`create_research_draft.py`、portfolio research 不能在 Mac 上作为真实研究执行入口。
+   - 本地只允许创建/查询 cloud research job、审阅云端产物、运行不触发研究的测试。
+   - `import_research_draft.py` 仅用于已审阅产物的 `manual_import` 或 `import_only`，不能把本地新生成研究伪装成云端产物。
 9. `list_research_jobs` 默认显示 execution location、worker、artifact 存在性、token usage、warnings 和 import 状态。
 10. command router 对“列出任务/查看任务”和“创建任务”做更严格区分，避免查询命令误创建任务。
 11. 部署到 ECS/云主机并重启 MCP、research worker 或相关服务。
@@ -109,8 +111,8 @@ finished_at: timestamptz | null
 2. 创建组合 research jobs 时，默认全部进入云端 worker 队列。
 3. 云端 worker 能完整跑通至少一个测试标的的 source collection、draft、validation、audit、review 和 artifact 写回。
 4. `list_research_jobs` 默认能看到任务在哪里跑、谁在跑、artifact 是否存在、token usage、warnings 和 import 状态。
-5. 本地脚本运行时，终端输出明确显示 `local_codex`、`manual_import` 或 `import_only`。
-6. 本地批量研究需要显式参数确认，不能静默执行。
+5. 本地脚本不会在 Mac 上执行真实股票研究；本地只做控制面和非研究测试。
+6. 本地导入必须明确标记为 `manual_import` 或 `import_only`，不能伪装为云端 worker 结果。
 7. 查看任务不会误触发创建任务。
 8. 不改变交易/账户写入逻辑。
 

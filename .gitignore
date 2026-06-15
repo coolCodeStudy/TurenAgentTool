@@ -68,8 +68,18 @@ local.properties
 *.log
 logs/
 
-# Generated research prompts
+# Generated research artifacts
+drafts/*_research_draft.json
+drafts/*_research_draft.enriched.json
+drafts/*_research_draft.enriched.review.md
+drafts/*_audit_report.md
+drafts/*.enriched_audit_report.md
+drafts/*_graph_review.md
 drafts/*.prompt.md
+drafts/*_source_facts.json
+drafts/*_source_discovery_notes.md
+drafts/portfolio_research_import_summary.json
+drafts/research_jobs/
 
 # Runtime data
 pids
