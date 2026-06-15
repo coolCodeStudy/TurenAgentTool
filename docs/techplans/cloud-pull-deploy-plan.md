@@ -248,6 +248,13 @@ cloud_deploy
   -> Ops API POST /ops/deploy
 ```
 
+当前缺口（2026-06-16）：
+
+- `/ops/deploy` 在云端会卡在 `record deploy start`，尚未进入 fetch/checkout/deploy；Ops API 只返回 traceback 第一行，诊断信息不足。
+- 需要让 Ops API 在部署事件记录失败时返回可行动错误，或将 deploy event 记录降级为 warning 后继续部署并在结果里标注审计缺口。
+- GitHub Actions quick deploy 不会重建/重启 `weekly-review-web`，周复盘 Web 修复不能依赖当前 quick deploy；短期走 full deploy，长期应把 `weekly-review-web` 纳入 quick deploy 或明确 quick deploy 适用范围。
+- ECS 上 host/systemd 与 Docker container 必须使用不同 DB profile：宿主侧 `127.0.0.1:55432`，容器侧 `postgres:5432`。部署脚本和 compose env 需要防止宿主 `.env` 覆盖容器内连接地址。
+
 以后稳定后可加 webhook：
 
 ```text
