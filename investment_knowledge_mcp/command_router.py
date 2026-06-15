@@ -63,6 +63,8 @@ from investment_knowledge_mcp.research.pipeline import ResearchPipelineOptions, 
 from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.research.validation import validate_research_draft
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
+from investment_knowledge_mcp.system_overview import render_system_overview
+from investment_knowledge_mcp.weekly_review import build_weekly_review
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
 
@@ -196,6 +198,15 @@ SYSTEM_STATUS_COMMANDS = {
     "health",
 }
 
+SYSTEM_OVERVIEW_COMMANDS = {
+    "系统总览",
+    "总览",
+    "控制台",
+    "控制平面",
+    "overview",
+    "system overview",
+}
+
 FUTU_MAINTENANCE_QUERY_COMMANDS = {
     "富途状态",
     "OpenD状态",
@@ -223,6 +234,21 @@ PERFORMANCE_ESTIMATE_COMMANDS = {
     "收益复盘",
     "月度收益",
     "本月收益",
+}
+
+WEEKLY_REVIEW_COMMANDS = {
+    "本周复盘",
+    "这周复盘",
+    "本星期复盘",
+    "这个星期复盘",
+    "周复盘",
+    "weekly review",
+}
+
+NEXT_WEEK_COMMANDS = {
+    "查看下周节奏",
+    "下周节奏",
+    "next week",
 }
 
 TRADE_BACKFILL_COMMANDS = {
@@ -423,6 +449,9 @@ def handle_command(
     if cleaned in WORKER_STATUS_COMMANDS:
         return _handle_worker_status()
 
+    if cleaned in SYSTEM_OVERVIEW_COMMANDS:
+        return CommandResult(ok=True, message=render_system_overview())
+
     if cleaned in CLOUD_SYSTEM_STATUS_COMMANDS:
         return CommandResult(ok=True, message=render_cloud_system_status())
 
@@ -431,6 +460,15 @@ def handle_command(
 
     if cleaned in SERVICE_LOG_COMMANDS:
         return CommandResult(ok=True, message=render_service_logs(SERVICE_LOG_COMMANDS[cleaned]))
+
+    task_events_match = re.fullmatch(
+        r"(?:任务状态|任务事件|task events?)\s+(research|coding|deploy|snapshot|ipo|command)\s+#?(\d+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if task_events_match:
+        task_type, task_id = task_events_match.groups()
+        return _handle_task_events(task_type=task_type, task_id=int(task_id))
 
     if cleaned in RESEARCH_WORKER_STOP_COMMANDS:
         return CommandResult(ok=True, message=render_cloud_service_control("research-agent-worker", "stop"))
@@ -519,6 +557,14 @@ def handle_command(
 
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
+
+    weekly_review_match = _match_weekly_review_command(cleaned)
+    if weekly_review_match is not None:
+        return _handle_weekly_review(time_range_text=weekly_review_match)
+
+    next_week_match = _match_next_week_command(cleaned)
+    if next_week_match is not None:
+        return _handle_weekly_review(time_range_text=next_week_match, next_week_only=True)
 
     trade_backfill_match = _match_trade_backfill_command(cleaned)
     if trade_backfill_match is not None:
@@ -627,6 +673,7 @@ def is_query_command(command: str) -> bool:
             *FUTU_MAINTENANCE_QUERY_COMMANDS,
             *IPO_REMINDER_STATUS_COMMANDS,
             *WORKER_STATUS_COMMANDS,
+            *SYSTEM_OVERVIEW_COMMANDS,
             *CLOUD_SYSTEM_STATUS_COMMANDS,
             *RECENT_ERRORS_COMMANDS,
             *SERVICE_LOG_COMMANDS,
@@ -637,6 +684,8 @@ def is_query_command(command: str) -> bool:
             *RESEARCH_JOB_LIST_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
+            *WEEKLY_REVIEW_COMMANDS,
+            *NEXT_WEEK_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
             "港股新股",
             "港股IPO",
@@ -648,6 +697,13 @@ def is_query_command(command: str) -> bool:
         or heuristic_intent.get("intent")
         in {"portfolio_analysis", "portfolio_positions", "portfolio_graph", "system_status", "ipo_status", "trade_review"}
         or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(
+            r"(?:任务状态|任务事件|task events?)\s+(research|coding|deploy|snapshot|ipo|command)\s+#?\d+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or _match_weekly_review_command(normalized) is not None
+        or _match_next_week_command(normalized) is not None
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
     )
@@ -1341,6 +1397,19 @@ def _handle_list_coding_tasks() -> CommandResult:
         if task.get("branch_name"):
             suffix = f" -> {task['branch_name']}"
         lines.append(f"- #{task['id']} [{task['status']}/{task['priority']}] {task['title']}{suffix}")
+    return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_task_events(task_type: str, task_id: int) -> CommandResult:
+    events = repository.list_task_events(task_type=task_type.lower(), task_id=task_id, limit=30)
+    if not events:
+        return CommandResult(ok=True, message=f"{task_type} #{task_id} 暂无任务事件。")
+
+    lines = [f"{task_type} #{task_id} 任务事件："]
+    for event in reversed(events):
+        status = f" [{event.get('status')}]" if event.get("status") else ""
+        message = f"：{_truncate_text(str(event.get('message')), 160)}" if event.get("message") else ""
+        lines.append(f"- {event.get('created_at')} {event.get('event_type')}{status}{message}")
     return CommandResult(ok=True, message="\n".join(lines))
 
 
@@ -2054,6 +2123,32 @@ def _match_trade_review_command(command: str) -> str | None:
     return None
 
 
+def _match_weekly_review_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in {"上周复盘", "上星期复盘", "上个星期复盘"}:
+        return "上周"
+    if compact in {"复盘上周", "复盘上星期", "复盘上个星期"}:
+        return "上周"
+    if compact in WEEKLY_REVIEW_COMMANDS:
+        return ""
+    for prefix in WEEKLY_REVIEW_COMMANDS | {"复盘"}:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    if re.fullmatch(r"复盘\s+\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{4}[-/]\d{1,2}[-/]\d{1,2}", compact):
+        return compact.replace("复盘", "", 1).strip()
+    return None
+
+
+def _match_next_week_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in NEXT_WEEK_COMMANDS:
+        return ""
+    for prefix in NEXT_WEEK_COMMANDS:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    return None
+
+
 def _match_performance_estimate_command(command: str) -> str | None:
     compact = command.strip()
     if compact in PERFORMANCE_ESTIMATE_COMMANDS:
@@ -2072,6 +2167,18 @@ def _match_trade_backfill_command(command: str) -> str | None:
         if compact.startswith(prefix + " "):
             return compact[len(prefix) :].strip()
     return None
+
+
+def _handle_weekly_review(time_range_text: str | None = None, next_week_only: bool = False) -> CommandResult:
+    start, end, _ = _resolve_weekly_review_range(time_range_text)
+    try:
+        result = build_weekly_review(start=start, end=end, save=not next_week_only, next_week_only=next_week_only)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"生成本周复盘失败：{exc}")
+    footer = ""
+    if result.saved_report is not None:
+        footer = f"\n\n已保存周复盘：review_reports #{result.saved_report.get('id')}"
+    return CommandResult(ok=True, message=result.markdown + footer)
 
 
 def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:
@@ -2120,6 +2227,41 @@ def _handle_trade_backfill(time_range_text: str | None = None) -> CommandResult:
         "- 口径：按富途 deal_id 去重；缺少 deal_id 时使用订单、标的、方向、数量、价格、时间组合去重。",
     ]
     return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _resolve_weekly_review_range(value: str | None) -> tuple[date, date, str]:
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    text = (value or "").strip()
+    if not text or re.search(r"(?:本周|这周|本星期|这个星期)", text):
+        start = today - timedelta(days=today.weekday())
+        return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
+
+    if re.search(r"(?:上周|上星期)", text):
+        this_week_start = today - timedelta(days=today.weekday())
+        start = this_week_start - timedelta(days=7)
+        end = this_week_start - timedelta(days=1)
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+
+    range_match = re.search(
+        r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}).*?(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
+        text,
+    )
+    if range_match:
+        start = _parse_command_date(range_match.group(1))
+        end = _parse_command_date(range_match.group(2))
+        if end < start:
+            start, end = end, start
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+
+    date_tokens = _extract_date_tokens(text, today=today)
+    if len(date_tokens) >= 2:
+        start, end = date_tokens[0], date_tokens[1]
+        if end < start:
+            start, end = end, start
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+
+    start = today - timedelta(days=today.weekday())
+    return start, today, f"{start.isoformat()} 至 {today.isoformat()}"
 
 
 def _handle_performance_estimate(time_range_text: str | None = None) -> CommandResult:
@@ -3110,6 +3252,9 @@ def _help_text() -> str:
 - 交易记录 2026-05-01 2026-05-29
 - 补全交易记录 2026-05
 - 本月收益
+- 本周复盘
+- 复盘 2026-06-08 2026-06-14
+- 查看下周节奏
 - 富途状态
 - 富途登录
 - 富途请求验证码

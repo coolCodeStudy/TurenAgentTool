@@ -22,6 +22,12 @@ Add only lessons that should change future behavior.
 - Use strong tokens for command-api. Do not write temporary tokens, secrets, or credentials into docs, commits, logs, or summaries.
 - If HTTP auth or gateway integration is not part of the task, prefer CLI/MCP verification over command-api verification.
 
+## Git Trust Boundary
+
+- Separate local Git metadata operations from remote operations in user-facing updates. Creating branches or commits writes local `.git` state; pushing can invoke remote credentials.
+- Before any `git push` or operation likely to touch the user's credential helper/keychain, state that explicitly and wait for clear user approval.
+- If the user expresses concern about Git credentials, stop remote-oriented Git work immediately and continue only with local verification until they re-authorize.
+
 ## Cloud Deploy Bootstrap
 
 - Before asking the user to SSH into ECS for one-time setup, check whether the existing GitHub Actions deployment path can bootstrap the same state through its already-configured SSH credentials.
