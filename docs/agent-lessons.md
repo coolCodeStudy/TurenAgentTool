@@ -25,11 +25,16 @@ Add only lessons that should change future behavior.
 ## Git Trust Boundary
 
 - Separate local Git metadata operations from remote operations in user-facing updates. Creating branches or commits writes local `.git` state; pushing can invoke remote credentials.
-- Before any `git push` or operation likely to touch the user's credential helper/keychain, state that explicitly and wait for clear user approval.
+- For low-risk tasks where the user asks for deploy validation after changes, the repo has standing authorization to make task-scoped commits, push, call `cloud_deploy` through `/ops/deploy`, and remote-validate without another conversational approval.
+- For other `git push` operations or operations likely to touch the user's credential helper/keychain, state that explicitly and wait for clear user approval.
 - If the user expresses concern about Git credentials, stop remote-oriented Git work immediately and continue only with local verification until they re-authorize.
+- Treat `/Users/lishaocheng/code/github_pat` as the only documented local GitHub PAT file for this machine. Do not search the user's home directory for token files.
+- Read `/Users/lishaocheng/code/github_pat` only for an approved `git push` or deploy operation that needs GitHub authentication.
+- Never print a PAT, put it into remote URLs, commit it, write it to docs/logs, or summarize its value. Prefer existing credential helpers, `gh` authentication, deploy keys, GitHub Actions secrets, or controlled MCP/Ops deployment tools when they satisfy the task.
 
 ## Cloud Deploy Bootstrap
 
+- Daily Codex deployment should use MCP `cloud_deploy(ref=<commit_sha>, mode="quick"|"full")`, which calls ECS Ops API `/ops/deploy`. GitHub Actions is the formal release/full rebuild backup/disaster-recovery path unless the user explicitly requests it.
 - Before asking the user to SSH into ECS for one-time setup, check whether the existing GitHub Actions deployment path can bootstrap the same state through its already-configured SSH credentials.
 - For a public repository, ECS can maintain a read-only HTTPS checkout such as `/opt/investment-knowledge-repo` without any GitHub token or deploy key; only use a deploy key if the repository becomes private.
 - When adding a cloud pull-deploy path, ensure the deployment workflow creates or refreshes the remote checkout and writes the checkout path into the Ops API systemd environment. Otherwise the new `/ops/deploy` endpoint may be deployed but unable to fetch refs.
@@ -41,3 +46,9 @@ Add only lessons that should change future behavior.
 - Durable lessons belong in this file and `AGENTS.md`.
 - Task plans belong in `docs/techplans/`.
 - Historical milestones belong in `docs/project-history.md`.
+
+## Documentation Language
+
+- Write repository documentation in English.
+- Do not add new Chinese prose to docs unless it is a command example, user-facing product phrase, source quote, filename, or domain term that must stay as-is.
+- When substantially editing an older Chinese doc, translate the touched section or replace it with an English equivalent.

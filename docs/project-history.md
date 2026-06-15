@@ -35,6 +35,13 @@ It is intentionally not a day-by-day log.
 - Task 2 was validated with a real cloud research sample: ASML US completed queueing, claiming, source expansion, draft, audit/review, artifact writeback, and import.
 - Task 3 changed default stock display to Level 1 decision cards while keeping full evidence and artifacts available through explicit detail/verbose paths.
 
+## Agent Collaboration
+
+- Agent work was split into durable workflows for product design, technical architecture, engineering execution, ops diagnosis, and research/knowledge-base updates.
+- The repository-level closeout rule now requires agents to decide whether a task should update product docs, tech plans, current state, project history, agent lessons, or the InvestmentKnowledge database.
+- A repository knowledge index was added so future sessions can find the canonical product, technical, operational, agent-experience, and business-knowledge sources faster.
+- Repository documentation language was standardized to English for new docs and substantive edits, while preserving Chinese only where required by commands, user-facing product text, source material, filenames, or domain terms.
+
 ## Known Open Items
 
 - `/mcp` public access protection remains a security TODO; short-term deployments rely on network/security-group restrictions.

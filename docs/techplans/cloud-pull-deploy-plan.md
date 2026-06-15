@@ -1,96 +1,109 @@
-# Cloud Pull Deploy 技术方案
+# Cloud Pull Deploy Technical Plan
 
-## 给执行 Session 的指令
+## Instructions For Execution Sessions
 
-请按照本文档实现 Cloud Pull Deploy。第一版优先完成：
+Implement Cloud Pull Deploy with the first version focused on:
 
-1. ECS Ops API 增加 `POST /ops/deploy`。
-2. MCP 增加 `cloud_deploy(ref, mode, render=True)` 工具。
-3. 部署过程写入 `deploy_events`。
-4. 部署后运行健康检查，并把摘要写入部署事件。
-5. 保持 GitHub Actions 作为备用/正式发布通道，不重构无关部署逻辑。
+1. Add `POST /ops/deploy` to the ECS Ops API.
+2. Add MCP tool `cloud_deploy(ref, mode, render=True)`.
+3. Record deployment progress in `deploy_events`.
+4. Run a health check after deployment and write the summary to the deploy event.
+5. Keep GitHub Actions as backup/formal release path; do not refactor unrelated deployment logic.
 
-明确不要做：
+Do not:
 
-- 不要用 `rsync` 作为主线。
-- 不要做 GitHub webhook 自动部署。
-- 不要引入 Kubernetes、Argo CD、Flux 或其他重型 GitOps 平台。
-- 不要改造钉钉交互主链路。
-- 不要顺手拆 `command_router.py` 或 `repository.py`。
-- 不要改动真实 `.env`、密钥、token、webhook。
+- Use `rsync` as the main deployment path.
+- Add GitHub webhook automatic deployment.
+- Introduce Kubernetes, Argo CD, Flux, or other heavyweight GitOps systems.
+- Rework the DingTalk interaction path.
+- Opportunistically split `command_router.py` or `repository.py`.
+- Modify real `.env`, secrets, tokens, or webhooks.
 
-第一版验收标准：
+First-version acceptance:
 
-- Codex 可以调用 MCP tool `cloud_deploy(ref=<commit_sha>, mode="quick")`。
-- ECS 通过 Ops API 从 GitHub 拉取指定 ref 并部署。
-- `deploy_events` 能看到 started / succeeded / failed。
-- `系统总览` 能显示最近部署状态。
-- 部署失败时，返回清晰错误并写入 `deploy_events`。
+- Codex can call MCP tool `cloud_deploy(ref=<commit_sha>, mode="quick")`.
+- ECS fetches the requested ref from GitHub through Ops API and deploys it.
+- `deploy_events` records `started`, `succeeded`, and `failed`.
+- System overview can show the latest deployment state.
+- Deployment failure returns a clear error and writes it to `deploy_events`.
 
-## 目标
+## Default Deployment Policy
 
-把 InvestmentKnowledge 的日常部署主线调整为：
+Daily Codex deployments use MCP `cloud_deploy(ref=<commit_sha>, mode="quick"|"full")`, which calls ECS Ops API `/ops/deploy`.
+
+GitHub Actions is not the default daily path. Keep it for formal releases, full rebuild backup, and disaster recovery unless the user explicitly requests Actions.
+
+When the user asks for deploy validation after changes, including `改完部署验证`, the standing workflow is:
 
 ```text
-Codex 本地改代码
-  -> 本地验证
+local validation
+  -> task-scoped commit
+  -> git push
+  -> cloud_deploy(ref=<commit_sha>, mode="quick"|"full")
+  -> /ops/deploy pulls the ref on ECS
+  -> remote health/status/log validation
+```
+
+For low-risk changes, the agent should not pause for another conversational approval before push/deploy. Ask again only for high-risk, destructive, secret-touching, production-data-changing, or service/database-scope-expanding changes.
+
+## Goal
+
+Change the daily deployment path to:
+
+```text
+Codex edits locally
+  -> local validation
   -> git commit / push
-  -> Codex 调用 cloud_deploy(ref, mode)
-  -> ECS 从 GitHub 拉取指定 commit
+  -> Codex calls cloud_deploy(ref, mode)
+  -> ECS fetches the requested commit from GitHub
   -> quick/full deploy
-  -> 健康检查
-  -> deploy_events / 系统总览可见
+  -> health check
+  -> deploy_events / system overview visibility
 ```
 
-这个方案服务于当前最高频工作流：
+This supports the highest-frequency workflow:
 
 ```text
-用户
+User
   -> Codex App
-    -> Codex 改代码、验证、push、触发云端部署、检查结果
+    -> edit code, validate, push, trigger cloud deploy, inspect result
 ```
 
-钉钉继续作为日常投资查询和通知入口；GitHub Actions 保留为正式发布、full rebuild 和灾备通道，不再作为高频小改的主部署路径。
+DingTalk remains the daily investment query and notification entrypoint. GitHub Actions remains the formal release, full rebuild, and disaster-recovery path, not the high-frequency small-change path.
 
-## 为什么不用 rsync 作为主线
+## Why Not Rsync As The Main Path
 
-`rsync` 可以快速把本地源码复制到 ECS，但它的问题是：
+`rsync` is fast, but it makes the cloud runtime less auditable:
 
-- 云上运行代码不一定对应一个明确 Git commit。
-- 变更来源是“本地文件状态”，不是 GitHub 事实源。
-- 回滚和审计不够自然。
-- 长期容易出现“本地、GitHub、云端”三份状态不一致。
+- Running code may not map to a clear Git commit.
+- The source of truth becomes local file state instead of GitHub.
+- Rollback and audit become less natural.
+- Local, GitHub, and cloud state can drift.
 
-`rsync` 可以保留为应急方案，但不作为长期主线。
+Keep `rsync` only as an emergency fallback.
 
-## 为什么不用 GitHub Actions 作为高频主线
+## Why Not GitHub Actions As The High-Frequency Path
 
-GitHub Actions 适合：
+GitHub Actions is appropriate for:
 
-- 依赖变化。
-- Dockerfile / 镜像结构变化。
-- full rebuild。
-- 正式 main 分支发布。
-- 灾备重建。
+- Dependency changes.
+- Dockerfile or image-structure changes.
+- Full rebuilds.
+- Formal `main` releases.
+- Disaster recovery.
 
-但它不适合当前最高频的 Codex 协作小改：
+It is too heavy for frequent Codex collaboration changes because checkout, build, packaging, SCP, and SSH add fixed cost and slow feedback. Therefore, Actions remains the formal release rail, while daily changes use cloud pull deploy.
 
-- 固定成本高：checkout、build、tar、scp、ssh 都耗时。
-- 反馈链路远：失败后 Codex 还要再查 Actions 输出和云端日志。
-- 小改动过重：只改 Python 业务逻辑也走完整 CI/CD，不够轻。
+## Principles
 
-因此 GitHub Actions 保留为正式发布轨，日常走云端 pull deploy。
+1. GitHub is the code source of truth.
+2. ECS pulls a specific commit instead of receiving local files.
+3. Codex explicitly triggers deployment; push does not deploy automatically.
+4. Every deployment writes `deploy_events`.
+5. Every deployment runs a health check.
+6. The user does not inspect Docker or GitHub logs manually; Codex uses system overview and event tables.
 
-## 方案原则
-
-1. GitHub 是代码事实源。
-2. ECS 自己拉取指定 commit，而不是接收本地文件推送。
-3. Codex 显式触发部署，不做每次 push 自动部署。
-4. 部署必须记录到 `deploy_events`。
-5. 部署后必须做健康检查。
-6. 用户不看 Docker/GitHub 日志；Codex 通过系统总览和事件表判断状态。
-
-## 总体架构
+## Architecture
 
 ```text
 Codex App
@@ -118,49 +131,22 @@ ECS Ops API
   +-- deploy_events succeeded/failed
 ```
 
-Mermaid:
+## ECS Directory Layout
 
-```mermaid
-sequenceDiagram
-  participant User as 用户
-  participant Codex as Codex App
-  participant GitHub as GitHub
-  participant MCP as Cloud MCP
-  participant Ops as ECS Ops API
-  participant ECS as ECS services
-
-  User->>Codex: 要求改功能/修问题
-  Codex->>Codex: 修改代码并本地验证
-  Codex->>GitHub: git commit / push
-  Codex->>MCP: cloud_deploy(ref=commit_sha, mode=quick)
-  MCP->>Ops: POST /ops/deploy
-  Ops->>Ops: 写 deploy_events started
-  Ops->>GitHub: git fetch origin
-  Ops->>Ops: checkout 指定 ref
-  Ops->>ECS: quick/full deploy
-  Ops->>ECS: health check
-  Ops->>Ops: 写 deploy_events succeeded/failed
-  Ops->>MCP: 返回部署结果
-  MCP->>Codex: 返回摘要
-  Codex->>User: 报告部署状态和系统总览
-```
-
-## ECS 目录结构
-
-建议保留两个目录：
+Keep two directories:
 
 ```text
 /opt/investment-knowledge-repo
   GitHub checkout
-  只负责拉代码和选择 ref
+  Only fetches code and selects refs
 
 /opt/investment-knowledge
-  当前运行目录
-  保留 .env、drafts、运行中挂载目录
-  docker compose 从这里启动
+  Runtime directory
+  Keeps .env, drafts, and mounted runtime paths
+  docker compose starts here
 ```
 
-部署时从 repo 目录复制源码到运行目录：
+Deployment copies source from the repo checkout to the runtime directory:
 
 ```bash
 SOURCE_DIR=/opt/investment-knowledge-repo \
@@ -169,341 +155,60 @@ BUILD_IMAGE=false \
 bash /opt/investment-knowledge-repo/scripts/deploy_from_local_checkout.sh
 ```
 
-`deploy_from_local_checkout.sh` 已经负责：
+`deploy_from_local_checkout.sh` already syncs source directories, dependencies, compose files, and restarts the relevant services. Ops API should become the single place that records `deploy_events`.
 
-- 同步 `db/`
-- 同步 `investment_knowledge_mcp/`
-- 同步 `scripts/`
-- 同步 `docs/`
-- 同步 `Dockerfile`
-- 同步 `requirements.txt`
-- 同步 `docker-compose.prod.yml`
-- 重启 `postgres`、`mcp`、`account-snapshot-scheduler`、`ipo-reminder-scheduler`、`dingtalk-stream-bot`
-- 写入本地部署事件
+## GitHub Permissions
 
-后续会让 Ops API 的 deploy 流程统一写 `deploy_events`。
-
-## GitHub 权限
-
-当前 `coolCodeStudy/TurenAgentTool` 仓库可未登录访问，第一版 ECS 直接使用 HTTPS 匿名只读拉取代码：
+The first version assumes `coolCodeStudy/TurenAgentTool` is publicly readable and uses anonymous HTTPS fetch:
 
 ```text
 https://github.com/coolCodeStudy/TurenAgentTool.git
 ```
 
-因此第一版不需要把 GitHub Actions secrets、个人 GitHub token 或 deploy key 搬到 ECS。
+If the repository becomes private, use a read-only deploy key bound only to this repository. Do not use a personal GitHub token as the main deployment credential. If cross-repository access is needed later, consider a GitHub App installation token.
 
-ECS 只需要能访问 GitHub，并在 `/opt/investment-knowledge-repo` 保留一个普通 Git checkout：
+## Notification And Triggering
+
+Do not use GitHub webhooks for the first version:
+
+- Not every push should deploy.
+- Codex may push intermediate branches.
+- The user should choose when a ref is deployed.
+
+The intended flow is:
+
+```text
+Codex push
+-> Codex calls cloud_deploy(ref=<commit_sha>, mode="quick"|"full")
+-> Ops API deploys the exact ref
+```
+
+## Deploy Modes
+
+- `quick`: copy code and restart services without rebuilding the image. Use for Python, scripts, DB, docs, and shell-script changes.
+- `full`: rebuild or refresh the image and restart services. Use for dependency, Dockerfile, or compose-structure changes.
+
+Prefer commit SHA refs for auditability.
+
+## Validation
+
+Local validation before push:
 
 ```bash
-git clone https://github.com/coolCodeStudy/TurenAgentTool.git /opt/investment-knowledge-repo
-git -C /opt/investment-knowledge-repo fetch origin
+.venv/bin/python scripts/smoke_test.py
 ```
 
-如果未来仓库改成 private，再改用 GitHub deploy key。
-
-推荐：
-
-```text
-read-only deploy key
-仅绑定 TurenAgentTool 仓库
-私钥只放 ECS
-```
-
-不要把个人 GitHub token 作为主部署凭据。
-
-如果未来需要跨多个仓库，再考虑 GitHub App installation token。
-
-## 通知云上的方式
-
-不使用 GitHub webhook 作为第一版主线。
-
-原因：
-
-- 不是每次 push 都应该部署。
-- Codex 可能会 push 中间状态。
-- 有些 commit 需要先验证或等用户确认。
-- 显式 `cloud_deploy(ref)` 更可控。
-
-第一版采用：
-
-```text
-Codex push 后，主动调用 MCP tool: cloud_deploy
-```
-
-底层：
-
-```text
-cloud_deploy
-  -> Ops API POST /ops/deploy
-```
-
-以后稳定后可加 webhook：
-
-```text
-main push -> staging 自动部署
-production -> 仍然手动 cloud_deploy
-```
-
-## Ops API 接口设计
-
-### POST /ops/deploy
-
-请求：
-
-```json
-{
-  "ref": "main 或 commit_sha",
-  "mode": "quick",
-  "source": "codex_app",
-  "requested_by": "codex"
-}
-```
-
-字段：
-
-- `ref`：Git ref，推荐使用 commit SHA。
-- `mode`：`quick` 或 `full`。
-- `source`：触发来源，例如 `codex_app`、`manual`。
-- `requested_by`：触发者。
-
-响应：
-
-```json
-{
-  "ok": true,
-  "data": {
-    "deploy_event_id": 123,
-    "ref": "abc123",
-    "mode": "quick",
-    "status": "succeeded",
-    "duration_seconds": 18.4,
-    "summary": "quick deploy completed",
-    "health": {
-      "ok": true
-    }
-  }
-}
-```
-
-失败响应：
-
-```json
-{
-  "ok": false,
-  "error": "git fetch failed: ...",
-  "data": {
-    "deploy_event_id": 123,
-    "status": "failed"
-  }
-}
-```
-
-## MCP 工具设计
-
-### cloud_deploy
-
-参数：
-
-```json
-{
-  "ref": "abc123",
-  "mode": "quick",
-  "render": true
-}
-```
-
-行为：
-
-- 调用 Ops API `/ops/deploy`。
-- 返回中文摘要。
-- 摘要包含 deploy event id、ref、mode、状态、耗时、健康检查结果。
-
-示例输出：
-
-```text
-云端部署完成：
-- deploy_event: #123
-- ref: abc123
-- mode: quick
-- 状态：succeeded
-- 耗时：18s
-- 健康检查：OK
-
-可继续问：系统总览
-```
-
-## 部署锁
-
-Ops API 必须防止并发部署。
-
-第一版可用文件锁：
-
-```text
-/tmp/investment-knowledge-deploy.lock
-```
-
-规则：
-
-- 同一时间只允许一个 deploy。
-- 如果已有 deploy 在跑，新的请求返回 busy。
-- busy 结果也写入或返回明确原因。
-
-## quick/full 模式
-
-### quick
-
-适用于：
-
-- `.py`
-- `scripts/*.py`
-- `db/schema.sql`
-- 文档
-- prompt
-- shell 脚本
-
-动作：
-
-```text
-git fetch / checkout
-同步源码
-不重建镜像
-重启相关服务
-健康检查
-```
-
-### full
-
-适用于：
-
-- `requirements.txt`
-- `Dockerfile`
-- `docker-compose.prod.yml` 的镜像结构变化
-- Python 依赖变化
-
-动作：
-
-```text
-git fetch / checkout
-同步源码
-docker compose build
-重启服务
-健康检查
-```
-
-第一版可由 Codex 判断 mode；后续可以让 Ops API 根据 changed files 自动判断。
-
-## 健康检查
-
-部署后至少检查：
-
-```text
-docker compose ps
-Postgres socket
-MCP socket 或 /mcp 可达
-dingtalk-stream-bot running
-account-snapshot-scheduler running
-ipo-reminder-scheduler running
-```
-
-如果 `COMMAND_API_TOKEN` 和 HTTP profile 可用，可追加：
-
-```text
-Command API /health
-系统总览
-```
-
-健康检查摘要写入 `deploy_events.metadata`。
-
-## deploy_events
-
-当前已新增：
-
-```text
-deploy_events
-  id
-  source
-  deploy_mode
-  commit_sha
-  branch_name
-  status
-  started_at
-  finished_at
-  duration_seconds
-  summary
-  logs_tail
-  metadata
-```
-
-cloud deploy 需要写：
-
-```text
-started
-succeeded / failed
-duration_seconds
-commit_sha
-health summary
-```
-
-`系统总览` 已读取最近部署记录。
-
-## 实施步骤
-
-### Step 1：ECS repo checkout
-
-- 在 ECS 建 `/opt/investment-knowledge-repo`。
-- 由于当前仓库是 public，第一版直接用 HTTPS clone：
-  `git clone https://github.com/coolCodeStudy/TurenAgentTool.git /opt/investment-knowledge-repo`。
-- 验证 `git fetch origin` 可用。
-- 如果未来仓库转 private，再配置 GitHub read-only deploy key。
-
-### Step 2：Ops API 增加部署接口
-
-- 在 `scripts/ecs_ops_api.py` 新增 `POST /ops/deploy`。
-- 实现部署锁。
-- 实现 git fetch / checkout。
-- 调用 `deploy_from_local_checkout.sh`。
-- 写 `deploy_events`。
-
-### Step 3：MCP 增加 cloud_deploy
-
-- 在 `investment_knowledge_mcp/ops_client.py` 增加 `deploy_cloud_ref`。
-- 在 `investment_knowledge_mcp/server.py` 增加 MCP tool `cloud_deploy`。
-- 在 `command_router.py` 可选增加命令 `部署 main`、`部署 <commit>`。
-
-### Step 4：部署后总览
-
-- 部署成功后返回摘要。
-- 手动或自动调用 `系统总览`。
-- 确认 deploy_events 正常显示。
-
-### Step 5：GitHub Actions 降级
-
-- 保留 full deploy。
-- 保留灾备安装。
-- quick deploy 可暂时保留，但不再作为高频主线。
-
-## 第一版不做
-
-- 不做 GitHub webhook 自动部署。
-- 不做 Kubernetes / Argo CD。
-- 不做复杂审批流。
-- 不做多环境发布。
-- 不做自动回滚。
-
-这些等系统产出和使用频率上来后再考虑。
-
-## 最终判断
-
-当前最优主线是轻量 GitOps：
-
-```text
-GitHub = 代码事实源
-ECS = pull 指定 commit 并部署
-Ops API = 部署控制面
-MCP = Codex 调用入口
-deploy_events = 部署审计和诊断入口
-系统总览 = 用户/Codex 的状态视图
-```
-
-这比 rsync 更可追踪，比 GitHub Actions 更快，比 Argo CD 更轻，最符合当前个人云端投资系统和 Codex 协作模式。
+Remote validation after deploy:
+
+- `cloud_system_status`
+- `system_overview`
+- recent service logs
+- health-check result attached to `deploy_events`
+
+## Risks
+
+- ECS cannot reach GitHub: report deploy failure clearly and preserve logs.
+- Deploy lock is missing: concurrent deploys may corrupt runtime state.
+- Ref does not exist remotely: return a clear error before touching runtime services.
+- Health check is too shallow: service may start but be functionally broken.
+- Public `/mcp` protection remains a separate security TODO.
