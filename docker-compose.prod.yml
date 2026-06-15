@@ -120,6 +120,54 @@ services:
       - "${COMMAND_API_HOST_PORT:-8001}:${COMMAND_API_PORT:-8001}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
 
+  weekly-review-web:
+    profiles: ["http"]
+    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./db:/app/db:ro
+      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
+      - ./scripts:/app/scripts:ro
+      - ./drafts:/opt/investment-knowledge/drafts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
+      WEEKLY_REVIEW_WEB_HOST: ${WEEKLY_REVIEW_WEB_HOST:-0.0.0.0}
+      WEEKLY_REVIEW_WEB_PORT: ${WEEKLY_REVIEW_WEB_PORT:-8010}
+      WEEKLY_REVIEW_WEB_TOKEN: ${WEEKLY_REVIEW_WEB_TOKEN:-}
+      FUTU_OPEND_HOST: ${FUTU_OPEND_HOST:-host.docker.internal}
+      FUTU_OPEND_PORT: ${FUTU_OPEND_PORT:-11112}
+      FUTU_OPEND_TELNET_HOST: ${FUTU_OPEND_TELNET_HOST:-host.docker.internal}
+      FUTU_OPEND_TELNET_PORT: ${FUTU_OPEND_TELNET_PORT:-22222}
+      FUTU_SECURITY_FIRM: ${FUTU_SECURITY_FIRM:-FUTUSECURITIES}
+      FUTU_TRADE_MARKET: ${FUTU_TRADE_MARKET:-HK}
+      FUTU_TRADE_ENV: ${FUTU_TRADE_ENV:-REAL}
+      FUTU_ACCOUNT_ID: ${FUTU_ACCOUNT_ID:-0}
+      FUTU_ACCOUNT_INDEX: ${FUTU_ACCOUNT_INDEX:-0}
+      FUTU_POSITION_CACHE_SECONDS: ${FUTU_POSITION_CACHE_SECONDS:-20}
+      FUTU_POSITION_REFRESH_CACHE: ${FUTU_POSITION_REFRESH_CACHE:-true}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
+      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+      OPS_API_URL: ${OPS_API_URL:-http://host.docker.internal:8767}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
+    ports:
+      - "${WEEKLY_REVIEW_WEB_HOST_PORT:-8010}:${WEEKLY_REVIEW_WEB_PORT:-8010}"
+    command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.weekly_review_web"]
+
   dingtalk-api:
     profiles: ["http"]
     image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}

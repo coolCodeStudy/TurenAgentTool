@@ -503,6 +503,11 @@ jobs:
             COMMAND_API_HOST_PORT=8001
             COMMAND_API_TOKEN=${{ secrets.COMMAND_API_TOKEN }}
 
+            WEEKLY_REVIEW_WEB_HOST=0.0.0.0
+            WEEKLY_REVIEW_WEB_PORT=8010
+            WEEKLY_REVIEW_WEB_HOST_PORT=${{ vars.WEEKLY_REVIEW_WEB_HOST_PORT || '8010' }}
+            WEEKLY_REVIEW_WEB_TOKEN=${{ secrets.WEEKLY_REVIEW_WEB_TOKEN }}
+
             DINGTALK_API_HOST=0.0.0.0
             DINGTALK_API_PORT=8002
             DINGTALK_API_HOST_PORT=8002
@@ -575,10 +580,10 @@ jobs:
             if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
               echo "Hermes gateway is installed but DingTalk is temporarily routed back to legacy dingtalk-stream-bot."
               systemctl stop hermes-gateway.service || true
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
             else
               echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
             fi
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             sleep 20
@@ -586,6 +591,7 @@ jobs:
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 account-snapshot-scheduler || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 ipo-reminder-scheduler || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 dingtalk-stream-bot || true
+            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=120 weekly-review-web || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 mcp || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 postgres || true
             systemctl status hermes-gateway.service --no-pager || true

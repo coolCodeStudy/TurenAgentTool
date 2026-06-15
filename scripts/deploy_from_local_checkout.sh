@@ -97,10 +97,10 @@ if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
 fi
 
 if [ "$BUILD_IMAGE" = "true" ]; then
-  $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --build postgres mcp account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
+  $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
 else
   $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
-  $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
+  $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
 fi
 
 $DOCKER_COMPOSE -f docker-compose.prod.yml ps
