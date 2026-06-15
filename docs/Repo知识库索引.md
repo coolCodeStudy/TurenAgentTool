@@ -96,7 +96,7 @@ Maintenance rules:
 - Hard operating rules belong in `AGENTS.md`.
 - Workflow, role boundaries, and closeout rules belong in `docs/Agent协作工作流规范.md`.
 - Reusable lessons belong in `docs/agent-lessons.md`.
-- Git push and PAT handling are remote credential boundaries. Approved push/deploy flows may read `/Users/lishaocheng/code/github_pat` ephemerally, but agents must not search the user's home directory for token files and must never display, persist, or write the PAT into docs, logs, or remotes.
+- Git push and PAT handling are remote credential boundaries. Approved push/deploy flows may read `/Users/lishaocheng/code/github_pat` ephemerally, but agents must not search the user's home directory for token files, must never use one-shot Git credential helpers or Keychain prompts, and must never display, persist, or write the PAT into docs, logs, or remotes.
 - Do not create routine diary logs.
 
 ## Business Knowledge Base

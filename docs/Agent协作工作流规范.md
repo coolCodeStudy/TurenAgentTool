@@ -151,6 +151,8 @@ Credential rules:
 - The GitHub PAT file for this machine is `/Users/lishaocheng/code/github_pat`.
 - Do not search the user's home directory for token files. Use only the explicitly documented `/Users/lishaocheng/code/github_pat` path when PAT auth is needed.
 - When this task has authorized `git push` or deploy, and the remote Git operation needs GitHub authentication, `/Users/lishaocheng/code/github_pat` may be read ephemerally for that single operation.
+- Never use one-shot or inline Git credential helpers such as `git -c credential.helper=...`, `GIT_ASKPASS`, or helper shell functions to pass the PAT.
+- Never trigger or rely on `git-credential-osxkeychain` / macOS Keychain prompts for repository pushes. If a push asks for Keychain access or an interactive GitHub username/password, stop and fix the non-interactive PAT push flow instead.
 - Never write a PAT into a Git remote URL, documentation, logs, commit messages, command output, or chat summaries.
 - Prefer configured Git credential helpers, `gh` auth state, deploy keys, GitHub Actions secrets, or controlled deployment tools; read `/Users/lishaocheng/code/github_pat` only when those are unavailable or the local push flow specifically needs it.
 

@@ -55,6 +55,8 @@ Read it before changing code, running services, or touching deployment commands.
 - The GitHub PAT file for this machine is `/Users/lishaocheng/code/github_pat`. Treat it as a secret.
 - Do not search the user's home directory for token files. Use only the explicitly documented `/Users/lishaocheng/code/github_pat` path when PAT auth is needed.
 - For an approved `git push` or deploy flow that requires GitHub authentication, read `/Users/lishaocheng/code/github_pat` only ephemerally for that single operation.
+- Never use one-shot or inline Git credential helpers such as `git -c credential.helper=...`, `GIT_ASKPASS`, or helper shell functions to pass the PAT.
+- Never trigger or rely on `git-credential-osxkeychain` / macOS Keychain prompts for repository pushes. If a push asks for Keychain access or an interactive GitHub username/password, stop and fix the non-interactive PAT push flow instead.
 - Never print, copy, commit, summarize, or write the PAT value into Git remotes, docs, logs, commands, or chat.
 - Prefer controlled deploy tools, GitHub Actions secrets, deploy keys, or existing credential helpers when they already satisfy the task; use `/Users/lishaocheng/code/github_pat` when the local push/deploy flow needs PAT auth.
 

@@ -30,6 +30,8 @@ Add only lessons that should change future behavior.
 - If the user expresses concern about Git credentials, stop remote-oriented Git work immediately and continue only with local verification until they re-authorize.
 - Treat `/Users/lishaocheng/code/github_pat` as the only documented local GitHub PAT file for this machine. Do not search the user's home directory for token files.
 - Read `/Users/lishaocheng/code/github_pat` only for an approved `git push` or deploy operation that needs GitHub authentication.
+- Never use one-shot or inline Git credential helpers such as `git -c credential.helper=...`, `GIT_ASKPASS`, or helper shell functions to pass the PAT.
+- Never trigger or rely on `git-credential-osxkeychain` / macOS Keychain prompts for repository pushes. If a push asks for Keychain access or interactive GitHub credentials, stop and fix the non-interactive PAT push flow instead.
 - Never print a PAT, put it into remote URLs, commit it, write it to docs/logs, or summarize its value. Prefer existing credential helpers, `gh` authentication, deploy keys, GitHub Actions secrets, or controlled MCP/Ops deployment tools when they satisfy the task.
 
 ## Cloud Deploy Bootstrap
