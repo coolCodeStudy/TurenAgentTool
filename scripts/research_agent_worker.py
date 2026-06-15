@@ -11,6 +11,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.parse import quote
 
@@ -40,41 +41,40 @@ class ResearchWorkerConfig:
     skip_codex_when_seed_passes: bool
     seed_min_sources_for_skip: int
     seed_min_knowledge_items_for_skip: int
+    concurrency: int
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run queued research jobs with Codex CLI.")
     parser.add_argument("--once", action="store_true", help="Process one job and exit.")
     parser.add_argument("--loop", action="store_true", help="Poll forever.")
+    parser.add_argument("--concurrency", type=int, help="Number of research jobs to process concurrently.")
     args = parser.parse_args()
 
     if not args.once and not args.loop:
         args.once = True
 
     config = load_config()
+    concurrency = max(1, args.concurrency or config.concurrency)
     run_schema()
     ensure_codex_available(config)
 
     while True:
-        job = claim_next_research_job(worker_name=config.worker_name)
-        if job is None:
+        jobs = _claim_jobs(config, concurrency)
+        if not jobs:
             if args.once:
                 print("No queued research job.", flush=True)
                 return
             time.sleep(config.poll_seconds)
             continue
 
-        try:
-            process_job(config, job)
-        except Exception as exc:
-            message = f"research job failed: {exc}"
-            print(message, flush=True)
-            update_research_job(
-                job_id=int(job["id"]),
-                status="failed",
-                error=message,
-                worker_log=message,
-            )
+        if len(jobs) == 1:
+            _process_claimed_job(config, jobs[0])
+        else:
+            with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+                futures = [executor.submit(_process_claimed_job, config, job) for job in jobs]
+                for future in as_completed(futures):
+                    future.result()
 
         if args.once:
             return
@@ -93,7 +93,40 @@ def load_config() -> ResearchWorkerConfig:
         skip_codex_when_seed_passes=_env_bool("RESEARCH_SKIP_CODEX_WHEN_SEED_PASSES", default=True),
         seed_min_sources_for_skip=int(os.getenv("RESEARCH_SEED_MIN_SOURCES_FOR_SKIP", "3")),
         seed_min_knowledge_items_for_skip=int(os.getenv("RESEARCH_SEED_MIN_KNOWLEDGE_ITEMS_FOR_SKIP", "1")),
+        concurrency=max(1, int(os.getenv("RESEARCH_WORKER_CONCURRENCY", "1"))),
     )
+
+
+def _claim_jobs(config: ResearchWorkerConfig, limit: int) -> list[dict[str, Any]]:
+    jobs: list[dict[str, Any]] = []
+    for _ in range(max(1, limit)):
+        job = claim_next_research_job(worker_name=config.worker_name)
+        if job is None:
+            break
+        jobs.append(job)
+    return jobs
+
+
+def _process_claimed_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
+    try:
+        process_job(config, job)
+    except Exception as exc:
+        message = f"research job failed: {exc}"
+        print(message, flush=True)
+        _record_task_event(
+            "research",
+            int(job["id"]),
+            "failed",
+            status="failed",
+            message=message,
+            metadata={"worker": config.worker_name},
+        )
+        update_research_job(
+            job_id=int(job["id"]),
+            status="failed",
+            error=message,
+            worker_log=message,
+        )
 
 
 def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
@@ -112,7 +145,16 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
         f"execution_location={execution_location} worker={config.worker_name}",
         flush=True,
     )
+    _record_task_event(
+        "research",
+        job_id,
+        "started",
+        status="running",
+        message=f"{symbol} {market} provider={provider}",
+        metadata={"worker": config.worker_name, "execution_location": execution_location},
+    )
     if provider == "openai":
+        _record_task_event("research", job_id, "openai_started", status="running")
         result = run_single_stock_research(
             symbol=symbol,
             market=market,
@@ -145,8 +187,17 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
             },
             worker_log=f"openai provider finished with status={result.status} audit={result.audit_status}",
         )
+        _record_task_event(
+            "research",
+            job_id,
+            "openai_finished",
+            status=_job_status_from_pipeline_result(result),
+            message=result.message,
+            metadata={"audit_status": result.audit_status, "errors": result.errors, "warnings": result.warnings},
+        )
         return
 
+    _record_task_event("research", job_id, "seed_started", status="running")
     seed = run_single_stock_research(
         symbol=symbol,
         market=market,
@@ -179,13 +230,36 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
             },
             worker_log="official-source seed stage failed",
         )
+        _record_task_event(
+            "research",
+            job_id,
+            "seed_failed",
+            status="failed",
+            message=seed.message,
+            metadata=seed.to_summary(),
+        )
         return
+    _record_task_event(
+        "research",
+        job_id,
+        "seed_finished",
+        status=seed.status,
+        message=seed.message,
+        metadata={"audit_status": seed.audit_status, "errors": seed.errors, "warnings": seed.warnings},
+    )
 
     discovery_path = artifact_dir / f"{symbol}_{market}_source_discovery_notes.md"
     _write_initial_discovery_notes(discovery_path, job=job, seed=seed)
 
     if provider == "codex":
         if _seed_is_sufficient_for_codex_skip(config, seed):
+            _record_task_event(
+                "research",
+                job_id,
+                "codex_skipped",
+                status="running",
+                message="seed passed audit and met skip thresholds",
+            )
             _append_discovery_note(
                 discovery_path,
                 "## Codex Skip",
@@ -201,7 +275,9 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
                 review_path=seed.review_path,
                 discovery_path=discovery_path,
             )
+            _record_task_event("research", job_id, "codex_started", status="running")
             run_codex(config, prompt=prompt, output_path=output_path)
+            _record_task_event("research", job_id, "codex_finished", status="running")
     elif provider != "none":
         raise ValueError(f"unsupported research provider: {provider}")
 
@@ -227,6 +303,14 @@ def process_job(config: ResearchWorkerConfig, job: dict[str, Any]) -> None:
         artifacts=final["artifacts"],
         source_discovery=final["source_discovery"],
         worker_log=final["worker_log"],
+    )
+    _record_task_event(
+        "research",
+        job_id,
+        "finalized",
+        status=final["status"],
+        message=final["summary"],
+        metadata={"error": final.get("error"), "artifact_dir": str(artifact_dir)},
     )
 
 
@@ -478,6 +562,27 @@ def _env_bool(key: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _record_task_event(
+    task_type: str,
+    task_id: int,
+    event_type: str,
+    status: str | None = None,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        repository.add_task_event(
+            task_type=task_type,
+            task_id=task_id,
+            event_type=event_type,
+            status=status,
+            message=message,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        print(f"task event write failed: {exc}", flush=True)
 
 
 if __name__ == "__main__":
