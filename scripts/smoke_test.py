@@ -14,6 +14,7 @@ from investment_knowledge_mcp.command_router import (
     _extract_time_range_text,
     _render_performance_estimate,
     _resolve_trade_review_range,
+    _resolve_weekly_review_range,
     handle_command,
     is_candidate_write_command,
     is_maintenance_command,
@@ -56,9 +57,13 @@ from investment_knowledge_mcp.repository import (
     resolve_stock_reference,
     reject_candidate_insight,
     search_stock,
+    upsert_account_snapshot,
     upsert_sector_tree,
     upsert_stock_profile,
+    upsert_trade_records,
 )
+from investment_knowledge_mcp.weekly_review import build_weekly_review, build_weekly_review_context, render_weekly_review_markdown
+from investment_knowledge_mcp.weekly_review_web import _resolve_request_range, render_weekly_review_workbench_html
 
 SMOKE_SYMBOL = "SMOKE001"
 SMOKE_MARKET = "TEST"
@@ -147,6 +152,27 @@ def cleanup_smoke_data() -> None:
             WHERE symbol = %s AND market = %s
             """,
             (SMOKE_JOB_SYMBOL, SMOKE_JOB_MARKET),
+        )
+        conn.execute(
+            """
+            DELETE FROM review_reports
+            WHERE report_type = 'weekly'
+              AND period_start = DATE '2020-01-06'
+              AND period_end = DATE '2020-01-12'
+            """
+        )
+        conn.execute(
+            """
+            DELETE FROM trade_records
+            WHERE code IN (%s, %s)
+            """,
+            (f"{SMOKE_MARKET}.{SMOKE_SYMBOL}", "TEST.LOSS"),
+        )
+        conn.execute(
+            """
+            DELETE FROM account_snapshots
+            WHERE metadata->>'task' = 'smoke_weekly_review'
+            """
         )
         conn.execute(
             """
@@ -405,9 +431,20 @@ def main() -> None:
         assert is_query_command("交易复盘")
         assert is_query_command("本月收益")
         assert is_query_command("补全交易记录 2026-05")
+        assert is_query_command("本周复盘")
+        assert is_query_command("上周复盘")
+        assert is_query_command("复盘 上周")
+        assert is_query_command("复盘 2020-01-06 2020-01-12")
+        assert is_query_command("查看下周节奏")
         assert _extract_time_range_text("5月收益") == "5月"
         assert _extract_time_range_text("五月份收益") == "五月份"
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        week_start, week_end, _ = _resolve_weekly_review_range("")
+        assert week_start == today - timedelta(days=today.weekday())
+        assert week_end == today
+        prev_week_start, prev_week_end, _ = _resolve_weekly_review_range("上周")
+        assert prev_week_start == today - timedelta(days=today.weekday() + 7)
+        assert prev_week_end == today - timedelta(days=today.weekday() + 1)
         may_start, may_end, may_label = _resolve_trade_review_range("5月")
         expected_may_year = today.year if 5 <= today.month else today.year - 1
         assert may_start.isoformat() == f"{expected_may_year}-05-01"
@@ -430,6 +467,108 @@ def main() -> None:
         recent_start, recent_end, _ = _resolve_trade_review_range("最近30天")
         assert recent_end == today
         assert (recent_end - recent_start).days == 29
+        weekly_start = datetime(2020, 1, 6, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+        weekly_end = datetime(2020, 1, 12, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+        upsert_account_snapshot(
+            snapshot_date=weekly_start.isoformat(),
+            account_info={"currency": "USD", "total_assets": 2000},
+            positions=[
+                {
+                    "code": f"{SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                    "stock_name": "Smoke Test Stock",
+                    "qty": 10,
+                    "cost_price": 99,
+                    "market_val": 1000,
+                    "pl_val": 10,
+                    "pl_ratio": 0.01,
+                    "currency": "USD",
+                },
+                {
+                    "code": "TEST.LOSS",
+                    "stock_name": "Smoke Loss Stock",
+                    "qty": 5,
+                    "cost_price": 20,
+                    "market_val": 100,
+                    "pl_val": 40,
+                    "pl_ratio": 0.4,
+                    "currency": "USD",
+                },
+            ],
+            fx_rates={"USD": 1.0},
+            fetched_at=datetime(2020, 1, 6, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat(),
+            metadata={"task": "smoke_weekly_review"},
+        )
+        upsert_account_snapshot(
+            snapshot_date=weekly_end.isoformat(),
+            account_info={"currency": "USD", "total_assets": 2100},
+            positions=[
+                {
+                    "code": f"{SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                    "stock_name": "Smoke Test Stock",
+                    "qty": 10,
+                    "cost_price": 99,
+                    "market_val": 1100,
+                    "pl_val": 80,
+                    "pl_ratio": 0.08,
+                    "currency": "USD",
+                },
+                {
+                    "code": "TEST.LOSS",
+                    "stock_name": "Smoke Loss Stock",
+                    "qty": 7,
+                    "cost_price": 18,
+                    "market_val": 90,
+                    "pl_val": -50,
+                    "pl_ratio": -0.35,
+                    "currency": "USD",
+                },
+            ],
+            fx_rates={"USD": 1.0},
+            fetched_at=datetime(2020, 1, 12, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat(),
+            metadata={"task": "smoke_weekly_review"},
+        )
+        upsert_trade_records(
+            [
+                {
+                    "deal_id": "smoke-weekly-loss-buy",
+                    "order_id": "smoke-weekly-loss-order",
+                    "code": "TEST.LOSS",
+                    "stock_name": "Smoke Loss Stock",
+                    "trd_side": "BUY",
+                    "qty": 2,
+                    "price": 18,
+                    "amount": 36,
+                    "currency": "USD",
+                    "create_time": "2020-01-08 10:00:00",
+                }
+            ]
+        )
+        weekly_context = build_weekly_review_context(start=weekly_start, end=weekly_end)
+        weekly_markdown = render_weekly_review_markdown(weekly_context)
+        assert weekly_context["source_status"]["account_snapshots"]["status"] == "ok"
+        assert weekly_context["source_status"]["trades"]["count"] == 1
+        assert weekly_context["highlights"][0]["code"] == f"{SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert weekly_context["blowups"][0]["code"] == "TEST.LOSS"
+        assert weekly_context["blowups"][0]["movement"] == "加仓"
+        assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_markdown
+        assert "指数数据源未接入" in weekly_markdown
+        weekly_result = build_weekly_review(start=weekly_start, end=weekly_end, save=True)
+        assert weekly_result.saved_report is not None
+        assert weekly_result.saved_report["report_type"] == "weekly"
+        assert str(weekly_result.saved_report["period_start"]) == "2020-01-06"
+        assert str(weekly_result.saved_report["period_end"]) == "2020-01-12"
+        weekly_command_result = handle_command("复盘 2020-01-06 2020-01-12")
+        assert weekly_command_result.ok
+        assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_command_result.message
+        assert "已保存周复盘" in weekly_command_result.message
+        weekly_web_html = render_weekly_review_workbench_html()
+        assert "InvestmentKnowledge" in weekly_web_html
+        assert "本周复盘" in weekly_web_html
+        assert "/api/weekly-review/save" in weekly_web_html
+        assert "data-slot=\"holdings\"" in weekly_web_html
+        web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
+        assert web_start == weekly_start
+        assert web_end == weekly_end
         draft_for_audit = {
             "stock": {
                 "symbol": "AUDIT",
