@@ -37,6 +37,7 @@ ALLOWED_NAMED_REFS = {
 COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
+    "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
     "account-snapshot-scheduler": "account-snapshot-scheduler",
     "ipo-reminder-scheduler": "ipo-reminder-scheduler",
@@ -62,6 +63,9 @@ SERVICE_ALIASES = {
     "hermes-gateway": "hermes",
     "dingtalk": "dingtalk-stream-bot",
     "stream": "dingtalk-stream-bot",
+    "weekly-review": "weekly-review-web",
+    "weekly-web": "weekly-review-web",
+    "review-web": "weekly-review-web",
     "account-snapshot": "account-snapshot-scheduler",
     "snapshot": "account-snapshot-scheduler",
     "snapshot-scheduler": "account-snapshot-scheduler",
@@ -202,6 +206,11 @@ def build_system_status() -> dict[str, Any]:
             _check_systemd("futu-proxy", SYSTEMD_SERVICES["futu-proxy"]),
             _check_socket("postgres", "127.0.0.1", int(os.getenv("POSTGRES_HOST_PORT", "55432"))),
             _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
+            _check_socket(
+                "weekly-review-web",
+                "127.0.0.1",
+                int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010")),
+            ),
             _check_socket("futu-opend", "127.0.0.1", 11111),
             _check_socket("futu-proxy", "172.17.0.1", 11112),
         ],
@@ -225,6 +234,7 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
     for name in (
         "mcp",
         "dingtalk-stream-bot",
+        "weekly-review-web",
         "account-snapshot-scheduler",
         "ipo-reminder-scheduler",
         "command-api",
@@ -421,8 +431,18 @@ def build_deploy_health() -> dict[str, Any]:
         _check_compose(),
         _check_socket("postgres", "127.0.0.1", int(os.getenv("POSTGRES_HOST_PORT", "55432"))),
         _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
+        _check_socket(
+            "weekly-review-web",
+            "127.0.0.1",
+            int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010")),
+        ),
     ]
-    for service in ("dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
+    for service in (
+        "weekly-review-web",
+        "dingtalk-stream-bot",
+        "account-snapshot-scheduler",
+        "ipo-reminder-scheduler",
+    ):
         checks.append(_check_compose_service_running(service))
     return {
         "ok": all(bool(check.get("ok")) for check in checks),
