@@ -1,64 +1,64 @@
-# Control Plane 与跑数效率升级计划
+# Control Plane And Throughput Upgrade Plan
 
-## 背景判断
+## Background
 
-当前 InvestmentKnowledge 的最高频使用主线不是钉钉查询，而是：
+The highest-frequency InvestmentKnowledge workflow is no longer DingTalk query alone. It is:
 
 ```text
-用户
+User
   -> Codex App
-    -> Codex 读本地代码 / 修改代码 / 跑验证
-    -> Codex 通过云端 MCP / Ops API 查看 ECS 状态和日志
-    -> Codex 总结问题、实施修复、触发或检查部署
+    -> Codex reads local code, edits code, runs validation
+    -> Codex uses cloud MCP / Ops API to inspect ECS status and logs
+    -> Codex summarizes issues, fixes them, triggers or checks deployment
 ```
 
-钉钉是日常投资查询和通知入口，云端 worker 是异步执行入口，但系统的核心开发效率取决于 Codex App 协作链路是否顺滑。
+DingTalk remains the daily investment query and notification entrypoint. Cloud workers remain async execution entrypoints. But development efficiency now depends on how smoothly Codex App can understand system state and act through the control plane.
 
-因此下一阶段优先级应从“多入口能力”调整为“Codex 协作控制平面”：
+Next-stage priority should therefore shift from "more entrypoints" to "Codex collaboration control plane":
 
-- 让 Codex 能快速知道系统当前状态。
-- 让 Codex 能快速定位部署、worker、研究任务卡点。
-- 让任务和部署过程结构化落库，而不是只靠日志。
-- 让跑数任务支持批量、分层和可恢复执行。
+- Let Codex quickly understand current system state.
+- Let Codex quickly locate deployment, worker, and research-job bottlenecks.
+- Persist tasks and deployments structurally instead of relying only on logs.
+- Support batch, layered, and resumable data/research runs.
 
-安全增强暂不作为前排优先级，只保留不影响产出的最低边界。
+Security hardening remains important but should not block the minimum productive control plane.
 
-## 修正后的交互架构
+## Revised Interaction Architecture
 
 ```text
-用户
+User
   |
-  | 高频：提出目标、让 Codex 判断/修改/部署/诊断
+  | High frequency: ask Codex to judge, edit, deploy, diagnose
   v
 Codex App
   |
-  +-- 本地仓库：读代码、改代码、跑测试
+  +-- Local repository: read code, edit code, run tests
   |
-  +-- 云端 MCP /mcp
+  +-- Cloud MCP /mcp
         |
         +-- InvestmentKnowledge MCP tools
               |
-              +-- Ops API：ECS 状态、服务日志、worker 状态
-              +-- PostgreSQL：任务、知识库、事件、部署记录
-              +-- Futu OpenD：持仓、交易、IPO
-              +-- OpenAI：分析/路由/研究补全
+              +-- Ops API: ECS status, service logs, worker status
+              +-- PostgreSQL: tasks, knowledge base, events, deployments
+              +-- Futu OpenD: holdings, trades, IPOs
+              +-- OpenAI: analysis, routing, research enrichment
 
-钉钉
+DingTalk
   |
-  +-- 日常查询：持仓分析、本月收益、怎么看某股票
-  +-- 通知：worker 完成、部署完成、任务失败、需要确认
+  +-- Daily queries: holdings analysis, monthly return, stock views
+  +-- Notifications: worker completed, deploy completed, task failed, confirmation needed
 
-云端 worker
+Cloud worker
   |
-  +-- research_jobs：研究跑数
-  +-- coding_tasks：开发任务
+  +-- research_jobs: research runs
+  +-- coding_tasks: development tasks
 ```
 
-## 持久化位置
+## Persistence
 
-所有协作和任务控制平面数据优先持久化在当前 PostgreSQL 数据库，不另起新存储。
+Control-plane data should be stored in the current PostgreSQL database by default.
 
-建议新增表：
+Suggested tables:
 
 ```text
 work_sessions
@@ -99,185 +99,133 @@ deploy_events
   created_at
 ```
 
-文档层只保存阶段计划、项目状态、经验教训和人工复盘；运行态事实放数据库。例行流水账已废弃，长期信息应进入 `docs/当前工程状态.md`、`docs/agent-lessons.md` 或 `docs/project-history.md`。
+Docs should preserve phase plans, project state, reusable lessons, and human-written reviews. Runtime facts belong in the database. Routine diary logs are retired.
 
-## 当前流水线问题
+## Current Pipeline Problems
 
-### Codex 协作链路
+### Codex Collaboration
 
-现状：
+Current state:
 
-- Codex 可以读本地代码。
-- Codex 可以通过 MCP/Ops API 看云端状态和日志。
-- 但 Codex 缺少一个系统总览工具，需要在多个日志、表和命令之间来回拼。
+- Codex can read local code.
+- Codex can inspect cloud status and logs through MCP/Ops API.
+- Codex lacks a single system overview and must stitch together logs, tables, and commands.
 
-优化目标：
+Target:
 
-- 新增 `system_overview` / `系统总览`。
-- 一次返回服务状态、部署状态、任务队列、最近失败、账户快照新鲜度。
-- 用户不需要看 Docker 日志；日志是 Codex 的输入，不是用户的工作。
+- Add `system_overview`.
+- Return service status, deployment state, task queues, recent failures, and account snapshot freshness in one response.
+- Users should not read Docker logs; logs are Codex input.
 
-### 部署流水线
+### Deployment Pipeline
 
-现状：
+Current state:
 
-- quick deploy 和 full deploy 已区分。
-- quick deploy 仍打较大的 release tar。
-- 部署后主要输出日志，没有结构化部署事件。
-- 健康检查不是所有部署路径的强制步骤。
+- Quick and full deploy are separated.
+- Quick deploy still packages more than it needs.
+- Deployments mostly output logs instead of structured events.
+- Health checks are not mandatory in every path.
 
-优化目标：
+Target:
 
-- quick deploy 排除 `drafts/` 等大产物。
-- quick/full deploy 都写入 `deploy_events`。
-- 部署结束自动跑健康检查，并把结果摘要落库。
-- Codex 可以直接问最近一次部署结果。
+- Exclude heavy artifacts such as `drafts/` from quick deploy.
+- Make quick/full deploy write `deploy_events`.
+- Run health checks after deploy and save summaries.
+- Let Codex answer "what happened in the last deploy?" directly.
 
-### 研究跑数流水线
+### Research Throughput
 
-现状：
+Current state:
 
-- 已有 `research_jobs`。
-- worker 默认偏单并发，适合稳，不适合批量补全。
-- 状态粒度偏粗，不知道卡在 source、draft、audit、import 哪一步。
-- `scripts/create_research_jobs.py` 当前传入了 `execution_location`、`created_from`、`requested_by` 等参数，但 `research.jobs.create_research_job` 现有签名没有这些参数；这条脚本路径需要修正，否则批量创建任务可能直接失败。
+- `research_jobs` exists.
+- Worker concurrency is conservative and safe, but not ideal for batch completion.
+- Status granularity is too coarse; it is hard to tell whether a job is stuck in source collection, draft, audit, or import.
+- Some batch-creation scripts pass metadata that older creation functions may not accept; this path needs compatibility checks.
 
-优化目标：
+Target:
 
-- 新增 `task_events` 记录每一步。
-- 把研究拆成 fast seed 和 deep codex 两段。
-- fast seed 可并发，deep codex 控制并发。
-- 批量任务有 `run_group_id`，支持“前十大持仓补全”的整体汇总。
+- Add `task_events` for each important step.
+- Split research into fast seed and deep Codex stages.
+- Allow fast seed concurrency while keeping deep Codex low-concurrency.
+- Add `run_group_id` for batch jobs such as top holdings coverage.
 
-## 优先级计划
+## Priority Plan
 
-### P0：Codex 协作控制平面
+### P0: Codex Collaboration Control Plane
 
-产出：
+Deliver:
 
-- 新增 `系统总览` 命令。
-- 新增 MCP tool：`system_overview` 或扩展 `cloud_system_status`。
-- 汇总：
-  - 服务状态
-  - 最近部署
-  - research queue
-  - coding queue
-  - worker status
-  - 最近 command failures
-  - 最近 account snapshot
+- Add command/tool `system_overview`.
+- Summarize services, latest deploy, research queue, coding queue, worker status, command failures, and account snapshot freshness.
 
-成功标准：
+Success:
 
-- 用户问“现在系统怎么样”，Codex 不需要先翻 5 个日志。
-- Codex 能 1 分钟内判断卡点在部署、worker、Futu、OpenAI、DB 还是任务数据。
+- When the user asks "how is the system now?", Codex does not need to inspect five separate logs.
+- Codex can identify within a minute whether the bottleneck is deployment, worker, Futu, OpenAI, DB, or task data.
 
-### P1：部署事件化
+### P1: Deployment Events
 
-产出：
+Deliver:
 
-- 新增 `deploy_events`。
-- 修改 GitHub Actions 和 `deploy_from_local_checkout.sh`，部署开始/结束写事件。
-- quick deploy 排除 `drafts/`。
-- 部署后自动健康检查。
+- Add `deploy_events`.
+- Make GitHub Actions and `deploy_from_local_checkout.sh` write start/end events.
+- Exclude `drafts/` from quick deploy.
+- Run post-deploy health checks.
 
-成功标准：
+Success:
 
-- 用户问“上次部署成功了吗”，系统能直接答。
-- Codex 可以看到 commit、deploy mode、耗时、失败摘要。
+- The system can answer whether the last deploy succeeded.
+- Codex can see commit, deploy mode, duration, and failure summary.
 
-### P2：任务事件化
+### P2: Task Events
 
-产出：
+Deliver:
 
-- 新增 `task_events`。
-- coding worker / research worker 每个关键阶段写事件。
-- 新增命令：
-  - `任务状态 #id`
-  - `研究任务 #id`
-  - `最近失败任务`
+- Add `task_events`.
+- Make coding and research workers write events at key stages.
+- Add commands such as task status, research-job status, and recent failed tasks.
 
-成功标准：
+Success:
 
-- 不看日志也能知道任务卡在哪一步。
-- 失败任务可以按原因聚合。
+- The system can identify where a task is stuck without raw logs.
+- Failed tasks can be grouped by reason.
 
-### P3：研究跑数并发与分层
+### P3: Research Concurrency And Layering
 
-产出：
+Deliver:
 
-- `research_jobs` 增加 `run_group_id`、`stage`、`max_attempts`、`attempt_count`。
-- fast seed worker 支持并发 2-4。
-- deep codex worker 保持低并发。
-- 批任务汇总报告。
+- Add `run_group_id`, `stage`, `max_attempts`, and `attempt_count` to `research_jobs`.
+- Allow fast seed workers to run with concurrency 2-4.
+- Keep deep Codex worker concurrency low.
+- Add batch summary reports.
 
-成功标准：
+Success:
 
-- 前十大持仓画像补全可以批量跑。
-- 大部分股票先用低成本 seed 完成，只有不足的进入 Codex 深研。
+- Top holdings coverage can run in batches.
+- Most stocks complete low-cost seed coverage first; only insufficient ones move to deep research.
 
-### P4：开发任务效率
+### P4: Development Task Efficiency
 
-产出：
+Deliver:
 
-- `coding_tasks` 增加 `task_kind`。
-- docs 类任务不部署。
-- bugfix/feature 跑 targeted tests。
-- ops 类任务部署后强制健康检查。
-- 支持多个完成任务合并部署。
+- Improve `coding_tasks` visibility.
+- Make worker status and recent failures visible in system overview.
+- Preserve branch/commit/result metadata for completed coding tasks.
 
-成功标准：
+Success:
 
-- 小修不再每次完整重启。
-- Codex worker 的结果包含验证和部署状态。
+- Codex can claim, process, and report coding tasks with less manual inspection.
 
-### P5：结构重构
+## Non-Goals
 
-产出：
+- Do not replace the whole runtime with a new orchestration platform.
+- Do not add a broad public control plane without authentication.
+- Do not move runtime facts into docs.
+- Do not make users read raw logs as the primary interface.
 
-- 拆 `command_router.py` 到 `commands/`。
-- 拆 `repository.py` 到 `stores/`。
-- research pipeline 显式 workflow 化。
+## Verification
 
-成功标准：
-
-- 新增功能不继续堆到超级路由器。
-- 测试能覆盖命令路由、任务事件、研究导入。
-
-## 云上多线程跑数结论
-
-可以云上并发跑，但建议分层并发，不建议所有任务都直接多 Codex 并发。
-
-推荐：
-
-```text
-fast seed research:
-  并发 2-4
-  低成本、短耗时、适合批量
-
-OpenAI enrich:
-  并发 1-2
-  受 API 成本和 rate limit 控制
-
-Codex deep research:
-  并发 1
-  高成本、高不确定性、适合难票或失败补救
-
-DB import:
-  可并发，但同一 symbol/market 需要唯一约束和幂等
-```
-
-技术上可选：
-
-- 单 worker 进程内部 `ThreadPoolExecutor`。
-- 多个 systemd worker 实例。
-- 多容器 worker replicas。
-
-短期最稳的是多个 worker 角色：
-
-```text
-research-seed-worker@1..N
-research-codex-worker@1
-coding-worker@1
-```
-
-每个 worker 用 `FOR UPDATE SKIP LOCKED` 抢任务，当前代码已经具备这个基础。
+- Unit tests for new event-writing repository functions.
+- Smoke test for `system_overview`.
+- Manual cloud check through MCP tools after deployment.
+- Regression check that existing DingTalk and command-router paths still work.
