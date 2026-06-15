@@ -214,6 +214,16 @@ read-only deploy key
 
 如果未来需要跨多个仓库，再考虑 GitHub App installation token。
 
+本地 Codex push 认证遵守独立边界：
+
+- 只有在用户明确授权 push 或 deploy 时，才读取本机 GitHub PAT 文件。
+- 优先使用 `/Users/lishaocheng/code/github_pat_only`；该文件应只包含 GitHub PAT。
+- 旧的 `/Users/lishaocheng/code/github_pat` 只作为兼容兜底；该文件后续行可能包含 Postgres 密码、Command API token 或其他本机秘密，只允许把第一行当作 GitHub PAT。
+- 不自动重写、截断、重命名、拆分、清理或打印 `/Users/lishaocheng/code/github_pat_only` 或 `/Users/lishaocheng/code/github_pat`。
+- push 时设置 `GIT_CONFIG_NOSYSTEM=1`，避免系统级 `git-credential-osxkeychain` 弹出 Keychain 授权框。
+- 只在 `/tmp` 下创建临时 credential store，push 完立即删除。
+- 不把 PAT 写入 remote URL、文档、日志、commit message 或聊天摘要。
+
 ## 通知云上的方式
 
 不使用 GitHub webhook 作为第一版主线。
