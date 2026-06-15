@@ -145,19 +145,19 @@ jobs:
           script: |
             set -e
             sudo rm -f /tmp/investment-knowledge-release.tar.gz /tmp/investment-knowledge-images.tar.gz
-            if command -v tar >/dev/null 2>&1; then
+            if command -v tar >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
               echo "ECS base tools are ready."
               exit 0
             fi
             if command -v apt-get >/dev/null 2>&1; then
               sudo apt-get update
-              sudo apt-get install -y tar
+              sudo apt-get install -y tar git
             elif command -v yum >/dev/null 2>&1; then
-              sudo yum install -y tar
+              sudo yum install -y tar git
             elif command -v dnf >/dev/null 2>&1; then
-              sudo dnf install -y tar
+              sudo dnf install -y tar git
             else
-              echo "Unsupported Linux distribution: cannot install tar automatically."
+              echo "Unsupported Linux distribution: cannot install tar/git automatically."
               exit 1
             fi
 
@@ -185,6 +185,8 @@ jobs:
             set -e
 
             APP_DIR=/opt/investment-knowledge
+            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
+            DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
             RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
 
             test -f "$RELEASE_TAR"
@@ -226,7 +228,23 @@ jobs:
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 mcp || true
               if [ -f scripts/install_ops_api_on_ecs.sh ] && [ -f .env ]; then
-                sudo bash scripts/install_ops_api_on_ecs.sh --start
+                sudo mkdir -p "$DEPLOY_REPO_DIR"
+                sudo chown -R "$(id -un)":"$(id -gn)" "$DEPLOY_REPO_DIR"
+                if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
+                  git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
+                  git -C "$DEPLOY_REPO_DIR" fetch --prune origin
+                else
+                  rm -rf "$DEPLOY_REPO_DIR"
+                  git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
+                fi
+                git -C "$DEPLOY_REPO_DIR" checkout --detach "${{ github.sha }}"
+                git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
+                sudo \
+                  INVESTMENT_DIR="$APP_DIR" \
+                  OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
+                  OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
+                  OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
+                  bash scripts/install_ops_api_on_ecs.sh --start
                 systemctl status investment-ops-api.service --no-pager || true
                 if [ -f /etc/investment-knowledge/ops-api.env ]; then
                   . /etc/investment-knowledge/ops-api.env
@@ -328,18 +346,18 @@ jobs:
             set -e
 
             install_base_tools() {
-              if command -v tar >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+              if command -v tar >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
                 return
               fi
 
-              echo "Installing base tools: tar, curl, ca-certificates"
+              echo "Installing base tools: tar, curl, git, ca-certificates"
               if command -v apt-get >/dev/null 2>&1; then
                 sudo apt-get update
-                sudo apt-get install -y tar curl ca-certificates
+                sudo apt-get install -y tar curl git ca-certificates
               elif command -v yum >/dev/null 2>&1; then
-                sudo yum install -y tar curl ca-certificates
+                sudo yum install -y tar curl git ca-certificates
               elif command -v dnf >/dev/null 2>&1; then
-                sudo dnf install -y tar curl ca-certificates
+                sudo dnf install -y tar curl git ca-certificates
               else
                 echo "Unsupported Linux distribution: cannot install base tools automatically."
                 exit 1
@@ -444,6 +462,8 @@ jobs:
             resolve_compose_command
 
             APP_DIR=/opt/investment-knowledge
+            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
+            DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
             RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
             IMAGE_TAR=/tmp/investment-knowledge-images.tar.gz
             RELEASE_DIR=/tmp/investment-knowledge-release
@@ -517,12 +537,30 @@ jobs:
             OPS_API_URL=${{ vars.OPS_API_URL || 'http://host.docker.internal:8767' }}
             OPS_API_TOKEN=${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
             OPS_API_TIMEOUT_SECONDS=${{ vars.OPS_API_TIMEOUT_SECONDS || '8' }}
+            OPS_API_DEPLOY_TIMEOUT_SECONDS=${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}
             ENV
 
             sed -i 's/^            //' .env
             chmod 600 .env
 
-            sudo bash scripts/install_ops_api_on_ecs.sh --start
+            sudo mkdir -p "$DEPLOY_REPO_DIR"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$DEPLOY_REPO_DIR"
+            if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
+              git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
+              git -C "$DEPLOY_REPO_DIR" fetch --prune origin
+            else
+              rm -rf "$DEPLOY_REPO_DIR"
+              git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
+            fi
+            git -C "$DEPLOY_REPO_DIR" checkout --detach "${{ github.sha }}"
+            git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
+
+            sudo \
+              INVESTMENT_DIR="$APP_DIR" \
+              OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
+              OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
+              OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
+              bash scripts/install_ops_api_on_ecs.sh --start
             if [ -f /etc/investment-knowledge/ops-api.env ]; then
               . /etc/investment-knowledge/ops-api.env
               curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true

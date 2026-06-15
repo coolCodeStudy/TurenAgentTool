@@ -17,6 +17,9 @@ Environment:
   OPS_API_HOST=...              Optional; defaults to docker0 bridge IP, then 127.0.0.1.
   OPS_API_PORT=8767
   OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
+  OPS_DEPLOY_REPO_DIR=...       Optional; defaults to /opt/investment-knowledge-repo.
+  OPS_API_DEPLOY_TIMEOUT_SECONDS=600
+  OPS_DEPLOY_ALLOWED_REFS=main
 EOF
 }
 
@@ -79,6 +82,9 @@ OPS_API_PORT=$OPS_API_PORT
 OPS_API_TOKEN=$OPS_API_TOKEN
 POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT:-55432}
 MCP_HOST_PORT=${MCP_HOST_PORT:-8000}
+OPS_DEPLOY_REPO_DIR=${OPS_DEPLOY_REPO_DIR:-/opt/investment-knowledge-repo}
+OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-600}
+OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
 EOF
 chmod 600 /etc/investment-knowledge/ops-api.env
 
