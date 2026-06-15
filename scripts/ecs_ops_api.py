@@ -327,6 +327,7 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
     commit_sha = ""
     branch_name = ref if ref in ALLOWED_NAMED_REFS else ""
     logs_tail = ""
+    warnings: list[str] = []
     metadata: dict[str, Any] = {
         "requested_ref": ref,
         "requested_by": requested_by,
@@ -335,27 +336,32 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
     }
 
     try:
-        event_id = _record_deploy_start(
-            source=source,
-            mode=mode,
-            commit_sha=ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
-            branch_name=branch_name,
-            metadata=metadata,
-        )
+        try:
+            event_id = _record_deploy_start(
+                source=source,
+                mode=mode,
+                commit_sha=ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
+                branch_name=branch_name,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            warning = f"deploy event start recording failed: {sanitize_text(str(exc))}"
+            warnings.append(warning)
+            metadata["event_recording_warning"] = warning
 
         _ensure_clean_repo()
         fetch = _run_git(["fetch", "--prune", "origin"], timeout=DEPLOY_TIMEOUT_SECONDS)
         if not fetch.ok:
-            raise RuntimeError(f"git fetch failed: {_first_line(fetch.stderr or fetch.stdout) or 'unknown error'}")
+            raise RuntimeError(f"git fetch failed: {_summarize_command_error(fetch.stderr or fetch.stdout)}")
 
         checkout_target = f"origin/{ref}" if ref in ALLOWED_NAMED_REFS else ref
         checkout = _run_git(["checkout", "--detach", checkout_target], timeout=DEPLOY_TIMEOUT_SECONDS)
         if not checkout.ok:
-            raise RuntimeError(f"git checkout failed: {_first_line(checkout.stderr or checkout.stdout) or 'unknown error'}")
+            raise RuntimeError(f"git checkout failed: {_summarize_command_error(checkout.stderr or checkout.stdout)}")
 
         commit_result = _run_git(["rev-parse", "HEAD"])
         if not commit_result.ok:
-            raise RuntimeError(f"git rev-parse failed: {_first_line(commit_result.stderr or commit_result.stdout) or 'unknown error'}")
+            raise RuntimeError(f"git rev-parse failed: {_summarize_command_error(commit_result.stderr or commit_result.stdout)}")
         commit_sha = commit_result.stdout.strip()
         metadata["resolved_commit_sha"] = commit_sha
 
@@ -364,7 +370,7 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
             "SOURCE_DIR": str(REPO_DIR),
             "APP_DIR": str(APP_DIR),
             "BUILD_IMAGE": "true" if mode == "full" else "false",
-            "DEPLOY_EVENT_ID": event_id,
+            "DEPLOY_EVENT_ID": event_id or "",
         }
         deploy = _run(
             ["bash", str(REPO_DIR / "scripts" / "deploy_from_local_checkout.sh")],
@@ -374,16 +380,20 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
         )
         logs_tail = _tail_text(_combine_output(deploy), limit=80)
         if not deploy.ok:
-            raise RuntimeError(f"deploy script failed: {_first_line(deploy.stderr or deploy.stdout) or 'unknown error'}")
+            raise RuntimeError(f"deploy script failed: {_summarize_command_error(deploy.stderr or deploy.stdout)}")
 
         health = build_deploy_health()
         metadata["health"] = health
+        if warnings:
+            metadata["warnings"] = warnings
         duration_seconds = round(time.monotonic() - started_at, 3)
         if not health.get("ok"):
             failed_checks = ", ".join(str(item.get("name")) for item in health.get("checks", []) if not item.get("ok"))
             summary = f"deploy health check failed: {failed_checks or 'unknown'}"
             if event_id:
-                _record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+                finish_warning = _try_record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+                if finish_warning:
+                    warnings.append(finish_warning)
             return {
                 "deploy_event_id": int(event_id) if event_id else None,
                 "ref": ref,
@@ -393,11 +403,14 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
                 "duration_seconds": duration_seconds,
                 "summary": summary,
                 "health": health,
+                "warnings": warnings,
             }
 
         summary = f"{mode} deploy completed"
         if event_id:
-            _record_deploy_finish(event_id, "succeeded", summary, logs_tail, metadata)
+            finish_warning = _try_record_deploy_finish(event_id, "succeeded", summary, logs_tail, metadata)
+            if finish_warning:
+                warnings.append(finish_warning)
         return {
             "deploy_event_id": int(event_id) if event_id else None,
             "ref": ref,
@@ -407,12 +420,17 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
             "duration_seconds": duration_seconds,
             "summary": summary,
             "health": health,
+            "warnings": warnings,
         }
     except Exception as exc:
         summary = sanitize_text(str(exc))
         metadata["error"] = summary
+        if warnings:
+            metadata["warnings"] = warnings
         if event_id:
-            _record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+            finish_warning = _try_record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+            if finish_warning:
+                summary = f"{summary}; {finish_warning}"
         raise RuntimeError(summary) from exc
 
 
@@ -469,7 +487,7 @@ def _record_deploy_start(
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
     if not result.ok:
-        raise RuntimeError(f"record deploy start failed: {_first_line(result.stderr or result.stdout) or 'unknown error'}")
+        raise RuntimeError(f"record deploy start failed: {_summarize_command_error(_combine_output(result))}")
     event_id = result.stdout.strip().splitlines()[-1].strip()
     if not event_id.isdigit():
         raise RuntimeError(f"record deploy start returned invalid id: {event_id}")
@@ -503,7 +521,21 @@ def _record_deploy_finish(
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
     if not result.ok:
-        raise RuntimeError(f"record deploy finish failed: {_first_line(result.stderr or result.stdout) or 'unknown error'}")
+        raise RuntimeError(f"record deploy finish failed: {_summarize_command_error(_combine_output(result))}")
+
+
+def _try_record_deploy_finish(
+    event_id: str,
+    status: str,
+    summary: str,
+    logs_tail: str,
+    metadata: dict[str, Any],
+) -> str | None:
+    try:
+        _record_deploy_finish(event_id, status, summary, logs_tail, metadata)
+    except Exception as exc:
+        return f"deploy event finish recording failed: {sanitize_text(str(exc))}"
+    return None
 
 
 def _ensure_clean_repo() -> None:
@@ -689,6 +721,23 @@ def _first_line(text: str) -> str:
         if stripped:
             return stripped
     return ""
+
+
+def _summarize_command_error(text: str) -> str:
+    lines = [line.strip() for line in sanitize_text(text).splitlines() if line.strip()]
+    if not lines:
+        return "unknown error"
+
+    for line in reversed(lines):
+        lower = line.lower()
+        if (
+            lower.startswith(("error:", "fatal:", "exception:", "runtimeerror:", "valueerror:"))
+            or "no such file or directory" in lower
+            or "connection refused" in lower
+            or "could not" in lower
+        ):
+            return line
+    return lines[-1]
 
 
 def _tail_nonempty_lines(text: str, limit: int) -> list[str]:
