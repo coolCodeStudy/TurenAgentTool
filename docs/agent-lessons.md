@@ -22,6 +22,12 @@ Add only lessons that should change future behavior.
 - Use strong tokens for command-api. Do not write temporary tokens, secrets, or credentials into docs, commits, logs, or summaries.
 - If HTTP auth or gateway integration is not part of the task, prefer CLI/MCP verification over command-api verification.
 
+## Cloud Deploy Bootstrap
+
+- Before asking the user to SSH into ECS for one-time setup, check whether the existing GitHub Actions deployment path can bootstrap the same state through its already-configured SSH credentials.
+- For a public repository, ECS can maintain a read-only HTTPS checkout such as `/opt/investment-knowledge-repo` without any GitHub token or deploy key; only use a deploy key if the repository becomes private.
+- When adding a cloud pull-deploy path, ensure the deployment workflow creates or refreshes the remote checkout and writes the checkout path into the Ops API systemd environment. Otherwise the new `/ops/deploy` endpoint may be deployed but unable to fetch refs.
+
 ## Daily Records Retired
 
 - Do not create routine daily work logs by default.
