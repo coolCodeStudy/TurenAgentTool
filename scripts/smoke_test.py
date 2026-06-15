@@ -493,6 +493,26 @@ def main() -> None:
                     "pl_ratio": 0.4,
                     "currency": "USD",
                 },
+                {
+                    "code": "TEST.CUT",
+                    "stock_name": "Smoke Cut Loss Stock",
+                    "qty": 3,
+                    "cost_price": 20,
+                    "market_val": 45,
+                    "pl_val": -15,
+                    "pl_ratio": -0.25,
+                    "currency": "USD",
+                },
+                {
+                    "code": "TEST.TAKE",
+                    "stock_name": "Smoke Take Profit Stock",
+                    "qty": 2,
+                    "cost_price": 20,
+                    "market_val": 55,
+                    "pl_val": 15,
+                    "pl_ratio": 0.38,
+                    "currency": "USD",
+                },
             ],
             fx_rates={"USD": 1.0},
             fetched_at=datetime(2020, 1, 6, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat(),
@@ -548,8 +568,11 @@ def main() -> None:
         assert weekly_context["source_status"]["account_snapshots"]["status"] == "ok"
         assert weekly_context["source_status"]["trades"]["count"] == 1
         assert weekly_context["highlights"][0]["code"] == f"{SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert any(item["code"] == "TEST.TAKE" and item["type"] == "止盈清仓" for item in weekly_context["highlights"])
+        assert all(item["code"] != "TEST.CUT" for item in weekly_context["highlights"])
         assert weekly_context["blowups"][0]["code"] == "TEST.LOSS"
         assert weekly_context["blowups"][0]["movement"] == "加仓"
+        assert any(item["code"] == "TEST.CUT" and item["type"] == "割肉清仓" for item in weekly_context["blowups"])
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_markdown
         assert "指数数据源未接入" in weekly_markdown
         weekly_result = build_weekly_review(start=weekly_start, end=weekly_end, save=True)

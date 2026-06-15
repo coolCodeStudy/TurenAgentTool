@@ -13,6 +13,7 @@ Read it before changing code, running services, or touching deployment commands.
 
 ## Deployment And Service Boundaries
 
+- For bugs observed on a cloud-served product surface, local verification is not the end of the task. After tests pass, proactively move to the release step: state the exact git push/deploy action needed, ask for approval when remote credentials or cloud services are involved, and continue through approved deployment/verification instead of stopping at a local summary.
 - Do not treat "verify the change" as permission to start the whole prod-style stack.
 - For local Task validation, prefer:
   - `.venv/bin/python scripts/smoke_test.py`
@@ -31,6 +32,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Be explicit about database target. Local compose can accidentally create or connect to a fresh empty database.
 - If a service should use the existing local knowledge base, verify `POSTGRES_HOST` and `POSTGRES_PORT` before starting it.
 - Do not assume data exists in the current database just because drafts exist on disk.
+- Real trading records, account snapshots, and weekly-review source data live in the cloud environment. If local database data is missing, treat it as an environment limitation and verify logic with fixtures or approved cloud read paths rather than assuming the product data does not exist.
 
 ## Verification Notes
 

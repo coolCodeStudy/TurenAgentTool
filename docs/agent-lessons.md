@@ -9,12 +9,14 @@ Add only lessons that should change future behavior.
 - For command-router or display behavior, validate with `scripts/smoke_test.py` and `scripts/ikg.py` first.
 - `command-api` is only an HTTP wrapper around `handle_command(...)`; it is not required for normal local feature verification.
 - Start `command-api`, `dingtalk-api`, schedulers, or broad compose profiles only when the user explicitly asks to test those surfaces or approves the exact service list.
+- When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
 
 ## Service Startup Preflight
 
 - Before any service action, state the service names, database target, exposed ports, and external integrations.
 - Verify `POSTGRES_HOST` and `POSTGRES_PORT` before starting containers. A compose stack may silently connect to a fresh empty database.
 - If a service should use the existing local knowledge base, point it at the established local DB instead of a newly created prod-compose DB.
+- Real trading records, account snapshots, and weekly-review source data are cloud-side product data. A missing local row is an environment limitation, not evidence that the product data is unavailable; use fixtures for local logic checks or an approved cloud read path when the task requires real data.
 
 ## Secrets And HTTP Entrypoints
 
