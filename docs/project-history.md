@@ -40,3 +40,7 @@ It is intentionally not a day-by-day log.
 - `/mcp` public access protection remains a security TODO; short-term deployments rely on network/security-group restrictions.
 - Research worker stability, retry behavior, artifact access, and queue capacity remain ongoing control-plane concerns.
 - Weekly/monthly performance review still needs a stronger data foundation around account snapshots, trades, cash flow, and FX.
+
+## Documentation Governance
+
+- A documentation front door and governance layer were added so future agents can find canonical docs, distinguish active plans from historical context, and avoid broad undocumented doc churn.

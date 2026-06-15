@@ -7,6 +7,7 @@ Read it before changing code, running services, or touching deployment commands.
 
 - Run `.venv/bin/python scripts/agent_preflight.py` at the start of a new task unless the user is asking only a tiny factual question.
 - Check `git status --short` before edits. The worktree is often intentionally dirty.
+- For documentation work, start with `docs/README.md` and follow `docs/DOCUMENTATION-GOVERNANCE.md`.
 - Read the specific tech plan or doc referenced by the user before implementing.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
 - Do not create routine daily logs. Put durable lessons in `docs/agent-lessons.md`, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.

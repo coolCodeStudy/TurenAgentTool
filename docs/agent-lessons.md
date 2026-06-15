@@ -50,3 +50,9 @@ Add only lessons that should change future behavior.
 - Durable lessons belong in this file and `AGENTS.md`.
 - Task plans belong in `docs/techplans/`.
 - Historical milestones belong in `docs/project-history.md`.
+
+## Documentation Governance
+
+- Start documentation work from `docs/README.md`.
+- Follow `docs/DOCUMENTATION-GOVERNANCE.md` before creating, moving, renaming, or retiring docs.
+- Prefer indexes and status metadata before broad file moves; do not rename many docs without updating all references in the same branch.
