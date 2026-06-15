@@ -112,12 +112,14 @@ def main() -> None:
 
         try:
             record_worker_status(config, "running", metadata={"task_id": task["id"]})
+            record_task_event(config, int(task["id"]), "started", status="running", message=str(task["title"]))
             process_task(config, task)
             record_worker_status(config, "idle", metadata={"last_task_id": task["id"]})
         except Exception as exc:
             message = f"Codex worker failed: {exc}"
             notify_dingtalk(config, f"开发任务 #{task['id']} 处理失败。\n\n原因：{message}")
             record_worker_status(config, "error", last_error=message, metadata={"task_id": task["id"]})
+            record_task_event(config, int(task["id"]), "failed", status="needs_user", message=message)
             update_task(
                 config,
                 task_id=task["id"],
@@ -263,6 +265,34 @@ def record_worker_status(
             )
 
 
+def record_task_event(
+    config: WorkerConfig,
+    task_id: int,
+    event_type: str,
+    status: str | None = None,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        with psycopg.connect(config.database_url, row_factory=dict_row) as conn:
+            with conn.transaction():
+                conn.execute(
+                    """
+                    INSERT INTO task_events (task_type, task_id, event_type, status, message, metadata)
+                    VALUES ('coding', %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        task_id,
+                        event_type,
+                        status,
+                        message,
+                        Jsonb(metadata or {}),
+                    ),
+                )
+    except Exception as exc:
+        print(f"task event write failed: {exc}", flush=True)
+
+
 def update_task(
     config: WorkerConfig,
     task_id: int,
@@ -309,16 +339,21 @@ def process_task(config: WorkerConfig, task: dict[str, Any]) -> None:
     branch_name = build_branch_name(task)
     print(f"Processing task #{task_id}: {task['title']}", flush=True)
 
+    record_task_event(config, task_id, "prepare_repo_started", status="running", metadata={"branch": branch_name})
     prepare_repo(config, branch_name)
+    record_task_event(config, task_id, "prepare_repo_finished", status="running", metadata={"branch": branch_name})
 
     with tempfile.TemporaryDirectory(prefix=f"codex-task-{task_id}-") as tmp:
         output_path = Path(tmp) / "codex-final.txt"
         prompt = build_codex_prompt(task, branch_name)
+        record_task_event(config, task_id, "codex_started", status="running")
         run_codex(config, prompt=prompt, output_path=output_path)
+        record_task_event(config, task_id, "codex_finished", status="running")
         codex_final = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
 
     changed = git_status_changed(config.work_dir)
     if not changed:
+        record_task_event(config, task_id, "no_changes", status="needs_user")
         update_task(
             config,
             task_id=task_id,
@@ -330,24 +365,38 @@ def process_task(config: WorkerConfig, task: dict[str, Any]) -> None:
         return
 
     if config.test_command:
+        record_task_event(config, task_id, "test_started", status="running", message=config.test_command)
         run_shell(config.test_command, cwd=config.work_dir, timeout=config.task_timeout_seconds)
+        record_task_event(config, task_id, "test_finished", status="running", message=config.test_command)
 
     commit_sha = commit_changes(config, task, branch_name)
+    record_task_event(
+        config,
+        task_id,
+        "committed",
+        status="running",
+        metadata={"branch": branch_name, "commit_sha": commit_sha},
+    )
     pushed = False
     if config.auto_push:
         push_branch(config, branch_name)
         pushed = True
+        record_task_event(config, task_id, "pushed", status="running", metadata={"branch": branch_name})
 
     deploy_triggered = False
     deploy_message = ""
     local_deployed = False
     local_deploy_message = ""
     if config.local_deploy:
+        record_task_event(config, task_id, "local_deploy_started", status="running")
         local_deploy_message = deploy_locally(config)
         local_deployed = True
+        record_task_event(config, task_id, "local_deploy_finished", status="running", message=local_deploy_message)
     if pushed and config.auto_deploy:
+        record_task_event(config, task_id, "github_deploy_started", status="running")
         deploy_message = trigger_deploy_workflow(config, branch_name)
         deploy_triggered = True
+        record_task_event(config, task_id, "github_deploy_triggered", status="running", message=deploy_message)
 
     result = render_result(
         task,
@@ -368,6 +417,14 @@ def process_task(config: WorkerConfig, task: dict[str, Any]) -> None:
         branch_name=branch_name,
         commit_sha=commit_sha,
         worker_log="Codex task completed.",
+    )
+    record_task_event(
+        config,
+        task_id,
+        "completed",
+        status="done",
+        message="Codex task completed.",
+        metadata={"branch": branch_name, "commit_sha": commit_sha, "pushed": pushed, "local_deployed": local_deployed},
     )
     notify_dingtalk(config, result)
 
