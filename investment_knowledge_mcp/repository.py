@@ -468,6 +468,244 @@ def record_command_event(
     return to_jsonable(row)
 
 
+def add_task_event(
+    task_type: str,
+    event_type: str,
+    task_id: int | None = None,
+    status: str | None = None,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cleaned_task_type = task_type.strip().lower()
+    cleaned_event_type = event_type.strip().lower()
+    if not cleaned_task_type:
+        raise ValueError("task_type is required")
+    if not cleaned_event_type:
+        raise ValueError("event_type is required")
+
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO task_events (task_type, task_id, event_type, status, message, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                cleaned_task_type,
+                task_id,
+                cleaned_event_type,
+                status,
+                message,
+                Jsonb(metadata or {}),
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def list_task_events(
+    task_type: str | None = None,
+    task_id: int | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 200))
+    with transaction() as conn:
+        if task_type and task_id is not None:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM task_events
+                WHERE task_type = %s AND task_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (task_type.strip().lower(), task_id, limit),
+            ).fetchall()
+        elif task_type:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM task_events
+                WHERE task_type = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (task_type.strip().lower(), limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM task_events
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+    return to_jsonable(rows)
+
+
+def start_deploy_event(
+    source: str,
+    deploy_mode: str,
+    commit_sha: str | None = None,
+    branch_name: str | None = None,
+    summary: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO deploy_events (
+              source, deploy_mode, commit_sha, branch_name, status, summary, metadata
+            )
+            VALUES (%s, %s, %s, %s, 'started', %s, %s)
+            RETURNING *
+            """,
+            (
+                source or "unknown",
+                deploy_mode or "quick",
+                commit_sha,
+                branch_name,
+                summary,
+                Jsonb(metadata or {}),
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def finish_deploy_event(
+    deploy_event_id: int,
+    status: str,
+    summary: str | None = None,
+    logs_tail: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cleaned_status = status.strip().lower()
+    if cleaned_status not in {"succeeded", "failed"}:
+        raise ValueError(f"invalid deploy status: {status}")
+
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE deploy_events SET
+              status = %s,
+              finished_at = now(),
+              duration_seconds = EXTRACT(EPOCH FROM (now() - started_at)),
+              summary = COALESCE(%s, summary),
+              logs_tail = COALESCE(%s, logs_tail),
+              metadata = CASE WHEN %s::jsonb IS NULL THEN metadata ELSE metadata || %s::jsonb END,
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                cleaned_status,
+                summary,
+                logs_tail,
+                Jsonb(metadata) if metadata is not None else None,
+                Jsonb(metadata) if metadata is not None else None,
+                deploy_event_id,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(f"deploy event not found: {deploy_event_id}")
+    return to_jsonable(row)
+
+
+def list_recent_deploy_events(limit: int = 5) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 50))
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM deploy_events
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
+def get_control_plane_summary() -> dict[str, Any]:
+    with transaction() as conn:
+        research_rows = conn.execute(
+            """
+            SELECT status, count(*) AS count
+            FROM research_jobs
+            GROUP BY status
+            ORDER BY status
+            """
+        ).fetchall()
+        coding_rows = conn.execute(
+            """
+            SELECT status, count(*) AS count
+            FROM coding_tasks
+            GROUP BY status
+            ORDER BY status
+            """
+        ).fetchall()
+        command_row = conn.execute(
+            """
+            SELECT
+              count(*) FILTER (WHERE created_at >= now() - interval '24 hours') AS total_24h,
+              count(*) FILTER (WHERE created_at >= now() - interval '24 hours' AND ok) AS ok_24h,
+              count(*) FILTER (WHERE created_at >= now() - interval '24 hours' AND NOT ok) AS failed_24h
+            FROM command_events
+            """
+        ).fetchone()
+        recent_failed_commands = conn.execute(
+            """
+            SELECT source, sender, command, message, created_at
+            FROM command_events
+            WHERE NOT ok
+            ORDER BY created_at DESC
+            LIMIT 5
+            """
+        ).fetchall()
+        latest_snapshot = conn.execute(
+            """
+            SELECT snapshot_date, source, fetched_at, metadata, updated_at
+            FROM account_snapshots
+            ORDER BY snapshot_date DESC, updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        worker_rows = conn.execute(
+            """
+            SELECT name, status, last_seen_at, last_error, metadata
+            FROM worker_status
+            ORDER BY name
+            """
+        ).fetchall()
+        recent_events = conn.execute(
+            """
+            SELECT task_type, task_id, event_type, status, message, created_at
+            FROM task_events
+            ORDER BY created_at DESC
+            LIMIT 10
+            """
+        ).fetchall()
+
+    return to_jsonable(
+        {
+            "research_jobs": _count_rows_by_status(research_rows),
+            "coding_tasks": _count_rows_by_status(coding_rows),
+            "commands_24h": command_row or {},
+            "recent_failed_commands": recent_failed_commands,
+            "latest_account_snapshot": latest_snapshot,
+            "worker_status": worker_rows,
+            "recent_task_events": recent_events,
+            "recent_deploy_events": list_recent_deploy_events(limit=5),
+        }
+    )
+
+
+def _count_rows_by_status(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {str(row["status"]): int(row["count"]) for row in rows}
+
+
 def create_coding_task(
     title: str,
     description: str | None = None,
@@ -684,6 +922,68 @@ def list_account_snapshots(
     return to_jsonable(rows)
 
 
+def upsert_review_report(
+    report_date: str,
+    summary: str,
+    portfolio_snapshot: dict[str, Any] | None = None,
+    risks: list[dict[str, Any]] | None = None,
+    opportunities: list[dict[str, Any]] | None = None,
+    new_knowledge_candidates: list[dict[str, Any]] | None = None,
+    report_type: str = "daily",
+    period_start: str | None = None,
+    period_end: str | None = None,
+    source_status: dict[str, Any] | None = None,
+    highlights: list[dict[str, Any]] | None = None,
+    blowups: list[dict[str, Any]] | None = None,
+    holdings_table: list[dict[str, Any]] | None = None,
+    next_week: list[dict[str, Any]] | None = None,
+    story: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO review_reports (
+              report_date, portfolio_snapshot, summary, risks, opportunities,
+              new_knowledge_candidates, report_type, period_start, period_end,
+              source_status, highlights, blowups, holdings_table, next_week, story
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (report_type, period_start, period_end) DO UPDATE SET
+              report_date = EXCLUDED.report_date,
+              portfolio_snapshot = EXCLUDED.portfolio_snapshot,
+              summary = EXCLUDED.summary,
+              risks = EXCLUDED.risks,
+              opportunities = EXCLUDED.opportunities,
+              new_knowledge_candidates = EXCLUDED.new_knowledge_candidates,
+              source_status = EXCLUDED.source_status,
+              highlights = EXCLUDED.highlights,
+              blowups = EXCLUDED.blowups,
+              holdings_table = EXCLUDED.holdings_table,
+              next_week = EXCLUDED.next_week,
+              story = EXCLUDED.story
+            RETURNING *
+            """,
+            (
+                report_date,
+                Jsonb(portfolio_snapshot or {}),
+                summary,
+                Jsonb(risks or []),
+                Jsonb(opportunities or []),
+                Jsonb(new_knowledge_candidates or []),
+                report_type,
+                period_start,
+                period_end,
+                Jsonb(source_status or {}),
+                Jsonb(highlights or []),
+                Jsonb(blowups or []),
+                Jsonb(holdings_table or []),
+                Jsonb(next_week or []),
+                Jsonb(story or {}),
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
 def upsert_trade_records(
     deals: list[dict[str, Any]],
     source: str = "futu",
@@ -735,6 +1035,25 @@ def upsert_trade_records(
             inserted_or_updated += 1
 
     return {"synced_count": inserted_or_updated}
+
+
+def list_trade_records(
+    start: str,
+    end: str,
+    source: str = "futu",
+) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM trade_records
+            WHERE source = %s
+              AND trade_date BETWEEN %s AND %s
+            ORDER BY trade_date ASC, create_time ASC, id ASC
+            """,
+            (source, start, end),
+        ).fetchall()
+    return to_jsonable(rows)
 
 
 def count_trade_records(

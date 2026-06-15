@@ -19,10 +19,12 @@ from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.display import build_stock_decision_card
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 from investment_knowledge_mcp.ops_client import (
+    deploy_cloud_ref,
     fetch_cloud_system_status,
     fetch_coding_status,
     fetch_recent_errors,
     fetch_service_logs,
+    render_cloud_deploy,
     render_cloud_system_status,
     render_recent_errors,
     render_service_logs,
@@ -30,6 +32,7 @@ from investment_knowledge_mcp.ops_client import (
 from investment_knowledge_mcp.research.jobs import create_research_job as create_research_job_record
 from investment_knowledge_mcp.research.jobs import list_research_jobs as list_research_job_records
 from investment_knowledge_mcp.research.jobs import list_research_jobs_for_stock
+from investment_knowledge_mcp.system_overview import build_system_overview, render_system_overview
 
 
 config = get_config()
@@ -524,6 +527,22 @@ def cloud_service_logs(service: str, lines: int = 120, render: bool = True) -> d
 def cloud_coding_status() -> dict[str, Any]:
     """Read cloud Codex worker status through the controlled Ops API."""
     return {"ok": True, "data": fetch_coding_status()}
+
+
+@mcp.tool()
+def cloud_deploy(ref: str, mode: str = "quick", render: bool = True) -> dict[str, Any]:
+    """Deploy a pushed Git ref on ECS through the controlled Ops API."""
+    if render:
+        return {"ok": True, "message": render_cloud_deploy(ref=ref, mode=mode)}
+    return {"ok": True, "data": deploy_cloud_ref(ref=ref, mode=mode)}
+
+
+@mcp.tool()
+def system_overview(render: bool = True) -> dict[str, Any]:
+    """Read the Codex-first control-plane overview: services, queues, deployments, workers, and recent failures."""
+    if render:
+        return {"ok": True, "message": render_system_overview()}
+    return {"ok": True, "data": build_system_overview()}
 
 
 @mcp.tool()

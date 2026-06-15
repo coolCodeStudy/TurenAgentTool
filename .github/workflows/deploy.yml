@@ -126,6 +126,8 @@ jobs:
             --exclude='./.env' \
             --exclude='./.env.test' \
             --exclude='./.env.production' \
+            --exclude='./drafts' \
+            --exclude='./drafts/*' \
             --exclude='./__pycache__' \
             --exclude='*/__pycache__' \
             --exclude='*.pyc' \
@@ -296,6 +298,8 @@ jobs:
             --exclude='./.env' \
             --exclude='./.env.test' \
             --exclude='./.env.production' \
+            --exclude='./drafts' \
+            --exclude='./drafts/*' \
             --exclude='./__pycache__' \
             --exclude='*/__pycache__' \
             --exclude='*.pyc' \

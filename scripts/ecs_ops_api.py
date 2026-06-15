@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+import fcntl
 import hmac
 import json
 import os
@@ -17,12 +18,20 @@ import time
 
 
 APP_DIR = Path(os.getenv("INVESTMENT_DIR", "/opt/investment-knowledge"))
+REPO_DIR = Path(os.getenv("OPS_DEPLOY_REPO_DIR", "/opt/investment-knowledge-repo"))
 COMPOSE_FILE = APP_DIR / "docker-compose.prod.yml"
 HOST = os.getenv("OPS_API_HOST", "127.0.0.1")
 PORT = int(os.getenv("OPS_API_PORT", "8767"))
 TOKEN = os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or ""
 MAX_LOG_LINES = 400
 COMMAND_TIMEOUT_SECONDS = float(os.getenv("OPS_API_COMMAND_TIMEOUT_SECONDS", "8"))
+DEPLOY_TIMEOUT_SECONDS = float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600"))
+DEPLOY_LOCK_PATH = Path(os.getenv("OPS_DEPLOY_LOCK_PATH", "/tmp/investment-knowledge-deploy.lock"))
+ALLOWED_NAMED_REFS = {
+    ref.strip()
+    for ref in os.getenv("OPS_DEPLOY_ALLOWED_REFS", "main").split(",")
+    if ref.strip()
+}
 
 
 COMPOSE_SERVICES = {
@@ -83,6 +92,10 @@ class CommandResult:
     returncode: int
 
 
+class DeploymentBusy(RuntimeError):
+    pass
+
+
 class OpsRequestHandler(BaseHTTPRequestHandler):
     server_version = "InvestmentKnowledgeOpsAPI/0.1"
 
@@ -128,8 +141,12 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
                 service = str(payload.get("service") or "")
                 action = str(payload.get("action") or "")
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": control_service(service=service, action=action)})
+            elif parsed.path == "/ops/deploy":
+                self._write_json(HTTPStatus.OK, {"ok": True, "data": deploy_ref(payload)})
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        except DeploymentBusy as exc:
+            self._write_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc), "data": {"status": "busy"}})
         except ValueError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
         except Exception as exc:
@@ -282,6 +299,252 @@ def control_service(service: str, action: str) -> dict[str, Any]:
     }
 
 
+def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
+    ref = _validate_deploy_ref(str(payload.get("ref") or ""))
+    mode = _validate_deploy_mode(str(payload.get("mode") or "quick"))
+    source = _safe_label(str(payload.get("source") or "codex_app"), default="codex_app")
+    requested_by = _safe_label(str(payload.get("requested_by") or "codex"), default="codex")
+
+    DEPLOY_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with DEPLOY_LOCK_PATH.open("w", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise DeploymentBusy("deployment is already running") from exc
+        lock_file.write(f"{time.time()} {ref} {mode} {source} {requested_by}\n")
+        lock_file.flush()
+        return _deploy_ref_locked(ref=ref, mode=mode, source=source, requested_by=requested_by)
+
+
+def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> dict[str, Any]:
+    if not REPO_DIR.exists() or not (REPO_DIR / ".git").exists():
+        raise ValueError(f"deploy repo is not initialized: {REPO_DIR}")
+    if not (REPO_DIR / "scripts" / "deploy_from_local_checkout.sh").exists():
+        raise ValueError(f"deploy script not found in repo: {REPO_DIR}")
+
+    event_id: str | None = None
+    started_at = time.monotonic()
+    commit_sha = ""
+    branch_name = ref if ref in ALLOWED_NAMED_REFS else ""
+    logs_tail = ""
+    metadata: dict[str, Any] = {
+        "requested_ref": ref,
+        "requested_by": requested_by,
+        "repo_dir": str(REPO_DIR),
+        "app_dir": str(APP_DIR),
+    }
+
+    try:
+        event_id = _record_deploy_start(
+            source=source,
+            mode=mode,
+            commit_sha=ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
+            branch_name=branch_name,
+            metadata=metadata,
+        )
+
+        _ensure_clean_repo()
+        fetch = _run_git(["fetch", "--prune", "origin"], timeout=DEPLOY_TIMEOUT_SECONDS)
+        if not fetch.ok:
+            raise RuntimeError(f"git fetch failed: {_first_line(fetch.stderr or fetch.stdout) or 'unknown error'}")
+
+        checkout_target = f"origin/{ref}" if ref in ALLOWED_NAMED_REFS else ref
+        checkout = _run_git(["checkout", "--detach", checkout_target], timeout=DEPLOY_TIMEOUT_SECONDS)
+        if not checkout.ok:
+            raise RuntimeError(f"git checkout failed: {_first_line(checkout.stderr or checkout.stdout) or 'unknown error'}")
+
+        commit_result = _run_git(["rev-parse", "HEAD"])
+        if not commit_result.ok:
+            raise RuntimeError(f"git rev-parse failed: {_first_line(commit_result.stderr or commit_result.stdout) or 'unknown error'}")
+        commit_sha = commit_result.stdout.strip()
+        metadata["resolved_commit_sha"] = commit_sha
+
+        env = {
+            **os.environ,
+            "SOURCE_DIR": str(REPO_DIR),
+            "APP_DIR": str(APP_DIR),
+            "BUILD_IMAGE": "true" if mode == "full" else "false",
+            "DEPLOY_EVENT_ID": event_id,
+        }
+        deploy = _run(
+            ["bash", str(REPO_DIR / "scripts" / "deploy_from_local_checkout.sh")],
+            cwd=REPO_DIR,
+            env=env,
+            timeout=DEPLOY_TIMEOUT_SECONDS,
+        )
+        logs_tail = _tail_text(_combine_output(deploy), limit=80)
+        if not deploy.ok:
+            raise RuntimeError(f"deploy script failed: {_first_line(deploy.stderr or deploy.stdout) or 'unknown error'}")
+
+        health = build_deploy_health()
+        metadata["health"] = health
+        duration_seconds = round(time.monotonic() - started_at, 3)
+        if not health.get("ok"):
+            failed_checks = ", ".join(str(item.get("name")) for item in health.get("checks", []) if not item.get("ok"))
+            summary = f"deploy health check failed: {failed_checks or 'unknown'}"
+            if event_id:
+                _record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+            return {
+                "deploy_event_id": int(event_id) if event_id else None,
+                "ref": ref,
+                "commit_sha": commit_sha,
+                "mode": mode,
+                "status": "failed",
+                "duration_seconds": duration_seconds,
+                "summary": summary,
+                "health": health,
+            }
+
+        summary = f"{mode} deploy completed"
+        if event_id:
+            _record_deploy_finish(event_id, "succeeded", summary, logs_tail, metadata)
+        return {
+            "deploy_event_id": int(event_id) if event_id else None,
+            "ref": ref,
+            "commit_sha": commit_sha,
+            "mode": mode,
+            "status": "succeeded",
+            "duration_seconds": duration_seconds,
+            "summary": summary,
+            "health": health,
+        }
+    except Exception as exc:
+        summary = sanitize_text(str(exc))
+        metadata["error"] = summary
+        if event_id:
+            _record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+        raise RuntimeError(summary) from exc
+
+
+def build_deploy_health() -> dict[str, Any]:
+    checks = [
+        _check_compose(),
+        _check_socket("postgres", "127.0.0.1", int(os.getenv("POSTGRES_HOST_PORT", "55432"))),
+        _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
+    ]
+    for service in ("dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
+        checks.append(_check_compose_service_running(service))
+    return {
+        "ok": all(bool(check.get("ok")) for check in checks),
+        "checks": checks,
+    }
+
+
+def _check_compose_service_running(service: str) -> dict[str, Any]:
+    result = _run(_compose_command(["ps", "--status", "running", "--services", service]))
+    if not result.ok:
+        return {"name": service, "ok": False, "message": _first_line(result.stderr or result.stdout) or "failed"}
+    running = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    if service in running:
+        return {"name": service, "ok": True, "message": "running"}
+    return {"name": service, "ok": False, "message": "not running"}
+
+
+def _record_deploy_start(
+    source: str,
+    mode: str,
+    commit_sha: str,
+    branch_name: str,
+    metadata: dict[str, Any],
+) -> str:
+    result = _run(
+        [
+            "python3",
+            str(APP_DIR / "scripts" / "record_deploy_event.py"),
+            "start",
+            "--source",
+            source,
+            "--deploy-mode",
+            mode,
+            "--commit-sha",
+            commit_sha,
+            "--branch-name",
+            branch_name,
+            "--summary",
+            "cloud pull deploy started",
+            "--metadata-json",
+            json.dumps(metadata, ensure_ascii=False),
+        ],
+        cwd=APP_DIR,
+        timeout=COMMAND_TIMEOUT_SECONDS,
+    )
+    if not result.ok:
+        raise RuntimeError(f"record deploy start failed: {_first_line(result.stderr or result.stdout) or 'unknown error'}")
+    event_id = result.stdout.strip().splitlines()[-1].strip()
+    if not event_id.isdigit():
+        raise RuntimeError(f"record deploy start returned invalid id: {event_id}")
+    return event_id
+
+
+def _record_deploy_finish(
+    event_id: str,
+    status: str,
+    summary: str,
+    logs_tail: str,
+    metadata: dict[str, Any],
+) -> None:
+    result = _run(
+        [
+            "python3",
+            str(APP_DIR / "scripts" / "record_deploy_event.py"),
+            "finish",
+            "--id",
+            event_id,
+            "--status",
+            status,
+            "--summary",
+            summary,
+            "--logs-tail",
+            logs_tail,
+            "--metadata-json",
+            json.dumps(metadata, ensure_ascii=False),
+        ],
+        cwd=APP_DIR,
+        timeout=COMMAND_TIMEOUT_SECONDS,
+    )
+    if not result.ok:
+        raise RuntimeError(f"record deploy finish failed: {_first_line(result.stderr or result.stdout) or 'unknown error'}")
+
+
+def _ensure_clean_repo() -> None:
+    status = _run_git(["status", "--porcelain"])
+    if not status.ok:
+        raise RuntimeError(f"git status failed: {_first_line(status.stderr or status.stdout) or 'unknown error'}")
+    if status.stdout.strip():
+        raise RuntimeError("deploy repo has local changes; refusing to deploy")
+
+
+def _run_git(args: list[str], timeout: float | None = None) -> CommandResult:
+    return _run(["git", "-C", str(REPO_DIR), *args], timeout=timeout)
+
+
+def _validate_deploy_ref(ref: str) -> str:
+    value = ref.strip()
+    if not value:
+        raise ValueError("ref is required")
+    if value in ALLOWED_NAMED_REFS:
+        return value
+    if re.fullmatch(r"[0-9a-fA-F]{7,40}", value):
+        return value
+    raise ValueError("ref must be a commit SHA or an allowed named ref")
+
+
+def _validate_deploy_mode(mode: str) -> str:
+    value = mode.strip().lower()
+    if value not in {"quick", "full"}:
+        raise ValueError("mode must be quick or full")
+    return value
+
+
+def _safe_label(value: str, default: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return default
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", cleaned):
+        return default
+    return cleaned
+
+
 def _check_command(name: str, command: list[str]) -> dict[str, Any]:
     result = _run(command)
     if result.ok:
@@ -363,14 +626,21 @@ def _compose_command(args: list[str]) -> list[str]:
     return ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
 
 
-def _run(command: list[str]) -> CommandResult:
+def _run(
+    command: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
+) -> CommandResult:
+    command_timeout = timeout if timeout is not None else COMMAND_TIMEOUT_SECONDS
     try:
         completed = subprocess.run(
             command,
-            cwd=str(APP_DIR) if APP_DIR.exists() else None,
+            cwd=str(cwd or APP_DIR) if (cwd or APP_DIR).exists() else None,
+            env=env,
             text=True,
             capture_output=True,
-            timeout=COMMAND_TIMEOUT_SECONDS,
+            timeout=command_timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -380,7 +650,7 @@ def _run(command: list[str]) -> CommandResult:
             ok=False,
             command=command,
             stdout=sanitize_text(stdout),
-            stderr=sanitize_text(stderr or f"command timed out after {COMMAND_TIMEOUT_SECONDS}s"),
+            stderr=sanitize_text(stderr or f"command timed out after {command_timeout}s"),
             returncode=124,
         )
     except Exception as exc:
@@ -424,6 +694,10 @@ def _first_line(text: str) -> str:
 def _tail_nonempty_lines(text: str, limit: int) -> list[str]:
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return lines[-limit:]
+
+
+def _tail_text(text: str, limit: int) -> str:
+    return "\n".join(_tail_nonempty_lines(sanitize_text(text), limit=limit))
 
 
 def _filter_error_lines(text: str) -> str:

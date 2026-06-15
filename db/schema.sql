@@ -138,6 +138,22 @@ CREATE TABLE IF NOT EXISTS review_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS period_start DATE;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS period_end DATE;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS report_type TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS source_status JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS highlights JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS blowups JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS holdings_table JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS next_week JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS story JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE review_reports
+  DROP CONSTRAINT IF EXISTS review_reports_report_date_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_type_period
+  ON review_reports (report_type, period_start, period_end);
+
 CREATE TABLE IF NOT EXISTS account_snapshots (
   id BIGSERIAL PRIMARY KEY,
   snapshot_date DATE NOT NULL,
@@ -188,6 +204,35 @@ CREATE TABLE IF NOT EXISTS command_events (
   ok BOOLEAN NOT NULL,
   message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS task_events (
+  id BIGSERIAL PRIMARY KEY,
+  task_type TEXT NOT NULL,
+  task_id BIGINT,
+  event_type TEXT NOT NULL,
+  status TEXT,
+  message TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS deploy_events (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT NOT NULL DEFAULT 'unknown',
+  deploy_mode TEXT NOT NULL DEFAULT 'quick',
+  commit_sha TEXT,
+  branch_name TEXT,
+  status TEXT NOT NULL DEFAULT 'started',
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  duration_seconds NUMERIC,
+  summary TEXT,
+  logs_tail TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('started', 'succeeded', 'failed'))
 );
 
 CREATE TABLE IF NOT EXISTS coding_tasks (
@@ -246,6 +291,10 @@ CREATE INDEX IF NOT EXISTS idx_user_insights_target ON user_insights(target_type
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_status ON candidate_insights(status);
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_command_events_created_at ON command_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_type, task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_events_created_at ON task_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deploy_events_created_at ON deploy_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deploy_events_status_created_at ON deploy_events(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_coding_tasks_status_created_at ON coding_tasks(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ipo_reminder_events_sent_at ON ipo_reminder_events(sent_at DESC);
 

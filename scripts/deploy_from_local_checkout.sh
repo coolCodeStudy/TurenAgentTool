@@ -4,6 +4,12 @@ set -euo pipefail
 APP_DIR=${APP_DIR:-/opt/investment-knowledge}
 SOURCE_DIR=${SOURCE_DIR:-$(pwd)}
 BUILD_IMAGE=${BUILD_IMAGE:-false}
+PYTHON_BIN=${PYTHON_BIN:-python3}
+DEPLOY_EVENT_ID="${DEPLOY_EVENT_ID:-}"
+DEPLOY_EVENT_MANAGED_EXTERNALLY=false
+if [ -n "$DEPLOY_EVENT_ID" ]; then
+  DEPLOY_EVENT_MANAGED_EXTERNALLY=true
+fi
 
 if [ ! -f "$SOURCE_DIR/docker-compose.prod.yml" ]; then
   echo "SOURCE_DIR does not look like the InvestmentKnowledge repo: $SOURCE_DIR" >&2
@@ -34,6 +40,49 @@ chmod +x "$APP_DIR"/scripts/*.sh "$APP_DIR"/scripts/*.py 2>/dev/null || true
 
 cd "$APP_DIR"
 
+record_deploy_start() {
+  if [ -n "$DEPLOY_EVENT_ID" ]; then
+    return
+  fi
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || [ ! -f "$APP_DIR/scripts/record_deploy_event.py" ]; then
+    return
+  fi
+  commit_sha="$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)"
+  branch_name="$(git -C "$SOURCE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  deploy_mode="quick"
+  if [ "$BUILD_IMAGE" = "true" ]; then
+    deploy_mode="full"
+  fi
+  DEPLOY_EVENT_ID="$("$PYTHON_BIN" "$APP_DIR/scripts/record_deploy_event.py" start \
+    --source local_codex \
+    --deploy-mode "$deploy_mode" \
+    --commit-sha "$commit_sha" \
+    --branch-name "$branch_name" \
+    --summary "deploy_from_local_checkout started" 2>/dev/null || true)"
+}
+
+record_deploy_finish() {
+  status="$1"
+  summary="$2"
+  if [ "$DEPLOY_EVENT_MANAGED_EXTERNALLY" = "true" ]; then
+    return
+  fi
+  if [ -z "$DEPLOY_EVENT_ID" ] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    return
+  fi
+  "$PYTHON_BIN" "$APP_DIR/scripts/record_deploy_event.py" finish \
+    --id "$DEPLOY_EVENT_ID" \
+    --status "$status" \
+    --summary "$summary" >/dev/null 2>&1 || true
+}
+
+on_deploy_error() {
+  record_deploy_finish failed "deploy_from_local_checkout failed"
+}
+
+trap on_deploy_error ERR
+record_deploy_start
+
 if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   DOCKER_COMPOSE="docker compose"
 elif sudo docker compose version >/dev/null 2>&1; then
@@ -55,3 +104,5 @@ else
 fi
 
 $DOCKER_COMPOSE -f docker-compose.prod.yml ps
+record_deploy_finish succeeded "deploy_from_local_checkout completed"
+trap - ERR

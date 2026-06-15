@@ -45,6 +45,9 @@ class AppConfig:
     command_api_host: str = "127.0.0.1"
     command_api_port: int = 8001
     command_api_token: str | None = None
+    weekly_review_web_host: str = "127.0.0.1"
+    weekly_review_web_port: int = 8010
+    weekly_review_web_token: str | None = None
     dingtalk_api_host: str = "127.0.0.1"
     dingtalk_api_port: int = 8002
     dingtalk_outgoing_secret: str | None = None
@@ -74,6 +77,7 @@ class AppConfig:
     ops_api_url: str | None = None
     ops_api_token: str | None = None
     ops_api_timeout_seconds: float = 8.0
+    ops_api_deploy_timeout_seconds: float = 600.0
 
 
 def get_config() -> AppConfig:
@@ -96,6 +100,9 @@ def get_config() -> AppConfig:
         command_api_host=os.getenv("COMMAND_API_HOST", "127.0.0.1"),
         command_api_port=int(os.getenv("COMMAND_API_PORT", "8001")),
         command_api_token=os.getenv("COMMAND_API_TOKEN") or None,
+        weekly_review_web_host=os.getenv("WEEKLY_REVIEW_WEB_HOST", "127.0.0.1"),
+        weekly_review_web_port=int(os.getenv("WEEKLY_REVIEW_WEB_PORT", "8010")),
+        weekly_review_web_token=os.getenv("WEEKLY_REVIEW_WEB_TOKEN") or None,
         dingtalk_api_host=os.getenv("DINGTALK_API_HOST", "127.0.0.1"),
         dingtalk_api_port=int(os.getenv("DINGTALK_API_PORT", "8002")),
         dingtalk_outgoing_secret=os.getenv("DINGTALK_OUTGOING_SECRET") or None,
@@ -125,6 +132,7 @@ def get_config() -> AppConfig:
         ops_api_url=os.getenv("OPS_API_URL") or None,
         ops_api_token=os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or None,
         ops_api_timeout_seconds=float(os.getenv("OPS_API_TIMEOUT_SECONDS", "8")),
+        ops_api_deploy_timeout_seconds=float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600")),
     )
 
 

@@ -82,6 +82,19 @@ def get_ops_client(config: AppConfig | None = None) -> OpsClient:
     )
 
 
+def get_ops_deploy_client(config: AppConfig | None = None) -> OpsClient:
+    config = config or get_config()
+    if not config.ops_api_url:
+        raise OpsClientError("OPS_API_URL is not configured")
+    if not config.ops_api_token:
+        raise OpsClientError("OPS_API_TOKEN or COMMAND_API_TOKEN is not configured")
+    return OpsClient(
+        base_url=config.ops_api_url,
+        token=config.ops_api_token,
+        timeout=config.ops_api_deploy_timeout_seconds,
+    )
+
+
 def fetch_cloud_system_status() -> dict[str, Any]:
     return get_ops_client().get("/ops/status")
 
@@ -100,6 +113,50 @@ def fetch_coding_status() -> dict[str, Any]:
 
 def control_cloud_service(service: str, action: str) -> dict[str, Any]:
     return get_ops_client().post("/ops/service-action", {"service": service, "action": action})
+
+
+def deploy_cloud_ref(ref: str, mode: str = "quick", source: str = "codex_app", requested_by: str = "codex") -> dict[str, Any]:
+    return get_ops_deploy_client().post(
+        "/ops/deploy",
+        {
+            "ref": ref,
+            "mode": mode,
+            "source": source,
+            "requested_by": requested_by,
+        },
+    )
+
+
+def render_cloud_deploy(ref: str, mode: str = "quick") -> str:
+    try:
+        data = deploy_cloud_ref(ref=ref, mode=mode)
+    except OpsClientError as exc:
+        return f"云端部署失败：{exc}"
+
+    health = data.get("health") if isinstance(data.get("health"), dict) else {}
+    failed_checks: list[str] = []
+    for check in health.get("checks") or []:
+        if isinstance(check, dict) and not check.get("ok"):
+            failed_checks.append(str(check.get("name") or "-"))
+
+    lines = [
+        "云端部署完成：" if data.get("status") == "succeeded" else "云端部署未完成：",
+        f"- deploy_event：#{data.get('deploy_event_id') or '-'}",
+        f"- ref：{data.get('ref') or ref}",
+        f"- commit：{data.get('commit_sha') or '-'}",
+        f"- mode：{data.get('mode') or mode}",
+        f"- 状态：{data.get('status') or '-'}",
+        f"- 耗时：{data.get('duration_seconds') or '-'}s",
+        f"- 健康检查：{'OK' if health.get('ok') else 'FAIL'}",
+    ]
+    if failed_checks:
+        lines.append("- 失败检查：" + "、".join(failed_checks))
+    summary = str(data.get("summary") or "").strip()
+    if summary:
+        lines.append(f"- 摘要：{summary}")
+    lines.append("")
+    lines.append("可继续问：`系统总览`。")
+    return "\n".join(lines)
 
 
 def render_cloud_service_control(service: str, action: str) -> str:
