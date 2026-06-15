@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 
 
@@ -27,6 +28,7 @@ MAX_LOG_LINES = 400
 COMMAND_TIMEOUT_SECONDS = float(os.getenv("OPS_API_COMMAND_TIMEOUT_SECONDS", "8"))
 DEPLOY_TIMEOUT_SECONDS = float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600"))
 DEPLOY_LOCK_PATH = Path(os.getenv("OPS_DEPLOY_LOCK_PATH", "/tmp/investment-knowledge-deploy.lock"))
+PYTHON_BIN = os.getenv("OPS_API_PYTHON_BIN") or sys.executable
 ALLOWED_NAMED_REFS = {
     ref.strip()
     for ref in os.getenv("OPS_DEPLOY_ALLOWED_REFS", "main").split(",")
@@ -467,7 +469,7 @@ def _record_deploy_start(
 ) -> str:
     result = _run(
         [
-            "python3",
+            PYTHON_BIN,
             str(APP_DIR / "scripts" / "record_deploy_event.py"),
             "start",
             "--source",
@@ -503,7 +505,7 @@ def _record_deploy_finish(
 ) -> None:
     result = _run(
         [
-            "python3",
+            PYTHON_BIN,
             str(APP_DIR / "scripts" / "record_deploy_event.py"),
             "finish",
             "--id",

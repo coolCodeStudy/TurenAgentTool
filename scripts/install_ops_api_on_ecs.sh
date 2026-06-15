@@ -3,6 +3,7 @@ set -euo pipefail
 
 INVESTMENT_DIR=${INVESTMENT_DIR:-/opt/investment-knowledge}
 OPS_API_PORT=${OPS_API_PORT:-8767}
+OPS_API_VENV=${OPS_API_VENV:-$INVESTMENT_DIR/.ops-api-venv}
 START_OPS=false
 
 usage() {
@@ -14,6 +15,7 @@ Usage:
 
 Environment:
   INVESTMENT_DIR=/opt/investment-knowledge
+  OPS_API_VENV=/opt/investment-knowledge/.ops-api-venv
   OPS_API_HOST=...              Optional; defaults to docker0 bridge IP, then 127.0.0.1.
   OPS_API_PORT=8767
   OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
@@ -74,9 +76,21 @@ if [ -z "$OPS_API_TOKEN" ]; then
   exit 1
 fi
 
+if [ ! -x "$OPS_API_VENV/bin/python" ]; then
+  python3 -m venv "$OPS_API_VENV"
+fi
+
+if ! "$OPS_API_VENV/bin/python" -c "import psycopg" >/dev/null 2>&1; then
+  "$OPS_API_VENV/bin/python" -m pip install \
+    --index-url "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" \
+    "psycopg[binary]>=3.2.0"
+fi
+
 mkdir -p /etc/investment-knowledge
 cat > /etc/investment-knowledge/ops-api.env <<EOF
 INVESTMENT_DIR=$INVESTMENT_DIR
+OPS_API_VENV=$OPS_API_VENV
+OPS_API_PYTHON_BIN=$OPS_API_VENV/bin/python
 OPS_API_HOST=$OPS_API_HOST
 OPS_API_PORT=$OPS_API_PORT
 OPS_API_TOKEN=$OPS_API_TOKEN
@@ -105,7 +119,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INVESTMENT_DIR
 EnvironmentFile=/etc/investment-knowledge/ops-api.env
-ExecStart=/usr/bin/env python3 $INVESTMENT_DIR/scripts/ecs_ops_api.py
+ExecStart=$OPS_API_VENV/bin/python $INVESTMENT_DIR/scripts/ecs_ops_api.py
 Restart=always
 RestartSec=5
 
