@@ -8,6 +8,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Run `.venv/bin/python scripts/agent_preflight.py` at the start of a new task unless the user is asking only a tiny factual question.
 - Check `git status --short` before edits. The worktree is often intentionally dirty.
 - Read the specific tech plan or doc referenced by the user before implementing.
+- Use English for all new or agent-authored docs, code comments, PRDs, tech plans, and durable notes. Preserve existing non-English content unless the task is to translate or rewrite it.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
 - Do not create routine daily logs. Put durable lessons in `docs/agent-lessons.md`, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
 
@@ -24,6 +25,9 @@ Read it before changing code, running services, or touching deployment commands.
   - which services will be started, stopped, or recreated;
   - which database they will connect to;
   - whether HTTP ports or external integrations are involved.
+- Daily cloud releases should use the pull-based `/ops/deploy quick` path through the independent ECS Ops API. Use full deploy only for `Dockerfile`, `requirements.txt`, compose/image-layer, or dependency changes.
+- The ECS Ops API must live outside the business release directory, under `/opt/investment-ops`; business releases live under `/opt/investment-knowledge/releases/<sha>` with `/opt/investment-knowledge/current` as the active symlink.
+- Keep GitHub Actions as a secondary/rescue deployment path. Do not make GitHub hosted runner SSH to ECS the daily blocker; the known failure mode is runner-to-ECS `:22` handshake reset by peer.
 - Full deploy is a multi-minute operation. The observed weekly-review release path takes about 6 minutes end to end; after triggering it, wait and poll calmly instead of treating the first few minutes of missing/unstable health checks as failure.
 - `command-api` is only the HTTP wrapper around `handle_command(...)`. It is not required for ordinary local feature work unless the HTTP command endpoint itself is being tested.
 - If `command-api` is started, it must use a strong `COMMAND_API_TOKEN`. Never write temporary tokens or secrets into docs, logs, commits, or chat summaries.

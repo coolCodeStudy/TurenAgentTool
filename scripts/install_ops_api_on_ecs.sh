@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INVESTMENT_DIR=${INVESTMENT_DIR:-/opt/investment-knowledge}
+APP_ROOT=${APP_ROOT:-${INVESTMENT_APP_ROOT:-/opt/investment-knowledge}}
+INVESTMENT_DIR=${INVESTMENT_DIR:-$APP_ROOT/current}
+OPS_HOME=${OPS_HOME:-/opt/investment-ops}
 OPS_API_PORT=${OPS_API_PORT:-8767}
-OPS_API_VENV=${OPS_API_VENV:-$INVESTMENT_DIR/.ops-api-venv}
+OPS_API_VENV=${OPS_API_VENV:-$OPS_HOME/.venv}
+OPS_DEPLOY_REPO_DIR=${OPS_DEPLOY_REPO_DIR:-/opt/investment-knowledge-repo}
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-turenagenttool_prod}
+COMPOSE_ENV_FILE=${COMPOSE_ENV_FILE:-$APP_ROOT/.env}
 START_OPS=false
 
 usage() {
@@ -14,8 +19,10 @@ Usage:
   bash scripts/install_ops_api_on_ecs.sh [--start]
 
 Environment:
-  INVESTMENT_DIR=/opt/investment-knowledge
-  OPS_API_VENV=/opt/investment-knowledge/.ops-api-venv
+  INVESTMENT_APP_ROOT=/opt/investment-knowledge
+  INVESTMENT_DIR=/opt/investment-knowledge/current
+  OPS_HOME=/opt/investment-ops
+  OPS_API_VENV=/opt/investment-ops/.venv
   OPS_API_HOST=...              Optional; defaults to docker0 bridge IP, then 127.0.0.1.
   OPS_API_PORT=8767
   OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
@@ -48,12 +55,24 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ ! -f "$INVESTMENT_DIR/scripts/ecs_ops_api.py" ]; then
-  echo "Missing $INVESTMENT_DIR/scripts/ecs_ops_api.py. Deploy latest code first." >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_OPS_API="$SCRIPT_DIR/ecs_ops_api.py"
+if [ ! -f "$SOURCE_OPS_API" ]; then
+  echo "Missing $SOURCE_OPS_API. Run this script from a full repo checkout." >&2
   exit 1
 fi
 
-if [ -f "$INVESTMENT_DIR/.env" ]; then
+if [ -f "$COMPOSE_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$COMPOSE_ENV_FILE"
+  set +a
+elif [ -f "$APP_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$APP_ROOT/.env"
+  set +a
+elif [ -f "$INVESTMENT_DIR/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   . "$INVESTMENT_DIR/.env"
@@ -76,6 +95,10 @@ if [ -z "$OPS_API_TOKEN" ]; then
   exit 1
 fi
 
+mkdir -p "$OPS_HOME"
+cp -a "$SOURCE_OPS_API" "$OPS_HOME/ecs_ops_api.py"
+chmod +x "$OPS_HOME/ecs_ops_api.py"
+
 if [ ! -x "$OPS_API_VENV/bin/python" ]; then
   python3 -m venv "$OPS_API_VENV"
 fi
@@ -88,7 +111,9 @@ fi
 
 mkdir -p /etc/investment-knowledge
 cat > /etc/investment-knowledge/ops-api.env <<EOF
+INVESTMENT_APP_ROOT=$APP_ROOT
 INVESTMENT_DIR=$INVESTMENT_DIR
+OPS_HOME=$OPS_HOME
 OPS_API_VENV=$OPS_API_VENV
 OPS_API_PYTHON_BIN=$OPS_API_VENV/bin/python
 OPS_API_HOST=$OPS_API_HOST
@@ -101,13 +126,14 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
 POSTGRES_DB=${POSTGRES_DB:-investment_kg}
 POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT:-55432}
 MCP_HOST_PORT=${MCP_HOST_PORT:-8000}
-OPS_DEPLOY_REPO_DIR=${OPS_DEPLOY_REPO_DIR:-/opt/investment-knowledge-repo}
+WEEKLY_REVIEW_WEB_HOST_PORT=${WEEKLY_REVIEW_WEB_HOST_PORT:-8010}
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-turenagenttool_prod}
+COMPOSE_ENV_FILE=$COMPOSE_ENV_FILE
+OPS_DEPLOY_REPO_DIR=$OPS_DEPLOY_REPO_DIR
 OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-600}
 OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
 EOF
 chmod 600 /etc/investment-knowledge/ops-api.env
-
-chmod +x "$INVESTMENT_DIR/scripts/ecs_ops_api.py"
 
 cat > /etc/systemd/system/investment-ops-api.service <<EOF
 [Unit]
@@ -117,9 +143,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=$INVESTMENT_DIR
+WorkingDirectory=$OPS_HOME
 EnvironmentFile=/etc/investment-knowledge/ops-api.env
-ExecStart=$OPS_API_VENV/bin/python $INVESTMENT_DIR/scripts/ecs_ops_api.py
+ExecStart=$OPS_API_VENV/bin/python $OPS_HOME/ecs_ops_api.py
 Restart=always
 RestartSec=5
 

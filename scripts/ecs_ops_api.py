@@ -19,9 +19,12 @@ import threading
 import time
 
 
-APP_DIR = Path(os.getenv("INVESTMENT_DIR", "/opt/investment-knowledge"))
+APP_ROOT = Path(os.getenv("INVESTMENT_APP_ROOT", "/opt/investment-knowledge"))
+APP_DIR = Path(os.getenv("INVESTMENT_DIR", str(APP_ROOT / "current")))
 REPO_DIR = Path(os.getenv("OPS_DEPLOY_REPO_DIR", "/opt/investment-knowledge-repo"))
 COMPOSE_FILE = APP_DIR / "docker-compose.prod.yml"
+COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "turenagenttool_prod")
+COMPOSE_ENV_FILE = Path(os.getenv("COMPOSE_ENV_FILE", str(APP_ROOT / ".env")))
 HOST = os.getenv("OPS_API_HOST", "127.0.0.1")
 PORT = int(os.getenv("OPS_API_PORT", "8767"))
 TOKEN = os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or ""
@@ -330,6 +333,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         "requested_ref": ref,
         "requested_by": requested_by,
         "repo_dir": str(REPO_DIR),
+        "app_root": str(APP_ROOT),
         "app_dir": str(APP_DIR),
         "async": True,
     }
@@ -407,6 +411,7 @@ def _run_deploy_with_event(
             "requested_ref": ref,
             "requested_by": requested_by,
             "repo_dir": str(REPO_DIR),
+            "app_root": str(APP_ROOT),
             "app_dir": str(APP_DIR),
         }
     )
@@ -431,7 +436,11 @@ def _run_deploy_with_event(
         env = {
             **os.environ,
             "SOURCE_DIR": str(REPO_DIR),
+            "APP_ROOT": str(APP_ROOT),
             "APP_DIR": str(APP_DIR),
+            "RELEASES_DIR": str(APP_ROOT / "releases"),
+            "COMPOSE_PROJECT_NAME": COMPOSE_PROJECT_NAME,
+            "COMPOSE_ENV_FILE": str(COMPOSE_ENV_FILE),
             "BUILD_IMAGE": "true" if mode == "full" else "false",
             "DEPLOY_EVENT_ID": event_id,
         }
@@ -747,7 +756,11 @@ def _check_required_file(name: str, path: Path) -> dict[str, Any]:
 def _compose_command(args: list[str]) -> list[str]:
     if not COMPOSE_FILE.exists():
         raise ValueError(f"compose file not found: {COMPOSE_FILE}")
-    return ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
+    command = ["docker", "compose", "--project-name", COMPOSE_PROJECT_NAME]
+    if COMPOSE_ENV_FILE.is_file():
+        command.extend(["--env-file", str(COMPOSE_ENV_FILE)])
+    command.extend(["-f", str(COMPOSE_FILE), *args])
+    return command
 
 
 def _script_path(name: str) -> Path:

@@ -255,6 +255,15 @@ cloud_deploy
 - GitHub Actions quick deploy 不会重建/重启 `weekly-review-web`，周复盘 Web 修复不能依赖当前 quick deploy；短期走 full deploy，长期应把 `weekly-review-web` 纳入 quick deploy 或明确 quick deploy 适用范围。
 - ECS 上 host/systemd 与 Docker container 必须使用不同 DB profile：宿主侧 `127.0.0.1:55432`，容器侧 `postgres:5432`。部署脚本和 compose env 需要防止宿主 `.env` 覆盖容器内连接地址。
 
+Pull-Based Atomic Ops Deploy V2 update:
+
+- The daily deploy mainline is `Codex/MCP -> independent ECS Ops API -> ECS local pull deploy`.
+- The Ops control plane lives in `/opt/investment-ops` with its own venv and systemd service; it no longer reads its running script from the mutable business app directory.
+- The business app root is `/opt/investment-knowledge`; releases are staged under `/opt/investment-knowledge/releases/<sha>` and activated by switching `/opt/investment-knowledge/current`.
+- Quick deploy copies code and recreates compose services without building an image. Full deploy is reserved for dependency/image-layer changes such as `Dockerfile`, `requirements.txt`, or compose image semantics.
+- GitHub Actions remains a secondary/rescue path. The current hosted-runner-to-ECS `:22` failure (`ssh handshake reset by peer`) is documented but no longer blocks daily releases.
+- One-time bootstrap uses Alibaba Cloud ECS Cloud Assistant Run Command to install `/opt/investment-ops`, write `/etc/investment-knowledge/ops-api.env`, and start `investment-ops-api.service`.
+
 以后稳定后可加 webhook：
 
 ```text
