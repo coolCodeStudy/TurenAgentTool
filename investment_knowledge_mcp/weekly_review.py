@@ -359,21 +359,23 @@ def _attach_knowledge(position_changes: list[dict[str, Any]], warnings: list[str
 
 
 def _top_highlights(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items = [item for item in position_changes if item["pl_val_delta"] > 0 or item["current_pl_val"] > 0]
-    return [_ranked_item(item, positive=True) for item in sorted(items, key=lambda row: row["pl_val_delta"], reverse=True)[:3]]
+    items = [item for item in position_changes if _rank_amount(item) > 0]
+    return [_ranked_item(item, positive=True) for item in sorted(items, key=_rank_amount, reverse=True)[:3]]
 
 
 def _top_blowups(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items = [item for item in position_changes if item["pl_val_delta"] < 0 or item["current_pl_val"] < 0]
-    return [_ranked_item(item, positive=False) for item in sorted(items, key=lambda row: row["pl_val_delta"])[:3]]
+    items = [item for item in position_changes if _rank_amount(item) < 0]
+    return [_ranked_item(item, positive=False) for item in sorted(items, key=_rank_amount)[:3]]
 
 
 def _ranked_item(item: dict[str, Any], positive: bool) -> dict[str, Any]:
+    amount = _rank_amount(item)
     return {
         "code": item["code"],
         "name": item["name"],
         "currency": item["currency"],
         "type": _highlight_type(item) if positive else _blowup_type(item),
+        "amount": amount,
         "pl_val_delta": item["pl_val_delta"],
         "current_pl_val": item["current_pl_val"],
         "movement": item["movement"],
@@ -424,9 +426,9 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
                 "needs_decision": "是",
             }
         )
-    top_loss = sorted(position_changes, key=lambda row: row["pl_val_delta"])[:3]
+    top_loss = sorted(position_changes, key=_rank_amount)[:3]
     if top_loss:
-        names = "、".join(f"{item['name']} {item['code']}" for item in top_loss if item["pl_val_delta"] < 0)
+        names = "、".join(f"{item['name']} {item['code']}" for item in top_loss if _rank_amount(item) < 0)
         if names:
             items.append(
                 {
@@ -469,8 +471,8 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
 
 
 def _build_story(context_warnings: list[str], position_changes: list[dict[str, Any]]) -> dict[str, Any]:
-    leaders = [item for item in sorted(position_changes, key=lambda row: row["pl_val_delta"], reverse=True)[:3] if item["pl_val_delta"] > 0]
-    laggards = [item for item in sorted(position_changes, key=lambda row: row["pl_val_delta"])[:3] if item["pl_val_delta"] < 0]
+    leaders = [item for item in sorted(position_changes, key=_rank_amount, reverse=True)[:3] if _rank_amount(item) > 0]
+    laggards = [item for item in sorted(position_changes, key=_rank_amount)[:3] if _rank_amount(item) < 0]
     return {
         "mainline": _names(leaders) or "本周缺少足够快照，暂不归纳主线。",
         "negative_signals": _names(laggards) or "暂未从快照差分中识别明显拖累项。",
@@ -505,13 +507,13 @@ def _render_ranked_table(items: list[dict[str, Any]], positive: bool) -> list[st
     if not items:
         return ["- 暂未识别到明显高光。" if positive else "- 暂未识别到明显拖累。"]
     lines = [
-        "| 标的 | 类型 | 本周盈亏变化 | 仓位变化 | 置信度 | 复盘问题 |",
+        "| 标的 | 类型 | 金额 | 仓位变化 | 置信度 | 复盘问题 |",
         "| --- | --- | ---: | --- | --- | --- |",
     ]
     for item in items:
         lines.append(
             f"| {item['name']} {item['code']} | {item['type']} | "
-            f"{_fmt_money(item['pl_val_delta'], item['currency'])} | {item['movement']} | "
+            f"{_fmt_money(item.get('amount', item['pl_val_delta']), item['currency'])} | {item['movement']} | "
             f"{item['confidence']} | {item['review_question']} |"
         )
     return lines
@@ -649,6 +651,8 @@ def _confidence_label(movement: str) -> str:
 
 
 def _highlight_type(item: dict[str, Any]) -> str:
+    if item["movement"] == "清仓":
+        return "止盈清仓"
     if item["movement"] == "新开仓":
         return "新开仓当前盈利"
     if item["movement"] == "加仓":
@@ -659,6 +663,8 @@ def _highlight_type(item: dict[str, Any]) -> str:
 
 
 def _blowup_type(item: dict[str, Any]) -> str:
+    if item["movement"] == "清仓":
+        return "割肉清仓"
     if item["movement"] == "新开仓":
         return "新开仓当前亏损"
     if item["movement"] == "加仓":
@@ -672,12 +678,22 @@ def _blowup_type(item: dict[str, Any]) -> str:
 
 def _review_question(item: dict[str, Any], positive: bool) -> str:
     if positive:
+        if item["movement"] == "清仓":
+            return "清仓前仍有浮盈，需要复盘退出纪律是否执行到位"
         if item["confidence"] == "高":
             return "这次贡献来自持仓表现，是否可复用判断框架"
         return "这次贡献包含仓位变化，需要复盘加减仓节奏"
+    if item["movement"] == "清仓":
+        return "清仓前仍是浮亏，需要复盘是否是主动纠错还是情绪化割肉"
     if item["confidence"] == "高":
         return "拖累来自持仓表现，需要确认逻辑是否变化"
     return "拖累包含仓位变化，需要区分价格波动和操作影响"
+
+
+def _rank_amount(item: dict[str, Any]) -> float:
+    if item["movement"] == "清仓" and item.get("start"):
+        return _number(item["start"].get("pl_val"))
+    return _number(item.get("pl_val_delta"))
 
 
 def _status_labels(item: dict[str, Any]) -> list[str]:

@@ -214,6 +214,16 @@ read-only deploy key
 
 如果未来需要跨多个仓库，再考虑 GitHub App installation token。
 
+本地 Codex push 认证遵守独立边界：
+
+- 只有在用户明确授权 push 或 deploy 时，才读取本机 GitHub PAT 文件。
+- 优先使用 `/Users/lishaocheng/code/github_pat_only`；该文件应只包含 GitHub PAT。
+- 旧的 `/Users/lishaocheng/code/github_pat` 只作为兼容兜底；该文件后续行可能包含 Postgres 密码、Command API token 或其他本机秘密，只允许把第一行当作 GitHub PAT。
+- 不自动重写、截断、重命名、拆分、清理或打印 `/Users/lishaocheng/code/github_pat_only` 或 `/Users/lishaocheng/code/github_pat`。
+- push 时设置 `GIT_CONFIG_NOSYSTEM=1`，避免系统级 `git-credential-osxkeychain` 弹出 Keychain 授权框。
+- 只在 `/tmp` 下创建临时 credential store，push 完立即删除。
+- 不把 PAT 写入 remote URL、文档、日志、commit message 或聊天摘要。
+
 ## 通知云上的方式
 
 不使用 GitHub webhook 作为第一版主线。
@@ -237,6 +247,13 @@ Codex push 后，主动调用 MCP tool: cloud_deploy
 cloud_deploy
   -> Ops API POST /ops/deploy
 ```
+
+当前缺口（2026-06-16）：
+
+- `/ops/deploy` 在云端会卡在 `record deploy start`，尚未进入 fetch/checkout/deploy；Ops API 只返回 traceback 第一行，诊断信息不足。
+- 需要让 Ops API 在部署事件记录失败时返回可行动错误，或将 deploy event 记录降级为 warning 后继续部署并在结果里标注审计缺口。
+- GitHub Actions quick deploy 不会重建/重启 `weekly-review-web`，周复盘 Web 修复不能依赖当前 quick deploy；短期走 full deploy，长期应把 `weekly-review-web` 纳入 quick deploy 或明确 quick deploy 适用范围。
+- ECS 上 host/systemd 与 Docker container 必须使用不同 DB profile：宿主侧 `127.0.0.1:55432`，容器侧 `postgres:5432`。部署脚本和 compose env 需要防止宿主 `.env` 覆盖容器内连接地址。
 
 以后稳定后可加 webhook：
 

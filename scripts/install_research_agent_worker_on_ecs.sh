@@ -77,6 +77,7 @@ Environment=RESEARCH_WORK_DIR=$INVESTMENT_DIR
 Environment=RESEARCH_ARTIFACT_ROOT=$INVESTMENT_DIR/drafts/research_jobs
 Environment=RESEARCH_WORKER_NAME=research-agent-worker
 Environment=RESEARCH_WORKER_POLL_SECONDS=30
+Environment=RESEARCH_WORKER_CONCURRENCY=${RESEARCH_WORKER_CONCURRENCY:-1}
 Environment=RESEARCH_CODEX_TIMEOUT_SECONDS=3600
 UnsetEnvironment=DATABASE_URL
 ExecStart=$WORKER_HOME/venv/bin/python $INVESTMENT_DIR/scripts/research_agent_worker.py --loop
