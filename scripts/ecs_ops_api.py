@@ -15,6 +15,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -34,6 +35,7 @@ ALLOWED_NAMED_REFS = {
     for ref in os.getenv("OPS_DEPLOY_ALLOWED_REFS", "main").split(",")
     if ref.strip()
 }
+DEPLOY_MUTEX = threading.Lock()
 
 
 COMPOSE_SERVICES = {
@@ -124,6 +126,13 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": get_service_logs(service=service, lines=lines)})
             elif parsed.path == "/ops/coding-status":
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": build_coding_status()})
+            elif parsed.path == "/ops/deploy-status":
+                event_id = _required_int_query(query, "id", minimum=1, maximum=10**12)
+                event = read_deploy_event(event_id)
+                if event is None:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "deploy_event_not_found"})
+                else:
+                    self._write_json(HTTPStatus.OK, {"ok": True, "data": event})
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except ValueError as exc:
@@ -144,7 +153,7 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
                 action = str(payload.get("action") or "")
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": control_service(service=service, action=action)})
             elif parsed.path == "/ops/deploy":
-                self._write_json(HTTPStatus.OK, {"ok": True, "data": deploy_ref(payload)})
+                self._write_json(HTTPStatus.ACCEPTED, {"ok": True, "data": deploy_ref(payload)})
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except DeploymentBusy as exc:
@@ -307,50 +316,101 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
     source = _safe_label(str(payload.get("source") or "codex_app"), default="codex_app")
     requested_by = _safe_label(str(payload.get("requested_by") or "codex"), default="codex")
 
-    DEPLOY_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with DEPLOY_LOCK_PATH.open("w", encoding="utf-8") as lock_file:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise DeploymentBusy("deployment is already running") from exc
-        lock_file.write(f"{time.time()} {ref} {mode} {source} {requested_by}\n")
-        lock_file.flush()
-        return _deploy_ref_locked(ref=ref, mode=mode, source=source, requested_by=requested_by)
-
-
-def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> dict[str, Any]:
     if not REPO_DIR.exists() or not (REPO_DIR / ".git").exists():
         raise ValueError(f"deploy repo is not initialized: {REPO_DIR}")
     if not (REPO_DIR / "scripts" / "deploy_from_local_checkout.sh").exists():
         raise ValueError(f"deploy script not found in repo: {REPO_DIR}")
 
-    event_id: str | None = None
-    started_at = time.monotonic()
-    commit_sha = ""
+    if not DEPLOY_MUTEX.acquire(blocking=False):
+        raise DeploymentBusy("deployment is already running")
+
     branch_name = ref if ref in ALLOWED_NAMED_REFS else ""
-    logs_tail = ""
-    warnings: list[str] = []
     metadata: dict[str, Any] = {
         "requested_ref": ref,
         "requested_by": requested_by,
         "repo_dir": str(REPO_DIR),
         "app_dir": str(APP_DIR),
+        "async": True,
+    }
+    try:
+        event_id = _record_deploy_start(
+            source=source,
+            mode=mode,
+            commit_sha=ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
+            branch_name=branch_name,
+            metadata=metadata,
+        )
+        thread = threading.Thread(
+            target=_deploy_ref_background,
+            kwargs={
+                "event_id": event_id,
+                "ref": ref,
+                "mode": mode,
+                "source": source,
+                "requested_by": requested_by,
+                "metadata": metadata,
+            },
+            daemon=True,
+        )
+        thread.start()
+    except Exception:
+        DEPLOY_MUTEX.release()
+        raise
+
+    return {
+        "deploy_event_id": int(event_id),
+        "ref": ref,
+        "commit_sha": ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
+        "mode": mode,
+        "status": "started",
+        "summary": "deployment started",
+        "status_url": f"/ops/deploy-status?id={event_id}",
     }
 
-    try:
-        try:
-            event_id = _record_deploy_start(
-                source=source,
-                mode=mode,
-                commit_sha=ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
-                branch_name=branch_name,
-                metadata=metadata,
-            )
-        except Exception as exc:
-            warning = f"deploy event start recording failed: {sanitize_text(str(exc))}"
-            warnings.append(warning)
-            metadata["event_recording_warning"] = warning
 
+def _deploy_ref_background(
+    event_id: str,
+    ref: str,
+    mode: str,
+    source: str,
+    requested_by: str,
+    metadata: dict[str, Any],
+) -> None:
+    try:
+        DEPLOY_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with DEPLOY_LOCK_PATH.open("w", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            lock_file.write(f"{time.time()} {ref} {mode} {source} {requested_by} event={event_id}\n")
+            lock_file.flush()
+            _run_deploy_with_event(event_id=event_id, ref=ref, mode=mode, requested_by=requested_by, metadata=metadata)
+    except Exception as exc:
+        print(f"deploy background failed for event {event_id}: {sanitize_text(str(exc))}", flush=True)
+    finally:
+        DEPLOY_MUTEX.release()
+
+
+def _run_deploy_with_event(
+    event_id: str,
+    ref: str,
+    mode: str,
+    requested_by: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    started_at = time.monotonic()
+    commit_sha = ""
+    logs_tail = ""
+    warnings: list[str] = []
+    metadata = dict(metadata or {})
+    metadata.update(
+        {
+            "requested_ref": ref,
+            "requested_by": requested_by,
+            "repo_dir": str(REPO_DIR),
+            "app_dir": str(APP_DIR),
+        }
+    )
+
+    try:
         _ensure_clean_repo()
         fetch = _run_git(["fetch", "--prune", "origin"], timeout=DEPLOY_TIMEOUT_SECONDS)
         if not fetch.ok:
@@ -372,7 +432,7 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
             "SOURCE_DIR": str(REPO_DIR),
             "APP_DIR": str(APP_DIR),
             "BUILD_IMAGE": "true" if mode == "full" else "false",
-            "DEPLOY_EVENT_ID": event_id or "",
+            "DEPLOY_EVENT_ID": event_id,
         }
         deploy = _run(
             ["bash", str(REPO_DIR / "scripts" / "deploy_from_local_checkout.sh")],
@@ -392,12 +452,11 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
         if not health.get("ok"):
             failed_checks = ", ".join(str(item.get("name")) for item in health.get("checks", []) if not item.get("ok"))
             summary = f"deploy health check failed: {failed_checks or 'unknown'}"
-            if event_id:
-                finish_warning = _try_record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
-                if finish_warning:
-                    warnings.append(finish_warning)
+            finish_warning = _try_record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+            if finish_warning:
+                warnings.append(finish_warning)
             return {
-                "deploy_event_id": int(event_id) if event_id else None,
+                "deploy_event_id": int(event_id),
                 "ref": ref,
                 "commit_sha": commit_sha,
                 "mode": mode,
@@ -409,12 +468,11 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
             }
 
         summary = f"{mode} deploy completed"
-        if event_id:
-            finish_warning = _try_record_deploy_finish(event_id, "succeeded", summary, logs_tail, metadata)
-            if finish_warning:
-                warnings.append(finish_warning)
+        finish_warning = _try_record_deploy_finish(event_id, "succeeded", summary, logs_tail, metadata)
+        if finish_warning:
+            warnings.append(finish_warning)
         return {
-            "deploy_event_id": int(event_id) if event_id else None,
+            "deploy_event_id": int(event_id),
             "ref": ref,
             "commit_sha": commit_sha,
             "mode": mode,
@@ -429,10 +487,9 @@ def _deploy_ref_locked(ref: str, mode: str, source: str, requested_by: str) -> d
         metadata["error"] = summary
         if warnings:
             metadata["warnings"] = warnings
-        if event_id:
-            finish_warning = _try_record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
-            if finish_warning:
-                summary = f"{summary}; {finish_warning}"
+        finish_warning = _try_record_deploy_finish(event_id, "failed", summary, logs_tail, metadata)
+        if finish_warning:
+            summary = f"{summary}; {finish_warning}"
         raise RuntimeError(summary) from exc
 
 
@@ -448,6 +505,29 @@ def build_deploy_health() -> dict[str, Any]:
         "ok": all(bool(check.get("ok")) for check in checks),
         "checks": checks,
     }
+
+
+def read_deploy_event(event_id: int) -> dict[str, Any] | None:
+    result = _run(
+        [
+            PYTHON_BIN,
+            str(APP_DIR / "scripts" / "get_deploy_event.py"),
+            str(event_id),
+        ],
+        cwd=APP_DIR,
+        timeout=COMMAND_TIMEOUT_SECONDS,
+    )
+    if not result.ok:
+        raise RuntimeError(f"read deploy event failed: {_summarize_command_error(_combine_output(result))}")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"read deploy event returned invalid JSON: {_summarize_command_error(result.stdout)}") from exc
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RuntimeError("read deploy event returned a non-object JSON payload")
+    return value
 
 
 def _check_compose_service_running(service: str) -> dict[str, Any]:
@@ -772,6 +852,17 @@ def _int_query(query: dict[str, list[str]], key: str, default: int, minimum: int
         value = int(raw)
     except ValueError:
         return default
+    return max(minimum, min(value, maximum))
+
+
+def _required_int_query(query: dict[str, list[str]], key: str, minimum: int, maximum: int) -> int:
+    raw = _first_query(query, key)
+    if raw is None:
+        raise ValueError(f"{key} is required")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{key} must be an integer") from exc
     return max(minimum, min(value, maximum))
 
 

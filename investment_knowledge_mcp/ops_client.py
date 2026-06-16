@@ -127,35 +127,63 @@ def deploy_cloud_ref(ref: str, mode: str = "quick", source: str = "codex_app", r
     )
 
 
+def fetch_cloud_deploy_status(deploy_event_id: int) -> dict[str, Any]:
+    return get_ops_client().get("/ops/deploy-status", {"id": deploy_event_id})
+
+
 def render_cloud_deploy(ref: str, mode: str = "quick") -> str:
     try:
         data = deploy_cloud_ref(ref=ref, mode=mode)
     except OpsClientError as exc:
         return f"云端部署失败：{exc}"
 
-    health = data.get("health") if isinstance(data.get("health"), dict) else {}
+    lines = [
+        "云端部署已启动：",
+        f"- deploy_event：#{data.get('deploy_event_id') or '-'}",
+        f"- ref：{data.get('ref') or ref}",
+        f"- commit：{data.get('commit_sha') or '-'}",
+        f"- mode：{data.get('mode') or mode}",
+        f"- 状态：{data.get('status') or '-'}",
+    ]
+    summary = str(data.get("summary") or "").strip()
+    if summary:
+        lines.append(f"- 摘要：{summary}")
+    lines.append("")
+    lines.append("可继续问：`cloud_deploy_status` 或 `系统总览`。")
+    return "\n".join(lines)
+
+
+def render_cloud_deploy_status(deploy_event_id: int) -> str:
+    try:
+        data = fetch_cloud_deploy_status(deploy_event_id)
+    except OpsClientError as exc:
+        return f"云端部署状态暂不可用：{exc}"
+
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    health = metadata.get("health") if isinstance(metadata.get("health"), dict) else {}
     failed_checks: list[str] = []
     for check in health.get("checks") or []:
         if isinstance(check, dict) and not check.get("ok"):
             failed_checks.append(str(check.get("name") or "-"))
 
     lines = [
-        "云端部署完成：" if data.get("status") == "succeeded" else "云端部署未完成：",
-        f"- deploy_event：#{data.get('deploy_event_id') or '-'}",
-        f"- ref：{data.get('ref') or ref}",
-        f"- commit：{data.get('commit_sha') or '-'}",
-        f"- mode：{data.get('mode') or mode}",
+        f"云端部署状态：#{data.get('id') or deploy_event_id}",
+        f"- mode：{data.get('deploy_mode') or '-'}",
         f"- 状态：{data.get('status') or '-'}",
+        f"- commit：{data.get('commit_sha') or '-'}",
+        f"- branch：{data.get('branch_name') or '-'}",
         f"- 耗时：{data.get('duration_seconds') or '-'}s",
-        f"- 健康检查：{'OK' if health.get('ok') else 'FAIL'}",
     ]
-    if failed_checks:
-        lines.append("- 失败检查：" + "、".join(failed_checks))
     summary = str(data.get("summary") or "").strip()
     if summary:
         lines.append(f"- 摘要：{summary}")
-    lines.append("")
-    lines.append("可继续问：`系统总览`。")
+    if health:
+        lines.append(f"- 健康检查：{'OK' if health.get('ok') else 'FAIL'}")
+    if failed_checks:
+        lines.append("- 失败检查：" + "、".join(failed_checks))
+    logs_tail = str(data.get("logs_tail") or "").strip()
+    if logs_tail and data.get("status") == "failed":
+        lines.append(f"- 日志尾部：{logs_tail[:500]}")
     return "\n".join(lines)
 
 

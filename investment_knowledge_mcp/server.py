@@ -20,11 +20,13 @@ from investment_knowledge_mcp.display import build_stock_decision_card
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 from investment_knowledge_mcp.ops_client import (
     deploy_cloud_ref,
+    fetch_cloud_deploy_status,
     fetch_cloud_system_status,
     fetch_coding_status,
     fetch_recent_errors,
     fetch_service_logs,
     render_cloud_deploy,
+    render_cloud_deploy_status,
     render_cloud_system_status,
     render_recent_errors,
     render_service_logs,
@@ -535,6 +537,14 @@ def cloud_deploy(ref: str, mode: str = "quick", render: bool = True) -> dict[str
     if render:
         return {"ok": True, "message": render_cloud_deploy(ref=ref, mode=mode)}
     return {"ok": True, "data": deploy_cloud_ref(ref=ref, mode=mode)}
+
+
+@mcp.tool()
+def cloud_deploy_status(deploy_event_id: int, render: bool = True) -> dict[str, Any]:
+    """Read the status for a cloud deployment event."""
+    if render:
+        return {"ok": True, "message": render_cloud_deploy_status(deploy_event_id)}
+    return {"ok": True, "data": fetch_cloud_deploy_status(deploy_event_id)}
 
 
 @mcp.tool()

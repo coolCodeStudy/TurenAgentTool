@@ -613,6 +613,19 @@ def finish_deploy_event(
     return to_jsonable(row)
 
 
+def get_deploy_event(deploy_event_id: int) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM deploy_events
+            WHERE id = %s
+            """,
+            (deploy_event_id,),
+        ).fetchone()
+    return to_jsonable(row) if row else None
+
+
 def list_recent_deploy_events(limit: int = 5) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 50))
     with transaction() as conn:

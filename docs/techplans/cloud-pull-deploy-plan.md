@@ -267,7 +267,8 @@ production -> 仍然手动 cloud_deploy
 - `source`：触发来源，例如 `codex_app`、`manual`。
 - `requested_by`：触发者。
 
-响应：
+响应为异步启动结果。真实部署在 ECS 后台继续执行，调用方通过
+`GET /ops/deploy-status?id=<deploy_event_id>` 或 `系统总览` 查询最终状态：
 
 ```json
 {
@@ -276,25 +277,50 @@ production -> 仍然手动 cloud_deploy
     "deploy_event_id": 123,
     "ref": "abc123",
     "mode": "quick",
-    "status": "succeeded",
-    "duration_seconds": 18.4,
-    "summary": "quick deploy completed",
-    "health": {
-      "ok": true
-    }
+    "status": "started",
+    "summary": "deployment started",
+    "status_url": "/ops/deploy-status?id=123"
   }
 }
 ```
 
-失败响应：
+启动失败响应：
 
 ```json
 {
   "ok": false,
-  "error": "git fetch failed: ...",
+  "error": "deployment is already running",
   "data": {
-    "deploy_event_id": 123,
-    "status": "failed"
+    "status": "busy"
+  }
+}
+```
+
+### GET /ops/deploy-status
+
+请求：
+
+```text
+GET /ops/deploy-status?id=123
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 123,
+    "deploy_mode": "quick",
+    "commit_sha": "abc123",
+    "status": "succeeded",
+    "duration_seconds": 18.4,
+    "summary": "quick deploy completed",
+    "metadata": {
+      "health": {
+        "ok": true
+      }
+    }
   }
 }
 ```
@@ -315,23 +341,37 @@ production -> 仍然手动 cloud_deploy
 
 行为：
 
-- 调用 Ops API `/ops/deploy`。
-- 返回中文摘要。
-- 摘要包含 deploy event id、ref、mode、状态、耗时、健康检查结果。
+- 调用 Ops API `/ops/deploy` 启动异步部署。
+- 立即返回中文摘要。
+- 摘要包含 deploy event id、ref、mode、启动状态和状态查询提示。
 
 示例输出：
 
 ```text
-云端部署完成：
+云端部署已启动：
 - deploy_event: #123
 - ref: abc123
 - mode: quick
-- 状态：succeeded
-- 耗时：18s
-- 健康检查：OK
+- 状态：started
 
-可继续问：系统总览
+可继续问：cloud_deploy_status 或 系统总览
 ```
+
+### cloud_deploy_status
+
+参数：
+
+```json
+{
+  "deploy_event_id": 123,
+  "render": true
+}
+```
+
+行为：
+
+- 调用 Ops API `/ops/deploy-status?id=123`。
+- 返回部署事件状态、耗时、摘要和健康检查结果。
 
 ## 部署锁
 

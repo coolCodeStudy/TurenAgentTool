@@ -45,7 +45,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          source: "scripts/ecs_ops_api.py,scripts/install_ops_api_on_ecs.sh"
+          source: "scripts/ecs_ops_api.py,scripts/install_ops_api_on_ecs.sh,scripts/get_deploy_event.py"
           target: "/tmp/ops-api-${{ github.run_id }}"
           strip_components: 1
           overwrite: true
@@ -68,7 +68,8 @@ jobs:
             sudo mkdir -p "$APP_DIR/scripts"
             sudo cp "$UPLOAD_DIR/ecs_ops_api.py" "$APP_DIR/scripts/ecs_ops_api.py"
             sudo cp "$UPLOAD_DIR/install_ops_api_on_ecs.sh" "$APP_DIR/scripts/install_ops_api_on_ecs.sh"
-            sudo chmod +x "$APP_DIR/scripts/ecs_ops_api.py" "$APP_DIR/scripts/install_ops_api_on_ecs.sh"
+            sudo cp "$UPLOAD_DIR/get_deploy_event.py" "$APP_DIR/scripts/get_deploy_event.py"
+            sudo chmod +x "$APP_DIR/scripts/ecs_ops_api.py" "$APP_DIR/scripts/install_ops_api_on_ecs.sh" "$APP_DIR/scripts/get_deploy_event.py"
 
             cd "$APP_DIR"
 
