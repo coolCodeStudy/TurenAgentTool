@@ -92,10 +92,6 @@ else
   exit 1
 fi
 
-if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
-  systemctl stop hermes-gateway.service || true
-fi
-
 if [ "$BUILD_IMAGE" = "true" ]; then
   $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
 else

@@ -282,7 +282,7 @@ def create_coding_task(
     priority: str = "normal",
     labels: list[str] | None = None,
     sender: str | None = None,
-    source: str = "hermes",
+    source: str = "agent-shell",
 ) -> dict[str, Any]:
     """Create a coding task for later Codex/manual handling. This does not edit code."""
     return repository.create_coding_task(
@@ -431,11 +431,11 @@ def update_coding_task(
 def run_investment_command(
     command: str,
     sender: str | None = None,
-    source: str = "hermes",
+    source: str = "agent-shell",
 ) -> dict[str, Any]:
     """Run a safe natural-language InvestmentKnowledge command for an agent shell.
 
-    This tool is intended for Hermes/OpenClaw style gateways. It permits
+    This tool is intended for controlled agent shells. It permits
     query commands, Futu maintenance commands, candidate-memory proposals, and
     explicit candidate confirmation/rejection. Direct formal memory writes remain
     blocked.
@@ -446,7 +446,7 @@ def run_investment_command(
 
     if not _is_safe_agent_command(cleaned):
         message = (
-            "Hermes MCP 当前只允许查询类、富途维护类、候选心得和候选确认/拒绝指令。"
+            "受控 Agent 入口当前只允许查询类、富途维护类、候选心得和候选确认/拒绝指令。"
             "正式心得写入必须先经过候选确认，避免污染长期记忆。"
         )
         _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
@@ -511,7 +511,7 @@ def cloud_system_status(render: bool = True) -> dict[str, Any]:
 
 @mcp.tool()
 def cloud_recent_errors(lines: int = 160, render: bool = True) -> dict[str, Any]:
-    """Read recent ECS/Hermes/Codex/Futu errors through the controlled Ops API."""
+    """Read recent ECS/Codex/Futu errors through the controlled Ops API."""
     if render:
         return {"ok": True, "message": render_recent_errors(lines=lines)}
     return {"ok": True, "data": fetch_recent_errors(lines=lines)}

@@ -48,7 +48,6 @@ COMPOSE_SERVICES = {
 }
 
 SYSTEMD_SERVICES = {
-    "hermes": "hermes-gateway.service",
     "codex-worker": "investment-codex-worker.service",
     "research-agent-worker": "investment-research-agent-worker.service",
     "futu-opend": "futu-opend.service",
@@ -63,7 +62,6 @@ SERVICE_ALIASES = {
     "research-worker": "research-agent-worker",
     "research_agent": "research-agent-worker",
     "research": "research-agent-worker",
-    "hermes-gateway": "hermes",
     "dingtalk": "dingtalk-stream-bot",
     "stream": "dingtalk-stream-bot",
     "account-snapshot": "account-snapshot-scheduler",
@@ -205,7 +203,6 @@ def build_system_status() -> dict[str, Any]:
         "checks": [
             _check_command("docker", ["docker", "ps", "--format", "{{.Names}}"]),
             _check_compose(),
-            _check_systemd("hermes", SYSTEMD_SERVICES["hermes"]),
             _check_systemd("codex-worker", SYSTEMD_SERVICES["codex-worker"]),
             _check_systemd("research-agent-worker", SYSTEMD_SERVICES["research-agent-worker"]),
             _check_systemd("ops-api", SYSTEMD_SERVICES["ops-api"]),
@@ -221,7 +218,7 @@ def build_system_status() -> dict[str, Any]:
 
 def build_recent_errors(lines: int = 160) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
-    for name in ("hermes", "codex-worker", "research-agent-worker", "ops-api", "futu-opend", "futu-proxy"):
+    for name in ("codex-worker", "research-agent-worker", "ops-api", "futu-opend", "futu-proxy"):
         unit = SYSTEMD_SERVICES[name]
         result = _run(["journalctl", "-u", unit, "-n", str(lines), "--no-pager", "-p", "warning..alert"])
         text = _combine_output(result)

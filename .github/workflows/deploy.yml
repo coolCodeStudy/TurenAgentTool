@@ -207,21 +207,11 @@ jobs:
             fi
 
             if [ -n "$DOCKER_COMPOSE" ] && [ -f docker-compose.prod.yml ]; then
-              if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
-                echo "Hermes gateway is installed but DingTalk is temporarily routed back to legacy dingtalk-stream-bot."
-                systemctl stop hermes-gateway.service || true
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate account-snapshot-scheduler
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate ipo-reminder-scheduler
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
-              else
-                echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate account-snapshot-scheduler
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate ipo-reminder-scheduler
-                $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
-              fi
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate account-snapshot-scheduler
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate ipo-reminder-scheduler
+              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
               $DOCKER_COMPOSE -f docker-compose.prod.yml ps
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 account-snapshot-scheduler || true
               $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 ipo-reminder-scheduler || true
@@ -255,8 +245,6 @@ jobs:
                 sudo bash scripts/install_research_agent_worker_on_ecs.sh --start || true
                 systemctl status investment-research-agent-worker.service --no-pager || true
               fi
-              systemctl status hermes-gateway.service --no-pager || true
-              journalctl -u hermes-gateway.service -n 160 --no-pager || true
             else
               echo "Docker Compose unavailable; files were synced without service restart."
             fi
@@ -577,14 +565,7 @@ jobs:
 
             gzip -dc "$IMAGE_TAR" | $DOCKER load
             $DOCKER_COMPOSE -f docker-compose.prod.yml config
-            if systemctl cat hermes-gateway.service >/dev/null 2>&1; then
-              echo "Hermes gateway is installed but DingTalk is temporarily routed back to legacy dingtalk-stream-bot."
-              systemctl stop hermes-gateway.service || true
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
-            else
-              echo "Hermes gateway is not installed; restarting legacy dingtalk-stream-bot."
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
-            fi
+            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             sleep 20
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
@@ -594,5 +575,3 @@ jobs:
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=120 weekly-review-web || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 mcp || true
             $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 postgres || true
-            systemctl status hermes-gateway.service --no-pager || true
-            journalctl -u hermes-gateway.service -n 160 --no-pager || true

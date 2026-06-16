@@ -17,7 +17,7 @@ Codex App
 
 - Codex App 只连接云端 `InvestmentKnowledge MCP /mcp`。
 - `Ops API` 只在 ECS 内网使用，不直接暴露公网。
-- Hermes 暂时不是主链路，只作为未来多入口网关的可选组件。
+- Hermes Gateway 已下线移除，不再作为诊断或消息入口。
 
 ## 组件
 
@@ -38,11 +38,6 @@ Codex App
     - `cloud_recent_errors`
     - `cloud_service_logs`
     - `cloud_coding_status`
-
-- `scripts/hermes_mcp_bridge.py`
-  - 备用的本地 stdio MCP bridge。
-  - 只有当 Codex App 不能直接连接云端 `/mcp`，或需要通过本地隧道/代理访问时使用。
-  - 支持自动读取 `.env.codex`、`.env`、`~/.investment-knowledge/ops.env`。
 
 ## Codex App 推荐接入
 
@@ -74,36 +69,8 @@ OPS_API_TOKEN=<same-as-command-api-token-or-dedicated-token>
 
 - `cloud_system_status`：查看 Docker、systemd、Postgres、Futu、MCP 等状态。
 - `cloud_recent_errors`：查看最近 warning/error。
-- `cloud_service_logs`：查看指定服务日志，支持 `mcp`、`dingtalk-stream-bot`、`codex-worker`、`hermes`、`postgres`、`futu-opend`、`futu-proxy`、`ops-api`。
+- `cloud_service_logs`：查看指定服务日志，支持 `mcp`、`dingtalk-stream-bot`、`codex-worker`、`postgres`、`futu-opend`、`futu-proxy`、`ops-api`。
 - `cloud_coding_status`：查看云端 Codex worker 状态和最近任务。
-
-## 备用：本地 Bridge 接入
-
-如果不想直接开放云端 `/mcp`，可以先用本地 bridge：
-
-```text
-Codex App
-  -> local stdio MCP bridge
-      -> Command API / Ops API
-```
-
-在项目根目录创建本地文件 `.env.codex`，不要提交：
-
-```env
-COMMAND_API_URL=http://<ECS_HOST>:8001
-COMMAND_API_TOKEN=<command-api-token>
-OPS_API_URL=http://<ECS_HOST>:8767
-OPS_API_TOKEN=<ops-api-token>
-HERMES_BRIDGE_TIMEOUT_SECONDS=20
-```
-
-然后在 Codex App 里添加 stdio MCP：
-
-```bash
-python scripts/hermes_mcp_bridge.py
-```
-
-注意：这个备用方案只有在你通过安全组、VPN、SSH tunnel 或反向代理安全暴露对应端口时才建议使用。默认不建议直接把 `8767` 暴露到公网。
 
 ## 钉钉可用诊断命令
 
@@ -112,34 +79,16 @@ python scripts/hermes_mcp_bridge.py
 - `云端状态`
 - `最近错误`
 - `worker日志`
-- `hermes日志`
 - `mcp日志`
 - `钉钉日志`
 - `futu日志`
 - `postgres日志`
 - `服务日志 codex-worker`
 
-## Hermes 定位
-
-Hermes 暂时不进入主链路。
-
-保留 Hermes 的原因：
-
-- 未来可能承接多个聊天入口。
-- 未来可能做更复杂的意图分发。
-- 未来可能统一钉钉、网页、Codex worker 等入口。
-
-暂时不用 Hermes 的原因：
-
-- 当前 InvestmentKnowledge MCP 已经能直接提供诊断能力。
-- Hermes 失败不应影响投资查询、日志诊断和 Codex App 调试。
-- 主链路越短，定位问题越快。
-
 ## 安全边界
 
 - Ops API 不支持任意 shell 命令。
 - Ops API 服务名白名单：
-  - `hermes`
   - `codex-worker`
   - `mcp`
   - `dingtalk-stream-bot`
@@ -162,4 +111,4 @@ Hermes 暂时不进入主链路。
 
 1. 让 InvestmentKnowledge MCP 成为 Codex App 访问云端系统的主入口。
 2. 让 Ops API 只作为 ECS 内部诊断服务。
-3. 保留 Hermes，但不让它阻塞主系统迭代。
+3. 不再维护 Hermes Gateway 运行态。

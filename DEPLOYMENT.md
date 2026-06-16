@@ -329,7 +329,7 @@ workflow 判断变更文件时会关闭 Git 的路径转义，避免中文文档
 
 消息入口设计见 [docs/消息入口设计.md](docs/消息入口设计.md)。
 
-建议第一版不要让钉钉、Hermes、OpenClaw 直接访问数据库。推荐路径：
+建议第一版不要让钉钉或其他 Agent 外壳直接访问数据库。推荐路径：
 
 ```text
 钉钉 / Web API / Agent 外壳

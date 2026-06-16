@@ -328,7 +328,6 @@ SERVICE_LOG_COMMANDS = {
     "research日志": "research-agent-worker",
     "研究worker日志": "research-agent-worker",
     "research worker日志": "research-agent-worker",
-    "hermes日志": "hermes",
     "mcp日志": "mcp",
     "钉钉日志": "dingtalk-stream-bot",
     "dingtalk日志": "dingtalk-stream-bot",
@@ -1374,7 +1373,7 @@ def _handle_create_coding_task(title: str) -> CommandResult:
         title=cleaned_title,
         description=cleaned_title,
         labels=["coding", "from-dingtalk"],
-        source="dingtalk-hermes",
+        source="dingtalk",
     )
     return CommandResult(
         ok=True,
@@ -1817,7 +1816,6 @@ def _looks_like_coding_task(command: str) -> bool:
         "bug",
         "接口",
         "命令",
-        "hermes",
         "codex",
         "mcp",
         "钉钉",
@@ -3264,7 +3262,6 @@ def _help_text() -> str:
 - 云端状态
 - 最近错误
 - worker日志
-- hermes日志
 - mcp日志
 - IPO提醒状态
 - 分析 000660 KR

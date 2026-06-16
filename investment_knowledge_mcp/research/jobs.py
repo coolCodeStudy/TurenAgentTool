@@ -393,7 +393,7 @@ def _summarize_research_job(job: dict[str, Any]) -> dict[str, Any]:
 
 def _created_from_source(source: str | None) -> str:
     cleaned = (source or "").strip().lower()
-    if cleaned in {"command", "command_router", "hermes"}:
+    if cleaned in {"command", "command_router", "agent-shell"}:
         return "command_router"
     if cleaned in {"script", "cli"}:
         return "script"

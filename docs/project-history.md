@@ -14,7 +14,7 @@ It is intentionally not a day-by-day log.
 - The first cloud deployment path used GitHub Actions to package source and build/upload Docker images to ECS, avoiding unreliable direct pulls from ECS.
 - Production database connection moved from hand-built `DATABASE_URL` strings to structured PostgreSQL environment variables after special characters in passwords caused host parsing failures.
 - The primary runtime later moved to Singapore ECS because it could reach OpenAI reliably; the older domestic ECS path was not kept as the main runtime.
-- The current main ops path is `Codex App -> InvestmentKnowledge MCP /mcp -> ECS internal Ops API`. Hermes remains optional rather than the primary dependency.
+- The current main ops path is `Codex App -> InvestmentKnowledge MCP /mcp -> ECS internal Ops API`; the legacy Hermes Gateway path was removed.
 
 ## Futu/OpenD
 

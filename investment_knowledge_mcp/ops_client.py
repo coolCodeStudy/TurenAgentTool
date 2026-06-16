@@ -231,7 +231,7 @@ def render_cloud_system_status() -> str:
     lines.append("")
     if failed:
         lines.append("需要关注：" + "、".join(failed))
-        lines.append("可继续问：`最近错误`、`worker日志`、`hermes日志`、`mcp日志`。")
+        lines.append("可继续问：`最近错误`、`worker日志`、`mcp日志`。")
     else:
         lines.append("核心链路看起来正常。")
     return "\n".join(lines)

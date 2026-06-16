@@ -12,9 +12,9 @@
 
 这种模式在简单查询里够用，但遇到部署、OpenD、Docker、云服务、数据补全等多步骤任务时，用户需要不断执行命令、贴日志、等待判断，体验较累。
 
-参考 Hermes Agent 后，核心启发不是立刻替换框架，而是把 InvestmentKnowledge 从“命令机器人”逐步升级成“投资 Agent 运行时”。
+核心方向是把 InvestmentKnowledge 从“命令机器人”逐步升级成“投资 Agent 运行时”。
 
-## Hermes 可借鉴点
+## 可借鉴的 Agent Runtime 能力
 
 - 统一 Gateway：CLI、消息平台、cron 都进入同一个 agent runtime。
 - 会话隔离：群聊中可以按用户隔离 session，避免上下文串掉。
@@ -26,8 +26,8 @@
 
 ## 演进原则
 
-1. 不急着整套接入 Hermes，避免刚跑通的新加坡 ECS 链路再次复杂化。
-2. 先吸收 Hermes 的工作模式，把最痛的“人肉 orchestrator”问题解决掉。
+1. 不再接入或维护 legacy gateway，避免刚跑通的新加坡 ECS 链路再次复杂化。
+2. 先吸收 agent runtime 的工作模式，把最痛的“人肉 orchestrator”问题解决掉。
 3. InvestmentKnowledge 继续掌握投资数据边界：知识库、候选确认、富途只读、用户心得落库。
 4. 外部 Agent Shell 以后可以接，但所有写入仍必须走受控工具和白名单。
 
@@ -117,31 +117,31 @@ updated_at
 - 写入类必须满足白名单。
 - 系统推断出的用户观点只能进入候选心得，不能直接变成正式心得。
 
-## 阶段 4：Hermes 作为外壳
+## 阶段 4：受控 Agent Shell
 
-目标：让 Hermes 承担通用 gateway / session / cron / memory shell，InvestmentKnowledge 退到受控投资后端。
+目标：让受控 Agent Shell 承担 session、cron、memory shell，InvestmentKnowledge 退到受控投资后端。
 
 当前决策：
 
 ```text
 钉钉 / CLI / Cron
--> Hermes Gateway
+-> InvestmentKnowledge MCP / controlled agent shell
 -> InvestmentKnowledge MCP / HTTP tools
 -> PostgreSQL / Futu / OpenAI
 ```
 
 落地原则：
 
-- 单个钉钉机器人先由 Hermes 接管，InvestmentKnowledge 不再直接消费同一套 Stream 凭证。
-- InvestmentKnowledge MCP 第一版只暴露安全总入口 `run_investment_command` 给 Hermes。
+- 钉钉 Stream bot 继续由 InvestmentKnowledge 直接维护。
+- InvestmentKnowledge MCP 暴露安全总入口 `run_investment_command` 给受控 agent shell。
 - 查询类和富途维护类可以直接执行；正式心得写入仍然必须经过候选确认。
 - 开发类需求先进入 `coding_tasks`，由云端 Codex worker 自动领取、改代码、提交、推送分支，并在默认配置下直接在 ECS 本机部署。
-- GitHub Actions 继续作为正式发布与回滚通道；Hermes 负责日常交互和轻量任务调度。
+- GitHub Actions 继续作为正式发布与回滚通道；`/ops/deploy` 负责日常云端自拉部署。
 
 ## 推荐下一步
 
 1. 给 InvestmentKnowledge MCP 增加安全自然语言命令入口。
-2. 编写 Hermes ECS 安装脚本和单机器人切换文档。
-3. 在新加坡 ECS 上先启动 InvestmentKnowledge MCP HTTP，再启动 Hermes Gateway。
+2. 完善云端 Codex worker 的任务状态和回传。
+3. 在新加坡 ECS 上保持 InvestmentKnowledge MCP HTTP 作为主入口。
 4. 测试 `帮助`、`我的持仓`、`本月收益`、`富途状态`。
 5. 稳定后再迁移 IPO 定时提醒和任务表。
