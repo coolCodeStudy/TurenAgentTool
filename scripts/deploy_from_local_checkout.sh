@@ -16,25 +16,77 @@ if [ ! -f "$SOURCE_DIR/docker-compose.prod.yml" ]; then
   exit 1
 fi
 
+for required_path in \
+  "$SOURCE_DIR/db/schema.sql" \
+  "$SOURCE_DIR/investment_knowledge_mcp" \
+  "$SOURCE_DIR/scripts/init_db.py" \
+  "$SOURCE_DIR/scripts/ecs_ops_api.py" \
+  "$SOURCE_DIR/Dockerfile" \
+  "$SOURCE_DIR/requirements.txt"
+do
+  if [ ! -e "$required_path" ]; then
+    echo "SOURCE_DIR is incomplete, missing: $required_path" >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$APP_DIR"
 
-rm -rf \
-  "$APP_DIR/db" \
-  "$APP_DIR/docs" \
-  "$APP_DIR/investment_knowledge_mcp" \
-  "$APP_DIR/prompts" \
-  "$APP_DIR/scripts"
+STAGING_DIR="$APP_DIR/.deploy-staging-$$"
+BACKUP_DIR="$APP_DIR/.deploy-backup-$$"
+rm -rf "$STAGING_DIR" "$BACKUP_DIR"
+mkdir -p "$STAGING_DIR" "$BACKUP_DIR"
 
-cp -a "$SOURCE_DIR/db" "$APP_DIR/db"
-cp -a "$SOURCE_DIR/docs" "$APP_DIR/docs"
-cp -a "$SOURCE_DIR/investment_knowledge_mcp" "$APP_DIR/investment_knowledge_mcp"
+cp -a "$SOURCE_DIR/db" "$STAGING_DIR/db"
+cp -a "$SOURCE_DIR/docs" "$STAGING_DIR/docs"
+cp -a "$SOURCE_DIR/investment_knowledge_mcp" "$STAGING_DIR/investment_knowledge_mcp"
 if [ -d "$SOURCE_DIR/prompts" ]; then
-  cp -a "$SOURCE_DIR/prompts" "$APP_DIR/prompts"
+  cp -a "$SOURCE_DIR/prompts" "$STAGING_DIR/prompts"
 fi
-cp -a "$SOURCE_DIR/scripts" "$APP_DIR/scripts"
-cp -a "$SOURCE_DIR/Dockerfile" "$APP_DIR/Dockerfile"
-cp -a "$SOURCE_DIR/requirements.txt" "$APP_DIR/requirements.txt"
-cp -a "$SOURCE_DIR/docker-compose.prod.yml" "$APP_DIR/docker-compose.prod.yml"
+cp -a "$SOURCE_DIR/scripts" "$STAGING_DIR/scripts"
+cp -a "$SOURCE_DIR/Dockerfile" "$STAGING_DIR/Dockerfile"
+cp -a "$SOURCE_DIR/requirements.txt" "$STAGING_DIR/requirements.txt"
+cp -a "$SOURCE_DIR/docker-compose.prod.yml" "$STAGING_DIR/docker-compose.prod.yml"
+
+for staged_required_path in \
+  "$STAGING_DIR/db/schema.sql" \
+  "$STAGING_DIR/scripts/init_db.py" \
+  "$STAGING_DIR/scripts/ecs_ops_api.py" \
+  "$STAGING_DIR/docker-compose.prod.yml"
+do
+  if [ ! -e "$staged_required_path" ]; then
+    echo "staged release is incomplete, missing: $staged_required_path" >&2
+    exit 1
+  fi
+done
+
+ROLLED_BACK=false
+rollback_release_files() {
+  if [ "$ROLLED_BACK" = "true" ]; then
+    return
+  fi
+  ROLLED_BACK=true
+  for path in db docs investment_knowledge_mcp prompts scripts Dockerfile requirements.txt docker-compose.prod.yml; do
+    rm -rf "$APP_DIR/$path"
+    if [ -e "$BACKUP_DIR/$path" ]; then
+      mv "$BACKUP_DIR/$path" "$APP_DIR/$path"
+    fi
+  done
+}
+
+install_staged_release() {
+  for path in db docs investment_knowledge_mcp prompts scripts Dockerfile requirements.txt docker-compose.prod.yml; do
+    if [ -e "$APP_DIR/$path" ]; then
+      mv "$APP_DIR/$path" "$BACKUP_DIR/$path"
+    fi
+    if [ -e "$STAGING_DIR/$path" ]; then
+      mv "$STAGING_DIR/$path" "$APP_DIR/$path"
+    fi
+  done
+}
+
+trap rollback_release_files ERR
+install_staged_release
 
 chmod +x "$APP_DIR"/scripts/*.sh "$APP_DIR"/scripts/*.py 2>/dev/null || true
 
@@ -77,6 +129,7 @@ record_deploy_finish() {
 }
 
 on_deploy_error() {
+  rollback_release_files
   record_deploy_finish failed "deploy_from_local_checkout failed"
 }
 
@@ -102,3 +155,4 @@ fi
 $DOCKER_COMPOSE -f docker-compose.prod.yml ps
 record_deploy_finish succeeded "deploy_from_local_checkout completed"
 trap - ERR
+rm -rf "$STAGING_DIR" "$BACKUP_DIR"

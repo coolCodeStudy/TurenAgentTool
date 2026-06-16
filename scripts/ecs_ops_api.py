@@ -41,6 +41,7 @@ DEPLOY_MUTEX = threading.Lock()
 COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
+    "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
     "account-snapshot-scheduler": "account-snapshot-scheduler",
     "ipo-reminder-scheduler": "ipo-reminder-scheduler",
@@ -70,6 +71,9 @@ SERVICE_ALIASES = {
     "ipo-reminder": "ipo-reminder-scheduler",
     "ipo-reminders": "ipo-reminder-scheduler",
     "ipo-scheduler": "ipo-reminder-scheduler",
+    "weekly-review": "weekly-review-web",
+    "weekly_review": "weekly-review-web",
+    "weekly-review-web": "weekly-review-web",
     "futu": "futu-opend",
     "opend": "futu-opend",
     "futu_proxy": "futu-proxy",
@@ -492,11 +496,14 @@ def _run_deploy_with_event(
 
 def build_deploy_health() -> dict[str, Any]:
     checks = [
+        _check_required_file("schema", APP_DIR / "db" / "schema.sql"),
+        _check_required_file("compose_file", COMPOSE_FILE),
         _check_compose(),
         _check_socket("postgres", "127.0.0.1", int(os.getenv("POSTGRES_HOST_PORT", "55432"))),
         _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
+        _check_socket("weekly-review-web", "127.0.0.1", int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010"))),
     ]
-    for service in ("dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
+    for service in ("weekly-review-web", "dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
         checks.append(_check_compose_service_running(service))
     return {
         "ok": all(bool(check.get("ok")) for check in checks),
@@ -508,7 +515,7 @@ def read_deploy_event(event_id: int) -> dict[str, Any] | None:
     result = _run(
         [
             PYTHON_BIN,
-            str(APP_DIR / "scripts" / "get_deploy_event.py"),
+            str(_script_path("get_deploy_event.py")),
             str(event_id),
         ],
         cwd=APP_DIR,
@@ -547,7 +554,7 @@ def _record_deploy_start(
     result = _run(
         [
             PYTHON_BIN,
-            str(APP_DIR / "scripts" / "record_deploy_event.py"),
+            str(_script_path("record_deploy_event.py")),
             "start",
             "--source",
             source,
@@ -583,7 +590,7 @@ def _record_deploy_finish(
     result = _run(
         [
             PYTHON_BIN,
-            str(APP_DIR / "scripts" / "record_deploy_event.py"),
+            str(_script_path("record_deploy_event.py")),
             "finish",
             "--id",
             event_id,
@@ -731,10 +738,26 @@ def _check_socket(name: str, host: str, port: int) -> dict[str, Any]:
     return {"name": name, "ok": True, "message": f"{host}:{port} reachable"}
 
 
+def _check_required_file(name: str, path: Path) -> dict[str, Any]:
+    if path.is_file():
+        return {"name": name, "ok": True, "message": str(path)}
+    return {"name": name, "ok": False, "message": f"missing: {path}"}
+
+
 def _compose_command(args: list[str]) -> list[str]:
     if not COMPOSE_FILE.exists():
         raise ValueError(f"compose file not found: {COMPOSE_FILE}")
     return ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
+
+
+def _script_path(name: str) -> Path:
+    app_path = APP_DIR / "scripts" / name
+    if app_path.is_file():
+        return app_path
+    repo_path = REPO_DIR / "scripts" / name
+    if repo_path.is_file():
+        return repo_path
+    return app_path
 
 
 def _run(

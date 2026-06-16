@@ -44,6 +44,8 @@ Add only lessons that should change future behavior.
 - GitHub Actions full deploy is multi-minute, not quick-deploy speed. In the 2026-06-16 weekly-review-web release it took about 6 minutes from dispatch to success; after triggering it, poll at a calm interval and verify only after completion.
 - If cloud-side business verification succeeds and compose/logs show the target Web container is running, but the public URL still returns connection refused or is unreachable, classify the remaining work as public ingress/network-layer debugging. Do not reopen the already-verified business logic unless new evidence points back to it.
 - When using a cloud command path as fallback verification for a Web bug, note any write side effects. For example, `复盘 2026-06-07 2026-06-13` can persist a `review_reports` row even when the goal is only verification.
+- `/ops/deploy` must be atomic with respect to the running app directory. Never delete `APP_DIR/db`, `APP_DIR/scripts`, or other mounted runtime paths before the new release has been copied to staging and validated; failed deploys must leave the previous `db/schema.sql` and runnable scripts in place.
+- Ops status and deploy-event endpoints must not depend solely on the current `APP_DIR`, because a failed deploy can corrupt that directory. Use the deploy repo checkout as a fallback for control-plane scripts so failures remain diagnosable.
 
 ## Daily Records Retired
 

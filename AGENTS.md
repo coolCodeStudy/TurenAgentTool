@@ -24,6 +24,7 @@ Read it before changing code, running services, or touching deployment commands.
   - which services will be started, stopped, or recreated;
   - which database they will connect to;
   - whether HTTP ports or external integrations are involved.
+- Full deploy is a multi-minute operation. The observed weekly-review release path takes about 6 minutes end to end; after triggering it, wait and poll calmly instead of treating the first few minutes of missing/unstable health checks as failure.
 - `command-api` is only the HTTP wrapper around `handle_command(...)`. It is not required for ordinary local feature work unless the HTTP command endpoint itself is being tested.
 - If `command-api` is started, it must use a strong `COMMAND_API_TOKEN`. Never write temporary tokens or secrets into docs, logs, commits, or chat summaries.
 
