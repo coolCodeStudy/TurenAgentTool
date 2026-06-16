@@ -42,6 +42,8 @@ Add only lessons that should change future behavior.
 - Keep host and container database profiles separate on ECS: host/systemd tools may use `127.0.0.1:55432`, while Docker compose services must use `postgres:5432`. Do not let a host `.env` leak into container runtime configuration.
 - GitHub Actions quick deploy currently does not rebuild or restart every product surface. Before using it for a cloud-served Web page, confirm that the workflow actually refreshes that service; otherwise use full deploy or fix the quick deploy scope.
 - GitHub Actions full deploy is multi-minute, not quick-deploy speed. In the 2026-06-16 weekly-review-web release it took about 6 minutes from dispatch to success; after triggering it, poll at a calm interval and verify only after completion.
+- If cloud-side business verification succeeds and compose/logs show the target Web container is running, but the public URL still returns connection refused or is unreachable, classify the remaining work as public ingress/network-layer debugging. Do not reopen the already-verified business logic unless new evidence points back to it.
+- When using a cloud command path as fallback verification for a Web bug, note any write side effects. For example, `复盘 2026-06-07 2026-06-13` can persist a `review_reports` row even when the goal is only verification.
 
 ## Daily Records Retired
 
