@@ -513,6 +513,16 @@ def main() -> None:
                     "pl_ratio": 0.38,
                     "currency": "USD",
                 },
+                {
+                    "code": "TEST.HIST",
+                    "stock_name": "Smoke Historical Gain Closed Stock",
+                    "qty": 10,
+                    "cost_price": 10,
+                    "market_val": 200,
+                    "pl_val": 100,
+                    "pl_ratio": 1.0,
+                    "currency": "USD",
+                },
             ],
             fx_rates={"USD": 1.0},
             fetched_at=datetime(2020, 1, 6, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat(),
@@ -530,6 +540,16 @@ def main() -> None:
                     "market_val": 1100,
                     "pl_val": 80,
                     "pl_ratio": 0.08,
+                    "currency": "USD",
+                },
+                {
+                    "code": "TEST.REAL",
+                    "stock_name": "Smoke Realized Plus Holding Stock",
+                    "qty": 6,
+                    "cost_price": 10,
+                    "market_val": 140,
+                    "pl_val": 80,
+                    "pl_ratio": 1.33,
                     "currency": "USD",
                 },
                 {
@@ -560,14 +580,53 @@ def main() -> None:
                     "amount": 36,
                     "currency": "USD",
                     "create_time": "2020-01-08 10:00:00",
+                },
+                {
+                    "deal_id": "smoke-weekly-real-buy",
+                    "order_id": "smoke-weekly-real-order-buy",
+                    "code": "TEST.REAL",
+                    "stock_name": "Smoke Realized Plus Holding Stock",
+                    "trd_side": "BUY",
+                    "qty": 10,
+                    "price": 10,
+                    "amount": 100,
+                    "currency": "USD",
+                    "create_time": "2020-01-08 10:00:00",
+                },
+                {
+                    "deal_id": "smoke-weekly-real-sell",
+                    "order_id": "smoke-weekly-real-order-sell",
+                    "code": "TEST.REAL",
+                    "stock_name": "Smoke Realized Plus Holding Stock",
+                    "trd_side": "SELL",
+                    "qty": 4,
+                    "price": 20,
+                    "amount": 80,
+                    "currency": "USD",
+                    "create_time": "2020-01-10 10:00:00",
+                },
+                {
+                    "deal_id": "smoke-weekly-hist-sell",
+                    "order_id": "smoke-weekly-hist-order-sell",
+                    "code": "TEST.HIST",
+                    "stock_name": "Smoke Historical Gain Closed Stock",
+                    "trd_side": "SELL",
+                    "qty": 10,
+                    "price": 20,
+                    "amount": 200,
+                    "currency": "USD",
+                    "create_time": "2020-01-10 11:00:00",
                 }
             ]
         )
         weekly_context = build_weekly_review_context(start=weekly_start, end=weekly_end)
         weekly_markdown = render_weekly_review_markdown(weekly_context)
         assert weekly_context["source_status"]["account_snapshots"]["status"] == "ok"
-        assert weekly_context["source_status"]["trades"]["count"] == 1
-        assert weekly_context["highlights"][0]["code"] == f"{SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert weekly_context["source_status"]["trades"]["count"] == 4
+        assert weekly_context["highlights"][0]["code"] == "TEST.REAL"
+        assert weekly_context["highlights"][0]["amount"] == 120
+        assert weekly_context["highlights"][0]["realized_pl_estimate"] == 40
+        assert all(item["code"] != "TEST.HIST" for item in weekly_context["highlights"])
         assert any(item["code"] == "TEST.TAKE" and item["type"] == "止盈清仓" for item in weekly_context["highlights"])
         assert all(item["code"] != "TEST.CUT" for item in weekly_context["highlights"])
         assert weekly_context["blowups"][0]["code"] == "TEST.LOSS"

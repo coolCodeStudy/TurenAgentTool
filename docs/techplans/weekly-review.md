@@ -8,10 +8,12 @@
 
 ## 产品口径
 
-P1 不追求严格完整的已实现盈亏账本。第一版周复盘以每日持仓 snapshot 差分作为主账本：
+当前周复盘以每日持仓 snapshot 差分和区间交易记录共同估算单票区间盈亏：
 
 ```text
-本周股票 performance = 期末持仓 pl_val - 期初持仓 pl_val
+snapshot_pl_delta = 期末持仓 pl_val - 期初持仓 pl_val
+realized_pl_estimate = 基于 trade_records 卖出成交和移动平均成本估算的已实现盈亏
+period_pl = snapshot_pl_delta + realized_pl_estimate
 ```
 
 交易记录作为解释账本，用来说明：
@@ -19,13 +21,14 @@ P1 不追求严格完整的已实现盈亏账本。第一版周复盘以每日�
 - 为什么 `qty` 变化。
 - 为什么 `cost_price` 变化。
 - 本周是否发生加仓、减仓、新开仓、清仓。
-- 后续买卖执行复盘和 realized P/L 的基础数据。
+- 区间卖出/清仓对 realized P/L 的影响。
 
-因此 P1 口径是：
+因此当前口径是：
 
 ```text
-P1 performance 主账本：account_snapshots
-P1 交易解释账本：trade_records
+performance 主账本：account_snapshots + trade_records
+快照账本：未实现盈亏变化
+交易账本：卖出实现盈亏估算、仓位变化解释
 富途实时接口：用于补漏和当天即时刷新，不作为唯一历史来源
 ```
 
@@ -110,7 +113,7 @@ generate_weekly_review_with_openai(context: dict) -> str | None
 3. 读取 trade_records 中本周交易。
 4. 如果 trade_records 缺失，则调用已接入的 get_futu_trade_history(start, end) 补库。
 5. 如果当天 snapshot 缺失，则调用已接入的 get_futu_positions() 生成即时参考。
-6. 计算每只股票的 pl_val_delta、qty_delta、cost_price_delta、market_val_delta。
+6. 计算每只股票的 pl_val_delta、realized_pl_estimate、period_pl、qty_delta、cost_price_delta、market_val_delta。
 7. 生成高光时刻、炸裂时刻、当前持仓分析表。
 8. 合并知识库、板块、用户心得和候选心得。
 9. 指数和外部事件先标记为“数据源未接入”。
@@ -157,6 +160,8 @@ generate_weekly_review_with_openai(context: dict) -> str | None
 
 ```text
 pl_val_delta = end.pl_val - start.pl_val
+realized_pl_estimate = 按期初 cost_price 和区间买卖成交估算卖出实现盈亏
+period_pl = pl_val_delta + realized_pl_estimate
 qty_delta = end.qty - start.qty
 cost_price_delta = end.cost_price - start.cost_price
 market_val_delta = end.market_val - start.market_val
@@ -177,14 +182,14 @@ qty 减少：减仓
 ```text
 高：qty 基本不变，pl_val_delta 可以较好代表本周持仓表现。
 中：qty 有变化，但仍有期初/期末持仓，可判断本周盈亏方向。
-低：新开仓或清仓，只描述仓位变化和当前/期末结果，不拆纯价格贡献。
+低：新开仓或清仓，需要结合 trade_records 的 realized_pl_estimate 判断，不能只看快照差分。
 ```
 
-注意：如果中间发生加仓/减仓，`pl_val_delta` 包含仓位调整影响，不能表述为纯价格贡献。
+注意：如果中间发生加仓/减仓，`pl_val_delta` 只代表未实现盈亏变化；排名和故事应优先使用 `period_pl`。
 
 ## 高光时刻
 
-按 `pl_val_delta` 降序取 Top 3。
+按 `period_pl` 降序取 Top 3。
 
 输出字段：
 
@@ -203,7 +208,7 @@ qty 减少：减仓
 
 ## 炸裂时刻
 
-按 `pl_val_delta` 升序取 Top 3。
+按 `period_pl` 升序取 Top 3。
 
 输出字段：
 
