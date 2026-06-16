@@ -454,7 +454,7 @@ def _run_deploy_with_event(
         if not deploy.ok:
             raise RuntimeError(f"deploy script failed: {_summarize_command_error(deploy.stderr or deploy.stdout)}")
 
-        health = build_deploy_health()
+        health = wait_for_deploy_health()
         metadata["health"] = health
         if warnings:
             metadata["warnings"] = warnings
@@ -518,6 +518,26 @@ def build_deploy_health() -> dict[str, Any]:
         "ok": all(bool(check.get("ok")) for check in checks),
         "checks": checks,
     }
+
+
+def wait_for_deploy_health(timeout_seconds: float = 90.0, stable_seconds: float = 12.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    first_healthy_at: float | None = None
+    last_health = build_deploy_health()
+    while time.monotonic() < deadline:
+        last_health = build_deploy_health()
+        if last_health.get("ok"):
+            if first_healthy_at is None:
+                first_healthy_at = time.monotonic()
+            if time.monotonic() - first_healthy_at >= stable_seconds:
+                last_health["stable_seconds"] = stable_seconds
+                return last_health
+        else:
+            first_healthy_at = None
+        time.sleep(3)
+    last_health["stable_seconds"] = 0
+    last_health["message"] = f"deploy health did not stay healthy for {stable_seconds:.0f}s"
+    return last_health
 
 
 def read_deploy_event(event_id: int) -> dict[str, Any] | None:

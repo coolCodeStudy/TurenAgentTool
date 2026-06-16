@@ -205,9 +205,11 @@ fi
 
 compose() {
   if [ -f "$COMPOSE_ENV_FILE" ]; then
-    $DOCKER_COMPOSE --project-name "$COMPOSE_PROJECT_NAME" --env-file "$COMPOSE_ENV_FILE" -f docker-compose.prod.yml "$@"
+    env -u POSTGRES_HOST -u POSTGRES_PORT \
+      $DOCKER_COMPOSE --project-name "$COMPOSE_PROJECT_NAME" --env-file "$COMPOSE_ENV_FILE" -f docker-compose.prod.yml "$@"
   else
-    $DOCKER_COMPOSE --project-name "$COMPOSE_PROJECT_NAME" -f docker-compose.prod.yml "$@"
+    env -u POSTGRES_HOST -u POSTGRES_PORT \
+      $DOCKER_COMPOSE --project-name "$COMPOSE_PROJECT_NAME" -f docker-compose.prod.yml "$@"
   fi
 }
 

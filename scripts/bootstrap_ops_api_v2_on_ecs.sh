@@ -64,7 +64,16 @@ fi
 
 health_url="http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health"
 echo "Checking $health_url"
-curl -fsS "$health_url"
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS "$health_url"; then
+    break
+  fi
+  if [ "$attempt" = "10" ]; then
+    echo "Ops API health check failed after $attempt attempts." >&2
+    exit 1
+  fi
+  sleep 1
+done
 echo
 
 if [ -n "${OPS_API_TOKEN:-}" ]; then
