@@ -13,6 +13,10 @@ from investment_knowledge_mcp.futu_provider import (
     get_futu_trade_history,
     get_hk_ipo_list,
 )
+from investment_knowledge_mcp.weekly_review_sources import (
+    build_budget_warnings,
+    load_weekly_review_external_sources,
+)
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -31,8 +35,10 @@ def build_weekly_review(
     *,
     save: bool = True,
     next_week_only: bool = False,
+    force_refresh: bool = False,
+    run_id: int | None = None,
 ) -> WeeklyReviewResult:
-    context = build_weekly_review_context(start=start, end=end)
+    context = build_weekly_review_context(start=start, end=end, force_refresh=force_refresh, run_id=run_id)
     markdown = render_next_week_markdown(context) if next_week_only else render_weekly_review_markdown(context)
     saved_report = None
     if save and not next_week_only:
@@ -40,7 +46,13 @@ def build_weekly_review(
     return WeeklyReviewResult(context=context, markdown=markdown, saved_report=saved_report)
 
 
-def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
+def build_weekly_review_context(
+    start: date,
+    end: date,
+    *,
+    force_refresh: bool = False,
+    run_id: int | None = None,
+) -> dict[str, Any]:
     if end < start:
         start, end = end, start
 
@@ -49,10 +61,20 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "trades": {"status": "missing", "count": 0},
         "positions": {"status": "missing", "fetched_at": None},
         "indexes": {"status": "missing", "reason": "index provider not configured"},
-        "events": {"status": "missing", "reason": "external event provider not implemented"},
+        "macro": {"status": "missing", "reason": "macro provider not configured"},
+        "news_themes": {"status": "missing", "reason": "news/theme provider not configured"},
+        "opportunities": {"status": "missing", "reason": "opportunity provider not configured"},
         "ipo": {"status": "missing", "count": 0},
     }
     warnings: list[str] = []
+    external_sources = load_weekly_review_external_sources(
+        start=start,
+        end=end,
+        force_refresh=force_refresh,
+        run_id=run_id,
+        warnings=warnings,
+    )
+    source_status.update(external_sources.get("source_status") or {})
 
     snapshots = _load_account_snapshots(start=start, end=end, source_status=source_status, warnings=warnings)
     start_snapshot = snapshots[0] if snapshots else None
@@ -92,7 +114,11 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
     blowups = _top_blowups(position_changes)
     holdings_table = _build_holdings_table(position_changes)
     ipo_items = _load_ipo_items(source_status=source_status, warnings=warnings)
-    next_week = _build_next_week_items(position_changes=position_changes, ipo_items=ipo_items)
+    next_week = _build_next_week_items(
+        position_changes=position_changes,
+        ipo_items=ipo_items,
+        opportunity_items=external_sources.get("opportunity_items") or [],
+    )
 
     return {
         "period": {
@@ -114,10 +140,17 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
             "records": trades,
             "by_code": list(trades_by_code.values()),
         },
-        "index_summary": [],
-        "event_summary": [],
+        "index_summary": external_sources.get("index_summary") or [],
+        "macro_events": external_sources.get("macro_events") or [],
+        "news_themes": external_sources.get("news_themes") or [],
+        "opportunity_items": external_sources.get("opportunity_items") or [],
+        "external_source_summary": external_sources.get("source_summary") or {},
         "next_week": next_week,
-        "story": _build_story(context_warnings=warnings, position_changes=position_changes),
+        "story": _build_story(
+            context_warnings=warnings,
+            position_changes=position_changes,
+            external_sources=external_sources,
+        ),
         "candidate_insights": [],
         "warnings": warnings,
     }
@@ -133,8 +166,14 @@ def render_weekly_review_markdown(context: dict[str, Any]) -> str:
     lines.extend(_render_ranked_table(context.get("highlights") or [], positive=True))
     lines.extend(["", "## 2. 炸裂时刻"])
     lines.extend(_render_ranked_table(context.get("blowups") or [], positive=False))
-    lines.extend(["", "## 3. 指数"])
-    lines.append("- 指数数据源未接入，本周不做指数归因。")
+    lines.extend(["", "## 3. 指数与外部环境"])
+    lines.extend(
+        _render_external_environment(
+            indexes=context.get("index_summary") or [],
+            macro_events=context.get("macro_events") or [],
+            news_themes=context.get("news_themes") or [],
+        )
+    )
     lines.extend(["", "## 4. 整体故事"])
     lines.extend(_render_story(context.get("story") or {}))
     lines.extend(["", "## 5. 下周展望"])
@@ -413,8 +452,23 @@ def _build_holdings_table(position_changes: list[dict[str, Any]]) -> list[dict[s
     return rows
 
 
-def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_next_week_items(
+    position_changes: list[dict[str, Any]],
+    ipo_items: list[dict[str, Any]],
+    opportunity_items: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    for opportunity in (opportunity_items or [])[:5]:
+        title = opportunity.get("title") or opportunity.get("name") or opportunity.get("item") or "外部机会"
+        reason = opportunity.get("reason") or opportunity.get("summary") or opportunity.get("note") or "来自外部机会列表。"
+        items.append(
+            {
+                "type": "机会",
+                "item": str(title),
+                "reason": str(reason),
+                "needs_decision": str(opportunity.get("needs_decision") or "是"),
+            }
+        )
     active_ipos = [ipo for ipo in ipo_items if _is_active_ipo(ipo)]
     if active_ipos:
         names = "、".join(str(ipo.get("name") or ipo.get("code") or "") for ipo in active_ipos[:5] if ipo)
@@ -470,20 +524,66 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
     return items
 
 
-def _build_story(context_warnings: list[str], position_changes: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_story(
+    context_warnings: list[str],
+    position_changes: list[dict[str, Any]],
+    external_sources: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     leaders = [item for item in sorted(position_changes, key=_rank_amount, reverse=True)[:3] if _rank_amount(item) > 0]
     laggards = [item for item in sorted(position_changes, key=_rank_amount)[:3] if _rank_amount(item) < 0]
+    external_sources = external_sources or {}
+    indexes = external_sources.get("index_summary") or []
+    macro_events = external_sources.get("macro_events") or []
+    news_themes = external_sources.get("news_themes") or []
+    external_text = _external_story_text(indexes=indexes, macro_events=macro_events, news_themes=news_themes)
+    portfolio_relation = (
+        "本周组合关系主要基于持仓 snapshot 的盈亏变化，并结合外部环境源做辅助判断。"
+        if external_text
+        else "本周故事主要基于持仓 snapshot 的盈亏变化；外部环境源未配置。"
+    )
     return {
         "mainline": _names(leaders) or "本周缺少足够快照，暂不归纳主线。",
+        "external_context": external_text or "外部环境源未配置。",
         "negative_signals": _names(laggards) or "暂未从快照差分中识别明显拖累项。",
-        "portfolio_relation": "本周故事主要基于持仓 snapshot 的盈亏变化；指数和外部事件源未接入。",
+        "portfolio_relation": portfolio_relation,
         "next_validation": "下周优先验证本周贡献/拖累标的的逻辑是否延续，并继续补齐每日交易与快照。",
         "data_gaps": context_warnings[:5],
     }
 
 
-def save_weekly_review_report(context: dict[str, Any], markdown: str) -> dict[str, Any]:
+def _external_story_text(
+    *,
+    indexes: list[dict[str, Any]],
+    macro_events: list[dict[str, Any]],
+    news_themes: list[dict[str, Any]],
+) -> str:
+    parts = []
+    if indexes:
+        parts.append("指数：" + "；".join(_short_item_text(item) for item in indexes[:3]))
+    if macro_events:
+        parts.append("宏观：" + "；".join(_short_item_text(item) for item in macro_events[:3]))
+    if news_themes:
+        parts.append("主题：" + "；".join(_short_item_text(item) for item in news_themes[:3]))
+    if not parts:
+        return ""
+    return "本周外部环境参考：" + " / ".join(parts)
+
+
+def _short_item_text(item: dict[str, Any]) -> str:
+    name = item.get("name") or item.get("title") or item.get("theme") or item.get("symbol") or "未命名"
+    summary = item.get("summary") or item.get("note") or item.get("change") or item.get("reason") or ""
+    return f"{name}{'：' + str(summary) if summary else ''}"
+
+
+def save_weekly_review_report(
+    context: dict[str, Any],
+    markdown: str,
+    *,
+    refreshed: bool = False,
+    token_usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     period = context["period"]
+    budget_warnings = build_budget_warnings(token_usage)
     return repository.upsert_review_report(
         report_date=period["end"],
         report_type="weekly",
@@ -500,6 +600,9 @@ def save_weekly_review_report(context: dict[str, Any], markdown: str) -> dict[st
         holdings_table=context.get("holdings_table") or [],
         next_week=context.get("next_week") or [],
         story=context.get("story") or {},
+        refreshed=refreshed,
+        token_usage=token_usage,
+        budget_warnings=budget_warnings,
     )
 
 
@@ -522,11 +625,43 @@ def _render_ranked_table(items: list[dict[str, Any]], positive: bool) -> list[st
 def _render_story(story: dict[str, Any]) -> list[str]:
     return [
         f"- 主线：{story.get('mainline') or '待观察'}",
-        "- 加速因素：本周暂未接入外部事件源，不做新闻/社媒/公告归因。",
+        f"- 外部环境：{story.get('external_context') or '外部环境源未配置。'}",
         f"- 负向信号：{story.get('negative_signals') or '待观察'}",
         f"- 和我组合的关系：{story.get('portfolio_relation') or '待观察'}",
         f"- 下周验证点：{story.get('next_validation') or '待观察'}",
     ]
+
+
+def _render_external_environment(
+    *,
+    indexes: list[dict[str, Any]],
+    macro_events: list[dict[str, Any]],
+    news_themes: list[dict[str, Any]],
+) -> list[str]:
+    lines: list[str] = []
+    if indexes:
+        lines.append("### 指数")
+        lines.extend(_render_named_items(indexes, empty_text="指数数据源未接入，本周不做指数归因。"))
+    else:
+        lines.append("- 指数数据源未接入，本周不做指数归因。")
+    if macro_events:
+        lines.extend(["", "### 宏观"])
+        lines.extend(_render_named_items(macro_events, empty_text="宏观数据源未接入。"))
+    if news_themes:
+        lines.extend(["", "### 新闻/主题"])
+        lines.extend(_render_named_items(news_themes, empty_text="新闻/主题数据源未接入。"))
+    return lines
+
+
+def _render_named_items(items: list[dict[str, Any]], *, empty_text: str) -> list[str]:
+    if not items:
+        return [f"- {empty_text}"]
+    lines = []
+    for item in items[:8]:
+        name = item.get("name") or item.get("title") or item.get("theme") or item.get("symbol") or "未命名"
+        summary = item.get("summary") or item.get("note") or item.get("change") or item.get("reason") or ""
+        lines.append(f"- {name}{'：' + str(summary) if summary else ''}")
+    return lines
 
 
 def _render_next_week_items(items: list[dict[str, Any]]) -> list[str]:
@@ -563,8 +698,10 @@ def _render_source_status(source_status: dict[str, Any]) -> list[str]:
         f"- 账户快照：{_status_text(source_status.get('account_snapshots'))}",
         f"- 交易记录：{_status_text(source_status.get('trades'))}",
         f"- 当前持仓：{_status_text(source_status.get('positions'))}",
-        "- 指数：数据源未接入。",
-        "- 外部事件：数据源未接入。",
+        f"- 指数：{_status_text(source_status.get('indexes'))}",
+        f"- 宏观：{_status_text(source_status.get('macro'))}",
+        f"- 新闻/主题：{_status_text(source_status.get('news_themes'))}",
+        f"- 机会列表：{_status_text(source_status.get('opportunities'))}",
         f"- 港股 IPO：{_status_text(source_status.get('ipo'))}",
     ]
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -951,29 +952,97 @@ def upsert_review_report(
     holdings_table: list[dict[str, Any]] | None = None,
     next_week: list[dict[str, Any]] | None = None,
     story: dict[str, Any] | None = None,
+    refreshed: bool = False,
+    token_usage: dict[str, Any] | None = None,
+    budget_warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    refreshed_at = now if refreshed else None
     with transaction() as conn:
+        if period_start is not None or period_end is not None:
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM review_reports
+                WHERE report_type = %s
+                  AND period_start IS NOT DISTINCT FROM %s
+                  AND period_end IS NOT DISTINCT FROM %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (report_type, period_start, period_end),
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM review_reports
+                WHERE report_type = %s
+                  AND report_date = %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (report_type, report_date),
+            ).fetchone()
+        if existing is not None:
+            row = conn.execute(
+                """
+                UPDATE review_reports SET
+                  report_date = %s,
+                  portfolio_snapshot = %s,
+                  summary = %s,
+                  risks = %s,
+                  opportunities = %s,
+                  new_knowledge_candidates = %s,
+                  report_type = %s,
+                  period_start = %s,
+                  period_end = %s,
+                  source_status = %s,
+                  highlights = %s,
+                  blowups = %s,
+                  holdings_table = %s,
+                  next_week = %s,
+                  story = %s,
+                  generated_at = COALESCE(generated_at, %s),
+                  refreshed_at = COALESCE(%s, refreshed_at),
+                  token_usage = %s,
+                  budget_warnings = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (
+                    report_date,
+                    Jsonb(portfolio_snapshot or {}),
+                    summary,
+                    Jsonb(risks or []),
+                    Jsonb(opportunities or []),
+                    Jsonb(new_knowledge_candidates or []),
+                    report_type,
+                    period_start,
+                    period_end,
+                    Jsonb(source_status or {}),
+                    Jsonb(highlights or []),
+                    Jsonb(blowups or []),
+                    Jsonb(holdings_table or []),
+                    Jsonb(next_week or []),
+                    Jsonb(story or {}),
+                    now,
+                    refreshed_at,
+                    Jsonb(token_usage or {}),
+                    Jsonb(budget_warnings or []),
+                    existing["id"],
+                ),
+            ).fetchone()
+            return to_jsonable(row)
         row = conn.execute(
             """
             INSERT INTO review_reports (
               report_date, portfolio_snapshot, summary, risks, opportunities,
               new_knowledge_candidates, report_type, period_start, period_end,
-              source_status, highlights, blowups, holdings_table, next_week, story
+              source_status, highlights, blowups, holdings_table, next_week, story,
+              generated_at, refreshed_at, token_usage, budget_warnings
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (report_type, period_start, period_end) DO UPDATE SET
-              report_date = EXCLUDED.report_date,
-              portfolio_snapshot = EXCLUDED.portfolio_snapshot,
-              summary = EXCLUDED.summary,
-              risks = EXCLUDED.risks,
-              opportunities = EXCLUDED.opportunities,
-              new_knowledge_candidates = EXCLUDED.new_knowledge_candidates,
-              source_status = EXCLUDED.source_status,
-              highlights = EXCLUDED.highlights,
-              blowups = EXCLUDED.blowups,
-              holdings_table = EXCLUDED.holdings_table,
-              next_week = EXCLUDED.next_week,
-              story = EXCLUDED.story
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -992,9 +1061,244 @@ def upsert_review_report(
                 Jsonb(holdings_table or []),
                 Jsonb(next_week or []),
                 Jsonb(story or {}),
+                now,
+                refreshed_at,
+                Jsonb(token_usage or {}),
+                Jsonb(budget_warnings or []),
             ),
         ).fetchone()
     return to_jsonable(row)
+
+
+def list_weekly_review_reports(period_start: str, period_end: str) -> list[dict[str, Any]]:
+    report = get_weekly_review_report(period_start=period_start, period_end=period_end)
+    return [report] if report else []
+
+
+def get_weekly_review_report(
+    period_start: str,
+    period_end: str,
+) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM review_reports
+            WHERE report_type = 'weekly'
+              AND period_start = %s
+              AND period_end = %s
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (period_start, period_end),
+        ).fetchone()
+    return to_jsonable(row) if row else None
+
+
+def create_weekly_review_run(
+    period_start: str,
+    period_end: str,
+    *,
+    trigger: str,
+    token_budget: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO weekly_review_runs (
+              period_start, period_end, trigger, status, token_budget
+            )
+            VALUES (%s, %s, %s, 'running', %s)
+            RETURNING *
+            """,
+            (period_start, period_end, trigger, Jsonb(token_budget or {})),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def finish_weekly_review_run(
+    run_id: int,
+    *,
+    status: str,
+    token_usage: dict[str, Any] | None = None,
+    budget_warnings: list[dict[str, Any]] | None = None,
+    source_summary: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE weekly_review_runs SET
+              status = %s,
+              token_usage = %s,
+              budget_warnings = %s,
+              source_summary = %s,
+              error = %s,
+              finished_at = now(),
+              updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                status,
+                Jsonb(token_usage or {}),
+                Jsonb(budget_warnings or []),
+                Jsonb(source_summary or {}),
+                error,
+                run_id,
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def upsert_weekly_review_source(
+    *,
+    period_start: str,
+    period_end: str,
+    source_type: str,
+    provider: str,
+    source_key: str = "default",
+    status: str,
+    payload: dict[str, Any] | list[Any] | None = None,
+    reason: str | None = None,
+    run_id: int | None = None,
+    expires_at: str | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO weekly_review_sources (
+              run_id, period_start, period_end, source_type, provider, source_key,
+              status, payload, reason, expires_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (period_start, period_end, source_type, source_key) DO UPDATE SET
+              run_id = EXCLUDED.run_id,
+              provider = EXCLUDED.provider,
+              status = EXCLUDED.status,
+              payload = EXCLUDED.payload,
+              reason = EXCLUDED.reason,
+              fetched_at = now(),
+              expires_at = EXCLUDED.expires_at,
+              updated_at = now()
+            RETURNING *
+            """,
+            (
+                run_id,
+                period_start,
+                period_end,
+                source_type,
+                provider,
+                source_key,
+                status,
+                Jsonb(payload or {}),
+                reason,
+                expires_at,
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def list_weekly_review_sources(period_start: str, period_end: str) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM weekly_review_sources
+            WHERE period_start = %s
+              AND period_end = %s
+            ORDER BY source_type ASC, source_key ASC
+            """,
+            (period_start, period_end),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
+def list_weekly_review_runs(period_start: str, period_end: str, limit: int = 10) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM weekly_review_runs
+            WHERE period_start = %s
+              AND period_end = %s
+            ORDER BY started_at DESC, id DESC
+            LIMIT %s
+            """,
+            (period_start, period_end, limit),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
+def summarize_weekly_review_token_usage(limit: int = 12) -> dict[str, Any]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT period_start, period_end, token_usage, budget_warnings, generated_at, refreshed_at
+            FROM review_reports
+            WHERE report_type = 'weekly'
+            ORDER BY COALESCE(refreshed_at, generated_at, created_at) DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+    weeks = []
+    total_tokens = 0
+    estimated_cost = 0.0
+    has_cost = False
+    for row in to_jsonable(rows):
+        usage = row.get("token_usage") if isinstance(row.get("token_usage"), dict) else {}
+        week_tokens = _token_total(usage)
+        week_cost = _float_or_none(usage.get("estimated_cost") or usage.get("cost"))
+        total_tokens += week_tokens
+        if week_cost is not None:
+            estimated_cost += week_cost
+            has_cost = True
+        weeks.append(
+            {
+                "period_start": row.get("period_start"),
+                "period_end": row.get("period_end"),
+                "total_tokens": week_tokens,
+                "estimated_cost": week_cost,
+                "provider": usage.get("provider"),
+                "model": usage.get("model"),
+                "budget_warnings": row.get("budget_warnings") or [],
+            }
+        )
+    return {
+        "weeks": weeks,
+        "total_tokens": total_tokens,
+        "estimated_cost": estimated_cost if has_cost else None,
+    }
+
+
+def _token_total(token_usage: dict[str, Any]) -> int:
+    for key in ("total_tokens", "tokens"):
+        value = _int_or_none(token_usage.get(key))
+        if value is not None:
+            return value
+    total = 0
+    for key in ("input_tokens", "prompt_tokens", "output_tokens", "completion_tokens"):
+        total += _int_or_none(token_usage.get(key)) or 0
+    return total
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def upsert_trade_records(

@@ -51,19 +51,30 @@ from investment_knowledge_mcp.repository import (
     get_sector_context,
     get_stock_context,
     list_candidate_insights,
+    list_weekly_review_runs,
+    list_weekly_review_sources,
     link_stock_to_sector,
     propose_candidate_insight,
     record_user_insight,
     resolve_stock_reference,
     reject_candidate_insight,
     search_stock,
+    get_weekly_review_report,
+    summarize_weekly_review_token_usage,
+    create_weekly_review_run,
+    finish_weekly_review_run,
     upsert_account_snapshot,
     upsert_sector_tree,
     upsert_stock_profile,
     upsert_trade_records,
 )
-from investment_knowledge_mcp.weekly_review import build_weekly_review, build_weekly_review_context, render_weekly_review_markdown
-from investment_knowledge_mcp.weekly_review_web import _resolve_request_range, render_weekly_review_workbench_html
+from investment_knowledge_mcp.weekly_review import (
+    build_weekly_review,
+    build_weekly_review_context,
+    render_weekly_review_markdown,
+    save_weekly_review_report,
+)
+from investment_knowledge_mcp.weekly_review_web import _resolve_request_range, render_weekly_review_workbench_html, resolve_week_input
 
 SMOKE_SYMBOL = "SMOKE001"
 SMOKE_MARKET = "TEST"
@@ -152,6 +163,20 @@ def cleanup_smoke_data() -> None:
             WHERE symbol = %s AND market = %s
             """,
             (SMOKE_JOB_SYMBOL, SMOKE_JOB_MARKET),
+        )
+        conn.execute(
+            """
+            DELETE FROM weekly_review_sources
+            WHERE period_start = DATE '2020-01-06'
+              AND period_end = DATE '2020-01-12'
+            """
+        )
+        conn.execute(
+            """
+            DELETE FROM weekly_review_runs
+            WHERE period_start = DATE '2020-01-06'
+              AND period_end = DATE '2020-01-12'
+            """
         )
         conn.execute(
             """
@@ -563,10 +588,20 @@ def main() -> None:
                 }
             ]
         )
+        os.environ["WEEKLY_REVIEW_INDEX_JSON"] = '[{"name":"Smoke Index","summary":"+2% weekly move","source":"smoke"}]'
+        os.environ["WEEKLY_REVIEW_MACRO_JSON"] = '[{"title":"Smoke Macro","summary":"policy watch","source":"smoke"}]'
+        os.environ["WEEKLY_REVIEW_NEWS_THEMES_JSON"] = '[{"theme":"Smoke Theme","summary":"AI infra rotation","source":"smoke"}]'
+        os.environ["WEEKLY_REVIEW_OPPORTUNITIES_JSON"] = '[{"title":"Smoke Opportunity","reason":"watch pullback","needs_decision":"是"}]'
         weekly_context = build_weekly_review_context(start=weekly_start, end=weekly_end)
         weekly_markdown = render_weekly_review_markdown(weekly_context)
         assert weekly_context["source_status"]["account_snapshots"]["status"] == "ok"
         assert weekly_context["source_status"]["trades"]["count"] == 1
+        assert weekly_context["source_status"]["indexes"]["status"] == "ok"
+        assert weekly_context["source_status"]["macro"]["status"] == "ok"
+        assert weekly_context["source_status"]["news_themes"]["status"] == "ok"
+        assert weekly_context["source_status"]["opportunities"]["status"] == "ok"
+        assert weekly_context["index_summary"][0]["name"] == "Smoke Index"
+        assert any(item["item"] == "Smoke Opportunity" for item in weekly_context["next_week"])
         assert weekly_context["highlights"][0]["code"] == f"{SMOKE_MARKET}.{SMOKE_SYMBOL}"
         assert any(item["code"] == "TEST.TAKE" and item["type"] == "止盈清仓" for item in weekly_context["highlights"])
         assert all(item["code"] != "TEST.CUT" for item in weekly_context["highlights"])
@@ -576,12 +611,45 @@ def main() -> None:
         assert "TEST.CUT" not in weekly_context["story"]["mainline"]
         assert "TEST.CUT" in weekly_context["story"]["negative_signals"]
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_markdown
-        assert "指数数据源未接入" in weekly_markdown
+        assert "Smoke Index" in weekly_markdown
+        source_records = list_weekly_review_sources("2020-01-06", "2020-01-12")
+        assert {item["source_type"] for item in source_records}.issuperset({"indexes", "macro", "news_themes", "opportunities"})
+        smoke_run = create_weekly_review_run("2020-01-06", "2020-01-12", trigger="smoke")
+        finish_weekly_review_run(
+            smoke_run["id"],
+            status="succeeded",
+            token_usage={"provider": "smoke", "total_tokens": 3},
+            source_summary={"indexes": {"status": "ok"}},
+        )
+        runs = list_weekly_review_runs("2020-01-06", "2020-01-12")
+        assert runs[0]["trigger"] == "smoke"
         weekly_result = build_weekly_review(start=weekly_start, end=weekly_end, save=True)
         assert weekly_result.saved_report is not None
         assert weekly_result.saved_report["report_type"] == "weekly"
         assert str(weekly_result.saved_report["period_start"]) == "2020-01-06"
         assert str(weekly_result.saved_report["period_end"]) == "2020-01-12"
+        edited_report = save_weekly_review_report(
+            context=weekly_context,
+            markdown=weekly_markdown,
+            token_usage={"provider": "smoke", "model": "none", "input_tokens": 0, "output_tokens": 0},
+        )
+        assert edited_report["id"] == weekly_result.saved_report["id"]
+        assert edited_report["token_usage"]["provider"] == "smoke"
+        refresh_report = save_weekly_review_report(
+            context=weekly_context,
+            markdown="force refreshed weekly report",
+            refreshed=True,
+            token_usage={"provider": "smoke", "model": "none", "input_tokens": 1, "output_tokens": 2},
+        )
+        assert refresh_report["id"] == weekly_result.saved_report["id"]
+        assert refresh_report["refreshed_at"] is not None
+        weekly_report = get_weekly_review_report("2020-01-06", "2020-01-12")
+        assert weekly_report is not None
+        assert weekly_report["id"] == weekly_result.saved_report["id"]
+        assert weekly_report["summary"] == "force refreshed weekly report"
+        assert weekly_report["token_usage"]["input_tokens"] == 1
+        token_summary = summarize_weekly_review_token_usage()
+        assert token_summary["total_tokens"] >= 3
         weekly_command_result = handle_command("复盘 2020-01-06 2020-01-12")
         assert weekly_command_result.ok
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_command_result.message
@@ -589,11 +657,23 @@ def main() -> None:
         weekly_web_html = render_weekly_review_workbench_html()
         assert "InvestmentKnowledge" in weekly_web_html
         assert "本周复盘" in weekly_web_html
+        assert 'id="week"' in weekly_web_html
+        assert 'id="start"' not in weekly_web_html
+        assert 'id="end"' not in weekly_web_html
+        assert "/api/weekly-review/generate" in weekly_web_html
+        assert "/api/weekly-review/refresh" in weekly_web_html
         assert "/api/weekly-review/save" in weekly_web_html
         assert "data-slot=\"holdings\"" in weekly_web_html
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end
+        week_scope = resolve_week_input({"date": "2020-01-08"})
+        assert week_scope.label == "2020-W02"
+        assert week_scope.start == weekly_start
+        assert week_scope.end == weekly_end
+        week_scope_from_label = resolve_week_input({"week": "2020-W02"})
+        assert week_scope_from_label.start == weekly_start
+        assert week_scope_from_label.end == weekly_end
         draft_for_audit = {
             "stock": {
                 "symbol": "AUDIT",

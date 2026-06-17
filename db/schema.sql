@@ -147,12 +147,63 @@ ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS blowups JSONB NOT NULL DEFAU
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS holdings_table JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS next_week JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS story JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS token_usage JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS budget_warnings JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE review_reports DROP COLUMN IF EXISTS status;
+ALTER TABLE review_reports DROP COLUMN IF EXISTS version;
+ALTER TABLE review_reports DROP COLUMN IF EXISTS finalized_at;
+ALTER TABLE review_reports DROP COLUMN IF EXISTS generation_mode;
+ALTER TABLE review_reports DROP COLUMN IF EXISTS source_versions;
 
 ALTER TABLE review_reports
   DROP CONSTRAINT IF EXISTS review_reports_report_date_key;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_type_period
-  ON review_reports (report_type, period_start, period_end);
+DROP INDEX IF EXISTS idx_review_reports_type_period;
+
+CREATE TABLE IF NOT EXISTS weekly_review_runs (
+  id BIGSERIAL PRIMARY KEY,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  trigger TEXT NOT NULL DEFAULT 'generate',
+  status TEXT NOT NULL DEFAULT 'running',
+  token_usage JSONB NOT NULL DEFAULT '{}'::jsonb,
+  token_budget JSONB NOT NULL DEFAULT '{}'::jsonb,
+  budget_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('running', 'succeeded', 'failed'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_review_runs_period
+  ON weekly_review_runs (period_start, period_end, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS weekly_review_sources (
+  id BIGSERIAL PRIMARY KEY,
+  run_id BIGINT REFERENCES weekly_review_runs(id) ON DELETE SET NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  source_type TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'manual',
+  source_key TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL DEFAULT 'missing',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  reason TEXT,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (period_start, period_end, source_type, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_review_sources_period
+  ON weekly_review_sources (period_start, period_end, source_type);
 
 CREATE TABLE IF NOT EXISTS account_snapshots (
   id BIGSERIAL PRIMARY KEY,

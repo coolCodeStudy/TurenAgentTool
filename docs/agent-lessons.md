@@ -10,6 +10,7 @@ Add only lessons that should change future behavior.
 - `command-api` is only an HTTP wrapper around `handle_command(...)`; it is not required for normal local feature verification.
 - Start `command-api`, `dingtalk-api`, schedulers, or broad compose profiles only when the user explicitly asks to test those surfaces or approves the exact service list.
 - When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
+- The user's local Mac does not normally run Futu OpenD or listen on the common OpenD port. If local smoke tests log Futu `ECONNREFUSED`, treat it as an environment limitation, do not classify the product change as failed, and do not start OpenD unless the user explicitly asks for that service.
 
 ## Service Startup Preflight
 
