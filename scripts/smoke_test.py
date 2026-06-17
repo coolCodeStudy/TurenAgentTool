@@ -678,7 +678,9 @@ def main() -> None:
                         {
                             "name": item["name"],
                             "market": item["market"],
-                            "code": item["codes"][0],
+                            "code": item["codes"][0]["code"] if isinstance(item["codes"][0], dict) else item["codes"][0],
+                            "instrument_type": item["codes"][0].get("instrument_type") if isinstance(item["codes"][0], dict) else "index",
+                            "proxy_for": item["codes"][0].get("proxy_for") if isinstance(item["codes"][0], dict) else None,
                             "weekly_change": "+1.00%",
                             "summary": f"{item['name']} default provider smoke",
                         }
@@ -709,6 +711,8 @@ def main() -> None:
                 "创业板指",
                 "科创50",
             ]
+            assert [item["codes"][0]["code"] for item in captured_indexes["items"][:3]] == ["US.QQQ", "US.SPY", "US.DIA"]
+            assert all(item["codes"][0]["instrument_type"] == "proxy_etf" for item in captured_indexes["items"][:3])
             assert len(payload["indexes"]) == 8
         finally:
             weekly_review_sources.get_futu_index_history = original_index_provider
@@ -805,6 +809,7 @@ def main() -> None:
         week_scope_from_label = resolve_week_input({"week": "2020-W02"})
         assert week_scope_from_label.start == weekly_start
         assert week_scope_from_label.end == weekly_end
+        assert is_query_command("周复盘指数诊断 2020-W02")
         draft_for_audit = {
             "stock": {
                 "symbol": "AUDIT",

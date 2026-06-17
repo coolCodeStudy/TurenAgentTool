@@ -98,7 +98,7 @@ Saves submitted Markdown using the submitted context or the existing report cont
 
 ## Source Providers
 
-Index data uses a default Futu OpenD historical K-line provider. No extra index configuration is required when OpenD is available.
+Index data uses a default Futu OpenD historical K-line provider. No extra index configuration is required when OpenD is available. Futu OpenD may reject direct US index K-line symbols, so the US broad-index entries use liquid ETF proxies and mark them explicitly in the payload.
 
 Default index basket:
 
@@ -112,6 +112,13 @@ Default index basket:
 8. STAR 50
 
 Environment JSON, JSON URL, or JSON file sources remain supported as explicit overrides or fallback sources for indexes, macro, news themes, and opportunities.
+
+Online diagnostics are available without generating or overwriting a weekly report:
+
+```text
+GET /api/weekly-review/diagnostics/indexes?week=2026-W25
+周复盘指数诊断 2026-W25
+```
 
 ## Token And Cost Policy
 
@@ -137,7 +144,7 @@ Implemented together:
 5. Force refresh overwrites the same weekly report row.
 6. Save without hidden regeneration.
 7. Token usage persistence without budget enforcement.
-8. Default index provider through Futu OpenD `request_history_kline`, using the accepted first basket: Nasdaq 100, S&P 500, Dow Jones, Hang Seng Index, Hang Seng Tech, CSI 300, ChiNext Index, and STAR 50.
+8. Default index provider through Futu OpenD `request_history_kline`, using the accepted first basket: Nasdaq 100, S&P 500, Dow Jones, Hang Seng Index, Hang Seng Tech, CSI 300, ChiNext Index, and STAR 50. US index entries use QQQ, SPY, and DIA as explicit Futu-readable ETF proxies.
 9. JSON file, environment JSON, or configured JSON URL overrides for external sources, used for tests, manual imports, or fallback data only; users should not need to configure these for default index data.
 10. Provider cache records in `weekly_review_sources`.
 11. Generation and force-refresh run records in `weekly_review_runs`.

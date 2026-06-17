@@ -58,19 +58,40 @@ DEFAULT_INDEX_BASKET = (
     {
         "market": "US",
         "name": "Nasdaq 100",
-        "codes": ["US..NDX", "US.NDX"],
+        "codes": [
+            {
+                "code": "US.QQQ",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "Nasdaq 100",
+                "source_note": "Futu OpenD does not provide direct US index K-line data in this environment; QQQ is used as a tradable Nasdaq 100 proxy.",
+            }
+        ],
         "portfolio_relevance": "观察美股大型科技和 AI 成长股风险偏好。",
     },
     {
         "market": "US",
         "name": "S&P 500",
-        "codes": ["US..SPX", "US.SPX", "US..INX", "US.INX"],
+        "codes": [
+            {
+                "code": "US.SPY",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "S&P 500",
+                "source_note": "Futu OpenD does not provide direct US index K-line data in this environment; SPY is used as a tradable S&P 500 proxy.",
+            }
+        ],
         "portfolio_relevance": "观察美股大盘风险偏好和组合美元资产背景。",
     },
     {
         "market": "US",
         "name": "Dow Jones",
-        "codes": ["US..DJI", "US.DJI"],
+        "codes": [
+            {
+                "code": "US.DIA",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "Dow Jones",
+                "source_note": "Futu OpenD does not provide direct US index K-line data in this environment; DIA is used as a tradable Dow Jones proxy.",
+            }
+        ],
         "portfolio_relevance": "观察美股传统蓝筹和风险偏好是否扩散。",
     },
     {
@@ -104,6 +125,31 @@ DEFAULT_INDEX_BASKET = (
         "portfolio_relevance": "观察半导体、硬科技和 AI 供应链情绪。",
     },
 )
+
+
+def diagnose_default_index_provider(*, start: date, end: date) -> dict[str, Any]:
+    warnings: list[str] = []
+    payload, provider, reason = _fetch_default_index_payload(start=start, end=end, warnings=warnings)
+    items = _extract_items(payload, SOURCE_DEFINITIONS[0])
+    status = "ok" if items else "missing"
+    errors: list[Any] = []
+    if isinstance(payload, dict):
+        errors = list(payload.get("errors") or [])
+        if items and errors:
+            status = "partial"
+        elif payload is not None and not items:
+            status = "empty"
+    return {
+        "period": {"start": start.isoformat(), "end": end.isoformat()},
+        "provider": provider,
+        "status": status,
+        "count": len(items),
+        "indexes": items,
+        "errors": errors,
+        "reason": reason,
+        "warnings": warnings,
+        "basket": [dict(item) for item in DEFAULT_INDEX_BASKET],
+    }
 
 
 def load_weekly_review_external_sources(

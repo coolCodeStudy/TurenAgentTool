@@ -15,6 +15,7 @@ from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
+from investment_knowledge_mcp.weekly_review_sources import diagnose_default_index_provider
 
 
 MAX_BODY_BYTES = 1024 * 1024
@@ -48,6 +49,11 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return
             self._handle_weekly_review_read(parse_qs(parsed.query))
+            return
+        if parsed.path == "/api/weekly-review/diagnostics/indexes":
+            if not self._authorized():
+                return
+            self._handle_weekly_review_index_diagnostics(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
             if not self._authorized():
@@ -228,6 +234,25 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         self._write_json(
             HTTPStatus.OK,
             _weekly_review_response(scope=scope, report=saved_report, saved_report=saved_report),
+        )
+
+    def _handle_weekly_review_index_diagnostics(self, query: dict[str, Any]) -> None:
+        try:
+            scope = resolve_week_input(query)
+            diagnostics = diagnose_default_index_provider(start=scope.start, end=scope.end)
+        except BadRequest as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
+            return
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "week": _week_scope_payload(scope),
+                "diagnostics": diagnostics,
+            },
         )
 
     def _handle_candidate_insights(self, query: dict[str, Any]) -> None:

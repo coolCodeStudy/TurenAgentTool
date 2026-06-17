@@ -65,6 +65,7 @@ from investment_knowledge_mcp.research.validation import validate_research_draft
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from investment_knowledge_mcp.system_overview import render_system_overview
 from investment_knowledge_mcp.weekly_review import build_weekly_review
+from investment_knowledge_mcp.weekly_review_sources import diagnose_default_index_provider
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
 
@@ -243,6 +244,14 @@ WEEKLY_REVIEW_COMMANDS = {
     "这个星期复盘",
     "周复盘",
     "weekly review",
+}
+
+WEEKLY_REVIEW_INDEX_DIAGNOSTIC_COMMANDS = {
+    "周复盘指数诊断",
+    "本周指数诊断",
+    "指数诊断",
+    "weekly index diagnostics",
+    "weekly review index diagnostics",
 }
 
 NEXT_WEEK_COMMANDS = {
@@ -557,6 +566,10 @@ def handle_command(
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
 
+    weekly_index_diagnostics_match = _match_weekly_index_diagnostics_command(cleaned)
+    if weekly_index_diagnostics_match is not None:
+        return _handle_weekly_index_diagnostics(time_range_text=weekly_index_diagnostics_match)
+
     weekly_review_match = _match_weekly_review_command(cleaned)
     if weekly_review_match is not None:
         return _handle_weekly_review(time_range_text=weekly_review_match)
@@ -684,6 +697,7 @@ def is_query_command(command: str) -> bool:
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
             *WEEKLY_REVIEW_COMMANDS,
+            *WEEKLY_REVIEW_INDEX_DIAGNOSTIC_COMMANDS,
             *NEXT_WEEK_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
             "港股新股",
@@ -702,6 +716,7 @@ def is_query_command(command: str) -> bool:
             flags=re.IGNORECASE,
         )
         or _match_weekly_review_command(normalized) is not None
+        or _match_weekly_index_diagnostics_command(normalized) is not None
         or _match_next_week_command(normalized) is not None
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
@@ -2137,6 +2152,16 @@ def _match_weekly_review_command(command: str) -> str | None:
     return None
 
 
+def _match_weekly_index_diagnostics_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in WEEKLY_REVIEW_INDEX_DIAGNOSTIC_COMMANDS:
+        return ""
+    for prefix in WEEKLY_REVIEW_INDEX_DIAGNOSTIC_COMMANDS:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    return None
+
+
 def _match_next_week_command(command: str) -> str | None:
     compact = command.strip()
     if compact in NEXT_WEEK_COMMANDS:
@@ -2167,6 +2192,15 @@ def _match_trade_backfill_command(command: str) -> str | None:
     return None
 
 
+def _handle_weekly_index_diagnostics(time_range_text: str | None = None) -> CommandResult:
+    start, end, label = _resolve_weekly_index_diagnostics_range(time_range_text)
+    try:
+        diagnostics = diagnose_default_index_provider(start=start, end=end)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"周复盘指数诊断失败：{exc}")
+    return CommandResult(ok=True, message=_render_weekly_index_diagnostics(diagnostics=diagnostics, label=label))
+
+
 def _handle_weekly_review(time_range_text: str | None = None, next_week_only: bool = False) -> CommandResult:
     start, end, _ = _resolve_weekly_review_range(time_range_text)
     try:
@@ -2177,6 +2211,48 @@ def _handle_weekly_review(time_range_text: str | None = None, next_week_only: bo
     if result.saved_report is not None:
         footer = f"\n\n已保存周复盘：review_reports #{result.saved_report.get('id')}"
     return CommandResult(ok=True, message=result.markdown + footer)
+
+
+def _resolve_weekly_index_diagnostics_range(value: str | None) -> tuple[date, date, str]:
+    text = (value or "").strip()
+    week_match = re.search(r"(\d{4})\s*[-/]?\s*[Ww]\s*(\d{1,2})", text)
+    if week_match:
+        year = int(week_match.group(1))
+        week = int(week_match.group(2))
+        start = date.fromisocalendar(year, week, 1)
+        end = start + timedelta(days=6)
+        return start, end, f"{start.isoformat()} 至 {end.isoformat()}"
+    return _resolve_weekly_review_range(text)
+
+
+def _render_weekly_index_diagnostics(*, diagnostics: dict[str, Any], label: str) -> str:
+    lines = [
+        f"周复盘指数诊断（{label}）",
+        f"- provider：{diagnostics.get('provider')}",
+        f"- status：{diagnostics.get('status')}，count={diagnostics.get('count')}",
+    ]
+    reason = diagnostics.get("reason")
+    if reason:
+        lines.append(f"- reason：{reason}")
+    warnings = diagnostics.get("warnings") or []
+    if warnings:
+        lines.append("- warnings：" + "；".join(str(item) for item in warnings[:5]))
+    indexes = diagnostics.get("indexes") or []
+    if indexes:
+        lines.extend(["", "指数结果："])
+        for item in indexes:
+            proxy_note = ""
+            if item.get("instrument_type") == "proxy_etf":
+                proxy_note = f"（proxy: {item.get('proxy_for') or item.get('name')}）"
+            lines.append(
+                f"- {item.get('name')} {item.get('code')} {proxy_note}: "
+                f"{item.get('weekly_change') or 'n/a'}；{item.get('summary') or ''}"
+            )
+    errors = diagnostics.get("errors") or []
+    if errors:
+        lines.extend(["", "错误："])
+        lines.extend(f"- {item}" for item in errors[:8])
+    return "\n".join(lines)
 
 
 def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:

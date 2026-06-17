@@ -429,9 +429,7 @@ def _fetch_index_history(
             name = str(item.get("name") or "").strip() or "unknown index"
             market = str(item.get("market") or "").strip()
             relevance = str(item.get("portfolio_relevance") or item.get("relevance") or "").strip()
-            code_candidates = [str(code).strip() for code in item.get("codes") or [] if str(code).strip()]
-            if not code_candidates and item.get("code"):
-                code_candidates = [str(item["code"]).strip()]
+            code_candidates = _normalize_index_code_candidates(item)
             result, error = _fetch_one_index_history(
                 quote_context=quote_context,
                 ft=ft,
@@ -464,7 +462,7 @@ def _fetch_one_index_history(
     name: str,
     market: str,
     relevance: str,
-    code_candidates: list[str],
+    code_candidates: list[dict[str, Any]],
     start: str,
     end: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -472,7 +470,8 @@ def _fetch_one_index_history(
         return None, f"{name} 缺少 Futu code 候选。"
 
     errors: list[str] = []
-    for code in code_candidates:
+    for candidate in code_candidates:
+        code = candidate["code"]
         try:
             kwargs = {
                 "code": code,
@@ -498,10 +497,50 @@ def _fetch_one_index_history(
                 candles=candles,
                 start=start,
                 end=end,
+                instrument_type=candidate.get("instrument_type"),
+                proxy_for=candidate.get("proxy_for"),
+                source_note=candidate.get("source_note"),
             ), None
         except Exception as exc:
             errors.append(f"{code}: {exc}")
     return None, f"{name} 指数行情读取失败：" + "；".join(errors[:3])
+
+
+def _normalize_index_code_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_candidates = item.get("codes") or []
+    if not raw_candidates and item.get("code"):
+        raw_candidates = [item["code"]]
+    candidates: list[dict[str, Any]] = []
+    for raw in raw_candidates:
+        if isinstance(raw, dict):
+            code = str(raw.get("code") or "").strip()
+            if not code:
+                continue
+            candidates.append(
+                {
+                    "code": code,
+                    "instrument_type": str(raw.get("instrument_type") or "index").strip() or "index",
+                    "proxy_for": _clean_optional_text(raw.get("proxy_for")),
+                    "source_note": _clean_optional_text(raw.get("source_note")),
+                }
+            )
+            continue
+        code = str(raw).strip()
+        if code:
+            candidates.append(
+                {
+                    "code": code,
+                    "instrument_type": "index",
+                    "proxy_for": None,
+                    "source_note": None,
+                }
+            )
+    return candidates
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _request_history_kline(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any, Any]:
@@ -683,6 +722,9 @@ def _summarize_index_history(
     candles: list[dict[str, Any]],
     start: str,
     end: str,
+    instrument_type: str | None = None,
+    proxy_for: str | None = None,
+    source_note: str | None = None,
 ) -> dict[str, Any]:
     first = candles[0]
     last = candles[-1]
@@ -692,10 +734,11 @@ def _summarize_index_history(
     if base not in (None, 0) and close is not None:
         weekly_change_pct = (close - base) / base * 100
     max_move = _max_daily_move(candles)
-    return {
+    result = {
         "name": name,
         "market": market,
         "code": code,
+        "instrument_type": instrument_type or "index",
         "source": "futu.request_history_kline",
         "period_start": start,
         "period_end": end,
@@ -714,6 +757,11 @@ def _summarize_index_history(
         ),
         "candles": candles,
     }
+    if proxy_for:
+        result["proxy_for"] = proxy_for
+    if source_note:
+        result["source_note"] = source_note
+    return result
 
 
 def _max_daily_move(candles: list[dict[str, Any]]) -> dict[str, Any]:
