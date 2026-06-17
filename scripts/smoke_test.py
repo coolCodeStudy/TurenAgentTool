@@ -74,6 +74,7 @@ from investment_knowledge_mcp.weekly_review import (
     render_weekly_review_markdown,
     save_weekly_review_report,
 )
+from investment_knowledge_mcp import weekly_review_sources
 from investment_knowledge_mcp.weekly_review_web import _resolve_request_range, render_weekly_review_workbench_html, resolve_week_input
 
 SMOKE_SYMBOL = "SMOKE001"
@@ -666,6 +667,51 @@ def main() -> None:
                 }
             ]
         )
+        original_index_provider = weekly_review_sources.get_futu_index_history
+        try:
+            captured_indexes = {}
+
+            def fake_index_provider(start: str, end: str, indexes: list[dict], config=None):
+                captured_indexes["items"] = indexes
+                return SimpleNamespace(
+                    indexes=[
+                        {
+                            "name": item["name"],
+                            "market": item["market"],
+                            "code": item["codes"][0],
+                            "weekly_change": "+1.00%",
+                            "summary": f"{item['name']} default provider smoke",
+                        }
+                        for item in indexes
+                    ],
+                    errors=[],
+                    fetched_at=datetime.now(),
+                    start=start,
+                    end=end,
+                )
+
+            weekly_review_sources.get_futu_index_history = fake_index_provider
+            payload, provider, reason = weekly_review_sources._fetch_default_index_payload(
+                start=weekly_start,
+                end=weekly_end,
+                warnings=[],
+            )
+            assert provider == "futu.request_history_kline"
+            assert reason is None
+            assert len(captured_indexes["items"]) == 8
+            assert [item["name"] for item in captured_indexes["items"]] == [
+                "Nasdaq 100",
+                "S&P 500",
+                "Dow Jones",
+                "恒生指数",
+                "恒生科技",
+                "沪深300",
+                "创业板指",
+                "科创50",
+            ]
+            assert len(payload["indexes"]) == 8
+        finally:
+            weekly_review_sources.get_futu_index_history = original_index_provider
         os.environ["WEEKLY_REVIEW_INDEX_JSON"] = '[{"name":"Smoke Index","summary":"+2% weekly move","source":"smoke"}]'
         os.environ["WEEKLY_REVIEW_MACRO_JSON"] = '[{"title":"Smoke Macro","summary":"policy watch","source":"smoke"}]'
         os.environ["WEEKLY_REVIEW_NEWS_THEMES_JSON"] = '[{"theme":"Smoke Theme","summary":"AI infra rotation","source":"smoke"}]'
