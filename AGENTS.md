@@ -12,6 +12,16 @@ Read it before changing code, running services, or touching deployment commands.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
 - Do not create routine daily logs. Put durable lessons in `docs/agent-lessons.md`, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
 
+## Worktree Session Mode
+
+- The main workspace `/Users/lishaocheng/code/TurenAgentTool` is for integration, release, urgent hotfixes, and cloud deploy verification.
+- When multiple sessions or longer-running tasks are active, create a dedicated task worktree before editing: `bash scripts/create_task_worktree.sh <task-slug>`.
+- Use one worktree per session/task. Do not share a task worktree across concurrent sessions.
+- Default task worktrees live under `/Users/lishaocheng/code/TurenAgentTool.worktrees/<task-slug>` and use branch `codex/<task-slug>`.
+- Each task worktree has its own ignored `.venv`; create it before running Python checks if it is missing.
+- Do not move, delete, or stage untracked/dirty files from another session while creating or using a worktree.
+- Deploy only pushed commits/refs, not implicit local worktree state. Merge or cherry-pick task work into the release branch deliberately before `/ops/deploy`.
+
 ## Deployment And Service Boundaries
 
 - For bugs observed on a cloud-served product surface, local verification is not the end of the task. After tests pass, proactively move to the release step: state the exact git push/deploy action needed, ask for approval when remote credentials or cloud services are involved, and continue through approved deployment/verification instead of stopping at a local summary.

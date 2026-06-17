@@ -20,6 +20,14 @@ Add only lessons that should change future behavior.
 - Real trading records, account snapshots, and weekly-review source data are cloud-side product data. A missing local row is an environment limitation, not evidence that the product data is unavailable; use fixtures for local logic checks or an approved cloud read path when the task requires real data.
 - Weekly review ranking must use interval P/L, not lifetime P/L labels. A closed losing position's realized loss can include losses accumulated before the review window; combine interval realized P/L with the change from the start snapshot so historical loss is not counted again.
 
+## Worktree Session Isolation
+
+- Use git worktrees for parallel Codex sessions. The main workspace should stay available for integration, release, urgent hotfixes, and cloud verification.
+- Treat unexpected untracked files as another session's work unless proven otherwise. Do not stage, move, or delete them while working on an unrelated task.
+- Create task worktrees with `scripts/create_task_worktree.sh <task-slug>` so paths and branch names stay predictable.
+- Remember that ignored runtime directories such as `.venv` are per-worktree. A newly created task worktree usually needs its own venv before running preflight, smoke tests, or scripts.
+- Push explicit commits from task branches; cloud deploy should target pushed refs, never uncommitted local state.
+
 ## Secrets And HTTP Entrypoints
 
 - `COMMAND_API_TOKEN` is required only when running the HTTP command API.
