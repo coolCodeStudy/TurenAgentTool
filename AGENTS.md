@@ -31,6 +31,7 @@ Read it before changing code, running services, or touching deployment commands.
 ## Deployment And Service Boundaries
 
 - For bugs observed on a cloud-served product surface, local verification is not the end of the task. After tests pass, proactively move to the release step: state the exact git push/deploy action needed, ask for approval when remote credentials or cloud services are involved, and continue through approved deployment/verification instead of stopping at a local summary.
+- For non-dangerous product changes that have passed focused verification, default to completing the merge, release push, deploy, and cloud verification in the same task. Do not stop at "branch pushed" unless the change is destructive, high blast-radius, blocked by credentials, explicitly held by the user, or needs a product decision.
 - Do not treat "verify the change" as permission to start the whole prod-style stack.
 - For local Task validation, prefer:
   - `.venv/bin/python scripts/smoke_test.py`
