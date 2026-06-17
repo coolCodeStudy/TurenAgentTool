@@ -18,6 +18,7 @@ Add only lessons that should change future behavior.
 - Verify `POSTGRES_HOST` and `POSTGRES_PORT` before starting containers. A compose stack may silently connect to a fresh empty database.
 - If a service should use the existing local knowledge base, point it at the established local DB instead of a newly created prod-compose DB.
 - Real trading records, account snapshots, and weekly-review source data are cloud-side product data. A missing local row is an environment limitation, not evidence that the product data is unavailable; use fixtures for local logic checks or an approved cloud read path when the task requires real data.
+- Weekly review ranking must use interval P/L, not lifetime P/L labels. A closed losing position's realized loss can include losses accumulated before the review window; combine interval realized P/L with the change from the start snapshot so historical loss is not counted again.
 
 ## Secrets And HTTP Entrypoints
 

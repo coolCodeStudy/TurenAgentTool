@@ -643,12 +643,6 @@ def _estimate_period_pl(
     snapshot_delta = end_pl - start_pl
     realized_result = _estimate_realized_pl(start=start, trades=trade_summary.get("records") or [])
     if realized_result["usable"]:
-        if end is None and start is not None and realized_result["realized_pl"] < 0:
-            return {
-                "amount": realized_result["realized_pl"],
-                "realized_pl": realized_result["realized_pl"],
-                "method": "closed_loss_realized_estimate",
-            }
         return {
             "amount": snapshot_delta + realized_result["realized_pl"],
             "realized_pl": realized_result["realized_pl"],
