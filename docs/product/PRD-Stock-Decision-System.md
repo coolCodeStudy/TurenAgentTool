@@ -65,7 +65,18 @@ Internal code can continue using existing helper names until implementation work
 
 ## Coexistence Plan
 
-The Stock Decision System is not a simple replacement for the evidence card. It is a higher-level decision layer that uses the evidence card as one input.
+The Stock Decision System is not a simple replacement for the evidence card. It is a higher-level decision layer that contains the stock analysis workflow as its first step, then adds portfolio constraints, fresh market/sector/technical/event context, scoring, gates, and review triggers.
+
+In other words:
+
+```text
+Stock analysis workflow
+  -> stock evidence card
+  -> decision-specific context
+  -> decision ticket
+```
+
+A decision request should never bypass stock analysis. It should first establish what the system knows about the stock, then decide whether that knowledge is good enough to support an action.
 
 ### Product Layer
 
@@ -75,7 +86,7 @@ The Stock Decision System is not a simple replacement for the evidence card. It 
 | Evidence Detail | What evidence supports this summary? | Sources, knowledge items, candidate insights, audit report, research draft. | `分析详情 SYMBOL MARKET`, expanded evidence view. |
 | Decision Ticket | What should I do with this stock given my portfolio and constraints? | Score, recommendation, position range, gates, entry/add/reduce conditions, review trigger. | `决策 SYMBOL MARKET`, decision workbench. |
 
-The evidence card remains useful because not every stock lookup should spend tokens, refresh data, or produce a recommendation. The decision ticket is used when the user is making or reviewing an action.
+The evidence card remains useful because not every stock lookup should spend tokens, refresh data, or produce a recommendation. The decision ticket is used when the user is making or reviewing an action. The decision ticket should include or reference the evidence card snapshot it used, so a future weekly review can reconstruct what the system knew at decision time.
 
 ### Data Storage Layer
 
@@ -85,13 +96,17 @@ The evidence card should usually be derived, not stored as a primary object:
 - Can be cached later for speed, but the durable source of truth remains the graph.
 - Can be embedded into a decision snapshot as `stock_card_json` so historical decisions remain reproducible.
 
-The decision system needs durable storage because it represents a point-in-time judgment:
+The decision system needs durable storage because it represents a point-in-time judgment. These names are storage responsibilities, not a requirement that engineering must create every table in the first migration if a simpler existing table can safely carry the responsibility. The product requirement is lifecycle separation:
 
-- `stock_decisions` stores the decision ticket and score components.
-- `stock_observations` stores time-sensitive market, technical, valuation, and event snapshots.
-- `inference_items` stores model-inferred theses separately from facts.
-- `user_constraint_profiles` stores structured decision constraints.
-- `sector_regime_snapshots` and `market_regime_snapshots` store time-sensitive context.
+| Storage responsibility | Why it exists | Why not just use existing `knowledge_items` |
+| --- | --- | --- |
+| `stock_decisions` | Stores the final decision ticket, score components, gates, recommendation, and evidence snapshot used at that time. | A decision is not a fact about the company; it is a point-in-time judgment that should be reviewed against later outcomes. |
+| `stock_observations` | Stores time-sensitive stock-level snapshots: technicals, valuation, chip/event state, relative strength, and latest market data. | These values stale quickly and should not pollute durable business knowledge. |
+| `inference_items` | Stores model-inferred investment logic, valuation-frame guesses, scenario interpretations, and uncertain thesis components. | Inference is not the same as a sourced fact or a user-confirmed insight. It needs confidence, stale-after, and review status. |
+| `user_constraint_profiles` | Stores structured decision constraints such as max position size, starter size, attention budget, volatility tolerance, and theme exposure limits. | User constraints must be machine-readable for scoring and gating; free-text insights alone are too ambiguous for position sizing. |
+| `sector_regime_snapshots` / `market_regime_snapshots` | Stores time-sensitive sector and market background used by decisions, such as demand trend, liquidity, crowding, and market-sector leadership fit. | Sector/market regime is not a timeless fact; it changes and must be reviewed as-of the decision date. |
+
+If engineering wants a leaner first migration, `sector_regime_snapshots` and `market_regime_snapshots` may initially be implemented as observation types or JSON packs referenced by `stock_decisions`. They should become separate tables once they are reused across many stocks, weekly reviews, or historical validation queries.
 
 ### Workflow Layer
 
@@ -112,14 +127,18 @@ Detailed evidence workflow:
   -> show evidence detail, sources, facts, audit status, candidate insights
 ```
 
-Decision workflow:
+Decision workflow. This workflow contains the stock analysis workflow as its first stage:
 
 ```text
 决策 SYMBOL MARKET
-  -> build Stock Evidence Card
+  -> run stock analysis workflow
+       -> load graph context
+       -> build Stock Evidence Card
+       -> identify missing/stale stock evidence
   -> load user constraint profile
   -> load current portfolio exposure
   -> load / refresh technical, valuation, chip-event, sector, and market packs
+  -> combine evidence card + decision-specific packs
   -> run deterministic gates and pre-scores
   -> run model synthesis on compact context pack
   -> save Decision Ticket snapshot
@@ -187,20 +206,24 @@ The evidence card is the compact evidence input. The decision ticket is the port
 ```text
 User asks: decide SYMBOL MARKET
   -> resolve stock and current holding
+  -> run stock analysis workflow
+       -> load stock context from knowledge graph
+       -> build Stock Evidence Card
+       -> identify stale or missing stock evidence
+  -> reuse stock graph context and load decision-specific sector / market context
   -> load user constraint profile
   -> load current portfolio snapshot and exposure map
-  -> load stock context from knowledge graph
-  -> load sector context and ancestor sectors
-  -> load market context
   -> run data freshness planner
-  -> refresh only required missing or stale sources
-  -> build structured evidence pack
+  -> refresh only required missing or stale decision packs
+  -> build structured decision context pack
   -> run deterministic pre-scoring
-  -> run model synthesis on compact evidence pack
+  -> run model synthesis on compact decision context pack
   -> produce decision ticket
   -> save decision snapshot
   -> propose candidate insights if new user-style rules are inferred
 ```
+
+The decision system therefore includes the stock analysis workflow, but it does not stop there. Stock analysis produces the evidence base; the decision workflow adds user constraints, portfolio exposure, fresh observations, sector/market regime, scoring, and action boundaries.
 
 ## Output: Decision Ticket
 
@@ -216,6 +239,8 @@ Suggested position:
 - Initial range: x%-y%
 - Max cap: z%
 - Position class: starter / normal / high-conviction candidate
+
+Position sizing should be expressed as a practical range, not as a false-precision single number. For example, prefer `initial range: 2%-3%, max cap: 6%` over `2.7%`.
 
 Sub-scores:
 - Portfolio fit
@@ -320,6 +345,88 @@ The product should ask only the minimum needed questions and infer the rest from
 
 The answers should become candidate or confirmed strategy/profile data depending on whether the user explicitly states them as preferences.
 
+## Insight Capture And Profile Update Flow
+
+The decision system needs a low-friction way for the user to teach it preferences, constraints, and lessons. This should not be a settings form first. The primary input should be natural language, because many useful investment lessons start as rough thoughts.
+
+The product should support four insight capture entrypoints:
+
+| Entrypoint | Example | Default behavior |
+| --- | --- | --- |
+| Active quick capture | `记录策略心得 我现在不想让单一 AI 主题超过 30%` | If the user clearly commands a formal record, write a confirmed `user_insight` and optionally update a structured profile after confirmation. |
+| Natural conversation capture | `我感觉最近我精力不够，不能持仓太碎` | Save as `candidate_insight` first, then ask for confirmation before it affects durable preference logic. |
+| Decision-time clarification | `决策 000660 KR` finds missing max position or cash reserve preference | Ask the minimum missing question, then save the answer as a candidate or confirmed constraint depending on user wording. |
+| Review-generated lesson | Weekly review or decision review infers a lesson | Always save as `candidate_insight`; never auto-promote model-inferred lessons. |
+
+### Entry Channel Roles
+
+All entry channels should write to the same knowledge base. The difference is the interaction mode, not the memory model.
+
+| Channel | Role | Best for | Should avoid |
+| --- | --- | --- | --- |
+| Mac local Codex | Primary thinking, capture, and decision-generation entrypoint. | Natural-language thoughts, decision discussions, rough lessons, fast stock decisions, research follow-up. | Forcing the user into forms or batch management. |
+| Web workbench | Review and management entrypoint. | Candidate insight confirmation, decision preference review, decision history, weekly-review validation, structured profile editing. | Being the only place where ideas can be captured. |
+| DingTalk | Push and reminder entrypoint. | Candidate insight reminders, decision refresh alerts, weekly-review reminders, stale-data alerts, important watch triggers. | Becoming the main write surface for durable memory or complex decision editing. |
+
+DingTalk should be treated as a notification and lightweight action surface first. If it later supports quick actions, those actions should be narrow and reversible, such as:
+
+- View pending candidate count.
+- Open a web link to confirm/reject candidates.
+- Acknowledge a reminder.
+- Trigger a refresh job.
+
+It should not become the primary place for writing nuanced investment lessons, editing profile constraints, or reviewing complex decision tickets.
+
+### Capture Pipeline
+
+```text
+User raw thought
+  -> preserve raw text
+  -> classify target: stock / sector / portfolio / strategy / constraint
+  -> decide write path:
+       explicit user command -> confirmed user insight
+       model inference or ambiguous thought -> candidate insight
+  -> extract possible structured constraint
+  -> ask for confirmation if it affects scoring or position sizing
+  -> update user_constraint_profiles only after confirmation
+  -> make the insight retrievable by stock analysis, decision context, and weekly review
+```
+
+### User-Facing Commands
+
+Existing and recommended command patterns:
+
+```text
+记录心得 SYMBOL MARKET 这里写个股心得
+记录组合心得 这里写组合/仓位心得
+记录策略心得 这里写长期策略心得
+提出个股候选心得 SYMBOL MARKET 这里写候选心得
+提出组合候选心得 这里写组合候选心得
+提出策略候选心得 这里写策略候选心得
+查看候选心得
+确认候选心得 ID
+拒绝候选心得 ID
+```
+
+Recommended future additions:
+
+```text
+记录板块心得 板块路径... 这里写板块心得
+设置决策偏好
+查看决策偏好
+确认决策偏好 ID
+```
+
+### Product Rules
+
+- Preserve raw user text before summarizing it.
+- Do not force the user to select a schema during quick capture.
+- Distinguish explicit user commands from model-inferred lessons.
+- Anything that changes scoring, position size, cash reserve, theme cap, or risk tolerance must be user-confirmed before it becomes active structured profile data.
+- Free-text `user_insights` should remain the source of qualitative memory.
+- `user_constraint_profiles` should contain only machine-readable constraints that the decision engine can apply deterministically.
+- Candidate insights should appear in stock analysis, decision tickets, and weekly review as pending context, but they must not be treated as confirmed user preferences.
+
 ## Data Source Strategy
 
 V1 should use a source ladder rather than one data provider.
@@ -371,7 +478,9 @@ The core storage principle:
 | Candidate user preference | Inferred user lesson from conversation or decision | `candidate_insights` | Pending until confirmed/rejected. |
 | Decision output | Score, recommendation, position range, reasons, gates | Future `stock_decisions` | Snapshot, immutable for audit. |
 
-### Proposed Tables
+### Proposed Storage Responsibilities
+
+The following names describe the recommended logical storage responsibilities. They can be implemented as separate tables immediately, or partially consolidated in the first migration if the lifecycle separation remains clear and the acceptance criteria can still be met.
 
 #### user_constraint_profiles
 
@@ -734,6 +843,7 @@ decision-history SYMBOL MARKET
 
 The future web surface should mirror the weekly review workbench style:
 
+- The Decision Preference Review Page should be the first web page for this feature.
 - Top decision ticket.
 - Score component table.
 - Portfolio fit panel.
@@ -741,6 +851,27 @@ The future web surface should mirror the weekly review workbench style:
 - Source trace panel.
 - Candidate insights panel.
 - Decision history panel.
+
+The Decision Preference Review Page is the user's "investment rules and preference" page. It shows the personal rules the system plans to use when scoring stocks and suggesting position size, such as max single-stock position, starter position size, cash reserve preference, theme exposure cap, volatility tolerance, and pending lessons inferred from conversations or reviews.
+
+The first web slice should prioritize this review page before the full decision workbench. This is not because the full workbench is unimportant. It is because decision quality depends on clean inputs: confirmed insights, confirmed decision preferences, and visible pending candidates. Building the full decision workbench at the same time would increase surface area before the preference-confirmation loop is safe enough.
+
+Recommended first web page:
+
+- Pending candidate insights.
+- Confirm / reject / edit candidate insight.
+- Current decision preferences.
+- Pending structured preference changes.
+- Links from DingTalk notifications.
+
+The first web page should allow direct editing of structured preference values such as max position, starter size, cash reserve, and theme cap. Every change must keep a history record with previous value, new value, timestamp, source channel, and optional reason, because these preferences directly affect future scores and position-size suggestions.
+
+Recommended second web page:
+
+- Full decision ticket workbench.
+- Decision history.
+- Evidence freshness and source trace.
+- Weekly-review validation links.
 
 ## V1 Engineering Handoff
 
@@ -764,12 +895,12 @@ If any of those are missing, the feature is still incomplete.
 
 Recommended engineering order:
 
-1. Add storage for `user_constraint_profiles`, `stock_decisions`, `stock_observations`, and `inference_items`.
-2. Build a `decision_context_pack` function that combines `get_stock_context`, portfolio exposure, user constraints, and freshness metadata.
+1. Define the minimal persistence boundary: `stock_decisions` must exist as the saved decision snapshot; user constraints, observations, and inferences must be represented in a structured way, either through new tables or a deliberately scoped first-pass schema.
+2. Build a `decision_context_pack` function that runs the stock analysis workflow first, then combines the Stock Evidence Card, portfolio exposure, user constraints, freshness metadata, and decision-specific packs.
 3. Implement deterministic pre-scoring and gates before any model synthesis.
 4. Add `决策 SYMBOL MARKET` and `决策详情 SYMBOL MARKET` command paths.
 5. Save decision snapshots and expose decision history.
-6. Add focused refresh hooks for technical, valuation, chip/event, sector, and market packs.
+6. Add focused refresh hooks for technical, valuation, chip/event, sector, and market packs; sector/market packs may be stored as referenced decision context before they become shared snapshot tables.
 7. Connect decisions to weekly review and candidate insight generation.
 
 ### Default Product Decisions For Engineering
@@ -777,9 +908,13 @@ Recommended engineering order:
 Use these defaults unless the user later confirms different preferences:
 
 - User-facing recommendation language should use decision-support categories such as watch, wait, starter, normal position, high-conviction candidate, review, trim, and reduce. Avoid strong imperative "buy now" language.
+- Natural Codex conversation should default to candidate insights unless the user explicitly says to record or remember the thought as formal memory.
 - If the user constraint profile is missing, the system may produce analysis and a provisional recommendation, but it must cap confidence and ask for the missing constraints before suggesting a large position.
 - High-conviction recommendations require deep mode or fresh enough evidence across portfolio, valuation, sector, market, technical, and event packs.
 - Theme exposure should use both sector-tree paths and explicit theme tags. If they conflict, show the conflict instead of hiding it.
+- DingTalk V1 should push notifications and links, but should not confirm candidate insights or structured decision preferences directly.
+- First decision outputs should use position ranges rather than exact position percentages.
+- The first acceptance markets should be US, HK, and KR because they match the current research and portfolio context better. A-share support can keep source interfaces and later expansion notes, but should not be the first acceptance gate.
 - First implementation should prioritize existing graph data, Futu portfolio/quote access, and official source records already supported by the research pipeline. Additional paid or fragile industry providers should be adapter-based.
 
 ### First Acceptance Scenario
