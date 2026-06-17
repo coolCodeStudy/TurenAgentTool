@@ -1,5 +1,7 @@
 # 周复盘 Web 工作台产品文档
 
+> Status note (2026-06-18): This document remains the product reference for the weekly-review workbench shape. The current save/refresh contract is governed by `docs/techplans/weekly-review-week-scope-force-refresh.md`: one report row per natural week, read existing content by default, generate only when missing, and `Force refresh` overwrites the same weekly report after confirmation. Older wording about draft/finalized separation should be treated as historical terminology unless it matches that current contract.
+
 ## 1. 背景判断
 
 钉钉这条线适合做通知、轻量命令和异步提醒，但不适合承载完整投资复盘。

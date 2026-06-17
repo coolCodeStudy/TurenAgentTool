@@ -1,5 +1,7 @@
 # PRD: Weekly Review Week Scope And Force Refresh
 
+> Status note (2026-06-18): This PRD is kept as historical product context. The accepted current behavior is simpler than several sections below: weekly review stores one report row per natural week; `Force refresh` requires explicit confirmation and then overwrites that same weekly report; there is no `refresh_draft`, compare view, or DB status machine. The current implementation contract is documented in `docs/techplans/weekly-review-week-scope-force-refresh.md`.
+
 ## 1. Background
 
 The first version of the weekly review web workbench allows users to generate a review from arbitrary `start/end` dates. That is cheap while the product only uses trades and position snapshots, but it becomes expensive and inconsistent once the product adds indexes, macro calendars, news themes, opportunity lists, and LLM-generated story candidates.

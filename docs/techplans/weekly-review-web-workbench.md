@@ -1,5 +1,7 @@
 # 周复盘 Web 工作台技术方案
 
+> Status note (2026-06-18): This is the historical P0 Web workbench plan. It remains useful for page layout and module structure, but its arbitrary `start/end` date range, draft/finalized workflow wording, and save semantics are superseded by `docs/techplans/weekly-review-week-scope-force-refresh.md`. Current behavior is fixed natural week, read existing by default, generate only when missing, and force-refresh overwrite of the same weekly report row after confirmation.
+
 ## 目标
 
 实现 `docs/product/周复盘Web工作台产品文档.md` 的 P0：用户打开 Web 后第一屏就是“本周复盘”，可以选择日期范围、生成草稿、查看数据源状态、高光/炸裂/指数/整体故事/下周展望/当前持仓分析 6 个模块，并将检查后的 Markdown 保存为正式周复盘。

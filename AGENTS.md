@@ -12,6 +12,12 @@ Read it before changing code, running services, or touching deployment commands.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
 - Do not create routine daily logs. Put durable lessons in `docs/agent-lessons.md`, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
 
+## Planning And Scope
+
+- When proposing a technical plan, default to delivering the whole requested scope in one pass when it is safe and reasonably bounded.
+- If a plan is split into P0/P1/P2 or separate phases, explain the reason for the split directly: dependency uncertainty, external credentials, product decision needed, high blast radius, deployment risk, or verification limits.
+- Do not use phased plans as a way to defer normal implementation work. The user expects bundled execution unless a concrete reason is stated.
+
 ## Worktree Session Mode
 
 - The main workspace `/Users/lishaocheng/code/TurenAgentTool` is for integration, release, urgent hotfixes, and cloud deploy verification.
