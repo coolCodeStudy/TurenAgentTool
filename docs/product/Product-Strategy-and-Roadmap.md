@@ -116,9 +116,9 @@ Key capabilities:
 - Reference historical views.
 - Generate candidate insights and next-week watch items.
 
-### 3. Decision Cards
+### 3. Stock Evidence Cards
 
-Goal: turn dense evidence into first-screen decision information.
+Goal: turn dense stock evidence into a first-screen evidence summary.
 
 Default fields:
 
@@ -131,7 +131,30 @@ Default fields:
 
 Full sources, knowledge items, audit reports, and research drafts remain in the evidence layer and can be expanded when needed.
 
-### 4. Stock Valuation Research
+Stock Evidence Cards were previously described as "Level 1 decision cards." The new name is clearer because this layer summarizes evidence; it does not issue portfolio-aware recommendations.
+
+Stock Evidence Cards are the summary layer. They answer:
+
+> What does the system know about this stock?
+
+### 4. Stock Decision System
+
+Goal: turn stock evidence, portfolio constraints, user preferences, sector regime, market regime, valuation frames, technical setup, and chip/event structure into a traceable Decision Ticket.
+
+Key capabilities:
+
+- Produce a composite decision score and sub-scores.
+- Recommend avoid, watch, wait, starter, normal position, high-conviction candidate, trim, reduce, or review.
+- Translate user constraints and current portfolio exposure into position-size boundaries.
+- Separate facts, observations, model inference, user-confirmed preferences, candidate insights, and decision snapshots.
+- Manage data freshness across fast-moving market data and slower durable research facts.
+- Use layered context packs to balance token cost, quality, and speed.
+
+The Stock Decision System is the decision layer. It consumes the Stock Evidence Card and additional portfolio, market, sector, valuation, technical, and event packs. It answers:
+
+> Given what the system knows and the user's current constraints, what should the user do or not do?
+
+### 5. Stock Valuation Research
 
 Goal: explain which valuation frames the market may be using for a stock and which assumptions could trigger rerating.
 
@@ -143,7 +166,7 @@ Key capabilities:
 - Identify rerating triggers and valuation failure conditions.
 - Feed valuation frames into decision cards and weekly reviews.
 
-### 5. Historical View Validation
+### 6. Historical View Validation
 
 Goal: help the user observe how judgment evolves.
 
@@ -154,7 +177,7 @@ Key capabilities:
 - Detect conflicts between current analysis and historical preferences.
 - Build a long-term user investment style profile.
 
-### 6. Research Task Pipeline
+### 7. Research Task Pipeline
 
 Goal: continuously fill the holdings graph and stock research base.
 
@@ -190,9 +213,11 @@ Key capabilities:
 - Generate candidate insights.
 - Support confirmation, rejection, and merge workflows.
 
-### P3: Decision Cards and Valuation Frames
+### P3: Stock Evidence Cards, Stock Decision System, and Valuation Frames
 
-- Show Level 1 decision cards by default for stocks.
+- Show Stock Evidence Cards by default for stock analysis.
+- Add Stock Decision System V1 as the decision-support layer above the evidence card.
+- Support composite score, recommendation, position range, decision gates, evidence freshness, and decision snapshot history.
 - Keep research task lists concise by default.
 - Support explicit evidence expansion.
 - Add valuation frame, rerating trigger, and valuation risk fields.
@@ -214,4 +239,3 @@ Key capabilities:
 - Weekly review comes before long daily reports.
 - Valuation explanation comes before target price.
 - The product should be able to run for ten years, not just answer one question.
-
