@@ -546,7 +546,8 @@ def render_weekly_review_workbench_html() -> str:
       return `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
         ${{items.map((item) => {{
           const amount = item.amount ?? item.pl_val_delta;
-          return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money ${{moneyClass(amount)}}">${{formatMoney(amount, item.currency)}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
+          const rankAmount = item.amount_usd ?? amount;
+          return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money ${{moneyClass(rankAmount)}}">${{formatRankMoney(item)}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`;
     }}
@@ -622,6 +623,13 @@ def render_weekly_review_workbench_html() -> str:
     function formatMoney(value, currency) {{
       const number = Number(value || 0);
       return `${{number.toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }})}}${{currency && currency !== "UNKNOWN" ? " " + currency : ""}}`;
+    }}
+    function formatRankMoney(item) {{
+      const amount = item.amount ?? item.pl_val_delta;
+      const currency = String(item.currency || "").toUpperCase();
+      const original = formatMoney(amount, currency);
+      if (currency === "USD" || item.amount_usd === undefined || item.amount_usd === null) return original;
+      return `${{formatMoney(item.amount_usd, "USD")}} (${{original}})`;
     }}
     function ratioText(value) {{
       if (value === null || value === undefined || value === "") return "";

@@ -164,9 +164,18 @@ def cleanup_smoke_data() -> None:
         conn.execute(
             """
             DELETE FROM trade_records
-            WHERE code IN (%s, %s)
+            WHERE code IN (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (f"{SMOKE_MARKET}.{SMOKE_SYMBOL}", "TEST.LOSS"),
+            (
+                f"{SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                "TEST.LOSS",
+                "TEST.CUT",
+                "TEST.TAKE",
+                "TEST.CUT2",
+                "TEST.HIST",
+                "TEST.REAL",
+                "HK.SMOKEFX",
+            ),
         )
         conn.execute(
             """
@@ -533,8 +542,18 @@ def main() -> None:
                     "pl_ratio": 1.0,
                     "currency": "USD",
                 },
+                {
+                    "code": "HK.SMOKEFX",
+                    "stock_name": "Smoke HKD FX Loss Stock",
+                    "qty": 10,
+                    "cost_price": 100,
+                    "market_val": 1000,
+                    "pl_val": 0,
+                    "pl_ratio": 0.0,
+                    "currency": "HKD",
+                },
             ],
-            fx_rates={"USD": 1.0},
+            fx_rates={"USD": 1.0, "HKD": 0.1},
             fetched_at=datetime(2020, 1, 6, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat(),
             metadata={"task": "smoke_weekly_review"},
         )
@@ -572,8 +591,18 @@ def main() -> None:
                     "pl_ratio": -0.35,
                     "currency": "USD",
                 },
+                {
+                    "code": "HK.SMOKEFX",
+                    "stock_name": "Smoke HKD FX Loss Stock",
+                    "qty": 10,
+                    "cost_price": 100,
+                    "market_val": 500,
+                    "pl_val": -500,
+                    "pl_ratio": -0.5,
+                    "currency": "HKD",
+                },
             ],
-            fx_rates={"USD": 1.0},
+            fx_rates={"USD": 1.0, "HKD": 0.1},
             fetched_at=datetime(2020, 1, 12, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat(),
             metadata={"task": "smoke_weekly_review"},
         )
@@ -653,9 +682,13 @@ def main() -> None:
         assert all(item["code"] != "TEST.CUT" for item in weekly_context["highlights"])
         assert weekly_context["blowups"][0]["code"] == "TEST.LOSS"
         assert weekly_context["blowups"][0]["movement"] == "加仓"
+        hkd_blowup = next(item for item in weekly_context["blowups"] if item["code"] == "HK.SMOKEFX")
+        assert hkd_blowup["amount"] == -500
+        assert hkd_blowup["amount_usd"] == -50
         assert any(item["code"] == "TEST.CUT" and item["type"] == "割肉清仓" for item in weekly_context["blowups"])
-        cut2 = next(item for item in weekly_context["blowups"] if item["code"] == "TEST.CUT2")
-        assert cut2["amount"] == -10
+        changes_by_code = {item["code"]: item for item in weekly_context["position_changes"]}
+        cut2 = changes_by_code["TEST.CUT2"]
+        assert cut2["period_pl"] == -10
         assert cut2["realized_pl_estimate"] == -110
         assert cut2["period_pl_method"] == "realized_plus_snapshot_delta"
         assert "TEST.CUT" not in weekly_context["story"]["mainline"]

@@ -72,3 +72,4 @@ Add only lessons that should change future behavior.
 - Durable lessons belong in this file and `AGENTS.md`.
 - Task plans belong in `docs/techplans/`.
 - Historical milestones belong in `docs/project-history.md`.
+- 周复盘跨市场榜单必须先统一换算成 USD 再排名；原币金额只能用于展示，不能直接混排 HKD/USD，否则高光和炸裂都会被裸数值误导。

@@ -16,6 +16,7 @@ from investment_knowledge_mcp.futu_provider import (
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+DEFAULT_FX_TO_USD = {"USD": 1.0, "HKD": 1.0 / 7.8}
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         end_positions = []
         end_snapshot_info = None
 
+    fx_rates = _fx_rates_for_review(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
     trades = _load_trade_records(start=start, end=end, source_status=source_status, warnings=warnings)
     trades_by_code = _summarize_trades_by_code(trades)
     position_changes = _build_position_changes(
@@ -85,6 +87,8 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         trades_by_code=trades_by_code,
         has_start_snapshot=start_snapshot is not None,
         has_end_reference=bool(end_positions),
+        fx_rates=fx_rates,
+        warnings=warnings,
     )
     _attach_knowledge(position_changes=position_changes, warnings=warnings)
 
@@ -116,6 +120,7 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         },
         "index_summary": [],
         "event_summary": [],
+        "fx_rates": fx_rates,
         "next_week": next_week,
         "story": _build_story(context_warnings=warnings, position_changes=position_changes),
         "candidate_insights": [],
@@ -294,6 +299,8 @@ def _build_position_changes(
     trades_by_code: dict[str, dict[str, Any]],
     has_start_snapshot: bool,
     has_end_reference: bool,
+    fx_rates: dict[str, float],
+    warnings: list[str],
 ) -> list[dict[str, Any]]:
     start_by_code = {item["code"]: item for item in start_positions if item.get("code")}
     end_by_code = {item["code"]: item for item in end_positions if item.get("code")}
@@ -303,6 +310,8 @@ def _build_position_changes(
         start = start_by_code.get(code)
         end = end_by_code.get(code)
         base = end or start or {"code": code}
+        currency = str(base.get("currency") or "UNKNOWN").upper()
+        fx_to_usd = _fx_rate_to_usd(currency, fx_rates, warnings)
         start_qty = start["qty"] if start else 0.0
         end_qty = end["qty"] if end else 0.0
         start_pl = start["pl_val"] if start else 0.0
@@ -313,13 +322,17 @@ def _build_position_changes(
         confidence = _confidence_label(movement)
         trade_summary = trades_by_code.get(code, _empty_trade_summary(code=code))
         period_pl = _estimate_period_pl(start=start, end=end, trade_summary=trade_summary)
+        period_pl_amount = _number(period_pl["amount"])
+        period_pl_usd = period_pl_amount * fx_to_usd if fx_to_usd is not None else 0.0
+        end_market_val_usd = end_market_val * fx_to_usd if fx_to_usd is not None else 0.0
         changes.append(
             {
                 "code": code,
                 "market": base.get("market") or _split_code(code)[0],
                 "symbol": base.get("symbol") or _split_code(code)[1],
                 "name": base.get("name") or code,
-                "currency": base.get("currency") or "UNKNOWN",
+                "currency": currency,
+                "fx_to_usd": fx_to_usd,
                 "start": start,
                 "end": end,
                 "qty_delta": end_qty - start_qty,
@@ -329,12 +342,14 @@ def _build_position_changes(
                 ),
                 "market_val_delta": end_market_val - start_market_val,
                 "pl_val_delta": end_pl - start_pl,
-                "period_pl": period_pl["amount"],
+                "period_pl": period_pl_amount,
+                "period_pl_usd": period_pl_usd,
                 "period_pl_method": period_pl["method"],
                 "realized_pl_estimate": period_pl["realized_pl"],
                 "current_pl_val": end_pl,
                 "current_pl_ratio": end.get("pl_ratio") if end else None,
                 "current_market_val": end_market_val,
+                "current_market_val_usd": end_market_val_usd,
                 "movement": movement,
                 "confidence": confidence,
                 "trade_summary": trade_summary,
@@ -344,7 +359,33 @@ def _build_position_changes(
                 "next_step": "",
             }
         )
-    return sorted(changes, key=lambda item: item["current_market_val"], reverse=True)
+    return sorted(changes, key=lambda item: item["current_market_val_usd"], reverse=True)
+
+
+def _fx_rates_for_review(*, start_snapshot: dict[str, Any] | None, end_snapshot: dict[str, Any] | None) -> dict[str, float]:
+    rates = dict(DEFAULT_FX_TO_USD)
+    for snapshot in (start_snapshot, end_snapshot):
+        snapshot_rates = snapshot.get("fx_rates") if snapshot else None
+        if not isinstance(snapshot_rates, dict):
+            continue
+        for currency, rate in snapshot_rates.items():
+            normalized = str(currency).upper()
+            numeric_rate = _number(rate)
+            if normalized and numeric_rate > 0:
+                rates[normalized] = numeric_rate
+    rates["USD"] = 1.0
+    return rates
+
+
+def _fx_rate_to_usd(currency: str, fx_rates: dict[str, float], warnings: list[str]) -> float | None:
+    normalized = (currency or "UNKNOWN").upper()
+    rate = _number(fx_rates.get(normalized))
+    if rate > 0:
+        return rate
+    warning = f"缺少 {normalized} 到 USD 的汇率，高光/炸裂排序未纳入该币种。"
+    if warning not in warnings:
+        warnings.append(warning)
+    return None
 
 
 def _attach_knowledge(position_changes: list[dict[str, Any]], warnings: list[str]) -> None:
@@ -373,13 +414,16 @@ def _top_blowups(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _ranked_item(item: dict[str, Any], positive: bool) -> dict[str, Any]:
-    amount = _rank_amount(item)
+    amount = _number(item.get("period_pl", item.get("pl_val_delta")))
+    amount_usd = _rank_amount(item)
     return {
         "code": item["code"],
         "name": item["name"],
         "currency": item["currency"],
         "type": _highlight_type(item) if positive else _blowup_type(item),
         "amount": amount,
+        "amount_usd": amount_usd,
+        "fx_to_usd": item.get("fx_to_usd"),
         "pl_val_delta": item["pl_val_delta"],
         "realized_pl_estimate": item.get("realized_pl_estimate", 0.0),
         "period_pl_method": item.get("period_pl_method") or "snapshot_pl_delta",
@@ -392,7 +436,7 @@ def _ranked_item(item: dict[str, Any], positive: bool) -> dict[str, Any]:
 
 def _build_holdings_table(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
-    for item in sorted(position_changes, key=lambda row: row["current_market_val"], reverse=True):
+    for item in sorted(position_changes, key=lambda row: row["current_market_val_usd"], reverse=True):
         if not item.get("end"):
             continue
         statuses = _status_labels(item)
@@ -407,9 +451,11 @@ def _build_holdings_table(position_changes: list[dict[str, Any]]) -> list[dict[s
                 "theme": " / ".join(item.get("themes") or []) or "待补",
                 "currency": item["currency"],
                 "market_val": item["current_market_val"],
+                "market_val_usd": item["current_market_val_usd"],
                 "current_pl_val": item["current_pl_val"],
                 "current_pl_ratio": item["current_pl_ratio"],
-                "weekly_pl_delta": _rank_amount(item),
+                "weekly_pl_delta": _number(item.get("period_pl", item.get("pl_val_delta"))),
+                "weekly_pl_delta_usd": _rank_amount(item),
                 "snapshot_pl_delta": item["pl_val_delta"],
                 "realized_pl_estimate": item.get("realized_pl_estimate", 0.0),
                 "period_pl_method": item.get("period_pl_method") or "snapshot_pl_delta",
@@ -522,7 +568,7 @@ def _render_ranked_table(items: list[dict[str, Any]], positive: bool) -> list[st
     for item in items:
         lines.append(
             f"| {item['name']} {item['code']} | {item['type']} | "
-            f"{_fmt_money(item.get('amount', item['pl_val_delta']), item['currency'])} | {item['movement']} | "
+            f"{_fmt_rank_money(item)} | {item['movement']} | "
             f"{item['confidence']} | {item['review_question']} |"
         )
     return lines
@@ -775,7 +821,7 @@ def _review_question(item: dict[str, Any], positive: bool) -> str:
 
 
 def _rank_amount(item: dict[str, Any]) -> float:
-    return _number(item.get("period_pl", item.get("pl_val_delta")))
+    return _number(item.get("period_pl_usd", item.get("period_pl", item.get("pl_val_delta"))))
 
 
 def _status_labels(item: dict[str, Any]) -> list[str]:
@@ -864,6 +910,16 @@ def _fmt_money(value: Any, currency: str | None = None) -> str:
     number = _number(value)
     suffix = f" {currency}" if currency and currency != "UNKNOWN" else ""
     return f"{number:,.2f}{suffix}"
+
+
+def _fmt_rank_money(item: dict[str, Any]) -> str:
+    currency = str(item.get("currency") or "UNKNOWN").upper()
+    original = _fmt_money(item.get("amount", item.get("pl_val_delta")), currency)
+    if currency == "USD":
+        return original
+    if item.get("amount_usd") is None:
+        return original
+    return f"{_fmt_money(item.get('amount_usd'), 'USD')} ({original})"
 
 
 def _fmt_ratio_suffix(value: Any) -> str:
