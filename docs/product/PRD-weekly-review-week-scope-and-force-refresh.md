@@ -258,7 +258,220 @@ source_counts
 error
 ```
 
-## 9. Generation Flow
+## 9. Story Source Strategy
+
+The weekly review story must be built from traceable evidence. It should not be a generic AI-written market summary. The story engine should combine four source families: macro calendar, market behavior, market-theme news, and opportunity lists.
+
+### 9.1 Macro Calendar Sources
+
+Macro events explain the market backdrop and the next week's risk windows.
+
+Preferred P1 sources:
+
+| Source | Use | Notes |
+| --- | --- | --- |
+| Federal Reserve FOMC calendar | FOMC meetings, SEP windows, rate-decision timing | Official source. Use for current and next-week event flags. |
+| BLS release calendar | CPI, PPI, payrolls, JOLTS, unemployment, wage data | Official source. Prefer calendar/ICS-style ingestion when available. |
+| BEA release schedule | GDP, PCE, corporate profits, international accounts | Official source. |
+| Trading Economics API | Paid/optional unified economic calendar | Optional enhancement when an API token is available. |
+
+Output shape:
+
+```json
+{
+  "source_type": "macro",
+  "events": [
+    {
+      "date": "2026-06-17",
+      "region": "US",
+      "title": "FOMC rate decision",
+      "importance": "high",
+      "why_it_matters": "Affects USD rates, risk appetite, and long-duration growth assets.",
+      "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    }
+  ]
+}
+```
+
+Macro events should be split into:
+
+- Events that happened during the review week.
+- Events scheduled for the next two weeks.
+- Events that directly map to portfolio exposures such as AI infrastructure, semiconductors, Hong Kong growth stocks, rates-sensitive growth, or commodities.
+
+### 9.2 Market Behavior Sources
+
+Market behavior is the price and flow evidence that confirms or weakens a story.
+
+Preferred P1 source:
+
+| Source | Use | Notes |
+| --- | --- | --- |
+| Futu OpenD `request_history_kline` | Weekly index and stock performance, max daily move | Use for indexes, held stocks, and key theme tickers. |
+| Futu OpenD `get_market_snapshot` | Current quote snapshot and index snapshot | Use for latest state and validation. |
+| Futu OpenD `get_capital_flow` | Stock-level capital flow | Use as supporting evidence only, not as a standalone conclusion. |
+| Futu OpenD `get_plate_stock` | Plate/sector member lists where available | Use to map market themes to stock baskets. |
+
+Market behavior outputs:
+
+```json
+{
+  "source_type": "market_behavior",
+  "themes": [
+    {
+      "theme": "AI memory / HBM",
+      "confirming_tickers": ["US.MU", "KR.000660", "HK.07709"],
+      "weekly_move_summary": "Theme basket outperformed broad indexes.",
+      "capital_flow_signal": "mixed",
+      "confidence": "medium"
+    }
+  ]
+}
+```
+
+The story builder should treat market behavior as evidence, not as the story itself. A theme is stronger when news heat, price action, and portfolio exposure point in the same direction.
+
+### 9.3 Market Theme News Sources
+
+Market-theme news should answer: which narratives were active this week, and which of them matter to the user's portfolio?
+
+Preferred P1 source:
+
+| Source | Use | Notes |
+| --- | --- | --- |
+| GDELT DOC 2.0 API | Global news search, article list, timeline, multilingual coverage | Use for theme heat and source links. Do not feed full articles into the LLM by default. |
+
+Optional P2 sources:
+
+| Source | Use | Notes |
+| --- | --- | --- |
+| Xueqiu | Chinese investor sentiment and retail narrative | Use only through a controlled provider with cookies or user-approved import. Keep source URLs. |
+| Tonghuashun | A-share theme and hot-sector narrative | Treat as optional and fragile; avoid making it a core dependency. |
+| WeChat public articles | Long-form Chinese narrative and channel checks | Prefer manual/user-approved import or search-result summaries. |
+| Yahoo Finance / Google News / official company news | Ticker-level news discovery | Use as fallback evidence sources. |
+
+The first implementation should avoid a general web crawler. Use a theme dictionary and source-specific queries.
+
+Initial theme dictionary:
+
+| Theme | Query terms | Portfolio relevance |
+| --- | --- | --- |
+| AI memory / HBM | `HBM`, `DRAM price`, `NAND`, `memory price`, `SK hynix`, `Micron` | MU, SK hynix exposure, leveraged memory products, AI infrastructure. |
+| MLCC / passive components | `MLCC`, `passive components`, `Murata`, `Yageo` | Electronics supply-chain cycle and component-price narratives. |
+| Glass substrate / advanced packaging | `glass substrate`, `advanced packaging`, `chip packaging` | Semiconductor packaging and AI accelerator supply chain. |
+| Optical modules / CPO | `CPO`, `optical module`, `silicon photonics`, `800G`, `1.6T` | Optical communication and AI data-center networking names. |
+| Hong Kong growth | `Alibaba`, `Meituan`, `Xiaomi`, `Hang Seng Tech`, `Southbound` | Hong Kong growth holdings and sentiment. |
+| High-volatility themes | `space`, `quantum`, `crypto finance`, `Circle`, `Rocket Lab` | Speculative US growth and high-volatility holdings. |
+
+Theme output shape:
+
+```json
+{
+  "source_type": "theme_news",
+  "themes": [
+    {
+      "theme": "AI memory / HBM",
+      "article_count": 18,
+      "previous_article_count": 9,
+      "heat_change": "up",
+      "top_evidence": [
+        {
+          "title": "Memory pricing story example",
+          "publisher": "Example Publisher",
+          "published_at": "2026-06-16",
+          "url": "https://example.com/story"
+        }
+      ],
+      "portfolio_relevance": ["US.MU", "KR.000660", "HK.07709"],
+      "confidence": "medium"
+    }
+  ]
+}
+```
+
+The weekly review must not paste full news articles into prompts. It should pass only title, publisher, date, short extracted fact, URL, theme tag, and relevance.
+
+### 9.4 Opportunity List Sources
+
+Opportunity lists are rules-based events where a list changes or an index window opens. They should be generated through list snapshots and diffs instead of narrative scraping.
+
+Preferred sources:
+
+| Source | Use | Notes |
+| --- | --- | --- |
+| SSE/SZSE Stock Connect eligible securities lists | Southbound Stock Connect additions/removals | Store daily snapshots and compute diffs. |
+| Nasdaq-100 official methodology and official announcements | Reconstitution and rebalance windows, additions/removals | Track official announcement windows and diff constituent lists where possible. |
+| Futu IPO data | Hong Kong IPO subscription/listing calendar | Already aligned with the current weekly-review data path. |
+
+Output shape:
+
+```json
+{
+  "source_type": "opportunities",
+  "items": [
+    {
+      "category": "stock_connect",
+      "title": "Potential Southbound Stock Connect list change",
+      "effective_date": "2026-06-24",
+      "affected_symbols": ["HK.XXXXX"],
+      "portfolio_relevance": "May affect liquidity and southbound fund access.",
+      "source_url": "https://www.sse.com.cn/services/hkexsc/disclo/eligible/"
+    }
+  ]
+}
+```
+
+Opportunity items should be classified as:
+
+- Confirmed: official list or announcement already changed.
+- Watch window: official methodology says a rebalance or review window is approaching.
+- Rumor/news-only: present only if there is clear source attribution and low-confidence labeling.
+
+### 9.5 Story Builder Rules
+
+The overall story section should use a fixed evidence hierarchy:
+
+1. Portfolio facts: trades, position changes, highlights, blowups, current holdings.
+2. Index and market behavior: broad market, sector/index baskets, key theme tickers.
+3. Macro calendar: this week's events and next two weeks' risk windows.
+4. Theme news: article count, heat change, top evidence links.
+5. Opportunity lists: Stock Connect, Nasdaq-100, IPO, and other list/rebalance events.
+6. User memory: confirmed insights and candidate insights.
+
+The story output should remain structured:
+
+```text
+Main line:
+Acceleration factors:
+Negative signals:
+Relationship to my portfolio:
+Next-week validation points:
+Evidence:
+```
+
+Rules:
+
+- At least two evidence families must support a generated story candidate.
+- If only one evidence family exists, label the story as weak or incomplete.
+- If external sources are missing, explicitly say which source is missing.
+- Theme confidence should be `high`, `medium`, or `low`, based on source count, market confirmation, and portfolio relevance.
+- The LLM may synthesize wording, but it must not invent facts or cite sources that are not in the source payload.
+
+### 9.6 References
+
+- Federal Reserve FOMC calendar: `https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm`
+- BLS release calendar: `https://www.bls.gov/schedule/news_release/`
+- BEA release schedule: `https://www.bea.gov/news/schedule`
+- Trading Economics API: `https://tradingeconomics.com/api/`
+- Futu historical Kline: `https://openapi.futunn.com/futu-api-doc/en/quote/request-history-kline.html`
+- Futu market snapshot: `https://openapi.futunn.com/futu-api-doc/en/quote/get-market-snapshot.html`
+- Futu capital flow: `https://openapi.futunn.com/futu-api-doc/en/quote/get-capital-flow.html`
+- Futu plate stocks: `https://openapi.futunn.com/futu-api-doc/en/quote/get-plate-stock.html`
+- GDELT DOC 2.0 API: `https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/`
+- SSE Stock Connect eligible securities: `https://www.sse.com.cn/services/hkexsc/disclo/eligible/`
+- Nasdaq-100 methodology: `https://indexes.nasdaqomx.com/docs/Methodology_NDX.pdf`
+
+## 10. Generation Flow
 
 Full pipeline:
 
@@ -284,7 +497,7 @@ Opening the page normally only does:
 3. Return
 ```
 
-## 10. Cost Control
+## 11. Cost Control
 
 Default behavior:
 
@@ -309,7 +522,7 @@ Force refresh should record cost:
 }
 ```
 
-## 11. Acceptance Criteria
+## 12. Acceptance Criteria
 
 1. The page no longer exposes arbitrary `start/end` date inputs.
 2. When the user selects any date, the system normalizes it to the natural week.
@@ -320,7 +533,7 @@ Force refresh should record cost:
 7. Every report version for a week is traceable to its source payloads and generation run.
 8. The UI clearly shows report status, generated time, refreshed time, and source status.
 
-## 12. Implementation Priority
+## 13. Implementation Priority
 
 ### P0
 
@@ -335,17 +548,20 @@ Force refresh should record cost:
 - Add `weekly_review_runs`.
 - Add `weekly_review_sources`.
 - Add index provider integration.
+- Add macro calendar provider using Fed, BLS, and BEA official sources.
+- Add Futu OpenD market-behavior evidence for key indexes and theme tickers.
 - Show cache/refresh state in source status.
 
 ### P2
 
-- Add macro calendar provider.
-- Add market theme provider.
-- Add opportunity list provider.
+- Add market theme provider using a theme dictionary and GDELT news heat.
+- Add opportunity list provider for Stock Connect, Nasdaq-100 windows, and IPOs.
+- Add optional paid Trading Economics integration.
 - Show token/time cost.
 
 ### P3
 
 - Add draft version comparison.
 - Add finalized report replacement approval.
+- Add optional Xueqiu, Tonghuashun, and WeChat import providers with source URLs and confidence labels.
 - Close the loop for accepting, rejecting, and converting story candidates into user insights.
