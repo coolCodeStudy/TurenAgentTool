@@ -60,7 +60,7 @@ def build_weekly_review_context(
         "account_snapshots": {"status": "missing", "count": 0},
         "trades": {"status": "missing", "count": 0},
         "positions": {"status": "missing", "fetched_at": None},
-        "indexes": {"status": "missing", "reason": "index provider not configured"},
+        "indexes": {"status": "missing", "reason": "index provider not fetched yet"},
         "macro": {"status": "missing", "reason": "macro provider not configured"},
         "news_themes": {"status": "missing", "reason": "news/theme provider not configured"},
         "opportunities": {"status": "missing", "reason": "opportunity provider not configured"},

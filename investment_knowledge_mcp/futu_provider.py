@@ -55,6 +55,16 @@ class CashFlowSnapshot:
     source: str = "futu"
 
 
+@dataclass(frozen=True)
+class IndexHistorySnapshot:
+    indexes: list[dict[str, Any]]
+    fetched_at: datetime
+    start: str
+    end: str
+    errors: list[str]
+    source: str = "futu"
+
+
 _CACHE: PositionSnapshot | None = None
 _CACHE_MONOTONIC: float = 0.0
 _IPO_CACHE: IpoSnapshot | None = None
@@ -105,6 +115,16 @@ def get_futu_trade_history(start: str, end: str, config: AppConfig | None = None
 def get_futu_cash_flows(start: str, end: str, config: AppConfig | None = None) -> CashFlowSnapshot:
     config = config or get_config()
     return _fetch_cash_flows(config=config, start=start, end=end)
+
+
+def get_futu_index_history(
+    start: str,
+    end: str,
+    indexes: list[dict[str, Any]],
+    config: AppConfig | None = None,
+) -> IndexHistorySnapshot:
+    config = config or get_config()
+    return _fetch_index_history(config=config, start=start, end=end, indexes=indexes)
 
 
 def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
@@ -384,6 +404,113 @@ def _fetch_cash_flows(config: AppConfig, start: str, end: str) -> CashFlowSnapsh
         context.close()
 
 
+def _fetch_index_history(
+    config: AppConfig,
+    start: str,
+    end: str,
+    indexes: list[dict[str, Any]],
+) -> IndexHistorySnapshot:
+    try:
+        import futu as ft
+    except ImportError as exc:
+        raise FutuProviderError("futu-api 未安装，无法读取富途指数行情。") from exc
+
+    quote_context = _create_quote_context(
+        ft.OpenQuoteContext,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+        },
+    )
+    try:
+        rows: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for item in indexes:
+            name = str(item.get("name") or "").strip() or "unknown index"
+            market = str(item.get("market") or "").strip()
+            relevance = str(item.get("portfolio_relevance") or item.get("relevance") or "").strip()
+            code_candidates = [str(code).strip() for code in item.get("codes") or [] if str(code).strip()]
+            if not code_candidates and item.get("code"):
+                code_candidates = [str(item["code"]).strip()]
+            result, error = _fetch_one_index_history(
+                quote_context=quote_context,
+                ft=ft,
+                name=name,
+                market=market,
+                relevance=relevance,
+                code_candidates=code_candidates,
+                start=start,
+                end=end,
+            )
+            if result is not None:
+                rows.append(result)
+            elif error:
+                errors.append(error)
+        return IndexHistorySnapshot(
+            indexes=rows,
+            fetched_at=datetime.now(timezone.utc),
+            start=start,
+            end=end,
+            errors=errors,
+        )
+    finally:
+        quote_context.close()
+
+
+def _fetch_one_index_history(
+    *,
+    quote_context: Any,
+    ft: Any,
+    name: str,
+    market: str,
+    relevance: str,
+    code_candidates: list[str],
+    start: str,
+    end: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not code_candidates:
+        return None, f"{name} 缺少 Futu code 候选。"
+
+    errors: list[str] = []
+    for code in code_candidates:
+        try:
+            kwargs = {
+                "code": code,
+                "start": start,
+                "end": end,
+                "ktype": _optional_enum_value(getattr(ft, "KLType", None), "K_DAY"),
+                "max_count": 100,
+            }
+            kwargs = {key: value for key, value in kwargs.items() if value is not None}
+            ret, data, _page_key = _request_history_kline(quote_context, kwargs)
+            if ret != ft.RET_OK:
+                errors.append(f"{code}: {data}")
+                continue
+            candles = _normalize_klines(data)
+            if not candles:
+                errors.append(f"{code}: no kline rows")
+                continue
+            return _summarize_index_history(
+                name=name,
+                market=market,
+                code=code,
+                relevance=relevance,
+                candles=candles,
+                start=start,
+                end=end,
+            ), None
+        except Exception as exc:
+            errors.append(f"{code}: {exc}")
+    return None, f"{name} 指数行情读取失败：" + "；".join(errors[:3])
+
+
+def _request_history_kline(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any, Any]:
+    if not hasattr(context, "request_history_kline"):
+        raise FutuProviderError("当前 futu-api 版本没有 request_history_kline，无法读取指数行情。")
+    supported_kwargs = _filter_supported_kwargs(context.request_history_kline, kwargs)
+    return _call_with_keyword_retry(context.request_history_kline, supported_kwargs)
+
+
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
     supported_kwargs = _filter_supported_kwargs(context.position_list_query, kwargs)
     return _call_with_keyword_retry(context.position_list_query, supported_kwargs)
@@ -535,6 +662,110 @@ def _clean_empty(value: Any) -> Any:
     if isinstance(value, str) and value.strip().upper() in {"", "N/A", "NONE", "NULL"}:
         return None
     return value
+
+
+def _normalize_klines(data: Any) -> list[dict[str, Any]]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+    return [to_jsonable(row) for row in records]
+
+
+def _summarize_index_history(
+    *,
+    name: str,
+    market: str,
+    code: str,
+    relevance: str,
+    candles: list[dict[str, Any]],
+    start: str,
+    end: str,
+) -> dict[str, Any]:
+    first = candles[0]
+    last = candles[-1]
+    base = _float_or_none(first.get("last_close")) or _float_or_none(first.get("open")) or _float_or_none(first.get("close"))
+    close = _float_or_none(last.get("close"))
+    weekly_change_pct = None
+    if base not in (None, 0) and close is not None:
+        weekly_change_pct = (close - base) / base * 100
+    max_move = _max_daily_move(candles)
+    return {
+        "name": name,
+        "market": market,
+        "code": code,
+        "source": "futu.request_history_kline",
+        "period_start": start,
+        "period_end": end,
+        "start_reference": base,
+        "close": close,
+        "weekly_change_pct": weekly_change_pct,
+        "weekly_change": _pct_text(weekly_change_pct),
+        "max_daily_move_pct": max_move.get("change_pct"),
+        "max_daily_move": max_move.get("text"),
+        "portfolio_relevance": relevance,
+        "summary": _index_summary_text(
+            name=name,
+            weekly_change_pct=weekly_change_pct,
+            max_move=max_move,
+            relevance=relevance,
+        ),
+        "candles": candles,
+    }
+
+
+def _max_daily_move(candles: list[dict[str, Any]]) -> dict[str, Any]:
+    best: dict[str, Any] = {}
+    best_abs = -1.0
+    for candle in candles:
+        change = _float_or_none(candle.get("change_rate"))
+        if change is None:
+            last_close = _float_or_none(candle.get("last_close"))
+            close = _float_or_none(candle.get("close"))
+            if last_close not in (None, 0) and close is not None:
+                change = (close - last_close) / last_close * 100
+        if change is None:
+            continue
+        if abs(change) > best_abs:
+            best_abs = abs(change)
+            best = {
+                "change_pct": change,
+                "time_key": candle.get("time_key"),
+                "text": f"{candle.get('time_key') or 'unknown'} {_pct_text(change)}",
+            }
+    return best
+
+
+def _index_summary_text(
+    *,
+    name: str,
+    weekly_change_pct: float | None,
+    max_move: dict[str, Any],
+    relevance: str,
+) -> str:
+    change_text = _pct_text(weekly_change_pct) if weekly_change_pct is not None else "本周涨跌缺失"
+    move_text = max_move.get("text") or "最大单日波动缺失"
+    if relevance:
+        return f"{name} 本周 {change_text}，最大单日波动 {move_text}；{relevance}"
+    return f"{name} 本周 {change_text}，最大单日波动 {move_text}。"
+
+
+def _pct_text(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _enum_value(enum_cls: Any, name: str) -> Any:

@@ -10,6 +10,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.futu_provider import FutuProviderError, get_futu_index_history
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,58 @@ SOURCE_DEFINITIONS = (
 )
 
 
+DEFAULT_INDEX_BASKET = (
+    {
+        "market": "US",
+        "name": "Nasdaq 100",
+        "codes": ["US..NDX", "US.NDX"],
+        "portfolio_relevance": "观察美股大型科技和 AI 成长股风险偏好。",
+    },
+    {
+        "market": "US",
+        "name": "S&P 500",
+        "codes": ["US..SPX", "US.SPX", "US..INX", "US.INX"],
+        "portfolio_relevance": "观察美股大盘风险偏好和组合美元资产背景。",
+    },
+    {
+        "market": "US",
+        "name": "Dow Jones",
+        "codes": ["US..DJI", "US.DJI"],
+        "portfolio_relevance": "观察美股传统蓝筹和风险偏好是否扩散。",
+    },
+    {
+        "market": "HK",
+        "name": "恒生指数",
+        "codes": ["HK.HSI"],
+        "portfolio_relevance": "观察港股大盘和南向资金情绪背景。",
+    },
+    {
+        "market": "HK",
+        "name": "恒生科技",
+        "codes": ["HK.HSTECH"],
+        "portfolio_relevance": "影响港股科技成长仓和中概相关情绪。",
+    },
+    {
+        "market": "CN",
+        "name": "沪深300",
+        "codes": ["SH.000300", "SZ.399300"],
+        "portfolio_relevance": "观察 A 股核心资产风险偏好。",
+    },
+    {
+        "market": "CN",
+        "name": "创业板指",
+        "codes": ["SZ.399006"],
+        "portfolio_relevance": "观察 A 股成长和题材风险偏好。",
+    },
+    {
+        "market": "CN",
+        "name": "科创50",
+        "codes": ["SH.000688"],
+        "portfolio_relevance": "观察半导体、硬科技和 AI 供应链情绪。",
+    },
+)
+
+
 def load_weekly_review_external_sources(
     *,
     start: date,
@@ -85,12 +138,21 @@ def load_weekly_review_external_sources(
             }
             continue
 
-        payload, provider, reason = _fetch_source_payload(definition, file_payload=file_payload, warnings=warnings)
+        payload, provider, reason = _fetch_source_payload(
+            definition,
+            file_payload=file_payload,
+            start=start,
+            end=end,
+            warnings=warnings,
+        )
         items = _extract_items(payload, definition)
         status_text = "ok" if items else "missing"
         if payload is not None and not items:
             status_text = "empty"
             reason = reason or "payload contained no items"
+        if isinstance(payload, dict) and items and payload.get("errors"):
+            status_text = "partial"
+            reason = reason or "; ".join(str(item) for item in (payload.get("errors") or [])[:3])
         cache_row = repository.upsert_weekly_review_source(
             period_start=start.isoformat(),
             period_end=end.isoformat(),
@@ -103,7 +165,14 @@ def load_weekly_review_external_sources(
             run_id=run_id,
             expires_at=(datetime.now(timezone.utc) + timedelta(hours=12)).isoformat(),
         )
-        status = _status_from_items(items, cached=False, provider=provider, reason=reason, fetched_at=cache_row.get("fetched_at"))
+        status = _status_from_items(
+            items,
+            cached=False,
+            provider=provider,
+            reason=reason,
+            fetched_at=cache_row.get("fetched_at"),
+            status_override=status_text,
+        )
         result[definition.context_key] = items
         result["source_status"][definition.status_key] = status
         result["source_summary"][definition.source_type] = {
@@ -163,6 +232,8 @@ def _fetch_source_payload(
     definition: SourceDefinition,
     *,
     file_payload: dict[str, Any],
+    start: date,
+    end: date,
     warnings: list[str] | None,
 ) -> tuple[Any | None, str, str | None]:
     for key in (definition.source_type, definition.status_key, *definition.payload_keys):
@@ -191,7 +262,47 @@ def _fetch_source_payload(
                 warnings.append(f"{definition.source_type} {reason}")
             return None, "json_url", reason
 
+    if definition.source_type == "indexes":
+        return _fetch_default_index_payload(start=start, end=end, warnings=warnings)
+
     return None, "not_configured", "provider not configured"
+
+
+def _fetch_default_index_payload(
+    *,
+    start: date,
+    end: date,
+    warnings: list[str] | None,
+) -> tuple[dict[str, Any] | None, str, str | None]:
+    try:
+        snapshot = get_futu_index_history(
+            start=start.isoformat(),
+            end=end.isoformat(),
+            indexes=[dict(item) for item in DEFAULT_INDEX_BASKET],
+        )
+    except FutuProviderError as exc:
+        reason = str(exc)
+        if warnings is not None:
+            warnings.append(f"indexes {reason}")
+        return None, "futu.request_history_kline", reason
+    except Exception as exc:
+        reason = f"Futu index provider failed: {exc}"
+        if warnings is not None:
+            warnings.append(f"indexes {reason}")
+        return None, "futu.request_history_kline", reason
+
+    payload = {
+        "indexes": snapshot.indexes,
+        "errors": snapshot.errors,
+        "fetched_at": snapshot.fetched_at.isoformat(),
+        "start": snapshot.start,
+        "end": snapshot.end,
+        "basket": [dict(item) for item in DEFAULT_INDEX_BASKET],
+    }
+    reason = "; ".join(snapshot.errors[:3]) if snapshot.errors else None
+    if snapshot.errors and warnings is not None:
+        warnings.append(f"indexes partial: {reason}")
+    return payload, "futu.request_history_kline", reason
 
 
 def _extract_items(payload: Any, definition: SourceDefinition) -> list[dict[str, Any]]:
@@ -223,8 +334,9 @@ def _status_from_items(
     provider: str | None,
     reason: str | None = None,
     fetched_at: str | None = None,
+    status_override: str | None = None,
 ) -> dict[str, Any]:
-    status = "cached" if cached and items else ("ok" if items else "missing")
+    status = status_override or ("cached" if cached and items else ("ok" if items else "missing"))
     result: dict[str, Any] = {
         "status": status,
         "count": len(items),

@@ -118,11 +118,12 @@ Implemented together:
 5. Force refresh overwrites the same weekly report row.
 6. Save without hidden regeneration.
 7. Token usage persistence without budget enforcement.
-8. External index, macro, news/theme, and opportunity-list providers through JSON file, environment JSON, or configured JSON URL.
-9. Provider cache records in `weekly_review_sources`.
-10. Generation and force-refresh run records in `weekly_review_runs`.
-11. Token spend summary returned by the workbench API.
-12. Budget warning metadata stored on reports and runs when configured thresholds are exceeded.
+8. Default index provider through Futu OpenD `request_history_kline`, using the accepted first basket: Nasdaq 100, S&P 500, Dow Jones, Hang Seng Index, Hang Seng Tech, CSI 300, ChiNext Index, and STAR 50.
+9. JSON file, environment JSON, or configured JSON URL overrides for external sources, used for tests, manual imports, or fallback data only; users should not need to configure these for default index data.
+10. Provider cache records in `weekly_review_sources`.
+11. Generation and force-refresh run records in `weekly_review_runs`.
+12. Token spend summary returned by the workbench API.
+13. Budget warning metadata stored on reports and runs when configured thresholds are exceeded.
 
 ## Main Concerns
 
