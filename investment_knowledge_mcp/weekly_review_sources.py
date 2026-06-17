@@ -97,31 +97,76 @@ DEFAULT_INDEX_BASKET = (
     {
         "market": "HK",
         "name": "恒生指数",
-        "codes": ["HK.HSI"],
+        "codes": [
+            {
+                "code": "HK.02800",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "恒生指数",
+                "source_note": "Futu OpenD rejected HK.HSI in this environment; Tracker Fund of Hong Kong is used as a tradable Hang Seng Index proxy.",
+            },
+            "HK.800000",
+        ],
         "portfolio_relevance": "观察港股大盘和南向资金情绪背景。",
     },
     {
         "market": "HK",
         "name": "恒生科技",
-        "codes": ["HK.HSTECH"],
+        "codes": [
+            {
+                "code": "HK.03033",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "恒生科技",
+                "source_note": "Futu OpenD rejected HK.HSTECH in this environment; a Hang Seng TECH ETF is used as a tradable proxy.",
+            },
+            "HK.800700",
+            "HK.03032",
+        ],
         "portfolio_relevance": "影响港股科技成长仓和中概相关情绪。",
     },
     {
         "market": "CN",
         "name": "沪深300",
-        "codes": ["SH.000300", "SZ.399300"],
+        "codes": [
+            {
+                "code": "HK.03188",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "沪深300",
+                "source_note": "The cloud Futu account lacks direct A-share index quote permission; a Hong Kong-listed CSI 300 ETF is used as a tradable proxy.",
+            },
+            "SH.510300",
+            "SH.000300",
+            "SZ.399300",
+        ],
         "portfolio_relevance": "观察 A 股核心资产风险偏好。",
     },
     {
         "market": "CN",
         "name": "创业板指",
-        "codes": ["SZ.399006"],
+        "codes": [
+            {
+                "code": "HK.03147",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "创业板指",
+                "source_note": "The cloud Futu account lacks direct A-share index quote permission; a Hong Kong-listed ChiNext ETF is used as a tradable proxy when available.",
+            },
+            "SZ.159915",
+            "SZ.399006",
+        ],
         "portfolio_relevance": "观察 A 股成长和题材风险偏好。",
     },
     {
         "market": "CN",
         "name": "科创50",
-        "codes": ["SH.000688"],
+        "codes": [
+            {
+                "code": "HK.03151",
+                "instrument_type": "proxy_etf",
+                "proxy_for": "科创50",
+                "source_note": "The cloud Futu account lacks direct A-share index quote permission; a Hong Kong-listed STAR 50 ETF is used as a tradable proxy when available.",
+            },
+            "SH.588000",
+            "SH.000688",
+        ],
         "portfolio_relevance": "观察半导体、硬科技和 AI 供应链情绪。",
     },
 )
