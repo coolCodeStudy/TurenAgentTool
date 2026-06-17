@@ -12,6 +12,7 @@ Add only lessons that should change future behavior.
 - When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
 - For verified non-dangerous product work, do not stop at a pushed task branch. Merge into the release branch, push the release ref, deploy, and verify cloud behavior unless the user explicitly says to hold or the change is destructive/high-risk.
 - All new or agent-authored docs, code comments, PRDs, tech plans, and durable notes must be in English. If editing an existing non-English document, keep untouched existing content as-is but write any new agent-authored section in English unless the user explicitly asks for translation into another language.
+- The user's local Mac does not normally run Futu OpenD or listen on the common OpenD port. If local smoke tests log Futu `ECONNREFUSED`, treat it as an environment limitation, do not classify the product change as failed, and do not start OpenD unless the user explicitly asks for that service.
 
 ## Service Startup Preflight
 

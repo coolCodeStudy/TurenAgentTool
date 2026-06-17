@@ -12,7 +12,7 @@ Make the weekly review workbench a simple natural-week workflow:
 4. Force refresh reruns the pipeline, overwrites the same weekly report, and returns it.
 5. Save finalized report writes the currently edited content back to the same weekly report.
 
-There is no weekly report status machine in P0. No `draft`, `finalized`, or `refresh_draft` rows are created for the same week.
+There is no weekly report status machine. No `draft`, `finalized`, or `refresh_draft` rows are created for the same week.
 
 ## Product Contract
 
@@ -42,21 +42,22 @@ Default behavior:
 
 ## Data Model
 
-P0 keeps the existing `review_reports` table and adds only report metadata that is useful without changing product behavior:
+The implementation keeps the existing `review_reports` table as the single weekly report row and adds report metadata that is useful without changing product behavior:
 
 ```text
 generated_at
 refreshed_at
 token_usage
+budget_warnings
 ```
 
-The migration deletes existing weekly rows because the feature just launched and old weekly data is not useful:
+The migration must not delete existing weekly reports. A page read calls schema setup, so destructive cleanup in schema would erase product data during normal use.
 
 ```text
-DELETE FROM review_reports WHERE report_type = 'weekly';
+No DELETE FROM review_reports in schema migration.
 ```
 
-No new unique index is required in P0. Application code queries the selected week first:
+Application code queries the selected week first:
 
 ```text
 report_type = 'weekly'
@@ -64,7 +65,18 @@ period_start = selected Monday
 period_end = selected Sunday
 ```
 
-If a row exists, update it. Otherwise insert one row. If duplicates somehow exist from earlier test data, P0 picks the latest `id` and updates that row.
+If a row exists, update it. Otherwise insert one row. If duplicates somehow exist from earlier test data, the implementation picks the latest `id` and updates that row.
+
+P1 adds operational records without changing the one-report-row product contract:
+
+```text
+weekly_review_runs
+weekly_review_sources
+```
+
+`weekly_review_runs` records generation and force-refresh attempts, their result status, token usage, source summary, and budget-warning metadata.
+
+`weekly_review_sources` caches provider payloads by week, source type, and source key. Force refresh bypasses the cache and overwrites provider records for the selected week.
 
 ## API
 
@@ -84,21 +96,39 @@ Requires `force=true`. Reruns the pipeline and overwrites the same weekly report
 
 Saves submitted Markdown using the submitted context or the existing report context. It must not call `build_weekly_review(...)`.
 
+## Source Providers
+
+Index data uses a default Futu OpenD historical K-line provider. No extra index configuration is required when OpenD is available.
+
+Default index basket:
+
+1. Nasdaq 100
+2. S&P 500
+3. Dow Jones
+4. Hang Seng Index
+5. Hang Seng TECH Index
+6. CSI 300
+7. ChiNext Index
+8. STAR 50
+
+Environment JSON, JSON URL, or JSON file sources remain supported as explicit overrides or fallback sources for indexes, macro, news themes, and opportunities.
+
 ## Token And Cost Policy
 
-P0 records token usage but does not enforce a budget.
+The workbench records token usage but does not enforce a hard budget.
 
 - Opening an existing week: `0` tokens.
 - Viewing a historical week: `0` tokens.
 - Saving the current report: `0` tokens.
 - First generation or force refresh: may use tokens if story generation is enabled.
-- When tokens are used, save provider/model/token/cost metadata into `review_reports.token_usage`.
+- When tokens are used, save provider/model/token/cost metadata into `review_reports.token_usage` and `weekly_review_runs.token_usage`.
+- Optional warning thresholds can add metadata to `budget_warnings`; they do not block generation.
 
 If exact price calculation is unavailable, store token counts and leave cost blank. Do not invent costs.
 
 ## Scope
 
-P0, implemented together:
+Implemented together:
 
 1. Week selector UI instead of arbitrary start/end date inputs.
 2. Read-only page load.
@@ -107,17 +137,16 @@ P0, implemented together:
 5. Force refresh overwrites the same weekly report row.
 6. Save without hidden regeneration.
 7. Token usage persistence without budget enforcement.
-
-P1, implemented after P0:
-
-1. External index, macro, news/theme, and opportunity-list providers.
-2. Provider-level cache/run records.
-3. Token spend summary views.
-4. Budget warning metadata after real usage is observed.
+8. External index, macro, news/theme, and opportunity-list providers through default Futu index data, JSON file, environment JSON, or configured JSON URL.
+9. Provider cache records in `weekly_review_sources`.
+10. Generation and force-refresh run records in `weekly_review_runs`.
+11. Token spend summary returned by the workbench API.
+12. Budget warning metadata stored on reports and runs when configured thresholds are exceeded.
 
 ## Main Concerns
 
 - Snapshot gaps can make weekly attribution approximate; the UI must keep source status visible.
 - Realtime holdings are current state, not historical evidence.
-- News, macro, and theme sources are high-noise and should stay out of normal page load.
+- News, macro, and theme sources are high-noise and stay out of read-only page load; they are fetched only during generation or force refresh.
 - Save must never regenerate context; otherwise the cost-control promise is broken even if the UI looks correct.
+- Local development machines may not run Futu OpenD. Treat local OpenD connection refusal as an environment limitation, not a failed product path.
