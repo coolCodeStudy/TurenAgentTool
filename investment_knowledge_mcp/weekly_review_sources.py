@@ -279,6 +279,43 @@ def diagnose_default_index_provider(*, start: date, end: date) -> dict[str, Any]
     }
 
 
+def diagnose_weekly_review_sources(*, start: date, end: date) -> dict[str, Any]:
+    warnings: list[str] = []
+    file_payload = _load_external_source_file(warnings=warnings)
+    sources: dict[str, Any] = {}
+    for definition in SOURCE_DEFINITIONS:
+        payload, provider, reason = _fetch_source_payload(
+            definition,
+            file_payload=file_payload,
+            start=start,
+            end=end,
+            warnings=warnings,
+        )
+        items = _extract_items(payload, definition)
+        status = "ok" if items else "missing"
+        errors: list[Any] = []
+        if isinstance(payload, dict):
+            errors = list(payload.get("errors") or [])
+            if items and errors:
+                status = "partial"
+            elif payload is not None and not items:
+                status = "empty"
+        sources[definition.status_key] = {
+            "source_type": definition.source_type,
+            "provider": provider,
+            "status": status,
+            "count": len(items),
+            "reason": reason,
+            "errors": errors[:5],
+            "samples": [_diagnostic_sample(item) for item in items[:3]],
+        }
+    return {
+        "period": {"start": start.isoformat(), "end": end.isoformat()},
+        "sources": sources,
+        "warnings": warnings,
+    }
+
+
 def load_weekly_review_external_sources(
     *,
     start: date,
@@ -640,6 +677,21 @@ def _extract_items(payload: Any, definition: SourceDefinition) -> list[dict[str,
 
 def _normalize_item(item: dict[str, Any]) -> dict[str, Any]:
     return {str(key): value for key, value in item.items() if value is not None}
+
+
+def _diagnostic_sample(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "name": item.get("name"),
+            "title": item.get("title"),
+            "theme": item.get("theme"),
+            "date": item.get("date") or item.get("effective_date"),
+            "summary": item.get("summary") or item.get("reason"),
+            "source": item.get("source"),
+        }.items()
+        if value
+    }
 
 
 def _fetch_fed_fomc_events(start: date, window_end: date) -> list[dict[str, Any]]:

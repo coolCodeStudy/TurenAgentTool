@@ -65,7 +65,7 @@ from investment_knowledge_mcp.research.validation import validate_research_draft
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from investment_knowledge_mcp.system_overview import render_system_overview
 from investment_knowledge_mcp.weekly_review import build_weekly_review
-from investment_knowledge_mcp.weekly_review_sources import diagnose_default_index_provider
+from investment_knowledge_mcp.weekly_review_sources import diagnose_default_index_provider, diagnose_weekly_review_sources
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
 
@@ -252,6 +252,14 @@ WEEKLY_REVIEW_INDEX_DIAGNOSTIC_COMMANDS = {
     "指数诊断",
     "weekly index diagnostics",
     "weekly review index diagnostics",
+}
+
+WEEKLY_REVIEW_SOURCE_DIAGNOSTIC_COMMANDS = {
+    "周复盘数据源诊断",
+    "本周数据源诊断",
+    "复盘数据源诊断",
+    "weekly source diagnostics",
+    "weekly review source diagnostics",
 }
 
 NEXT_WEEK_COMMANDS = {
@@ -569,6 +577,10 @@ def handle_command(
     weekly_index_diagnostics_match = _match_weekly_index_diagnostics_command(cleaned)
     if weekly_index_diagnostics_match is not None:
         return _handle_weekly_index_diagnostics(time_range_text=weekly_index_diagnostics_match)
+
+    weekly_source_diagnostics_match = _match_weekly_source_diagnostics_command(cleaned)
+    if weekly_source_diagnostics_match is not None:
+        return _handle_weekly_source_diagnostics(time_range_text=weekly_source_diagnostics_match)
 
     weekly_review_match = _match_weekly_review_command(cleaned)
     if weekly_review_match is not None:
@@ -2162,6 +2174,16 @@ def _match_weekly_index_diagnostics_command(command: str) -> str | None:
     return None
 
 
+def _match_weekly_source_diagnostics_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in WEEKLY_REVIEW_SOURCE_DIAGNOSTIC_COMMANDS:
+        return ""
+    for prefix in WEEKLY_REVIEW_SOURCE_DIAGNOSTIC_COMMANDS:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    return None
+
+
 def _match_next_week_command(command: str) -> str | None:
     compact = command.strip()
     if compact in NEXT_WEEK_COMMANDS:
@@ -2199,6 +2221,15 @@ def _handle_weekly_index_diagnostics(time_range_text: str | None = None) -> Comm
     except Exception as exc:
         return CommandResult(ok=False, message=f"周复盘指数诊断失败：{exc}")
     return CommandResult(ok=True, message=_render_weekly_index_diagnostics(diagnostics=diagnostics, label=label))
+
+
+def _handle_weekly_source_diagnostics(time_range_text: str | None = None) -> CommandResult:
+    start, end, label = _resolve_weekly_index_diagnostics_range(time_range_text)
+    try:
+        diagnostics = diagnose_weekly_review_sources(start=start, end=end)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"周复盘数据源诊断失败：{exc}")
+    return CommandResult(ok=True, message=_render_weekly_source_diagnostics(diagnostics=diagnostics, label=label))
 
 
 def _handle_weekly_review(time_range_text: str | None = None, next_week_only: bool = False) -> CommandResult:
@@ -2252,6 +2283,31 @@ def _render_weekly_index_diagnostics(*, diagnostics: dict[str, Any], label: str)
     if errors:
         lines.extend(["", "错误："])
         lines.extend(f"- {item}" for item in errors[:8])
+    return "\n".join(lines)
+
+
+def _render_weekly_source_diagnostics(*, diagnostics: dict[str, Any], label: str) -> str:
+    lines = [f"周复盘数据源诊断（{label}）"]
+    sources = diagnostics.get("sources") or {}
+    for key in ("indexes", "macro", "news_themes", "opportunities"):
+        item = sources.get(key) or {}
+        lines.append(
+            f"- {key}: provider={item.get('provider')}, status={item.get('status')}, count={item.get('count')}"
+        )
+        reason = item.get("reason")
+        if reason:
+            lines.append(f"  reason: {reason}")
+        errors = item.get("errors") or []
+        if errors:
+            lines.append("  errors: " + "；".join(str(error) for error in errors[:3]))
+        samples = item.get("samples") or []
+        for sample in samples[:2]:
+            title = sample.get("title") or sample.get("name") or sample.get("theme") or "sample"
+            summary = sample.get("summary") or ""
+            lines.append(f"  sample: {title}{' - ' + str(summary) if summary else ''}")
+    warnings = diagnostics.get("warnings") or []
+    if warnings:
+        lines.append("warnings: " + "；".join(str(item) for item in warnings[:5]))
     return "\n".join(lines)
 
 
