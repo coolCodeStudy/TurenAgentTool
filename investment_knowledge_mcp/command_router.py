@@ -710,6 +710,7 @@ def is_query_command(command: str) -> bool:
             *PERFORMANCE_ESTIMATE_COMMANDS,
             *WEEKLY_REVIEW_COMMANDS,
             *WEEKLY_REVIEW_INDEX_DIAGNOSTIC_COMMANDS,
+            *WEEKLY_REVIEW_SOURCE_DIAGNOSTIC_COMMANDS,
             *NEXT_WEEK_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
             "港股新股",
@@ -721,6 +722,8 @@ def is_query_command(command: str) -> bool:
         }
         or heuristic_intent.get("intent")
         in {"portfolio_analysis", "portfolio_positions", "portfolio_graph", "system_status", "ipo_status", "trade_review"}
+        or _match_weekly_index_diagnostics_command(normalized) is not None
+        or _match_weekly_source_diagnostics_command(normalized) is not None
         or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
         or re.fullmatch(
             r"(?:任务状态|任务事件|task events?)\s+(research|coding|deploy|snapshot|ipo|command)\s+#?\d+",
