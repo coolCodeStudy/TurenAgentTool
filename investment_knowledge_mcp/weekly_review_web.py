@@ -853,12 +853,7 @@ def render_weekly_review_workbench_html() -> str:
       const warnings = state.budgetWarnings.length
         ? `<div class="notice">${{escapeHtml(state.budgetWarnings.map((item) => item.message || item.type).join("；"))}}</div>`
         : "";
-      const missing = [];
-      if (!macroEvents.length) missing.push("宏观");
-      if (!newsThemes.length) missing.push("新闻/主题");
-      if (!opportunities.length) missing.push("机会列表");
-      const missingHint = missing.length ? `<div class="empty">${{escapeHtml(missing.join("、"))}}暂未接入；本节先用指数刻画外部环境。</div>` : "";
-      return warnings + html + missingHint;
+      return warnings + html;
     }}
 
     function indexThermometer(items) {{
