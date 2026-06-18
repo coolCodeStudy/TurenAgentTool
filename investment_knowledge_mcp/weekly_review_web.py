@@ -853,7 +853,8 @@ def render_weekly_review_workbench_html() -> str:
       const warnings = state.budgetWarnings.length
         ? `<div class="notice">${{escapeHtml(state.budgetWarnings.map((item) => item.message || item.type).join("；"))}}</div>`
         : "";
-      return warnings + html;
+      const sourceHints = sourceGapHints(context);
+      return warnings + html + sourceHints;
     }}
 
     function indexThermometer(items) {{
@@ -877,6 +878,31 @@ def render_weekly_review_workbench_html() -> str:
     function compactExternalList(title, items) {{
       if (!items.length) return "";
       return `<h3>${{escapeHtml(title)}}</h3><ul class="story-list">${{items.slice(0, 5).map((item) => `<li><strong>${{escapeHtml(item.name || item.title || item.theme || item.symbol || "未命名")}}：</strong>${{escapeHtml(item.summary || item.note || item.change || item.reason || "")}}</li>`).join("")}}</ul>`;
+    }}
+
+    function sourceGapHints(context) {{
+      const specs = [
+        ["宏观", "macro", context.macro_events || []],
+        ["新闻/主题", "news_themes", context.news_themes || []],
+        ["机会列表", "opportunities", context.opportunity_items || []],
+      ];
+      const status = context.source_status || {{}};
+      const hints = specs.map(([label, key, items]) => {{
+        const item = status[key] || {{}};
+        const sourceStatus = item.status || "missing";
+        const provider = item.provider && item.provider !== "unknown" ? `（${{item.provider}}）` : "";
+        if (sourceStatus === "partial") {{
+          const reason = item.reason ? `：${{item.reason}}` : "";
+          return `${{label}}源部分读取成功${{provider}}${{reason}}。`;
+        }}
+        if (items.length) return "";
+        if (sourceStatus === "ok" || sourceStatus === "cached" || sourceStatus === "empty") {{
+          return `${{label}}源已接入${{provider}}，本窗口暂无匹配事项。`;
+        }}
+        const reason = item.reason ? `：${{item.reason}}` : "";
+        return `${{label}}源暂未完成读取${{provider}}${{reason}}。`;
+      }}).filter(Boolean);
+      return hints.length ? `<div class="empty">${{escapeHtml(hints.join(" "))}}</div>` : "";
     }}
 
     function groupByMarket(items) {{
