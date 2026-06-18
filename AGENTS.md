@@ -11,6 +11,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Use English for all new or agent-authored docs, code comments, PRDs, tech plans, and durable notes. Preserve existing non-English content unless the task is to translate or rewrite it.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
 - Do not create routine daily logs. Put durable lessons in `docs/agent-lessons.md`, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
+- Do not create candidate insights, user insights, profile changes, or other memory records from ordinary conversation, technical planning, debugging, or user pushback. Write memory only when the user explicitly invokes a memory/profile command or explicitly approves a proposed write.
 
 ## Planning And Scope
 

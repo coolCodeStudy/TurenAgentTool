@@ -12,6 +12,13 @@ Add only lessons that should change future behavior.
 - When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
 - All new or agent-authored docs, code comments, PRDs, tech plans, and durable notes must be in English. If editing an existing non-English document, keep untouched existing content as-is but write any new agent-authored section in English unless the user explicitly asks for translation into another language.
 
+## Memory Write Boundary
+
+- Do not write candidate insights, user insights, profile changes, or other memory records from ordinary conversation, technical planning, debugging, or user pushback.
+- Treat memory writes as explicit write operations, not ambient conversation capture.
+- If a user statement seems worth preserving but was not given through a memory/profile command, ask for explicit approval before writing anything.
+- Product workflows may propose candidate insights only from bounded entrypoints such as decision generation or weekly review, and those candidates must remain pending until the user confirms them.
+
 ## Service Startup Preflight
 
 - Before any service action, state the service names, database target, exposed ports, and external integrations.
