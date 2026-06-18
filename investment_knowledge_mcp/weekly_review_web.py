@@ -840,22 +840,94 @@ def render_weekly_review_workbench_html() -> str:
     }}
 
     function externalEnvironmentBlock(context) {{
-      const sections = [
-        ["指数", context.index_summary || []],
-        ["宏观", context.macro_events || []],
-        ["新闻/主题", context.news_themes || []],
-        ["机会列表", context.opportunity_items || []],
-      ];
-      const html = sections.map(([title, items]) => {{
-        if (!items.length) return `<div class="empty">${{escapeHtml(title)}}数据源未配置。</div>`;
-        return `<h3>${{escapeHtml(title)}}</h3><table><thead><tr><th>名称</th><th>摘要</th><th>来源</th></tr></thead><tbody>
-          ${{items.slice(0, 8).map((item) => `<tr><td>${{escapeHtml(item.name || item.title || item.theme || item.symbol || "未命名")}}</td><td>${{escapeHtml(item.summary || item.note || item.change || item.reason || "")}}</td><td>${{escapeHtml(item.source || item.provider || "")}}</td></tr>`).join("")}}
-        </tbody></table>`;
-      }}).join("");
+      const indexes = context.index_summary || [];
+      const macroEvents = context.macro_events || [];
+      const newsThemes = context.news_themes || [];
+      const opportunities = context.opportunity_items || [];
+      const html = [
+        indexThermometer(indexes),
+        compactExternalList("宏观", macroEvents),
+        compactExternalList("新闻/主题", newsThemes),
+        compactExternalList("机会列表", opportunities),
+      ].filter(Boolean).join("");
       const warnings = state.budgetWarnings.length
         ? `<div class="notice">${{escapeHtml(state.budgetWarnings.map((item) => item.message || item.type).join("；"))}}</div>`
         : "";
-      return warnings + html;
+      const missing = [];
+      if (!macroEvents.length) missing.push("宏观");
+      if (!newsThemes.length) missing.push("新闻/主题");
+      if (!opportunities.length) missing.push("机会列表");
+      const missingHint = missing.length ? `<div class="empty">${{escapeHtml(missing.join("、"))}}暂未接入；本节先用指数刻画外部环境。</div>` : "";
+      return warnings + html + missingHint;
+    }}
+
+    function indexThermometer(items) {{
+      if (!items.length) return `<div class="empty">指数数据源未接入，本周不做指数归因。</div>`;
+      const groups = groupByMarket(items);
+      const rows = items.map((item) => {{
+        const move = Number(item.weekly_change_pct);
+        const proxy = item.instrument_type === "proxy_etf" ? "ETF proxy" : "index";
+        return `<tr>
+          <td>${{escapeHtml(marketLabel(item.market))}}</td>
+          <td>${{escapeHtml(item.name || item.code || "未命名")}} <span class="chip">${{escapeHtml(proxy)}}</span></td>
+          <td class="money ${{moneyClass(move)}}">${{escapeHtml(item.weekly_change || formatPct(move))}}</td>
+          <td>${{escapeHtml(compactDailyMove(item.max_daily_move) || "n/a")}}</td>
+          <td>${{escapeHtml(indexRead(item))}}</td>
+        </tr>`;
+      }}).join("");
+      return `<div class="chips">${{groups.map((group) => `<span class="chip">${{escapeHtml(group)}}</span>`).join("")}}</div>
+        <table><thead><tr><th>市场</th><th>指数</th><th class="money">周变化</th><th>最大单日</th><th>怎么读</th></tr></thead><tbody>${{rows}}</tbody></table>`;
+    }}
+
+    function compactExternalList(title, items) {{
+      if (!items.length) return "";
+      return `<h3>${{escapeHtml(title)}}</h3><ul class="story-list">${{items.slice(0, 5).map((item) => `<li><strong>${{escapeHtml(item.name || item.title || item.theme || item.symbol || "未命名")}}：</strong>${{escapeHtml(item.summary || item.note || item.change || item.reason || "")}}</li>`).join("")}}</ul>`;
+    }}
+
+    function groupByMarket(items) {{
+      const order = ["US", "HK", "CN"];
+      const byMarket = new Map();
+      for (const item of items) {{
+        const market = item.market || "OTHER";
+        const value = Number(item.weekly_change_pct);
+        if (!byMarket.has(market)) byMarket.set(market, []);
+        if (!Number.isNaN(value)) byMarket.get(market).push(value);
+      }}
+      const rank = (market) => order.includes(market) ? order.indexOf(market) : 99;
+      return [...byMarket.entries()].sort((a, b) => rank(a[0]) - rank(b[0])).map(([market, values]) => {{
+        const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+        return `${{marketLabel(market)}} ${{marketDirection(avg)}}`;
+      }});
+    }}
+
+    function indexRead(item) {{
+      const relevance = item.portfolio_relevance || "";
+      const note = item.instrument_type === "proxy_etf" ? "代理口径。" : "";
+      return `${{note}}${{relevance}}`;
+    }}
+
+    function compactDailyMove(value) {{
+      return String(value || "").replace(/\\b(\\d{{4}}-\\d{{2}}-\\d{{2}})\\s+00:00:00\\b/g, "$1");
+    }}
+
+    function marketLabel(market) {{
+      if (market === "US") return "美股";
+      if (market === "HK") return "港股";
+      if (market === "CN" || market === "SH" || market === "SZ") return "A股";
+      return market || "其他";
+    }}
+
+    function marketDirection(value) {{
+      if (value === null || Number.isNaN(value)) return "数据不足";
+      if (value >= 1) return "偏强";
+      if (value > 0) return "小幅偏强";
+      if (value <= -1) return "承压";
+      return "震荡偏弱";
+    }}
+
+    function formatPct(value) {{
+      if (value === null || Number.isNaN(value)) return "N/A";
+      return `${{value > 0 ? "+" : ""}}${{value.toFixed(2)}}%`;
     }}
 
     function nextWeekTable(items) {{

@@ -781,9 +781,16 @@ def _max_daily_move(candles: list[dict[str, Any]]) -> dict[str, Any]:
             best = {
                 "change_pct": change,
                 "time_key": candle.get("time_key"),
-                "text": f"{candle.get('time_key') or 'unknown'} {_pct_text(change)}",
+                "text": f"{_display_kline_date(candle.get('time_key'))} {_pct_text(change)}",
             }
     return best
+
+
+def _display_kline_date(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    return text.split()[0]
 
 
 def _index_summary_text(

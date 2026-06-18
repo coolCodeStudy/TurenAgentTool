@@ -545,10 +545,12 @@ def _build_story(
     macro_events = external_sources.get("macro_events") or []
     news_themes = external_sources.get("news_themes") or []
     external_text = _external_story_text(indexes=indexes, macro_events=macro_events, news_themes=news_themes)
-    portfolio_relation = (
-        "本周组合关系主要基于持仓 snapshot 的盈亏变化，并结合外部环境源做辅助判断。"
-        if external_text
-        else "本周故事主要基于持仓 snapshot 的盈亏变化；外部环境源未配置。"
+    portfolio_relation = _portfolio_relation_text(
+        position_changes=position_changes,
+        leaders=leaders,
+        laggards=laggards,
+        indexes=indexes,
+        has_external_context=bool(external_text),
     )
     return {
         "mainline": _names(leaders) or "本周缺少足够快照，暂不归纳主线。",
@@ -568,7 +570,7 @@ def _external_story_text(
 ) -> str:
     parts = []
     if indexes:
-        parts.append("指数：" + "；".join(_short_item_text(item) for item in indexes[:3]))
+        parts.append("指数：" + _index_market_story(indexes))
     if macro_events:
         parts.append("宏观：" + "；".join(_short_item_text(item) for item in macro_events[:3]))
     if news_themes:
@@ -582,6 +584,109 @@ def _short_item_text(item: dict[str, Any]) -> str:
     name = item.get("name") or item.get("title") or item.get("theme") or item.get("symbol") or "未命名"
     summary = item.get("summary") or item.get("note") or item.get("change") or item.get("reason") or ""
     return f"{name}{'：' + str(summary) if summary else ''}"
+
+
+def _index_market_story(indexes: list[dict[str, Any]]) -> str:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in indexes:
+        grouped[_index_market_label(item)].append(item)
+    ordered_labels = [label for label in ("美股", "港股", "A股") if grouped.get(label)]
+    ordered_labels.extend(label for label in grouped if label not in ordered_labels)
+    parts = []
+    for label in ordered_labels:
+        items = grouped[label]
+        avg = _average_index_change(items)
+        direction = _market_direction(avg)
+        names = "、".join(
+            f"{item.get('name') or item.get('code') or '指数'} {item.get('weekly_change') or 'N/A'}"
+            for item in items[:3]
+        )
+        parts.append(f"{label}{direction}（{names}）")
+    return "；".join(parts)
+
+
+def _portfolio_relation_text(
+    *,
+    position_changes: list[dict[str, Any]],
+    leaders: list[dict[str, Any]],
+    laggards: list[dict[str, Any]],
+    indexes: list[dict[str, Any]],
+    has_external_context: bool,
+) -> str:
+    exposure = _portfolio_market_exposure(position_changes)
+    leader_text = _names(leaders) or "高光标的"
+    laggard_text = _names(laggards) or "拖累标的"
+    if not exposure:
+        return (
+            "本周组合关系主要基于持仓 snapshot 的盈亏变化，并结合外部环境源做辅助判断。"
+            if has_external_context
+            else "本周故事主要基于持仓 snapshot 的盈亏变化；外部环境源未配置。"
+        )
+    top_market, _top_value = exposure[0]
+    exposure_text = f"当前组合主要暴露在{top_market}，该市场持仓市值在组合内排序靠前"
+    market_context = _market_context_for_label(indexes, top_market)
+    if market_context:
+        return f"{exposure_text}；{leader_text} 的贡献需要放在{market_context}里看，{laggard_text} 则优先拆分为市场逆风还是个股逻辑问题。"
+    return f"{exposure_text}；{leader_text} 和 {laggard_text} 仍主要依赖持仓 snapshot 与成交记录判断，外部环境只作辅助。"
+
+
+def _portfolio_market_exposure(position_changes: list[dict[str, Any]]) -> list[tuple[str, float]]:
+    totals: dict[str, float] = defaultdict(float)
+    for item in position_changes:
+        if not item.get("end"):
+            continue
+        label = _holding_market_label(str(item.get("market") or ""))
+        totals[label] += abs(_number(item.get("current_market_val")))
+    return sorted(totals.items(), key=lambda pair: pair[1], reverse=True)
+
+
+def _market_context_for_label(indexes: list[dict[str, Any]], market_label: str) -> str:
+    items = [item for item in indexes if _index_market_label(item) == market_label]
+    if not items:
+        return ""
+    return _index_market_story(items)
+
+
+def _index_market_label(item: dict[str, Any]) -> str:
+    market = str(item.get("market") or "").upper()
+    if market == "US":
+        return "美股"
+    if market == "HK":
+        return "港股"
+    if market in {"CN", "SH", "SZ"}:
+        return "A股"
+    return market or "其他"
+
+
+def _holding_market_label(market: str) -> str:
+    value = market.upper()
+    if value == "US":
+        return "美股"
+    if value == "HK":
+        return "港股"
+    if value in {"CN", "SH", "SZ"}:
+        return "A股"
+    return value or "其他"
+
+
+def _average_index_change(items: list[dict[str, Any]]) -> float | None:
+    values = [_optional_number(item.get("weekly_change_pct")) for item in items]
+    clean = [value for value in values if value is not None]
+    if not clean:
+        return None
+    return sum(clean) / len(clean)
+
+
+def _market_direction(value: float | None) -> str:
+    if value is None:
+        return "数据不足"
+    if value >= 1.0:
+        return "偏强"
+    if value > 0:
+        return "小幅偏强"
+    if value <= -1.0:
+        return "承压"
+    return "震荡偏弱"
 
 
 def save_weekly_review_report(
