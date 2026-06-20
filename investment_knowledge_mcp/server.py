@@ -10,12 +10,24 @@ from investment_knowledge_mcp.command_router import (
     handle_command,
     is_candidate_write_command,
     is_coding_task_command,
+    is_decision_write_command,
     is_maintenance_command,
     is_query_command,
     is_research_write_command,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
+from investment_knowledge_mcp.decision_engine import (
+    confirm_decision_profile_change as confirm_profile_change,
+    decide_stock as run_stock_decision,
+    get_decision_detail as load_stock_decision_detail,
+    get_decision_profile as load_decision_profile,
+    list_decision_history as load_decision_history,
+    propose_decision_profile_change as propose_profile_change,
+    refresh_decision_data as refresh_stock_decision_context,
+    reject_decision_profile_change as reject_profile_change,
+)
+from investment_knowledge_mcp.decision_rendering import render_decision_detail, render_decision_profile, render_decision_ticket
 from investment_knowledge_mcp.display import build_stock_decision_card
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 from investment_knowledge_mcp.ops_client import (
@@ -59,6 +71,74 @@ def inspect_stock_decision_card(symbol: str, market: str) -> dict[str, Any]:
     jobs = list_research_jobs_for_stock(symbol=symbol, market=market, limit=1)
     latest_job = jobs[0] if jobs else None
     return build_stock_decision_card(context, latest_research_job=latest_job)
+
+
+@mcp.tool()
+def decide_stock(symbol: str, market: str, mode: str = "focused", render: bool = True) -> dict[str, Any]:
+    """Create and save a traceable stock Decision Ticket. This does not trade."""
+    ticket = run_stock_decision(symbol=symbol, market=market, mode=mode, save=True)
+    if render:
+        return {"ok": True, "message": render_decision_ticket(ticket), "data": ticket}
+    return {"ok": True, "data": ticket}
+
+
+@mcp.tool()
+def get_stock_decision_detail(decision_id: int, render: bool = True) -> dict[str, Any]:
+    """Read a saved stock Decision Ticket by id."""
+    ticket = load_stock_decision_detail(decision_id)
+    if ticket is None:
+        return {"ok": False, "message": f"stock decision not found: {decision_id}"}
+    if render:
+        return {"ok": True, "message": render_decision_detail(ticket), "data": ticket}
+    return {"ok": True, "data": ticket}
+
+
+@mcp.tool()
+def list_stock_decision_history(symbol: str, market: str, limit: int = 20) -> list[dict[str, Any]]:
+    """List saved Decision Tickets for a stock."""
+    return load_decision_history(symbol=symbol, market=market, limit=limit)
+
+
+@mcp.tool()
+def refresh_stock_decision_data(symbol: str, market: str, mode: str = "focused") -> dict[str, Any]:
+    """Build the current decision context and freshness report without saving a ticket."""
+    return refresh_stock_decision_context(symbol=symbol, market=market, mode=mode)
+
+
+@mcp.tool()
+def get_decision_profile(render: bool = True) -> dict[str, Any]:
+    """Read the active user constraint profile and pending profile changes."""
+    payload = load_decision_profile()
+    if render:
+        return {
+            "ok": True,
+            "message": render_decision_profile(payload.get("profile"), payload.get("pending_changes") or []),
+            "data": payload,
+        }
+    return {"ok": True, "data": payload}
+
+
+@mcp.tool()
+def propose_decision_profile_change(
+    field_name: str,
+    value: Any,
+    reason: str | None = None,
+    source_text: str | None = None,
+) -> dict[str, Any]:
+    """Create a pending structured decision-profile change. It affects decisions only after confirmation."""
+    return propose_profile_change(field_name=field_name, value=value, reason=reason, source_text=source_text, source_channel="mcp_tool")
+
+
+@mcp.tool()
+def confirm_decision_profile_change(change_id: int) -> dict[str, Any]:
+    """Confirm and apply a pending decision-profile change."""
+    return confirm_profile_change(change_id)
+
+
+@mcp.tool()
+def reject_decision_profile_change(change_id: int) -> dict[str, Any]:
+    """Reject a pending decision-profile change."""
+    return reject_profile_change(change_id)
 
 
 @mcp.tool()
@@ -436,9 +516,9 @@ def run_investment_command(
     """Run a safe natural-language InvestmentKnowledge command for an agent shell.
 
     This tool is intended for controlled agent shells. It permits
-    query commands, Futu maintenance commands, candidate-memory proposals, and
-    explicit candidate confirmation/rejection. Direct formal memory writes remain
-    blocked.
+    query commands, Futu maintenance commands, decision snapshots, candidate-memory
+    proposals, and explicit candidate confirmation/rejection. Direct formal memory
+    writes remain blocked.
     """
     cleaned = command.strip()
     if not cleaned:
@@ -446,7 +526,7 @@ def run_investment_command(
 
     if not _is_safe_agent_command(cleaned):
         message = (
-            "受控 Agent 入口当前只允许查询类、富途维护类、候选心得和候选确认/拒绝指令。"
+            "受控 Agent 入口当前只允许查询类、富途维护类、决策快照、候选心得和候选确认/拒绝指令。"
             "正式心得写入必须先经过候选确认，避免污染长期记忆。"
         )
         _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
@@ -473,6 +553,7 @@ def _is_safe_agent_command(command: str) -> bool:
     return bool(
         is_query_command(command)
         or is_maintenance_command(command)
+        or is_decision_write_command(command)
         or is_candidate_write_command(command)
         or is_coding_task_command(command)
         or is_research_write_command(command)

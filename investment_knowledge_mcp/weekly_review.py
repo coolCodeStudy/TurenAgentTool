@@ -7,6 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.decision_repository import list_decisions_for_review_period, set_candidate_source_metadata
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_positions,
@@ -51,6 +52,7 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "indexes": {"status": "missing", "reason": "index provider not configured"},
         "events": {"status": "missing", "reason": "external event provider not implemented"},
         "ipo": {"status": "missing", "count": 0},
+        "stock_decisions": {"status": "missing", "count": 0},
     }
     warnings: list[str] = []
 
@@ -91,6 +93,13 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
     highlights = _top_highlights(position_changes)
     blowups = _top_blowups(position_changes)
     holdings_table = _build_holdings_table(position_changes)
+    decision_tickets = _load_decision_tickets(
+        start=start,
+        end=end,
+        holdings_table=holdings_table,
+        source_status=source_status,
+        warnings=warnings,
+    )
     ipo_items = _load_ipo_items(source_status=source_status, warnings=warnings)
     next_week = _build_next_week_items(position_changes=position_changes, ipo_items=ipo_items)
 
@@ -110,6 +119,7 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "highlights": highlights,
         "blowups": blowups,
         "holdings_table": holdings_table,
+        "decision_tickets": decision_tickets,
         "trades": {
             "records": trades,
             "by_code": list(trades_by_code.values()),
@@ -118,7 +128,7 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "event_summary": [],
         "next_week": next_week,
         "story": _build_story(context_warnings=warnings, position_changes=position_changes),
-        "candidate_insights": [],
+        "candidate_insights": _build_weekly_candidate_proposals(decision_tickets),
         "warnings": warnings,
     }
 
@@ -139,7 +149,11 @@ def render_weekly_review_markdown(context: dict[str, Any]) -> str:
     lines.extend(_render_story(context.get("story") or {}))
     lines.extend(["", "## 5. 下周展望"])
     lines.extend(_render_next_week_items(context.get("next_week") or []))
-    lines.extend(["", "## 6. 当前持仓分析"])
+    lines.extend(["", "## 6. 决策票据"])
+    lines.extend(_render_decision_tickets(context.get("decision_tickets") or {}))
+    lines.extend(["", "## 7. 待确认心得"])
+    lines.extend(_render_candidate_proposals(context.get("candidate_insights") or []))
+    lines.extend(["", "## 8. 当前持仓分析"])
     lines.extend(_render_holdings_table(context.get("holdings_table") or []))
     lines.extend(["", "## 数据口径"])
     lines.extend(_render_source_status(context.get("source_status") or {}))
@@ -402,6 +416,7 @@ def _build_holdings_table(position_changes: list[dict[str, Any]]) -> list[dict[s
         rows.append(
             {
                 "market": item["market"],
+                "symbol": item["symbol"],
                 "code": item["code"],
                 "name": item["name"],
                 "theme": " / ".join(item.get("themes") or []) or "待补",
@@ -493,7 +508,7 @@ def _build_story(context_warnings: list[str], position_changes: list[dict[str, A
 
 def save_weekly_review_report(context: dict[str, Any], markdown: str) -> dict[str, Any]:
     period = context["period"]
-    return repository.upsert_review_report(
+    saved_report = repository.upsert_review_report(
         report_date=period["end"],
         report_type="weekly",
         period_start=period["start"],
@@ -510,6 +525,115 @@ def save_weekly_review_report(context: dict[str, Any], markdown: str) -> dict[st
         next_week=context.get("next_week") or [],
         story=context.get("story") or {},
     )
+    persisted = _persist_weekly_candidate_proposals(
+        report_id=int(saved_report["id"]),
+        proposals=context.get("candidate_insights") or [],
+        period_label=period["label"],
+    )
+    if persisted:
+        saved_report["candidate_insight_rows"] = persisted
+    return saved_report
+
+
+def _load_decision_tickets(
+    *,
+    start: date,
+    end: date,
+    holdings_table: list[dict[str, Any]],
+    source_status: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    try:
+        rows = list_decisions_for_review_period(start=start.isoformat(), end=end.isoformat())
+    except Exception as exc:
+        warnings.append(f"决策票据读取失败：{exc}")
+        source_status["stock_decisions"] = {"status": "error", "count": 0}
+        return {"period_decisions": [], "missing_current_holdings": []}
+
+    source_status["stock_decisions"] = {"status": "ok" if rows else "missing", "count": len(rows)}
+    decided = {(str(row.get("market") or "").upper(), str(row.get("symbol") or "").upper()) for row in rows}
+    missing = []
+    for row in holdings_table:
+        market = str(row.get("market") or "").upper()
+        code = str(row.get("code") or "")
+        symbol = str(row.get("symbol") or "")
+        if not symbol and "." in code:
+            symbol = code.split(".", 1)[1]
+        symbol = symbol.upper()
+        if symbol and market and (market, symbol) not in decided:
+            missing.append({"market": market, "symbol": symbol, "name": row.get("name"), "code": code})
+
+    return {
+        "period_decisions": rows,
+        "missing_current_holdings": missing[:20],
+    }
+
+
+def _build_weekly_candidate_proposals(decision_tickets: dict[str, Any]) -> list[dict[str, Any]]:
+    proposals: list[dict[str, Any]] = []
+    missing = decision_tickets.get("missing_current_holdings") or []
+    if missing:
+        proposals.append(
+            {
+                "target_type": "strategy",
+                "insight": (
+                    "Weekly review should prioritize Decision Tickets for current holdings that lack saved decisions "
+                    "before adding or increasing exposure."
+                ),
+                "normalized_summary": "Prioritize saved Decision Tickets for current holdings before adding or increasing exposure.",
+                "tags": ["weekly-review", "decision-system", "process"],
+                "reason": "Weekly review found current holdings without saved Decision Tickets.",
+            }
+        )
+
+    degraded = [
+        item
+        for item in decision_tickets.get("period_decisions") or []
+        if item.get("freshness_status") in {"missing_critical", "degraded"}
+    ]
+    if degraded:
+        proposals.append(
+            {
+                "target_type": "strategy",
+                "insight": (
+                    "Decision Tickets with missing or degraded critical inputs should stay in review/watch mode "
+                    "until the stale packs are refreshed or explicitly accepted."
+                ),
+                "normalized_summary": "Keep degraded Decision Tickets in review/watch mode until stale packs are refreshed or accepted.",
+                "tags": ["weekly-review", "decision-system", "freshness"],
+                "reason": "Weekly review found saved decisions with missing or degraded freshness status.",
+            }
+        )
+    return proposals
+
+
+def _persist_weekly_candidate_proposals(
+    *,
+    report_id: int,
+    proposals: list[dict[str, Any]],
+    period_label: str,
+) -> list[dict[str, Any]]:
+    rows = []
+    for proposal in proposals:
+        insight = str(proposal.get("insight") or "").strip()
+        if not insight:
+            continue
+        row = repository.propose_candidate_insight(
+            target_type=str(proposal.get("target_type") or "strategy"),
+            insight=insight,
+            normalized_summary=proposal.get("normalized_summary"),
+            tags=proposal.get("tags") or ["weekly-review", "decision-system"],
+            reason=proposal.get("reason"),
+        )
+        row = set_candidate_source_metadata(
+            int(row["id"]),
+            source_workflow="weekly_review",
+            source_object_type="review_report",
+            source_object_id=report_id,
+            source_metadata={"period": period_label},
+        )
+        rows.append(row)
+    return rows
 
 
 def _render_ranked_table(items: list[dict[str, Any]], positive: bool) -> list[str]:
@@ -567,11 +691,47 @@ def _render_holdings_table(rows: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _render_decision_tickets(payload: dict[str, Any]) -> list[str]:
+    decisions = payload.get("period_decisions") or []
+    missing = payload.get("missing_current_holdings") or []
+    lines: list[str] = []
+    if decisions:
+        lines.extend(
+            [
+                "| 决策 | 标的 | 结论 | 分数 | 置信度 | 新鲜度 |",
+                "| --- | --- | --- | ---: | --- | --- |",
+            ]
+        )
+        for item in decisions[:12]:
+            lines.append(
+                f"| #{item.get('id')} | {item.get('symbol')} {item.get('market')} | "
+                f"{item.get('recommendation')} | {_fmt_decimal(item.get('composite_score'))} | "
+                f"{item.get('confidence')} | {item.get('freshness_status')} |"
+            )
+    else:
+        lines.append("- 本周没有已保存的决策票据。")
+
+    if missing:
+        names = "、".join(f"{item.get('name') or item.get('symbol')} {item.get('code') or item.get('symbol')}" for item in missing[:8])
+        lines.append(f"- 当前持仓中尚未看到本周决策票据：{names}")
+    return lines
+
+
+def _render_candidate_proposals(items: list[dict[str, Any]]) -> list[str]:
+    if not items:
+        return ["- 本周没有生成待确认候选心得。"]
+    lines = ["这些只是待确认候选心得，不会在确认前成为正式偏好或规则："]
+    for item in items[:8]:
+        lines.append(f"- {item.get('normalized_summary') or item.get('insight')} ({item.get('reason') or 'weekly review'})")
+    return lines
+
+
 def _render_source_status(source_status: dict[str, Any]) -> list[str]:
     return [
         f"- 账户快照：{_status_text(source_status.get('account_snapshots'))}",
         f"- 交易记录：{_status_text(source_status.get('trades'))}",
         f"- 当前持仓：{_status_text(source_status.get('positions'))}",
+        f"- 决策票据：{_status_text(source_status.get('stock_decisions'))}",
         "- 指数：数据源未接入。",
         "- 外部事件：数据源未接入。",
         f"- 港股 IPO：{_status_text(source_status.get('ipo'))}",
@@ -871,6 +1031,13 @@ def _fmt_ratio_suffix(value: Any) -> str:
     if ratio is None:
         return ""
     return f" / {ratio * 100:.2f}%"
+
+
+def _fmt_decimal(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def _delta_optional(end_value: Any, start_value: Any) -> float | None:

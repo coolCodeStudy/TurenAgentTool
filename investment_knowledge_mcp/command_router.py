@@ -16,6 +16,24 @@ from investment_knowledge_mcp.analysis_provider import (
     generate_stock_analysis_with_openai,
     route_command_intent_with_openai,
 )
+from investment_knowledge_mcp.decision_engine import (
+    confirm_decision_profile_change,
+    decide_stock,
+    get_decision_detail,
+    get_latest_decision_detail,
+    get_decision_profile,
+    list_decision_history,
+    propose_decision_profile_change,
+    refresh_decision_data,
+    reject_decision_profile_change,
+)
+from investment_knowledge_mcp.decision_repository import DEFAULT_PROFILE
+from investment_knowledge_mcp.decision_rendering import (
+    render_decision_detail,
+    render_decision_history,
+    render_decision_profile,
+    render_decision_ticket,
+)
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
@@ -367,6 +385,60 @@ def handle_command(
     if ambiguous_match:
         return CommandResult(ok=False, message=f"匹配到多个股票，请说得更具体一点：{ambiguous_match.group(1)}")
 
+    decision_match = re.fullmatch(r"(?:决策|股票决策|decision|decide)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
+    if decision_match:
+        symbol, market = decision_match.groups()
+        return _handle_decide_stock(symbol=symbol, market=market)
+
+    decision_detail_match = re.fullmatch(
+        r"(?:决策详情|查看决策|decision detail)\s+(?:(#?\d+)|(\S+)\s+(\S+))",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if decision_detail_match:
+        decision_id, symbol, market = decision_detail_match.groups()
+        if decision_id:
+            return _handle_decision_detail(decision_id=int(decision_id.lstrip("#")))
+        return _handle_decision_detail(symbol=symbol, market=market)
+
+    decision_history_match = re.fullmatch(
+        r"(?:查看决策历史|决策历史|decision history)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if decision_history_match:
+        symbol, market = decision_history_match.groups()
+        return _handle_decision_history(symbol=symbol, market=market)
+
+    decision_refresh_match = re.fullmatch(
+        r"(?:刷新决策数据|decision refresh|refresh decision data)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if decision_refresh_match:
+        symbol, market = decision_refresh_match.groups()
+        return _handle_refresh_decision_data(symbol=symbol, market=market)
+
+    if cleaned in {"查看决策偏好", "决策偏好", "decision profile"}:
+        return _handle_decision_profile()
+
+    decision_profile_change_match = re.fullmatch(
+        r"(?:设置决策偏好|提出决策偏好变更|set decision profile)\s+(\S+)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if decision_profile_change_match:
+        field_name, value_text = decision_profile_change_match.groups()
+        return _handle_set_decision_profile(field_name=field_name, value_text=value_text, source_text=cleaned)
+
+    confirm_profile_match = re.fullmatch(r"(?:确认决策偏好|confirm decision profile)\s+#?(\d+)", cleaned, flags=re.IGNORECASE)
+    if confirm_profile_match:
+        return _handle_confirm_decision_profile(int(confirm_profile_match.group(1)))
+
+    reject_profile_match = re.fullmatch(r"(?:拒绝决策偏好|reject decision profile)\s+#?(\d+)", cleaned, flags=re.IGNORECASE)
+    if reject_profile_match:
+        return _handle_reject_decision_profile(int(reject_profile_match.group(1)))
+
     stock_detail_match = re.fullmatch(
         r"(?:分析详情|查看详情|股票详情|inspect detail|analyze detail)\s+(\S+)\s+(\S+)",
         cleaned,
@@ -659,8 +731,26 @@ def is_query_command(command: str) -> bool:
             flags=re.IGNORECASE,
         )
         or re.fullmatch(r"(?:研究草稿|图谱草稿|research draft)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(
+            r"(?:决策详情|查看决策|decision detail)\s+(?:(#?\d+)|(\S+)\s+(\S+))",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
+            r"(?:查看决策历史|决策历史|decision history)\s+\S+\s+\S+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
+            r"(?:刷新决策数据|decision refresh|refresh decision data)\s+\S+\s+\S+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
         or normalized
         in {
+            "查看决策偏好",
+            "决策偏好",
+            "decision profile",
             "查看候选心得",
             "候选心得",
             "list candidates",
@@ -708,6 +798,21 @@ def is_query_command(command: str) -> bool:
     )
 
 
+def is_decision_write_command(command: str) -> bool:
+    cleaned = command.strip()
+    normalized = _normalize_natural_command(cleaned)
+    return bool(
+        re.fullmatch(r"(?:决策|股票决策|decision|decide)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(
+            r"(?:设置决策偏好|提出决策偏好变更|set decision profile)\s+\S+\s+.+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(r"(?:确认决策偏好|confirm decision profile)\s+#?\d+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(r"(?:拒绝决策偏好|reject decision profile)\s+#?\d+", normalized, flags=re.IGNORECASE)
+    )
+
+
 def is_maintenance_command(command: str) -> bool:
     cleaned = command.strip()
     normalized = _normalize_natural_command(cleaned)
@@ -749,7 +854,6 @@ def is_candidate_write_command(command: str) -> bool:
             normalized,
             flags=re.IGNORECASE,
         )
-        or _heuristic_route_intent(normalized).get("intent") == "memory_candidate"
     )
 
 
@@ -818,6 +922,186 @@ def _handle_stock_decision_card(symbol: str, market: str) -> CommandResult:
         return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
     card = build_stock_decision_card(context, latest_research_job=_latest_research_job(symbol, market))
     return CommandResult(ok=True, message=render_stock_decision_card(card))
+
+
+def _handle_decide_stock(symbol: str, market: str) -> CommandResult:
+    try:
+        ticket = decide_stock(symbol=symbol, market=market)
+    except ValueError as exc:
+        return CommandResult(ok=False, message=str(exc))
+    message = render_decision_ticket(ticket)
+    candidates = ticket.get("candidate_insight_rows") or []
+    if candidates:
+        message += f"\n\n已生成 {len(candidates)} 条待确认候选心得；它们不会在确认前成为正式规则。"
+    return CommandResult(ok=True, message=message)
+
+
+def _handle_decision_detail(
+    *,
+    decision_id: int | None = None,
+    symbol: str | None = None,
+    market: str | None = None,
+) -> CommandResult:
+    if decision_id is not None:
+        ticket = get_decision_detail(decision_id)
+        label = f"#{decision_id}"
+    elif symbol and market:
+        ticket = get_latest_decision_detail(symbol=symbol, market=market)
+        label = f"{symbol} {market}"
+    else:
+        return CommandResult(ok=False, message="请提供决策 id，或股票代码和市场，例如：决策详情 000660 KR")
+    if not ticket:
+        return CommandResult(ok=False, message=f"未找到已保存的决策：{label}。可以先运行：决策 SYMBOL MARKET")
+    return CommandResult(ok=True, message=render_decision_detail(ticket))
+
+
+def _handle_decision_history(symbol: str, market: str) -> CommandResult:
+    decisions = list_decision_history(symbol=symbol, market=market, limit=20)
+    return CommandResult(ok=True, message=render_decision_history(decisions))
+
+
+def _handle_refresh_decision_data(symbol: str, market: str) -> CommandResult:
+    try:
+        result = refresh_decision_data(symbol=symbol, market=market)
+    except ValueError as exc:
+        return CommandResult(ok=False, message=str(exc))
+    freshness = result.get("freshness_report") or {}
+    questions = result.get("open_questions") or []
+    lines = [
+        f"决策数据已检查：{result.get('symbol')} {result.get('market')}",
+        f"- Context hash: {result.get('input_context_hash') or 'n/a'}",
+        f"- Freshness: {freshness.get('overall_status') or 'unknown'}",
+        f"- Open questions: {len(questions)}",
+    ]
+    for question in questions[:8]:
+        lines.append(f"  - {question}")
+    return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_decision_profile() -> CommandResult:
+    payload = get_decision_profile()
+    return CommandResult(
+        ok=True,
+        message=render_decision_profile(payload.get("profile"), payload.get("pending_changes") or []),
+    )
+
+
+def _handle_set_decision_profile(field_name: str, value_text: str, source_text: str) -> CommandResult:
+    normalized_field = _normalize_profile_field(field_name)
+    if normalized_field not in DEFAULT_PROFILE or normalized_field in {"profile_name"}:
+        fields = ", ".join(sorted(key for key in DEFAULT_PROFILE if key != "profile_name"))
+        return CommandResult(ok=False, message=f"不支持的决策偏好字段：{field_name}\n可用字段：{fields}")
+    try:
+        value = _parse_profile_value(normalized_field, value_text)
+        row = propose_decision_profile_change(
+            field_name=normalized_field,
+            value=value,
+            source_text=source_text,
+            reason="Explicit decision profile change command.",
+        )
+    except ValueError as exc:
+        return CommandResult(ok=False, message=str(exc))
+    return CommandResult(
+        ok=True,
+        message=(
+            f"已创建待确认决策偏好变更 #{row['id']}：{normalized_field} -> {row['new_value_json']}\n"
+            f"确认后才会影响评分和仓位建议：确认决策偏好 {row['id']}"
+        ),
+    )
+
+
+def _handle_confirm_decision_profile(change_id: int) -> CommandResult:
+    try:
+        row = confirm_decision_profile_change(change_id)
+    except ValueError as exc:
+        return CommandResult(ok=False, message=str(exc))
+    return CommandResult(ok=True, message=f"已确认并应用决策偏好变更 #{row['id']}：{row['field_name']}")
+
+
+def _handle_reject_decision_profile(change_id: int) -> CommandResult:
+    try:
+        row = reject_decision_profile_change(change_id)
+    except ValueError as exc:
+        return CommandResult(ok=False, message=str(exc))
+    return CommandResult(ok=True, message=f"已拒绝决策偏好变更 #{row['id']}：{row['field_name']}")
+
+
+def _normalize_profile_field(field_name: str) -> str:
+    aliases = {
+        "max_single_stock_position": "max_single_stock_position_pct",
+        "max_single": "max_single_stock_position_pct",
+        "单票上限": "max_single_stock_position_pct",
+        "starter": "preferred_starter_position_pct",
+        "starter_position": "preferred_starter_position_pct",
+        "试仓": "preferred_starter_position_pct",
+        "现金保留": "cash_reserve_min_pct",
+        "cash_reserve": "cash_reserve_min_pct",
+        "持仓数量目标": "max_positions_target",
+        "持仓硬上限": "max_positions_hard_cap",
+        "每日盯盘分钟": "daily_monitoring_minutes",
+        "每周研究小时": "weekly_research_hours",
+        "主题上限": "max_theme_exposure_pct",
+        "市场上限": "max_market_exposure_json",
+        "波动容忍": "volatility_tolerance",
+        "回撤容忍": "drawdown_tolerance",
+        "错过vs回撤": "missed_opportunity_vs_drawdown_bias",
+        "事件股": "event_stock_allowed",
+    }
+    cleaned = field_name.strip()
+    return aliases.get(cleaned, aliases.get(cleaned.lower(), cleaned))
+
+
+def _parse_profile_value(field_name: str, value_text: str) -> Any:
+    text = value_text.strip()
+    if not text:
+        raise ValueError("决策偏好值不能为空。")
+    if field_name in {
+        "max_single_stock_position_pct",
+        "preferred_starter_position_pct",
+        "cash_reserve_min_pct",
+        "max_theme_exposure_pct",
+    }:
+        value = _parse_number(text)
+        return value / 100.0 if "%" in text or value > 1 else value
+    if field_name in {"max_positions_target", "max_positions_hard_cap", "daily_monitoring_minutes"}:
+        return int(_parse_number(text))
+    if field_name == "weekly_research_hours":
+        return float(_parse_number(text))
+    if field_name == "event_stock_allowed":
+        return _parse_bool(text)
+    if field_name in {"max_market_exposure_json", "source_insight_ids_json"}:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name} 需要 JSON 值：{exc}") from exc
+    if field_name in {"volatility_tolerance", "drawdown_tolerance"}:
+        normalized = text.lower()
+        if normalized not in {"low", "medium", "high"}:
+            raise ValueError(f"{field_name} 只支持 low / medium / high。")
+        return normalized
+    if field_name == "missed_opportunity_vs_drawdown_bias":
+        normalized = text.lower()
+        if normalized not in {"missed_opportunity", "drawdown", "balanced"}:
+            raise ValueError("missed_opportunity_vs_drawdown_bias 只支持 missed_opportunity / drawdown / balanced。")
+        return normalized
+    return text
+
+
+def _parse_number(text: str) -> float:
+    cleaned = text.strip().rstrip("%")
+    try:
+        return float(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"无法解析数字：{text}") from exc
+
+
+def _parse_bool(text: str) -> bool:
+    normalized = text.strip().lower()
+    if normalized in {"true", "yes", "y", "1", "允许", "是", "可以"}:
+        return True
+    if normalized in {"false", "no", "n", "0", "不允许", "否", "不可以"}:
+        return False
+    raise ValueError(f"无法解析布尔值：{text}")
 
 
 def _latest_research_job(symbol: str, market: str) -> dict[str, Any] | None:
@@ -1714,28 +1998,12 @@ def _handle_intent_routed_command(command: str) -> CommandResult | None:
     if intent_name == "coding_task":
         title = str(intent.get("coding_task") or command).strip()
         return _handle_create_coding_task(title or command)
-    if intent_name == "memory_candidate":
-        candidate = str(intent.get("memory_candidate") or command).strip()
-        if not candidate:
-            return None
-        target_type = str(intent.get("target_type") or "strategy").strip().lower()
-        if target_type not in {"portfolio", "strategy"}:
-            target_type = "strategy"
-        result = _handle_propose_global_candidate(target_type=target_type, insight=candidate)
-        return CommandResult(
-            ok=True,
-            message=(
-                result.message
-                + "\n\n"
-                + "我先把它作为候选心得保存，等你确认后才会变成正式长期记忆。"
-            ),
-        )
     return None
 
 
 def _route_intent(command: str) -> dict[str, Any]:
     heuristic = _heuristic_route_intent(command)
-    if heuristic.get("confidence", 0) >= 0.8 or heuristic.get("intent") == "memory_candidate":
+    if heuristic.get("confidence", 0) >= 0.8:
         return heuristic
     try:
         routed = route_command_intent_with_openai(command)
@@ -1777,14 +2045,6 @@ def _heuristic_route_intent(command: str) -> dict[str, Any]:
         return {"intent": "portfolio_analysis", "confidence": 0.85, "target_type": None}
     if any(keyword in compact for keyword in ("我的持仓", "当前持仓", "持仓列表", "仓位列表")):
         return {"intent": "portfolio_positions", "confidence": 0.85, "target_type": None}
-    if _looks_like_memory_candidate(command):
-        target_type = "strategy" if any(keyword in command for keyword in ("系统", "长期", "目标", "策略", "进步", "复盘", "伴侣")) else "portfolio"
-        return {
-            "intent": "memory_candidate",
-            "confidence": 0.78,
-            "target_type": target_type,
-            "memory_candidate": command,
-        }
     return {"intent": "unknown", "confidence": 0.0, "target_type": None}
 
 
@@ -3265,6 +3525,14 @@ def _help_text() -> str:
 - mcp日志
 - IPO提醒状态
 - 分析 000660 KR
+- 决策 000660 KR
+- 决策详情 000660 KR
+- 查看决策历史 000660 KR
+- 刷新决策数据 000660 KR
+- 查看决策偏好
+- 设置决策偏好 max_single_stock_position_pct 8%
+- 确认决策偏好 3
+- 拒绝决策偏好 4
 - 怎么看海力士
 - 分析一下腾讯
 - 查看候选心得

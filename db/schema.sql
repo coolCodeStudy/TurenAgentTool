@@ -126,6 +126,152 @@ CREATE TABLE IF NOT EXISTS candidate_insights (
 
 ALTER TABLE candidate_insights
   ADD COLUMN IF NOT EXISTS repeat_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE candidate_insights
+  ADD COLUMN IF NOT EXISTS source_workflow TEXT;
+ALTER TABLE candidate_insights
+  ADD COLUMN IF NOT EXISTS source_object_type TEXT;
+ALTER TABLE candidate_insights
+  ADD COLUMN IF NOT EXISTS source_object_id BIGINT;
+ALTER TABLE candidate_insights
+  ADD COLUMN IF NOT EXISTS source_metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE TABLE IF NOT EXISTS user_constraint_profiles (
+  id BIGSERIAL PRIMARY KEY,
+  profile_name TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL DEFAULT 'active',
+  max_single_stock_position_pct NUMERIC(6, 3),
+  preferred_starter_position_pct NUMERIC(6, 3),
+  cash_reserve_min_pct NUMERIC(6, 3),
+  max_positions_target INTEGER,
+  max_positions_hard_cap INTEGER,
+  daily_monitoring_minutes INTEGER,
+  weekly_research_hours NUMERIC(6, 2),
+  max_theme_exposure_pct NUMERIC(6, 3),
+  max_market_exposure_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  volatility_tolerance TEXT,
+  drawdown_tolerance TEXT,
+  missed_opportunity_vs_drawdown_bias TEXT,
+  event_stock_allowed BOOLEAN,
+  source_insight_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  confirmed_by_user BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('active', 'archived'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_constraint_profiles_active_default
+  ON user_constraint_profiles(profile_name)
+  WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS user_constraint_profile_changes (
+  id BIGSERIAL PRIMARY KEY,
+  profile_id BIGINT REFERENCES user_constraint_profiles(id) ON DELETE CASCADE,
+  field_name TEXT NOT NULL,
+  old_value_json JSONB,
+  new_value_json JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  source_channel TEXT,
+  source_text TEXT,
+  reason TEXT,
+  source_candidate_insight_id BIGINT REFERENCES candidate_insights(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ,
+  CHECK (status IN ('pending', 'confirmed', 'rejected', 'applied'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_constraint_profile_changes_status
+  ON user_constraint_profile_changes(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS stock_observations (
+  id BIGSERIAL PRIMARY KEY,
+  stock_id BIGINT NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  observation_type TEXT NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  period_start TIMESTAMPTZ,
+  period_end TIMESTAMPTZ,
+  value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_id BIGINT REFERENCES sources(id) ON DELETE SET NULL,
+  confidence NUMERIC(4, 3) NOT NULL DEFAULT 0.500,
+  stale_after TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_observations_stock_type_observed
+  ON stock_observations(stock_id, observation_type, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS inference_items (
+  id BIGSERIAL PRIMARY KEY,
+  target_type TEXT NOT NULL,
+  target_id BIGINT,
+  inference_type TEXT NOT NULL,
+  content TEXT NOT NULL,
+  supporting_source_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  supporting_knowledge_item_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  confidence NUMERIC(4, 3) NOT NULL DEFAULT 0.500,
+  stale_after TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'candidate',
+  promoted_to_knowledge_item_id BIGINT REFERENCES knowledge_items(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('candidate', 'active', 'superseded', 'rejected', 'promoted'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inference_items_target_status
+  ON inference_items(target_type, target_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS stock_decisions (
+  id BIGSERIAL PRIMARY KEY,
+  stock_id BIGINT NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  symbol TEXT NOT NULL,
+  market TEXT NOT NULL,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decision_type TEXT NOT NULL DEFAULT 'single_stock',
+  mode TEXT NOT NULL DEFAULT 'focused',
+  recommendation TEXT NOT NULL,
+  composite_score NUMERIC(5, 2) NOT NULL,
+  confidence TEXT NOT NULL,
+  freshness_status TEXT NOT NULL,
+  suggested_initial_position_min_pct NUMERIC(6, 3),
+  suggested_initial_position_max_pct NUMERIC(6, 3),
+  suggested_max_position_pct NUMERIC(6, 3),
+  position_class TEXT,
+  score_components_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  gates_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reasons_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  veto_conditions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  entry_conditions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  add_conditions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reduce_conditions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  next_review_trigger_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  evidence_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  stale_components_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  unresolved_questions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  stock_card_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  context_pack_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  input_context_hash TEXT,
+  model_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_decisions_stock_created
+  ON stock_decisions(stock_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_stock_decisions_symbol_market_created
+  ON stock_decisions(symbol, market, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS stock_decision_evidence_links (
+  id BIGSERIAL PRIMARY KEY,
+  decision_id BIGINT NOT NULL REFERENCES stock_decisions(id) ON DELETE CASCADE,
+  section TEXT NOT NULL,
+  component TEXT,
+  evidence_type TEXT NOT NULL,
+  evidence_id BIGINT,
+  evidence_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_decision_evidence_links_decision
+  ON stock_decision_evidence_links(decision_id);
 
 CREATE TABLE IF NOT EXISTS review_reports (
   id BIGSERIAL PRIMARY KEY,

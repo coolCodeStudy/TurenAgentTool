@@ -17,6 +17,7 @@ from investment_knowledge_mcp.command_router import (
     _resolve_weekly_review_range,
     handle_command,
     is_candidate_write_command,
+    is_decision_write_command,
     is_maintenance_command,
     is_query_command,
     is_research_write_command,
@@ -79,6 +80,15 @@ SMOKE_ROUTER_CANDIDATE = "Smoke test verifies command router candidate proposal.
 SMOKE_ROUTER_PORTFOLIO_INSIGHT = "Smoke test verifies command router portfolio insight recording."
 SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy candidate proposal."
 SMOKE_ROUTER_NATURAL_MEMORY = "我觉得 Smoke Test 的组合管理成本需要被系统识别并沉淀。"
+SMOKE_WEEKLY_MISSING_DECISION_CANDIDATE = (
+    "Weekly review should prioritize Decision Tickets for current holdings that lack saved decisions "
+    "before adding or increasing exposure."
+)
+SMOKE_WEEKLY_DEGRADED_DECISION_CANDIDATE = (
+    "Decision Tickets with missing or degraded critical inputs should stay in review/watch mode "
+    "until the stale packs are refreshed or explicitly accepted."
+)
+SMOKE_DECISION_PROFILE_COMMAND = "设置决策偏好 max_single_stock_position_pct 8%"
 SMOKE_JOB_SYMBOL = "SMOKEJOB"
 SMOKE_JOB_MARKET = "TEST"
 
@@ -102,6 +112,8 @@ def cleanup_smoke_data() -> None:
                     SMOKE_ROUTER_PORTFOLIO_INSIGHT,
                     SMOKE_ROUTER_STRATEGY_CANDIDATE,
                     SMOKE_ROUTER_NATURAL_MEMORY,
+                    SMOKE_WEEKLY_MISSING_DECISION_CANDIDATE,
+                    SMOKE_WEEKLY_DEGRADED_DECISION_CANDIDATE,
                 ],
             ),
         )
@@ -117,8 +129,17 @@ def cleanup_smoke_data() -> None:
                     SMOKE_ROUTER_CANDIDATE,
                     SMOKE_ROUTER_STRATEGY_CANDIDATE,
                     SMOKE_ROUTER_NATURAL_MEMORY,
+                    SMOKE_WEEKLY_MISSING_DECISION_CANDIDATE,
+                    SMOKE_WEEKLY_DEGRADED_DECISION_CANDIDATE,
                 ],
             ),
+        )
+        conn.execute(
+            """
+            DELETE FROM user_constraint_profile_changes
+            WHERE source_text = %s
+            """,
+            (SMOKE_DECISION_PROFILE_COMMAND,),
         )
         stock = conn.execute(
             """
@@ -139,6 +160,13 @@ def cleanup_smoke_data() -> None:
             conn.execute(
                 """
                 DELETE FROM user_insights
+                WHERE target_type = 'stock' AND target_id = %s
+                """,
+                (stock["id"],),
+            )
+            conn.execute(
+                """
+                DELETE FROM inference_items
                 WHERE target_type = 'stock' AND target_id = %s
                 """,
                 (stock["id"],),
@@ -328,6 +356,14 @@ def main() -> None:
         router_natural_memory_result = handle_command(SMOKE_ROUTER_NATURAL_MEMORY)
         router_trade_review_result = handle_command("帮我看看这个月到底赚在哪亏在哪")
         router_candidates_result = handle_command("查看候选心得")
+        decision_result = handle_command(f"决策 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        decision_detail_result = handle_command(f"决策详情 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        decision_history_result = handle_command(f"查看决策历史 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        decision_refresh_result = handle_command(f"刷新决策数据 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        decision_profile_result = handle_command("查看决策偏好")
+        decision_profile_change_result = handle_command(SMOKE_DECISION_PROFILE_COMMAND)
+        profile_change_id = decision_profile_change_result.message.split("#", 1)[1].split("：", 1)[0]
+        decision_profile_reject_result = handle_command(f"拒绝决策偏好 {profile_change_id}")
         graph_context = build_portfolio_graph_queue(
             SimpleNamespace(
                 positions=[
@@ -401,9 +437,23 @@ def main() -> None:
         assert "已合并" in router_duplicate_candidate_result.message
         assert router_portfolio_insight_result.ok
         assert router_strategy_candidate_result.ok
-        assert router_natural_memory_result.ok
+        assert not router_natural_memory_result.ok
+        assert not is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert router_trade_review_result.ok
         assert router_candidates_result.ok
+        assert decision_result.ok
+        assert "Decision Ticket" in decision_result.message
+        assert decision_detail_result.ok
+        assert "Score component evidence" in decision_detail_result.message
+        assert decision_history_result.ok
+        assert "Decision history" in decision_history_result.message
+        assert decision_refresh_result.ok
+        assert "决策数据已检查" in decision_refresh_result.message
+        assert decision_profile_result.ok
+        assert "Decision profile" in decision_profile_result.message
+        assert decision_profile_change_result.ok
+        assert "待确认决策偏好变更" in decision_profile_change_result.message
+        assert decision_profile_reject_result.ok
         assert graph_context["summary"]["position_count"] == 2
         assert graph_context["summary"]["stock_profile_count"] == 1
         assert graph_context["summary"]["sector_linked_count"] == 1
@@ -420,6 +470,10 @@ def main() -> None:
         assert not is_query_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_query_command("持仓图谱")
         assert is_query_command(f"研究草稿 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        assert is_query_command(f"决策详情 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        assert is_query_command(f"查看决策历史 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        assert is_decision_write_command(f"决策 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        assert is_decision_write_command(SMOKE_DECISION_PROFILE_COMMAND)
         assert is_query_command("全持仓研究草稿")
         assert is_query_command("列出研究任务")
         assert is_research_write_command("持仓图谱补全")
@@ -662,9 +716,12 @@ def main() -> None:
         assert "TEST.CUT" in weekly_context["story"]["negative_signals"]
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_markdown
         assert "指数数据源未接入" in weekly_markdown
+        assert "待确认心得" in weekly_markdown
+        assert SMOKE_WEEKLY_MISSING_DECISION_CANDIDATE in str(weekly_context["candidate_insights"])
         weekly_result = build_weekly_review(start=weekly_start, end=weekly_end, save=True)
         assert weekly_result.saved_report is not None
         assert weekly_result.saved_report["report_type"] == "weekly"
+        assert weekly_result.saved_report.get("candidate_insight_rows")
         assert str(weekly_result.saved_report["period_start"]) == "2020-01-06"
         assert str(weekly_result.saved_report["period_end"]) == "2020-01-12"
         weekly_command_result = handle_command("复盘 2020-01-06 2020-01-12")
@@ -1106,13 +1163,13 @@ def main() -> None:
         assert "hidden taxonomy noise" not in ixbrl_text
         assert "Data center revenue increased." in ixbrl_text
         assert "1234" in ixbrl_text
-        assert is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
+        assert not is_candidate_write_command(SMOKE_ROUTER_NATURAL_MEMORY)
         assert is_candidate_write_command(f"提出策略候选心得 {SMOKE_ROUTER_STRATEGY_CANDIDATE}")
         assert is_maintenance_command("富途验证码 123456")
         assert is_maintenance_command("富途登录")
         assert SMOKE_ROUTER_CANDIDATE in router_candidates_result.message
         assert SMOKE_ROUTER_STRATEGY_CANDIDATE in router_candidates_result.message
-        assert SMOKE_ROUTER_NATURAL_MEMORY in router_candidates_result.message
+        assert SMOKE_ROUTER_NATURAL_MEMORY not in router_candidates_result.message
         assert "估算收益复盘" in router_trade_review_result.message
         assert result["sectors"][0]["relation_id"] == relation["id"]
         assert len(result["knowledge_items"]) == 1
