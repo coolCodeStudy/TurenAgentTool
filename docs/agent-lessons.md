@@ -10,6 +10,7 @@ Add only lessons that should change future behavior.
 - `command-api` is only an HTTP wrapper around `handle_command(...)`; it is not required for normal local feature verification.
 - Start `command-api`, `dingtalk-api`, schedulers, or broad compose profiles only when the user explicitly asks to test those surfaces or approves the exact service list.
 - When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
+- Never fall back to running real stock research on the user's Mac. Local Codex/Desktop is only the control plane; source collection, filing/news crawling, draft enrichment, audit/review generation, portfolio research, and investment-event discovery should default to cloud Codex workers.
 
 ## Service Startup Preflight
 

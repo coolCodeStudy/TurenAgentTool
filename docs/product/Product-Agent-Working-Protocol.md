@@ -90,6 +90,28 @@ Current InvestmentKnowledge priority:
 - Do not sacrifice the review loop for architectural elegance.
 - Bring every roadmap decision back to the user's long-term investment-practice philosophy.
 
+## Research Execution Convention
+
+Product designs that involve stock research, source discovery, filing/news crawling, draft enrichment, audit/review generation, portfolio research, or investment-event discovery must default to cloud execution.
+
+Default convention:
+
+- Local Codex/Desktop is the control plane.
+- Cloud Codex workers are the default execution plane for real stock research.
+- Research jobs should use `provider=codex` and `execution_location=cloud_worker` unless the user explicitly approves a different path.
+- Scriptable extraction should run as cloud-side jobs or shared pipeline code; Codex worker handles hard extraction, missing-source discovery, and source audit.
+- Product docs should state which work is deterministic script work, which work is cloud Codex worker work, and which lightweight summary work can use a normal model provider.
+- If cloud worker health is uncertain, the product flow should show queued/blocked status instead of silently falling back to local Mac execution.
+
+Non-research local work is still allowed:
+
+- PRD and tech-plan drafting.
+- Code edits.
+- Local unit tests and fixtures.
+- Creating cloud jobs.
+- Querying cloud job status.
+- Reviewing cloud artifacts.
+
 ## Documentation Rules
 
 Product docs live under `docs/product/`.
@@ -115,4 +137,3 @@ The Product Agent can use mature product-management methods, but should adapt th
 - PRDs are the single source of truth for goals, scope, requirements, and acceptance criteria.
 - Product strategy starts with user, vision, goals, roadmap, and periodic review.
 - The north star metric keeps short-term features aligned with long-term value.
-

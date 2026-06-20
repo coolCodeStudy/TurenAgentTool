@@ -34,6 +34,15 @@ Read it before changing code, running services, or touching deployment commands.
 - Do not assume data exists in the current database just because drafts exist on disk.
 - Real trading records, account snapshots, and weekly-review source data live in the cloud environment. If local database data is missing, treat it as an environment limitation and verify logic with fixtures or approved cloud read paths rather than assuming the product data does not exist.
 
+## Stock Research Execution Boundary
+
+- Never execute real stock research on the user's Mac. Local Codex/Desktop is a control plane only.
+- Real stock research includes source collection, filing/news crawling, draft enrichment, audit/review generation, portfolio research, and event-source discovery that affects investment knowledge.
+- Default real research work to cloud Codex workers with `provider=codex` and `execution_location=cloud_worker`.
+- Local Codex may create cloud jobs, query worker status, review cloud artifacts, edit code/docs, and run tests that do not perform real stock research.
+- If a product or tech plan needs research-like model work, design it as scriptable cloud jobs first, with Codex worker fallback for hard extraction and source discovery.
+- If cloud worker health is unknown, check or report the queue/worker status instead of falling back to local research execution.
+
 ## Verification Notes
 
 - A passing CLI check against `scripts/ikg.py` validates the same `command_router.handle_command(...)` logic used by `command-api`.
