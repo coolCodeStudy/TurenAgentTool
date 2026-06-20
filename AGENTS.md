@@ -28,6 +28,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Each task worktree has its own ignored `.venv`; create it before running Python checks if it is missing.
 - Do not move, delete, or stage untracked/dirty files from another session while creating or using a worktree.
 - Deploy only pushed commits/refs, not implicit local worktree state. Merge or cherry-pick task work into the release branch deliberately before `/ops/deploy`.
+- After a task branch is pushed, do not stop at "pushed" by default. Unless the user explicitly asks to pause, continue the release path by merging the pushed branch into the appropriate integration/release branch and deploying the resulting pushed ref. State the exact merge target and deploy path before acting, and still obey remote credential and cloud-service approval boundaries.
 
 ## Deployment And Service Boundaries
 

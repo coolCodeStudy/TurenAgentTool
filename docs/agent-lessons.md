@@ -45,6 +45,7 @@ Add only lessons that should change future behavior.
 
 - Separate local Git metadata operations from remote operations in user-facing updates. Creating branches or commits writes local `.git` state; pushing can invoke remote credentials.
 - Before any `git push` or operation likely to touch the user's credential helper/keychain, state that explicitly and wait for clear user approval.
+- After an approved task-branch push, the default next step is merge plus deploy, not stopping at the push summary. Make the merge target, deploy mode, and verification surface explicit, then continue through the approved release path unless the user pauses.
 - If the user expresses concern about Git credentials, stop remote-oriented Git work immediately and continue only with local verification until they re-authorize.
 - The preferred local GitHub token file is `/Users/lishaocheng/code/github_pat_only`; it should contain only the GitHub token. The legacy `/Users/lishaocheng/code/github_pat` file may contain other local secrets such as database passwords or command-api tokens, so use it only as a compatibility fallback and treat only its first line as the GitHub token. Do not rewrite, truncate, rename, split, clean up, or print either file unless the user explicitly asks for that exact file maintenance operation.
 - For approved GitHub pushes, disable system Git config with `GIT_CONFIG_NOSYSTEM=1` so the macOS `osxkeychain` helper is not invoked. Use a temporary credential store under `/tmp`, delete it immediately after the operation, and never print or persist the token.
