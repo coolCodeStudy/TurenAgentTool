@@ -14,9 +14,12 @@ Read it before changing code, running services, or touching deployment commands.
 
 ## Planning And Scope
 
+- For product-facing work, use the default sequence: product document, technical plan, then technical implementation.
 - When proposing a technical plan, default to delivering the whole requested scope in one pass when it is safe and reasonably bounded.
+- Prefer technical plans that can be completed in one implementation pass. If a plan cannot be completed in one pass, state the concrete reason before splitting it.
 - If a plan is split into P0/P1/P2 or separate phases, explain the reason for the split directly: dependency uncertainty, external credentials, product decision needed, high blast radius, deployment risk, or verification limits.
 - Do not use phased plans as a way to defer normal implementation work. The user expects bundled execution unless a concrete reason is stated.
+- After finishing the technical implementation, review the technical plan for missed items. Complete straightforward misses immediately; for larger or blocked misses, clearly call them out or record them as follow-up work in the appropriate durable place.
 
 ## Worktree Session Mode
 
