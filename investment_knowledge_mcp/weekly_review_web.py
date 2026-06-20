@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.command_access import classify_command
+from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
@@ -25,6 +27,9 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/command":
+            self._write_html(HTTPStatus.OK, render_command_console_html())
+            return
         if parsed.path in {"/", "/weekly-review"}:
             self._write_html(HTTPStatus.OK, render_weekly_review_workbench_html())
             return
@@ -41,11 +46,22 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 return
             self._handle_candidate_insights(parse_qs(parsed.query))
             return
+        if parsed.path == "/api/command/history":
+            if not self._authorized():
+                return
+            self._handle_command_history(parse_qs(parsed.query))
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if not self._authorized():
+            return
+        if parsed.path == "/api/command":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._handle_command_api(payload)
             return
         if parsed.path == "/api/weekly-review/save":
             payload = self._read_json_body()
@@ -112,6 +128,91 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             return
         self._write_json(HTTPStatus.OK, {"ok": True, "result": result})
 
+    def _handle_command_api(self, payload: dict[str, Any]) -> None:
+        command = str(payload.get("command") or payload.get("text") or "").strip()
+        if not command:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "command is required"})
+            return
+
+        classification = classify_command(command)
+        if not classification.get("allowed_from_web"):
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "message": "无法识别这条指令，网站指令台不会执行未知文本。",
+                    "classification": classification,
+                },
+            )
+            return
+
+        confirmed = bool(payload.get("confirmed"))
+        if classification.get("requires_confirmation") and not confirmed:
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": False,
+                    "requires_confirmation": True,
+                    "classification": classification,
+                    "preview": _command_confirmation_preview(command, classification),
+                },
+            )
+            return
+
+        sender = _first_query_value(payload, "sender") or "web"
+        try:
+            run_schema()
+            result = handle_command(command, include_artifact_path=False)
+            event = repository.record_command_event(
+                command=command,
+                ok=result.ok,
+                message=result.message,
+                sender=sender,
+                source="web-command-console",
+            )
+        except Exception as exc:
+            message = f"指令执行失败：{exc}"
+            try:
+                event = repository.record_command_event(
+                    command=command,
+                    ok=False,
+                    message=message,
+                    sender=sender,
+                    source="web-command-console",
+                )
+            except Exception:
+                event = None
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "ok": False,
+                    "message": message,
+                    "classification": classification,
+                    "command_event_id": event.get("id") if event else None,
+                },
+            )
+            return
+
+        self._write_json(
+            HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST,
+            {
+                "ok": result.ok,
+                "message": result.message,
+                "classification": classification,
+                "command_event_id": event.get("id"),
+            },
+        )
+
+    def _handle_command_history(self, query: dict[str, Any]) -> None:
+        limit_text = _first_query_value(query, "limit") or "20"
+        try:
+            run_schema()
+            rows = repository.list_command_events(source="web-command-console", limit=int(limit_text))
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
+            return
+        self._write_json(HTTPStatus.OK, {"ok": True, "items": rows})
+
     def _authorized(self) -> bool:
         token = get_config().weekly_review_web_token
         if not token:
@@ -168,6 +269,311 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+def render_command_console_html() -> str:
+    return """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InvestmentKnowledge 指令台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #20242a;
+      --muted: #657180;
+      --line: #dce2ea;
+      --accent: #1769aa;
+      --warn: #966200;
+      --danger: #9f2f2f;
+      --ok: #126a3a;
+      --chip: #eef3f8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr) 280px;
+      min-height: 100vh;
+    }
+    .sidebar, .rail {
+      background: #fff;
+      padding: 22px 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+    .sidebar { border-right: 1px solid var(--line); }
+    .rail { border-left: 1px solid var(--line); }
+    .brand { font-size: 18px; font-weight: 700; margin: 0 0 20px; }
+    .nav { display: grid; gap: 4px; }
+    .nav a {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 9px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .nav a.active { color: var(--accent); background: #e8f1fa; font-weight: 650; }
+    main { padding: 22px 24px 42px; min-width: 0; }
+    h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: 0; }
+    h2 { font-size: 16px; margin: 0 0 10px; letter-spacing: 0; }
+    .subtitle { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    textarea, input, button {
+      font: inherit;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea {
+      width: 100%;
+      min-height: 112px;
+      resize: vertical;
+      padding: 12px;
+      line-height: 1.5;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 14px;
+    }
+    input { height: 34px; padding: 0 8px; width: 100%; }
+    button {
+      height: 34px;
+      padding: 0 12px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    button.danger { border-color: var(--danger); color: var(--danger); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .notice {
+      border-left: 3px solid var(--warn);
+      background: #fff8e8;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #6b4b00;
+      margin-bottom: 14px;
+    }
+    .notice.hidden { display: none; }
+    .status-ok { color: var(--ok); }
+    .status-bad { color: var(--danger); }
+    .result {
+      min-height: 320px;
+      max-height: 62vh;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      background: #fbfcfe;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+    }
+    .template-list, .history-list { display: grid; gap: 8px; }
+    .template, .history {
+      border: 1px solid var(--line);
+      background: var(--chip);
+      border-radius: 6px;
+      padding: 9px;
+      font-size: 13px;
+      text-align: left;
+      height: auto;
+      line-height: 1.35;
+      font-weight: 500;
+    }
+    .history { background: #fff; cursor: pointer; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .rail-section { margin-bottom: 18px; }
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 190px minmax(0, 1fr); }
+      .rail { display: none; }
+    }
+    @media (max-width: 760px) {
+      .shell { display: block; }
+      .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      main { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <p class="brand">InvestmentKnowledge</p>
+      <nav class="nav" aria-label="主导航">
+        <a href="/weekly-review">本周复盘</a>
+        <a class="active" href="/command">指令台</a>
+      </nav>
+    </aside>
+    <main>
+      <h1>指令台</h1>
+      <p class="subtitle">运行和钉钉、CLI 同一套 InvestmentKnowledge 指令。写入类指令会先要求确认。</p>
+      <div id="message" class="notice">输入指令，或从右侧选择模板。</div>
+      <section class="panel">
+        <h2>输入指令</h2>
+        <textarea id="command" spellcheck="false" placeholder="例如：决策 000660 KR"></textarea>
+        <div class="actions">
+          <button id="run" class="primary">运行</button>
+          <button id="clear">清空</button>
+          <input id="api-token" type="password" placeholder="访问令牌" aria-label="访问令牌">
+        </div>
+      </section>
+      <section id="confirm-panel" class="notice hidden">
+        <div id="confirm-text"></div>
+        <div class="actions">
+          <button id="confirm-run" class="primary">确认执行</button>
+          <button id="cancel-confirm">取消</button>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>执行结果</h2>
+        <div id="result" class="result">尚未执行。</div>
+      </section>
+    </main>
+    <aside class="rail">
+      <div class="rail-section">
+        <h2>常用指令</h2>
+        <div id="templates" class="template-list"></div>
+      </div>
+      <div class="rail-section">
+        <h2>最近执行</h2>
+        <div id="history" class="history-list"><div class="meta">暂无历史。</div></div>
+      </div>
+    </aside>
+  </div>
+  <script>
+    const templates = [
+      "决策 000660 KR",
+      "决策详情 000660 KR",
+      "查看决策历史 000660 KR",
+      "刷新决策数据 000660 KR",
+      "查看决策偏好",
+      "持仓分析",
+      "本周复盘",
+      "查看候选心得",
+      "系统状态"
+    ];
+    let pendingCommand = null;
+    const $ = (selector) => document.querySelector(selector);
+    $("#api-token").value = localStorage.getItem("weekly_review_web_token") || "";
+    $("#run").addEventListener("click", () => runCommand(false));
+    $("#confirm-run").addEventListener("click", () => runCommand(true));
+    $("#cancel-confirm").addEventListener("click", clearConfirmation);
+    $("#clear").addEventListener("click", () => { $("#command").value = ""; $("#result").textContent = "尚未执行。"; clearConfirmation(); });
+    $("#command").addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runCommand(false);
+    });
+
+    renderTemplates();
+    loadHistory();
+
+    async function runCommand(confirmed) {
+      const command = (pendingCommand && confirmed) ? pendingCommand : $("#command").value.trim();
+      if (!command) {
+        setMessage("请输入指令。", false);
+        return;
+      }
+      setBusy(true);
+      clearConfirmation();
+      setMessage(confirmed ? "正在执行已确认的写入类指令..." : "正在执行指令...", true);
+      try {
+        const response = await fetch("/api/command", {
+          method: "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ command, confirmed, sender: "web" })
+        });
+        const data = await response.json();
+        if (data.requires_confirmation) {
+          pendingCommand = command;
+          $("#confirm-text").textContent = data.preview || "这条指令需要确认后才会执行。";
+          $("#confirm-panel").classList.remove("hidden");
+          setMessage("需要确认。", false);
+          return;
+        }
+        persistToken();
+        $("#result").textContent = data.message || data.error || "无输出。";
+        setMessage(`${data.ok ? "执行成功" : "执行失败"}${data.command_event_id ? "，事件 #" + data.command_event_id : ""}`, data.ok);
+        await loadHistory();
+      } catch (error) {
+        $("#result").textContent = error.message;
+        setMessage("执行失败。", false);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const response = await fetch("/api/command/history?limit=12", { headers: authHeaders() });
+        const data = await response.json();
+        if (!data.ok) return;
+        const items = data.items || [];
+        $("#history").innerHTML = items.length ? items.map((item) => `
+          <button class="history" title="${escapeAttr(item.message || "")}" onclick="useTemplate('${escapeAttr(item.command || "")}')">
+            ${escapeHtml(item.command || "")}
+            <div class="meta">${item.ok ? "OK" : "Failed"} · ${escapeHtml(item.created_at || "")}</div>
+          </button>
+        `).join("") : `<div class="meta">暂无历史。</div>`;
+      } catch (error) {
+        $("#history").innerHTML = `<div class="meta">历史读取失败。</div>`;
+      }
+    }
+
+    function renderTemplates() {
+      $("#templates").innerHTML = templates.map((command) => `
+        <button class="template" onclick="useTemplate('${escapeAttr(command)}')">${escapeHtml(command)}</button>
+      `).join("");
+    }
+    function useTemplate(command) {
+      $("#command").value = command;
+      $("#command").focus();
+      clearConfirmation();
+    }
+    function clearConfirmation() {
+      pendingCommand = null;
+      $("#confirm-panel").classList.add("hidden");
+      $("#confirm-text").textContent = "";
+    }
+    function setBusy(busy) {
+      $("#run").disabled = busy;
+      $("#confirm-run").disabled = busy;
+    }
+    function setMessage(text, ok) {
+      $("#message").textContent = text;
+      $("#message").className = "notice " + (ok ? "status-ok" : "");
+    }
+    function authHeaders() {
+      const token = $("#api-token").value.trim();
+      return token ? { "Authorization": `Bearer ${token}` } : {};
+    }
+    function persistToken() {
+      const token = $("#api-token").value.trim();
+      if (token) localStorage.setItem("weekly_review_web_token", token);
+    }
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+    }
+    function escapeAttr(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }
+  </script>
+</body>
+</html>"""
 
 
 def render_weekly_review_workbench_html() -> str:
@@ -415,6 +821,7 @@ def render_weekly_review_workbench_html() -> str:
       <p class="brand">InvestmentKnowledge</p>
       <nav class="nav" aria-label="主导航">
         <a class="active" href="/weekly-review">本周复盘</a>
+        <a href="/command">指令台</a>
         <a href="#holdings">当前持仓</a>
         <a href="#markdown">交易复盘</a>
         <a href="#candidates">心得确认</a>
@@ -648,6 +1055,19 @@ def _resolve_request_range(payload: dict[str, Any]) -> tuple[date, date]:
             start, end = end, start
         return start, end
     return _default_week_range()
+
+
+def _command_confirmation_preview(command: str, classification: dict[str, Any]) -> str:
+    labels = {
+        "decision_write": "这条决策指令会保存 Decision Ticket 或修改待确认决策偏好。",
+        "candidate_write": "这条指令会修改候选心得状态。",
+        "research_write": "这条指令会修改研究任务队列。",
+        "maintenance": "这条维护指令可能影响外部服务或登录状态。",
+        "coding_task": "这条指令会修改开发任务队列。",
+    }
+    category = str(classification.get("category") or "write")
+    reason = labels.get(category, classification.get("reason") or "这条指令会写入系统状态。")
+    return f"{reason}\n\n确认执行：{command}"
 
 
 def _default_week_range() -> tuple[date, date]:

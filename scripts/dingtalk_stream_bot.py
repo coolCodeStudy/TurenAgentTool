@@ -13,14 +13,8 @@ import certifi
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from investment_knowledge_mcp.command_router import (
-    handle_command,
-    is_candidate_write_command,
-    is_coding_task_command,
-    is_maintenance_command,
-    is_query_command,
-    is_research_write_command,
-)
+from investment_knowledge_mcp.command_access import classify_command
+from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 
@@ -72,30 +66,26 @@ def main() -> None:
                 self.reply_text("目前只支持文本消息，例如：怎么看海力士", incoming_message)
                 return AckMessage.STATUS_OK, "OK"
 
-            is_query = is_query_command(command)
-            is_candidate_write = is_candidate_write_command(command)
-            is_coding_task = is_coding_task_command(command)
-            is_maintenance = is_maintenance_command(command)
-            is_research_write = is_research_write_command(command)
+            classification = classify_command(command)
+            category = str(classification.get("category") or "unknown")
+            is_query = category == "query"
+            is_write = bool(classification.get("requires_sender_allowlist"))
             sender_can_write = _sender_can_write(sender, config.dingtalk_stream_write_allowed_senders)
-            if not args.allow_write and not is_query and not (
-                (is_candidate_write or is_coding_task or is_maintenance or is_research_write) and sender_can_write
-            ):
+            if category == "unknown" or (not args.allow_write and not is_query and not (is_write and sender_can_write)):
                 logger.warning(
-                    "blocked DingTalk non-query command: candidate_write=%s coding_task=%s maintenance=%s research_write=%s sender=%s",
-                    is_candidate_write,
-                    is_coding_task,
-                    is_maintenance,
-                    is_research_write,
+                    "blocked DingTalk command: category=%s allow_write=%s sender_can_write=%s sender=%s",
+                    category,
+                    args.allow_write,
+                    sender_can_write,
                     _format_sender_for_log(sender),
                 )
                 self.reply_text(
-                    "Stream 入口当前只开放查询类指令；候选心得、开发任务、富途维护和持仓图谱补全只允许写入白名单本人提交。可用：怎么看海力士、研究草稿 09988 HK、全持仓研究草稿、持仓分析、交易记录 2026-05、补全交易记录 2026-05、富途状态、worker状态、查看开发任务、查看候选心得、创建开发任务、帮助。",
+                    "Stream 入口当前只开放查询类指令；决策快照、候选心得、开发任务、富途维护和研究队列写入只允许白名单本人提交。可用：怎么看海力士、决策详情 000660 KR、查看决策历史 000660 KR、持仓分析、本周复盘、富途状态、worker状态、查看候选心得、帮助。",
                     incoming_message,
                 )
                 return AckMessage.STATUS_OK, "OK"
 
-            if args.allow_write and not is_query and not sender_can_write:
+            if args.allow_write and is_write and not sender_can_write:
                 logger.warning(
                     "blocked DingTalk write command from unauthorized sender=%s",
                     _format_sender_for_log(sender),

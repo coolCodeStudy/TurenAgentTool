@@ -22,6 +22,7 @@ from investment_knowledge_mcp.command_router import (
     is_query_command,
     is_research_write_command,
 )
+from investment_knowledge_mcp.command_access import classify_command
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
@@ -64,7 +65,11 @@ from investment_knowledge_mcp.repository import (
     upsert_trade_records,
 )
 from investment_knowledge_mcp.weekly_review import build_weekly_review, build_weekly_review_context, render_weekly_review_markdown
-from investment_knowledge_mcp.weekly_review_web import _resolve_request_range, render_weekly_review_workbench_html
+from investment_knowledge_mcp.weekly_review_web import (
+    _resolve_request_range,
+    render_command_console_html,
+    render_weekly_review_workbench_html,
+)
 
 SMOKE_SYMBOL = "SMOKE001"
 SMOKE_MARKET = "TEST"
@@ -474,6 +479,9 @@ def main() -> None:
         assert is_query_command(f"查看决策历史 {SMOKE_SYMBOL} {SMOKE_MARKET}")
         assert is_decision_write_command(f"决策 {SMOKE_SYMBOL} {SMOKE_MARKET}")
         assert is_decision_write_command(SMOKE_DECISION_PROFILE_COMMAND)
+        assert classify_command(f"决策 {SMOKE_SYMBOL} {SMOKE_MARKET}")["category"] == "decision_write"
+        assert classify_command(f"决策详情 {SMOKE_SYMBOL} {SMOKE_MARKET}")["category"] == "query"
+        assert classify_command(SMOKE_ROUTER_NATURAL_MEMORY)["category"] == "unknown"
         assert is_query_command("全持仓研究草稿")
         assert is_query_command("列出研究任务")
         assert is_research_write_command("持仓图谱补全")
@@ -729,10 +737,16 @@ def main() -> None:
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_command_result.message
         assert "已保存周复盘" in weekly_command_result.message
         weekly_web_html = render_weekly_review_workbench_html()
+        command_console_html = render_command_console_html()
         assert "InvestmentKnowledge" in weekly_web_html
         assert "本周复盘" in weekly_web_html
+        assert "/command" in weekly_web_html
         assert "/api/weekly-review/save" in weekly_web_html
         assert "data-slot=\"holdings\"" in weekly_web_html
+        assert "指令台" in command_console_html
+        assert "/api/command" in command_console_html
+        assert "决策 000660 KR" in command_console_html
+        assert "确认执行" in command_console_html
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end

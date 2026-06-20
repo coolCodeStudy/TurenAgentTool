@@ -468,6 +468,22 @@ def record_command_event(
     return to_jsonable(row)
 
 
+def list_command_events(source: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 100))
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, source, sender, command, ok, message, created_at
+            FROM command_events
+            WHERE (%s::text IS NULL OR source = %s)
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (source, source, limit),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
 def add_task_event(
     task_type: str,
     event_type: str,
