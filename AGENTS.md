@@ -33,6 +33,8 @@ Read it before changing code, running services, or touching deployment commands.
 ## Deployment And Service Boundaries
 
 - For bugs observed on a cloud-served product surface, local verification is not the end of the task. After tests pass, proactively move to the release step: state the exact git push/deploy action needed, ask for approval when remote credentials or cloud services are involved, and continue through approved deployment/verification instead of stopping at a local summary.
+- When the user asks for a browser link to test or accept a product feature, assume they mean the cloud-served product URL. Do not offer `localhost`, `127.0.0.1`, or file URLs as the acceptance link unless the user explicitly asks for a local-only check. Local pages are for agent self-verification only; user-facing acceptance should use the deployed cloud surface or clearly state that the feature is not deployed yet.
+- After a GitHub push is explicitly requested or approved, treat remote deployment through the standard Ops API path as pre-approved for that pushed ref unless the user says to pause. State the exact ref, deploy mode, and verification URL, then continue through deploy status checks and cloud verification.
 - Do not treat "verify the change" as permission to start the whole prod-style stack.
 - For local Task validation, prefer:
   - `.venv/bin/python scripts/smoke_test.py`
