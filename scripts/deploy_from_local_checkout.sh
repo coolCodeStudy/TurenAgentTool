@@ -16,6 +16,10 @@ if [ -n "$DEPLOY_EVENT_ID" ]; then
   DEPLOY_EVENT_MANAGED_EXTERNALLY=true
 fi
 
+if [ "$APP_DIR" = "$APP_ROOT" ]; then
+  APP_DIR="$APP_ROOT/current"
+fi
+
 if [ ! -f "$SOURCE_DIR/docker-compose.prod.yml" ]; then
   echo "SOURCE_DIR does not look like the InvestmentKnowledge repo: $SOURCE_DIR" >&2
   exit 1
