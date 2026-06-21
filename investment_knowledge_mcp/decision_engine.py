@@ -4,6 +4,7 @@ from typing import Any
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.decision_context import build_decision_context_pack
+from investment_knowledge_mcp.decision_external_data import refresh_external_decision_observations
 from investment_knowledge_mcp.decision_repository import (
     add_decision_evidence_links,
     add_inference_item,
@@ -24,6 +25,10 @@ from investment_knowledge_mcp.decision_synthesis import generate_decision_synthe
 
 def decide_stock(symbol: str, market: str, mode: str = "focused", save: bool = True) -> dict[str, Any]:
     context_pack = build_decision_context_pack(symbol=symbol, market=market, mode=mode)
+    refresh_result = _refresh_context_inputs(context_pack=context_pack, mode=mode)
+    if refresh_result.get("refreshed"):
+        context_pack = build_decision_context_pack(symbol=symbol, market=market, mode=mode)
+    context_pack["external_refresh_result"] = refresh_result
     ticket = build_deterministic_ticket(context_pack)
     synthesis = generate_decision_synthesis(context_pack, ticket)
     ticket = merge_synthesis(ticket, synthesis)
@@ -61,6 +66,9 @@ def list_decision_history(symbol: str, market: str, limit: int = 20) -> list[dic
 
 def refresh_decision_data(symbol: str, market: str, mode: str = "focused") -> dict[str, Any]:
     context_pack = build_decision_context_pack(symbol=symbol, market=market, mode=mode)
+    refresh_result = _refresh_context_inputs(context_pack=context_pack, mode=mode)
+    if refresh_result.get("refreshed"):
+        context_pack = build_decision_context_pack(symbol=symbol, market=market, mode=mode)
     return {
         "symbol": context_pack["stock"]["symbol"],
         "market": context_pack["stock"]["market"],
@@ -68,6 +76,7 @@ def refresh_decision_data(symbol: str, market: str, mode: str = "focused") -> di
         "input_context_hash": context_pack.get("input_context_hash"),
         "freshness_report": context_pack.get("freshness_report"),
         "open_questions": context_pack.get("open_questions") or [],
+        "external_refresh_result": refresh_result,
     }
 
 
@@ -167,3 +176,20 @@ def _persist_candidate_proposals(
         )
         rows.append(row)
     return rows
+
+
+def _refresh_context_inputs(context_pack: dict[str, Any], mode: str) -> dict[str, Any]:
+    try:
+        return refresh_external_decision_observations(stock=context_pack["stock"], mode=mode)
+    except Exception as exc:
+        return {
+            "mode": mode,
+            "refreshed": [],
+            "diagnostics": [
+                {
+                    "provider": "external_adapter_ladder",
+                    "ok": False,
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        }

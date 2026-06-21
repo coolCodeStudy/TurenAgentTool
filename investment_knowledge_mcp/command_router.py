@@ -27,7 +27,7 @@ from investment_knowledge_mcp.decision_engine import (
     refresh_decision_data,
     reject_decision_profile_change,
 )
-from investment_knowledge_mcp.decision_data_probe import probe_futu_decision_data, render_probe_result
+from investment_knowledge_mcp.decision_data_probe import probe_decision_data_coverage, render_probe_result
 from investment_knowledge_mcp.decision_repository import DEFAULT_PROFILE
 from investment_knowledge_mcp.decision_rendering import (
     render_decision_detail,
@@ -982,19 +982,32 @@ def _handle_refresh_decision_data(symbol: str, market: str) -> CommandResult:
         return CommandResult(ok=False, message=str(exc))
     freshness = result.get("freshness_report") or {}
     questions = result.get("open_questions") or []
+    refresh = result.get("external_refresh_result") or {}
+    refreshed = refresh.get("refreshed") or []
+    diagnostics = refresh.get("diagnostics") or []
     lines = [
         f"决策数据已检查：{result.get('symbol')} {result.get('market')}",
         f"- Context hash: {result.get('input_context_hash') or 'n/a'}",
         f"- Freshness: {freshness.get('overall_status') or 'unknown'}",
+        f"- Refreshed observations: {len(refreshed)}",
         f"- Open questions: {len(questions)}",
     ]
+    for row in refreshed[:8]:
+        lines.append(f"  - refreshed {row.get('observation_type')} #{row.get('id')}")
+    if diagnostics:
+        lines.append("- Provider diagnostics:")
+        for item in diagnostics[:8]:
+            lines.append(
+                f"  - {item.get('provider')} {item.get('provider_symbol') or ''}: "
+                f"{'ok' if item.get('ok') else 'failed'} - {item.get('message')}"
+            )
     for question in questions[:8]:
         lines.append(f"  - {question}")
     return CommandResult(ok=True, message="\n".join(lines))
 
 
 def _handle_decision_data_probe(symbol: str, market: str) -> CommandResult:
-    payload = probe_futu_decision_data(symbol=symbol, market=market)
+    payload = probe_decision_data_coverage(symbol=symbol, market=market)
     return CommandResult(ok=bool(payload.get("ok")), message=render_probe_result(payload))
 
 

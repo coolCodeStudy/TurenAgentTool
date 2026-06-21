@@ -82,6 +82,14 @@ def render_decision_detail(ticket: dict[str, Any]) -> str:
             lines.append(f"- {item.get('component')}: {item.get('status')} - {item.get('reason')}")
     else:
         lines.append("- None.")
+    diagnostics = ((normalized.get("context_pack") or {}).get("external_refresh_result") or {}).get("diagnostics") or []
+    if diagnostics:
+        lines.extend(["", "Provider diagnostics:"])
+        for item in diagnostics[:20]:
+            lines.append(
+                f"- {item.get('provider')} {item.get('provider_symbol') or ''}: "
+                f"{'ok' if item.get('ok') else 'failed'} - {item.get('message')}"
+            )
     links = normalized.get("evidence_links") or []
     if links:
         lines.extend(["", "Evidence links:"])
@@ -157,6 +165,7 @@ def _normalize_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
         "evidence_summary": ticket.get("evidence_summary_json") or {},
         "stale_components": ticket.get("stale_components_json") or [],
         "unresolved_questions": ticket.get("unresolved_questions_json") or [],
+        "context_pack": ticket.get("context_pack_json") or {},
         "evidence_links": ticket.get("evidence_links") or [],
     }
 

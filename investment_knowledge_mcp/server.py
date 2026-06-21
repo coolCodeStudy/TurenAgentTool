@@ -27,6 +27,7 @@ from investment_knowledge_mcp.decision_engine import (
     refresh_decision_data as refresh_stock_decision_context,
     reject_decision_profile_change as reject_profile_change,
 )
+from investment_knowledge_mcp.decision_data_probe import probe_decision_data_coverage, render_probe_result
 from investment_knowledge_mcp.decision_rendering import render_decision_detail, render_decision_profile, render_decision_ticket
 from investment_knowledge_mcp.display import build_stock_decision_card
 from investment_knowledge_mcp.futu_provider import get_futu_positions
@@ -103,6 +104,15 @@ def list_stock_decision_history(symbol: str, market: str, limit: int = 20) -> li
 def refresh_stock_decision_data(symbol: str, market: str, mode: str = "focused") -> dict[str, Any]:
     """Build the current decision context and freshness report without saving a ticket."""
     return refresh_stock_decision_context(symbol=symbol, market=market, mode=mode)
+
+
+@mcp.tool()
+def probe_stock_decision_data(symbol: str, market: str, render: bool = True) -> dict[str, Any]:
+    """Probe read-only provider coverage for a stock without saving observations."""
+    payload = probe_decision_data_coverage(symbol=symbol, market=market)
+    if render:
+        return {"ok": bool(payload.get("ok")), "message": render_probe_result(payload), "data": payload}
+    return {"ok": bool(payload.get("ok")), "data": payload}
 
 
 @mcp.tool()

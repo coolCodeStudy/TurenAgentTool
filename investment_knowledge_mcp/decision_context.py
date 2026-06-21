@@ -223,14 +223,14 @@ def build_freshness_report(
             "critical": True,
         }
     )
-    for pack_name in ("technical_pack", "valuation_pack", "chip_event_pack", "sector_pack", "market_pack"):
+    for pack_name in ("quote_pack", "technical_pack", "valuation_pack", "chip_event_pack", "sector_pack", "market_pack"):
         pack = observation_packs.get(pack_name) or {}
         components.append(
             {
                 "component": pack_name,
                 "status": pack.get("status", "missing"),
                 "reason": pack.get("observation_type") or "no stored observation",
-                "critical": pack_name in {"technical_pack", "valuation_pack"},
+                "critical": pack_name in {"quote_pack", "technical_pack", "valuation_pack"},
             }
         )
     source_count = len(graph_context.get("sources") or [])

@@ -361,10 +361,18 @@ def main() -> None:
         router_natural_memory_result = handle_command(SMOKE_ROUTER_NATURAL_MEMORY)
         router_trade_review_result = handle_command("帮我看看这个月到底赚在哪亏在哪")
         router_candidates_result = handle_command("查看候选心得")
-        decision_result = handle_command(f"决策 {SMOKE_SYMBOL} {SMOKE_MARKET}")
-        decision_detail_result = handle_command(f"决策详情 {SMOKE_SYMBOL} {SMOKE_MARKET}")
-        decision_history_result = handle_command(f"查看决策历史 {SMOKE_SYMBOL} {SMOKE_MARKET}")
-        decision_refresh_result = handle_command(f"刷新决策数据 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        old_external_refresh = os.environ.get("DECISION_EXTERNAL_REFRESH_ENABLED")
+        os.environ["DECISION_EXTERNAL_REFRESH_ENABLED"] = "0"
+        try:
+            decision_result = handle_command(f"决策 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+            decision_detail_result = handle_command(f"决策详情 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+            decision_history_result = handle_command(f"查看决策历史 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+            decision_refresh_result = handle_command(f"刷新决策数据 {SMOKE_SYMBOL} {SMOKE_MARKET}")
+        finally:
+            if old_external_refresh is None:
+                os.environ.pop("DECISION_EXTERNAL_REFRESH_ENABLED", None)
+            else:
+                os.environ["DECISION_EXTERNAL_REFRESH_ENABLED"] = old_external_refresh
         decision_profile_result = handle_command("查看决策偏好")
         decision_profile_change_result = handle_command(SMOKE_DECISION_PROFILE_COMMAND)
         profile_change_id = decision_profile_change_result.message.split("#", 1)[1].split("：", 1)[0]

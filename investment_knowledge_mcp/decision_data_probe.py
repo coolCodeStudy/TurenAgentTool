@@ -6,6 +6,7 @@ import json
 from typing import Any, Callable
 
 from investment_knowledge_mcp.config import AppConfig, get_config
+from investment_knowledge_mcp.decision_external_data import probe_external_decision_data, to_probe_result_dict
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,21 @@ def probe_futu_decision_data(symbol: str, market: str, config: AppConfig | None 
         "ok": any(item.ok for item in results),
         "provider": "futu",
         "opend": {"host": config.futu_opend_host, "port": config.futu_opend_port},
+        "results": results,
+    }
+
+
+def probe_decision_data_coverage(symbol: str, market: str, config: AppConfig | None = None) -> dict[str, Any]:
+    futu_payload = probe_futu_decision_data(symbol=symbol, market=market, config=config)
+    external_payload = probe_external_decision_data(symbol=symbol, market=market)
+    results: list[Any] = []
+    results.extend(futu_payload.get("results") or [])
+    results.extend(to_probe_result_dict(item) for item in external_payload.get("results") or [])
+    return {
+        "code": f"{market.strip().upper()}.{symbol.strip().upper()}",
+        "ok": bool(futu_payload.get("ok") or external_payload.get("ok")),
+        "provider": "decision_data_provider_ladder",
+        "opend": futu_payload.get("opend"),
         "results": results,
     }
 
