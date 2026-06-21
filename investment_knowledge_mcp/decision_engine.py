@@ -183,7 +183,14 @@ def _refresh_context_inputs(context_pack: dict[str, Any], mode: str) -> dict[str
         return {
             "mode": mode,
             "refreshed": [],
-            "diagnostics": [{"message": "external decision-data packs are fresh enough for this mode"}],
+            "diagnostics": [
+                {
+                    "provider": "external_adapter_ladder",
+                    "provider_symbol": context_pack.get("stock", {}).get("symbol"),
+                    "ok": True,
+                    "message": "external decision-data packs are fresh enough for this mode",
+                }
+            ],
         }
     try:
         return refresh_external_decision_observations(stock=context_pack["stock"], mode=mode)
