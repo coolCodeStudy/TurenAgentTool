@@ -42,6 +42,7 @@ Add only lessons that should change future behavior.
 - If `/ops/deploy` fails before fetch/checkout while recording `deploy_events`, treat that as deployment-control-plane debt, not a business deploy failure. Capture the failing stage, preserve the user-requested release path, and record a follow-up to make Ops API return actionable tracebacks or degrade deploy event recording.
 - Keep host and container database profiles separate on ECS: host/systemd tools may use `127.0.0.1:55432`, while Docker compose services must use `postgres:5432`. Do not let a host `.env` leak into container runtime configuration.
 - GitHub Actions quick deploy currently does not rebuild or restart every product surface. Before using it for a cloud-served Web page, confirm that the workflow actually refreshes that service; otherwise use full deploy or fix the quick deploy scope.
+- For MCP-backed `.py`, `scripts/*.py`, or `db/schema.sql` changes with no dependency/image/compose changes, quick deploy is usually the right first release path because production mounts synced source and recreates MCP. After quick deploy, allow a bounded MCP restart window and poll health before escalating to full deploy; short `connection refused` during recreate is not by itself evidence that full deploy is required.
 - GitHub Actions full deploy is multi-minute, not quick-deploy speed. In the 2026-06-16 weekly-review-web release it took about 6 minutes from dispatch to success; after triggering it, poll at a calm interval and verify only after completion.
 
 ## Daily Records Retired
