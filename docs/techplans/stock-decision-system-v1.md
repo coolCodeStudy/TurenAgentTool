@@ -484,6 +484,53 @@ Initial V1 source order:
 
 Do not make every `决策` command perform broad web search. If source coverage is weak, save unresolved questions and optionally queue a research job.
 
+### External Data Source Fallback Plan
+
+The cloud probe for `KR.000660` showed that the current Futu OpenD quote APIs reject Korean-stock codes such as `KR.000660`, `KS.000660`, and `KRX.000660` with a code-format error, while the same probe succeeds for supported markets such as `US.AAPL`. Therefore, Futu should remain the read-only source for portfolio/account/trade data, but it must not be the primary V1 source for Korean stock quote, technical, valuation, or analyst data.
+
+For Korean stocks, V1 should use an adapter ladder instead of a single provider:
+
+1. `internal_graph`: durable facts, source-backed research, sector links, user insights, and saved observations.
+2. `futu_portfolio`: holdings, cash, trade records, and account state only.
+3. `naver_finance_kr`: first KR market-data fallback for `latest_quote_snapshot`, `valuation_snapshot`, financial summary, peer comparison, foreign/institution flow, and compact company overview. Naver Finance exposes a usable SK hynix page for code `000660`, including KRX-close quote fields, price/volume, company overview, financial table, valuation metrics, peer comparison, and foreign ownership/trading data. Because this is page extraction rather than a stable contract API, the adapter must be low-QPS, cached, parser-tested, attributed, and fail closed.
+4. `yahoo_finance`: auxiliary source for historical OHLCV, technical indicators, and market-relative strength when available. Map `KR.000660` to Yahoo ticker `000660.KS`; use `^KS11` for KOSPI market-relative strength and a configured semiconductor basket for sector-relative strength. Direct Yahoo chart probing can hit `Too Many Requests`, so this adapter must use backoff, caching, and freshness reuse; it should not be the only critical source for a high-conviction ticket.
+5. `krx_data_marketplace`: preferred official-source path for later hardening. KRX Data Marketplace lists individual stock price trend, stock basic information, investor trading, short-selling, index data, and PER/PBR/dividend-yield screens. It should be used when the integration contract is stable enough, but V1 should not block on reverse-engineering CSV/OTP flows.
+6. `company_ir_and_newsroom`: official SK hynix IR earnings releases, ownership structure, and newsroom releases for `chip_event_snapshot` and major company event evidence.
+7. `investing_or_other_web`: manual research fallback only. Do not make it a default automated adapter in V1 unless a stable, licensed, and testable data access path is confirmed.
+
+Provider selection should be explicit in every observation:
+
+```json
+{
+  "provider": "naver_finance_kr",
+  "provider_symbol": "000660",
+  "source_url": "https://finance.naver.com/item/main.naver?code=000660",
+  "retrieved_at": "2026-06-22T00:00:00Z",
+  "coverage": ["latest_quote_snapshot", "valuation_snapshot", "peer_comparison"],
+  "license_status": "page_extraction_review_required",
+  "quality": "usable_for_v1_with_attribution"
+}
+```
+
+Required V1 behavior:
+
+- Add a `market_symbol_map` resolver that can map canonical internal symbols to provider symbols, for example `KR.000660 -> naver:000660` and `KR.000660 -> yahoo:000660.KS`.
+- Add a source-probe command or script that reports provider coverage per stock before an adapter is trusted for scoring.
+- Store provider diagnostics in observation `value_json` or a dedicated adapter diagnostics field so the Decision Ticket can explain why a pack is missing or stale.
+- Never silently substitute a US ADR, OTC ticker, or similarly named company for a Korean listing.
+- If all external adapters fail, continue producing a Decision Ticket, but cap confidence and show the missing packs.
+
+Initial source ownership by pack:
+
+| Pack | Primary V1 source | Fallback | Notes |
+| --- | --- | --- | --- |
+| `latest_quote_snapshot` | `naver_finance_kr` | `yahoo_finance`, stored observation | Futu is not expected to support KR quote codes in the current environment. |
+| `technical_snapshot` | `yahoo_finance` OHLCV | Naver daily price table, stored observation | Compute locally from OHLCV; do not rely on provider prose. |
+| `valuation_snapshot` | `naver_finance_kr` financial and valuation table | company IR, research job artifact | Separate historical actuals, consensus estimates, and provider-derived ratios. |
+| `market_relative_strength` | `yahoo_finance` `^KS11` or KRX index data | stored observation | Compare stock return to KOSPI over configured windows. |
+| `sector_relative_strength` | configured peer basket via Yahoo or Naver peer table | stored observation | V1 basket can start with Samsung Electronics, Micron, and semiconductor ETFs/indices where available. |
+| `chip_event_snapshot` | SK hynix IR/newsroom, saved research artifact | curated web research job | This remains semi-structured and should be evidence-linked, not scraped as a score directly. |
+
 ## Context Pack Budget
 
 The model synthesis prompt should be bounded:
@@ -667,6 +714,28 @@ Acceptance:
 - Missing portfolio/profile/observation inputs are explicit, not silent.
 - Context hash is stable for unchanged inputs.
 
+### Slice 2A: External Data Probes and KR Fallback Adapters
+
+Reason for slice:
+
+- The first end-to-end target is `000660 KR`, and the cloud Futu probe proved that Futu quote APIs do not accept the Korean listing code in the current environment. The decision system cannot improve confidence for this target without a market-data adapter ladder.
+
+Work:
+
+- Add `market_symbol_map` utilities for provider-specific symbols.
+- Extend `decision_data_probe` into a provider coverage probe that can test Futu, Naver Finance, Yahoo Finance, KRX availability, and company IR reachability without writing observations.
+- Add `naver_finance_kr` read-only adapter for SK hynix quote, financial table, valuation metrics, peer comparison, and foreign/institution flow.
+- Add `yahoo_finance` read-only adapter for OHLCV-driven technical snapshots and market/sector relative-strength inputs, with cache and backoff handling for rate limits.
+- Add observation writers that persist successful adapter results as `stock_observations` with provider metadata and stale-after timestamps.
+- Keep KRX Data Marketplace and Investing.com as non-blocking research items unless a stable API or licensed access path is confirmed.
+
+Acceptance:
+
+- `decision_data_probe 000660 KR` reports Futu as unsupported for KR quotes and reports Naver/Yahoo/KRX/company-IR coverage separately.
+- `refresh_decision_data("000660", "KR", mode="focused")` can produce at least `latest_quote_snapshot`, `valuation_snapshot`, `technical_snapshot`, and `market_relative_strength` from non-Futu sources when network access is available.
+- Adapter failures are rendered as provider diagnostics and do not crash `决策 000660 KR`.
+- No provider result is used without storing `provider`, `provider_symbol`, `source_url`, `retrieved_at`, and `stale_after`.
+
 ### Slice 3: Deterministic Scoring and Gates
 
 Reason for slice:
@@ -753,9 +822,11 @@ Use `000660 KR`.
 Expected demonstration:
 
 - Evidence card comes from graph context.
-- Portfolio pack is present or explicitly stale/missing.
+- Portfolio pack is present or explicitly stale/missing; Futu is used only for account/holding inputs.
+- KR market-data packs come from the adapter ladder: Naver/Yahoo/KRX/company IR before falling back to missing or stale stored observations.
 - User constraint profile is present or confidence is capped.
 - HBM and memory-cycle context appears through stock/sector/user insights.
+- Provider diagnostics explain any missing or stale quote, valuation, technical, market-relative, sector-relative, or chip-event pack.
 - Composite score and gates are produced.
 - Position range is range-based.
 - Decision snapshot is saved.
@@ -806,12 +877,13 @@ Do not start command-api, schedulers, dingtalk-api, or compose for normal local 
 | Too many inputs make the command slow. | Use quick/focused/deep modes and compact context packs. |
 | Inferred user preferences overwrite confirmed preferences. | Store inferred lessons as candidate insights or pending profile changes only. |
 | Source licensing or availability varies by market. | Adapter-based source ladder; missing data is disclosed instead of fabricated. |
+| Web-derived KR market data becomes brittle or rate-limited. | Cache observations, render provider diagnostics, keep KRX and company IR as hardening paths, and cap confidence when live refresh fails. |
 
 ## V1 Engineering Defaults
 
 These defaults remove ambiguity for the first implementation. Revisit them only after the first end-to-end scenario works.
 
 - `决策详情 SYMBOL MARKET` should default to the latest saved decision for that stock. A future explicit refresh flag or separate command can generate a new decision.
-- Quote and technical refresh should start with stored or missing/stale observation packs. Add Futu quote/technical refresh after the deterministic decision path works.
+- Quote and technical refresh should start with stored or missing/stale observation packs plus the KR adapter ladder for Korean listings. Add Futu quote/technical refresh only for markets confirmed by source probes.
 - CLI profile editing should be minimal in V1: show the active profile, propose pending profile changes, and confirm or reject them. Rich editing belongs to the Decision Preference Review web page.
 - Sector and market regime should be stored in the decision `context_pack_json` and observation packs for the first migration. Promote to shared `sector_regime_snapshots` and `market_regime_snapshots` only after reuse across decisions or weekly reviews is proven.
