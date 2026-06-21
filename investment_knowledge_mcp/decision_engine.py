@@ -179,6 +179,12 @@ def _persist_candidate_proposals(
 
 
 def _refresh_context_inputs(context_pack: dict[str, Any], mode: str) -> dict[str, Any]:
+    if not _should_refresh_external_inputs(context_pack, mode):
+        return {
+            "mode": mode,
+            "refreshed": [],
+            "diagnostics": [{"message": "external decision-data packs are fresh enough for this mode"}],
+        }
     try:
         return refresh_external_decision_observations(stock=context_pack["stock"], mode=mode)
     except Exception as exc:
@@ -193,3 +199,23 @@ def _refresh_context_inputs(context_pack: dict[str, Any], mode: str) -> dict[str
                 }
             ],
         }
+
+
+def _should_refresh_external_inputs(context_pack: dict[str, Any], mode: str) -> bool:
+    normalized_mode = (mode or "focused").strip().lower()
+    if normalized_mode == "quick":
+        return False
+    if normalized_mode == "deep":
+        return True
+    for pack_name in (
+        "quote_pack",
+        "technical_pack",
+        "valuation_pack",
+        "market_pack",
+        "sector_pack",
+        "chip_event_pack",
+    ):
+        status = (context_pack.get(pack_name) or {}).get("status")
+        if status in {None, "missing", "stale", "unknown"}:
+            return True
+    return False
