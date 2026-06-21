@@ -99,7 +99,7 @@ Today the page handles exact commands but fails on common human phrasing. The fa
 
 1. Let the user execute common InvestmentKnowledge actions without memorizing exact command syntax.
 2. Resolve common stock names, aliases, and symbols into canonical `market.symbol` targets.
-3. Provide a structured fallback path when natural input is incomplete or ambiguous.
+3. Use deterministic parsing and LLM-assisted semantic parsing together so natural input feels intelligent without becoming unsafe.
 4. Make the exact command preview visible before execution.
 5. Keep safety boundaries: write-like, maintenance, or high-impact actions must require explicit confirmation.
 6. Preserve the command console's operator value for advanced users.
@@ -109,7 +109,7 @@ Today the page handles exact commands but fails on common human phrasing. The fa
 - Do not build a general-purpose investment chatbot in this feature.
 - Do not allow arbitrary unknown text to reach command execution.
 - Do not replace the command router's controlled allowlist.
-- Do not use LLM inference as the only parser for high-impact operations.
+- Do not let LLM output execute directly. LLM output is only a structured parse proposal that must pass registry, entity resolution, preview, and confirmation checks.
 - Do not hide entity ambiguity by guessing silently.
 
 ## 7. Product Principles
@@ -381,7 +381,7 @@ The complete version includes:
 1. Rename the page from raw "Command Console" to "Command Workbench".
 2. Replace the large default textarea-first experience with a smart input plus parsed preview.
 3. Add a visible action catalog with grouped actions.
-4. Add deterministic parser coverage for all supported action families in this PRD.
+4. Add hybrid parser coverage for all supported action families in this PRD: deterministic first for exact and high-confidence paths, LLM-assisted parsing for natural phrasing and low-confidence paths.
 5. Add entity resolution for stock names, aliases, and symbols.
 6. Add candidate selection for ambiguous entities.
 7. Add command preview before execution.
@@ -391,7 +391,7 @@ The complete version includes:
 11. Add structured mini-forms for required fields such as stock, week, service name, provider, or source policy.
 12. Add recent and pinned actions.
 13. Add result cards for each supported action family, even if the card wraps the existing plain-text command result.
-14. Add safe LLM fallback only after deterministic parsing fails, with a small bounded prompt and preview-before-execution.
+14. Add safe LLM-assisted parsing with a small bounded prompt, structured output, parser confidence, and preview-before-execution.
 15. Add token/cost disclosure for commands that may call LLMs or enqueue asynchronous work.
 16. Add telemetry for parse outcome, ambiguity, confirmation, execution, and recovery.
 17. Keep unsupported or high-risk actions blocked with an explicit explanation.
@@ -400,7 +400,12 @@ The version is complete only when a user can finish common tasks from natural in
 
 ## 12. Token And Cost Policy
 
-The command workbench itself should not spend LLM tokens for normal supported inputs. Common commands must be handled by deterministic parsing and local/entity data:
+The command workbench can use LLMs, but the design must keep token use intentional and bounded. The parsing layer should choose the cheapest reliable path:
+
+1. Exact command path: no LLM.
+2. Alias/entity path: no LLM when local data gives a high-confidence match.
+3. LLM-assisted parse path: use a small prompt when phrasing is natural, incomplete, or low-confidence.
+4. Downstream execution path: token use depends on the command being run and must be shown separately.
 
 | Interaction | Expected extra LLM tokens |
 | --- | ---: |
@@ -408,23 +413,24 @@ The command workbench itself should not spend LLM tokens for normal supported in
 | `决策 阿里` to candidate list | 0 |
 | Click action catalog and select target | 0 |
 | Show command preview and confirmation | 0 |
-| Unknown command recovery with supported examples | 0 |
+| Natural phrasing such as `帮我看一下英特尔要不要做` | 400-1,500 |
+| Unknown command recovery with semantic explanation | 300-1,000 |
 
-LLM fallback is part of the complete version, but it is only allowed when deterministic parsing fails. It must use a small bounded context:
+LLM-assisted parsing is part of the complete version. It must use a small bounded context:
 
 - Raw user input.
 - Supported action registry summary.
 - Candidate entities from local search.
 - No full portfolio, full knowledge base, full reports, or long histories.
 
-The fallback output must be a parse proposal, not an executed command. The proposal still goes through preview and confirmation.
+The LLM output must be a parse proposal, not an executed command. The proposal still goes through registry validation, entity resolution, preview, and confirmation.
 
-Expected fallback cost:
+Expected parser cost:
 
-| Fallback case | Expected prompt size | Expected completion size |
+| Parser case | Expected prompt size | Expected completion size |
 | --- | ---: | ---: |
-| Unknown natural phrasing with clear entity | 300-800 tokens | 100-250 tokens |
-| Ambiguous command family | 500-1,200 tokens | 100-300 tokens |
+| Natural phrasing with clear entity | 300-900 tokens | 100-250 tokens |
+| Ambiguous command family | 500-1,400 tokens | 100-350 tokens |
 | Unsupported request explanation | 300-700 tokens | 100-250 tokens |
 
 Commands that execute downstream LLM work, such as research drafts or generated summaries, must show their own estimated cost separately. The command workbench should not hide downstream token use inside the input experience.
