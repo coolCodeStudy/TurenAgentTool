@@ -297,7 +297,7 @@ Failure examples:
 
 ### 10.1 Decision
 
-P0 commands:
+Complete-version commands:
 
 - Create decision ticket.
 - Refresh decision data.
@@ -316,7 +316,7 @@ decision Intel
 
 ### 10.2 Portfolio
 
-P0 commands:
+Complete-version commands:
 
 - Current positions.
 - Portfolio analysis.
@@ -330,7 +330,7 @@ Example natural inputs:
 
 ### 10.3 Weekly Review
 
-P0 commands:
+Complete-version commands:
 
 - This week review.
 - Previous week review.
@@ -347,17 +347,17 @@ Example natural inputs:
 
 ### 10.4 Research
 
-P1 commands:
+Complete-version commands:
 
 - Create single-stock research job.
 - List research jobs.
 - Create portfolio research jobs.
 
-Reason for P1: research job creation can enqueue longer asynchronous work and needs clearer budget/source controls.
+Research commands can enqueue longer asynchronous work, so the command workbench must show the provider, source policy, expected side effect, and confirmation step before creating jobs.
 
 ### 10.5 System Diagnostics
 
-P0 commands:
+Complete-version commands:
 
 - System status.
 - Recent errors.
@@ -372,33 +372,62 @@ Example natural inputs:
 查看 mcp 日志
 ```
 
-## 11. P0 Scope
+## 11. Complete Usable Version
 
-P0 should be completed as one implementation pass because the product issue is not solved unless natural input, structured fallback, and confirmation are delivered together.
+This PRD should be implemented as one complete usable version. The product issue is not solved if only one part is delivered: a smart input without structured fallback remains confusing, while a structured command form without natural shortcuts remains a raw operator console.
 
-P0 includes:
+The complete version includes:
 
 1. Rename the page from raw "Command Console" to "Command Workbench".
 2. Replace the large default textarea-first experience with a smart input plus parsed preview.
 3. Add a visible action catalog with grouped actions.
-4. Add deterministic parser coverage for P0 action families.
+4. Add deterministic parser coverage for all supported action families in this PRD.
 5. Add entity resolution for stock names, aliases, and symbols.
 6. Add candidate selection for ambiguous entities.
 7. Add command preview before execution.
 8. Add confirmation cards for write-like or low-confidence actions.
 9. Replace generic failures with recovery states.
 10. Preserve exact command execution for advanced users.
+11. Add structured mini-forms for required fields such as stock, week, service name, provider, or source policy.
+12. Add recent and pinned actions.
+13. Add result cards for each supported action family, even if the card wraps the existing plain-text command result.
+14. Add safe LLM fallback only after deterministic parsing fails, with a small bounded prompt and preview-before-execution.
+15. Add token/cost disclosure for commands that may call LLMs or enqueue asynchronous work.
+16. Add telemetry for parse outcome, ambiguity, confirmation, execution, and recovery.
+17. Keep unsupported or high-risk actions blocked with an explicit explanation.
 
-## 12. Later Scope
+The version is complete only when a user can finish common tasks from natural input or structured selection without knowing exact command syntax.
 
-Later scope should be treated as separate only because it depends on broader product decisions or external service cost:
+## 12. Token And Cost Policy
 
-- LLM-backed semantic command parsing.
-- Personalized command ranking across longer usage history.
-- Full command registry editor.
-- Multi-step workflows such as "research this stock then decide".
-- Inline result cards for every command family.
-- Mobile-first command workbench.
+The command workbench itself should not spend LLM tokens for normal supported inputs. Common commands must be handled by deterministic parsing and local/entity data:
+
+| Interaction | Expected extra LLM tokens |
+| --- | ---: |
+| `决策 英特尔` to decision preview | 0 |
+| `决策 阿里` to candidate list | 0 |
+| Click action catalog and select target | 0 |
+| Show command preview and confirmation | 0 |
+| Unknown command recovery with supported examples | 0 |
+
+LLM fallback is part of the complete version, but it is only allowed when deterministic parsing fails. It must use a small bounded context:
+
+- Raw user input.
+- Supported action registry summary.
+- Candidate entities from local search.
+- No full portfolio, full knowledge base, full reports, or long histories.
+
+The fallback output must be a parse proposal, not an executed command. The proposal still goes through preview and confirmation.
+
+Expected fallback cost:
+
+| Fallback case | Expected prompt size | Expected completion size |
+| --- | ---: | ---: |
+| Unknown natural phrasing with clear entity | 300-800 tokens | 100-250 tokens |
+| Ambiguous command family | 500-1,200 tokens | 100-300 tokens |
+| Unsupported request explanation | 300-700 tokens | 100-250 tokens |
+
+Commands that execute downstream LLM work, such as research drafts or generated summaries, must show their own estimated cost separately. The command workbench should not hide downstream token use inside the input experience.
 
 ## 13. Functional Requirements
 
