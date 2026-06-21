@@ -27,6 +27,7 @@ from investment_knowledge_mcp.decision_engine import (
     refresh_decision_data,
     reject_decision_profile_change,
 )
+from investment_knowledge_mcp.decision_data_probe import probe_futu_decision_data, render_probe_result
 from investment_knowledge_mcp.decision_repository import DEFAULT_PROFILE
 from investment_knowledge_mcp.decision_rendering import (
     render_decision_detail,
@@ -419,6 +420,15 @@ def handle_command(
         symbol, market = decision_refresh_match.groups()
         return _handle_refresh_decision_data(symbol=symbol, market=market)
 
+    decision_probe_match = re.fullmatch(
+        r"(?:探测决策数据|决策数据探针|decision data probe)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if decision_probe_match:
+        symbol, market = decision_probe_match.groups()
+        return _handle_decision_data_probe(symbol=symbol, market=market)
+
     if cleaned in {"查看决策偏好", "决策偏好", "decision profile"}:
         return _handle_decision_profile()
 
@@ -746,6 +756,11 @@ def is_query_command(command: str) -> bool:
             normalized,
             flags=re.IGNORECASE,
         )
+        or re.fullmatch(
+            r"(?:探测决策数据|决策数据探针|decision data probe)\s+\S+\s+\S+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
         or normalized
         in {
             "查看决策偏好",
@@ -976,6 +991,11 @@ def _handle_refresh_decision_data(symbol: str, market: str) -> CommandResult:
     for question in questions[:8]:
         lines.append(f"  - {question}")
     return CommandResult(ok=True, message="\n".join(lines))
+
+
+def _handle_decision_data_probe(symbol: str, market: str) -> CommandResult:
+    payload = probe_futu_decision_data(symbol=symbol, market=market)
+    return CommandResult(ok=bool(payload.get("ok")), message=render_probe_result(payload))
 
 
 def _handle_decision_profile() -> CommandResult:
