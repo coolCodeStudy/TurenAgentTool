@@ -113,6 +113,18 @@ else
   rm -rf "$STAGING_DIR"
 fi
 
+migrate_legacy_app_dir() {
+  if [ -e "$APP_DIR" ] && [ ! -L "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
+    legacy_release="$RELEASES_DIR/legacy-$(date +%Y%m%d%H%M%S)"
+    if [ -e "$legacy_release" ]; then
+      legacy_release="$legacy_release-$$"
+    fi
+    mv "$APP_DIR" "$legacy_release"
+    ln -s "$legacy_release" "$APP_DIR"
+  fi
+}
+
+migrate_legacy_app_dir
 PREVIOUS_RELEASE="$(resolve_path "$APP_DIR")"
 replace_symlink() {
   target="$1"
