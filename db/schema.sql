@@ -217,6 +217,130 @@ CREATE TABLE IF NOT EXISTS task_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS event_sources (
+  id BIGSERIAL PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  publisher TEXT,
+  url TEXT NOT NULL,
+  canonical_url TEXT,
+  title TEXT,
+  published_at TIMESTAMPTZ,
+  market TEXT,
+  symbol TEXT,
+  accession_number TEXT,
+  cik TEXT,
+  form_type TEXT,
+  raw_hash TEXT,
+  excerpt TEXT,
+  parsed_facts JSONB NOT NULL DEFAULT '{}'::jsonb,
+  fetch_status TEXT NOT NULL DEFAULT 'ok',
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_sources_accession
+  ON event_sources (source_type, accession_number)
+  WHERE accession_number IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_sources_canonical_hash
+  ON event_sources (canonical_url, raw_hash)
+  WHERE canonical_url IS NOT NULL AND raw_hash IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS portfolio_events (
+  id BIGSERIAL PRIMARY KEY,
+  market TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  event_title TEXT NOT NULL,
+  event_date DATE,
+  next_trading_date DATE,
+  detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  priority TEXT NOT NULL DEFAULT 'medium',
+  confidence TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'active',
+  source_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_facts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  derived_facts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  media_labels JSONB NOT NULL DEFAULT '[]'::jsonb,
+  uncertainties JSONB NOT NULL DEFAULT '[]'::jsonb,
+  portfolio_relevance JSONB NOT NULL DEFAULT '{}'::jsonb,
+  dedupe_key TEXT NOT NULL,
+  scan_status TEXT NOT NULL DEFAULT 'ok',
+  needs_research BOOLEAN NOT NULL DEFAULT false,
+  research_job_id BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (dedupe_key),
+  CHECK (priority IN ('high', 'medium', 'low')),
+  CHECK (confidence IN ('high', 'medium', 'low')),
+  CHECK (status IN ('upcoming', 'active', 'recent', 'archived')),
+  CHECK (scan_status IN ('ok', 'partial', 'failed'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_portfolio_events_symbol_date
+  ON portfolio_events (market, symbol, event_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_portfolio_events_priority_status
+  ON portfolio_events (priority, status);
+
+CREATE TABLE IF NOT EXISTS event_scan_runs (
+  id BIGSERIAL PRIMARY KEY,
+  scope TEXT NOT NULL,
+  market TEXT,
+  symbol TEXT,
+  status TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  symbols_total INTEGER NOT NULL DEFAULT 0,
+  symbols_scanned INTEGER NOT NULL DEFAULT 0,
+  events_found INTEGER NOT NULL DEFAULT 0,
+  errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (scope IN ('portfolio', 'stock')),
+  CHECK (status IN ('ok', 'partial', 'failed'))
+);
+
+CREATE TABLE IF NOT EXISTS event_scan_checkpoints (
+  id BIGSERIAL PRIMARY KEY,
+  market TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'sec',
+  last_scanned_at TIMESTAMPTZ,
+  last_filing_date DATE,
+  last_accession_numbers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  deep_scan_completed_until DATE,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (market, symbol, provider)
+);
+
+CREATE TABLE IF NOT EXISTS event_alerts (
+  id BIGSERIAL PRIMARY KEY,
+  event_id BIGINT NOT NULL REFERENCES portfolio_events(id) ON DELETE CASCADE,
+  alert_date DATE NOT NULL,
+  channel TEXT NOT NULL,
+  alert_level TEXT NOT NULL DEFAULT 'medium',
+  rendered_summary TEXT NOT NULL,
+  user_action TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (event_id, alert_date, channel)
+);
+
+CREATE TABLE IF NOT EXISTS event_alert_preferences (
+  id BIGSERIAL PRIMARY KEY,
+  event_id BIGINT NOT NULL REFERENCES portfolio_events(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL DEFAULT 'all',
+  preference TEXT NOT NULL DEFAULT 'default',
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (event_id, channel),
+  CHECK (preference IN ('default', 'muted'))
+);
+
 CREATE TABLE IF NOT EXISTS deploy_events (
   id BIGSERIAL PRIMARY KEY,
   source TEXT NOT NULL DEFAULT 'unknown',

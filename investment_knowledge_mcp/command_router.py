@@ -17,6 +17,9 @@ from investment_knowledge_mcp.analysis_provider import (
     route_command_intent_with_openai,
 )
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
+from investment_knowledge_mcp.events import repository as event_repository
+from investment_knowledge_mcp.events.renderer import render_muted_event, render_scan_result
+from investment_knowledge_mcp.events.scanner import scan_portfolio_events, scan_stock_events
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_cash_flows,
@@ -114,6 +117,16 @@ PORTFOLIO_POSITION_COMMANDS = {
     "仓位",
     "portfolio",
     "positions",
+}
+
+PORTFOLIO_EVENT_COMMANDS = {
+    "持仓事件",
+    "今日持仓事件",
+    "持仓新闻",
+    "今日持仓新闻",
+    "风险雷达",
+    "portfolio events",
+    "event radar",
 }
 
 PORTFOLIO_ANALYSIS_COMMANDS = {
@@ -527,6 +540,19 @@ def handle_command(
     if cleaned in PORTFOLIO_ANALYSIS_COMMANDS:
         return _handle_portfolio_analysis()
 
+    if cleaned in PORTFOLIO_EVENT_COMMANDS:
+        return _handle_portfolio_events()
+
+    mute_event_match = _match_event_mute_command(cleaned)
+    if mute_event_match is not None:
+        symbol, market = mute_event_match
+        return _handle_mute_event(symbol=symbol, market=market)
+
+    stock_event_match = _match_stock_event_command(cleaned)
+    if stock_event_match is not None:
+        symbol, market = stock_event_match
+        return _handle_stock_events(symbol=symbol, market=market)
+
     if cleaned in PORTFOLIO_RESEARCH_DRAFT_COMMANDS:
         return _handle_portfolio_research(output_dir=output_dir, auto_import=False)
 
@@ -677,6 +703,7 @@ def is_query_command(command: str) -> bool:
             *RECENT_ERRORS_COMMANDS,
             *SERVICE_LOG_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
+            *PORTFOLIO_EVENT_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
             *PORTFOLIO_GRAPH_COMMANDS,
             *PORTFOLIO_RESEARCH_DRAFT_COMMANDS,
@@ -695,6 +722,7 @@ def is_query_command(command: str) -> bool:
         }
         or heuristic_intent.get("intent")
         in {"portfolio_analysis", "portfolio_positions", "portfolio_graph", "system_status", "ipo_status", "trade_review"}
+        or _match_stock_event_command(normalized) is not None
         or re.fullmatch(r"(?:服务日志|查看服务日志|service logs?)\s+[a-zA-Z0-9_-]+", normalized, flags=re.IGNORECASE)
         or re.fullmatch(
             r"(?:任务状态|任务事件|task events?)\s+(research|coding|deploy|snapshot|ipo|command)\s+#?\d+",
@@ -728,6 +756,7 @@ def is_research_write_command(command: str) -> bool:
     return bool(
         normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
+        or _match_event_mute_command(normalized) is not None
         or _match_research_job_requeue_limit(normalized) is not None
         or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
         or re.fullmatch(r"(?:取消研究任务|停止研究任务|cancel research job)\s+#?\d+", normalized, flags=re.IGNORECASE)
@@ -2034,6 +2063,61 @@ def _handle_portfolio_analysis() -> CommandResult:
         ok=True,
         message=analysis + "\n\n" + _portfolio_analysis_footer(context),
     )
+
+
+def _handle_portfolio_events() -> CommandResult:
+    result = scan_portfolio_events(days=30, persist=True)
+    return CommandResult(ok=result.status != "failed", message=render_scan_result(result, title="持仓事件雷达"))
+
+
+def _handle_stock_events(symbol: str, market: str = "US") -> CommandResult:
+    result = scan_stock_events(symbol=symbol, market=market, days=90, persist=True)
+    if result.status == "failed":
+        rows = event_repository.list_portfolio_events(market=market, symbol=symbol, include_muted=True, limit=10)
+        if rows:
+            message = render_scan_result(result, title=f"{symbol.upper()} 事件雷达") + "\n\n" + event_repository_notice(symbol, rows)
+            return CommandResult(ok=False, message=message)
+    return CommandResult(ok=result.status != "failed", message=render_scan_result(result, title=f"{symbol.upper()} 事件雷达"))
+
+
+def _handle_mute_event(symbol: str, market: str = "US") -> CommandResult:
+    result = event_repository.mute_latest_event_for_symbol(
+        symbol=symbol,
+        market=market,
+        reason="muted by command",
+    )
+    return CommandResult(ok=result is not None, message=render_muted_event(result, symbol=symbol))
+
+
+def event_repository_notice(symbol: str, rows: list[dict[str, Any]]) -> str:
+    from investment_knowledge_mcp.events.renderer import render_stock_events_from_rows
+
+    return "以下是已入库事件缓存：\n" + render_stock_events_from_rows(symbol, rows)
+
+
+def _match_stock_event_command(command: str) -> tuple[str, str] | None:
+    compact = command.strip()
+    match = re.fullmatch(r"([A-Za-z][A-Za-z0-9.-]{0,15})\s+(US|HK|SH|SZ|CN)?\s*(?:事件|持仓事件|新闻|最近有什么新闻)", compact, flags=re.IGNORECASE)
+    if match:
+        symbol, market = match.groups()
+        return symbol.upper(), (market or "US").upper()
+    match = re.fullmatch(r"([A-Za-z][A-Za-z0-9.-]{0,15})\s+最近有什么(?:重要)?新闻", compact, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).upper(), "US"
+    return None
+
+
+def _match_event_mute_command(command: str) -> tuple[str, str] | None:
+    compact = command.strip()
+    match = re.fullmatch(
+        r"(?:不再提醒|别再提醒|静音)\s+([A-Za-z][A-Za-z0-9.-]{0,15})(?:\s+(US|HK|SH|SZ|CN))?\s*(?:这件事|事件)?",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        symbol, market = match.groups()
+        return symbol.upper(), (market or "US").upper()
+    return None
 
 
 def _handle_portfolio_graph_queue() -> CommandResult:
