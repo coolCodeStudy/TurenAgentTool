@@ -10,6 +10,8 @@ Add only lessons that should change future behavior.
 - `command-api` is only an HTTP wrapper around `handle_command(...)`; it is not required for normal local feature verification.
 - Start `command-api`, `dingtalk-api`, schedulers, or broad compose profiles only when the user explicitly asks to test those surfaces or approves the exact service list.
 - When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
+- All new or agent-authored docs, code comments, PRDs, tech plans, and durable notes must be in English. If editing an existing non-English document, keep untouched existing content as-is but write any new agent-authored section in English unless the user explicitly asks for translation into another language.
+- Do not hide missing product data or optional-source gaps as a substitute for completing the integration. If the product surface reasonably needs macro, news/theme, opportunity, or similar context, first investigate and connect an available source; keep transparent user-facing diagnostics until the source is genuinely implemented or a concrete product decision says it is out of scope.
 
 ## Service Startup Preflight
 
@@ -17,6 +19,15 @@ Add only lessons that should change future behavior.
 - Verify `POSTGRES_HOST` and `POSTGRES_PORT` before starting containers. A compose stack may silently connect to a fresh empty database.
 - If a service should use the existing local knowledge base, point it at the established local DB instead of a newly created prod-compose DB.
 - Real trading records, account snapshots, and weekly-review source data are cloud-side product data. A missing local row is an environment limitation, not evidence that the product data is unavailable; use fixtures for local logic checks or an approved cloud read path when the task requires real data.
+- Weekly review ranking must use interval P/L, not lifetime P/L labels. A closed losing position's realized loss can include losses accumulated before the review window; combine interval realized P/L with the change from the start snapshot so historical loss is not counted again.
+
+## Worktree Session Isolation
+
+- Use git worktrees for parallel Codex sessions. The main workspace should stay available for integration, release, urgent hotfixes, and cloud verification.
+- Treat unexpected untracked files as another session's work unless proven otherwise. Do not stage, move, or delete them while working on an unrelated task.
+- Create task worktrees with `scripts/create_task_worktree.sh <task-slug>` so paths and branch names stay predictable.
+- Remember that ignored runtime directories such as `.venv` are per-worktree. A newly created task worktree usually needs its own venv before running preflight, smoke tests, or scripts.
+- Push explicit commits from task branches; cloud deploy should target pushed refs, never uncommitted local state.
 
 ## Secrets And HTTP Entrypoints
 
@@ -39,9 +50,21 @@ Add only lessons that should change future behavior.
 - For a public repository, ECS can maintain a read-only HTTPS checkout such as `/opt/investment-knowledge-repo` without any GitHub token or deploy key; only use a deploy key if the repository becomes private.
 - When adding a cloud pull-deploy path, ensure the deployment workflow creates or refreshes the remote checkout and writes the checkout path into the Ops API systemd environment. Otherwise the new `/ops/deploy` endpoint may be deployed but unable to fetch refs.
 - If `/ops/deploy` fails before fetch/checkout while recording `deploy_events`, treat that as deployment-control-plane debt, not a business deploy failure. Capture the failing stage, preserve the user-requested release path, and record a follow-up to make Ops API return actionable tracebacks or degrade deploy event recording.
+- Separate control-plane and app-plane releases. `/ops/deploy quick` updates `/opt/investment-knowledge/current`, but it does not update the running `/opt/investment-ops/ecs_ops_api.py` process. Any Ops API or bootstrap script change needs an explicit bootstrap/restart step before expecting new control-plane behavior.
 - Keep host and container database profiles separate on ECS: host/systemd tools may use `127.0.0.1:55432`, while Docker compose services must use `postgres:5432`. Do not let a host `.env` leak into container runtime configuration.
+- Docker Compose interpolation prefers exported shell/systemd environment variables over `--env-file`. When Ops API launches compose, explicitly remove host-only `POSTGRES_HOST` and `POSTGRES_PORT` so app containers keep using `postgres:5432` instead of `127.0.0.1:55432`.
+- Verify the actual container environment after any env-related deploy fix with `docker inspect ... .Config.Env`; do not infer that `--env-file` won just because the file contains the desired values.
+- Do not call a deploy successful from transient container startup output. Require stable health after recreate, and if services later show `Restarting`, prioritize container logs and env inspection over public ingress debugging.
+- A public URL failure is only an ingress/network problem after host-local checks pass. First prove `docker ps` is stable and `curl 127.0.0.1:<port>` works on ECS.
+- Bootstrap scripts should retry `/health` after restarting systemd services. A single immediate curl can race with service bind and produce a false failure even when the service becomes active seconds later.
+- The daily production deploy path is pull-based and atomic: Codex/MCP calls the independent ECS Ops API, ECS fetches the requested commit locally, stages it under `/opt/investment-knowledge/releases/<sha>`, and flips `/opt/investment-knowledge/current` only after validation. The Ops API itself must stay under `/opt/investment-ops`, not inside the mutable business release.
+- GitHub Actions SSH deploy is a secondary/rescue path, not the mainline. The observed hosted-runner failure was `ssh: handshake failed ... connection reset by peer` on ECS `:22`; do not spend daily release time on that channel unless the user explicitly asks to repair the rescue path.
 - GitHub Actions quick deploy currently does not rebuild or restart every product surface. Before using it for a cloud-served Web page, confirm that the workflow actually refreshes that service; otherwise use full deploy or fix the quick deploy scope.
 - GitHub Actions full deploy is multi-minute, not quick-deploy speed. In the 2026-06-16 weekly-review-web release it took about 6 minutes from dispatch to success; after triggering it, poll at a calm interval and verify only after completion.
+- If cloud-side business verification succeeds and compose/logs show the target Web container is running, but the public URL still returns connection refused or is unreachable, classify the remaining work as public ingress/network-layer debugging. Do not reopen the already-verified business logic unless new evidence points back to it.
+- When using a cloud command path as fallback verification for a Web bug, note any write side effects. For example, `复盘 2026-06-07 2026-06-13` can persist a `review_reports` row even when the goal is only verification.
+- `/ops/deploy` must be atomic with respect to the running app directory. Never delete `APP_DIR/db`, `APP_DIR/scripts`, or other mounted runtime paths before the new release has been copied to staging and validated; failed deploys must leave the previous `db/schema.sql` and runnable scripts in place.
+- Ops status and deploy-event endpoints must not depend solely on the current `APP_DIR`, because a failed deploy can corrupt that directory. Use the deploy repo checkout as a fallback for control-plane scripts so failures remain diagnosable.
 
 ## Daily Records Retired
 

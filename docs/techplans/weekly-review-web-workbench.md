@@ -1,5 +1,7 @@
 # 周复盘 Web 工作台技术方案
 
+> Status note (2026-06-18): This is the historical P0 Web workbench plan. It remains useful for page layout and module structure, but its arbitrary `start/end` date range, draft/finalized workflow wording, and save semantics are superseded by `docs/techplans/weekly-review-week-scope-force-refresh.md`. Current behavior is fixed natural week, read existing by default, generate only when missing, and force-refresh overwrite of the same weekly report row after confirmation.
+
 ## 目标
 
 实现 `docs/product/周复盘Web工作台产品文档.md` 的 P0：用户打开 Web 后第一屏就是“本周复盘”，可以选择日期范围、生成草稿、查看数据源状态、高光/炸裂/指数/整体故事/下周展望/当前持仓分析 6 个模块，并将检查后的 Markdown 保存为正式周复盘。
@@ -106,10 +108,11 @@ flowchart LR
 
 ## 数据口径
 
-P0 沿用已有周复盘口径：
+当前周复盘口径：
 
-- 主账本：`account_snapshots` 区间首尾持仓 `pl_val` 差分。
-- 解释账本：`trade_records` 本周成交，用于解释加仓、减仓、新开仓、清仓。
+- 主账本：`account_snapshots` 区间首尾持仓 `pl_val` 差分 + `trade_records` 区间卖出实现盈亏估算。
+- 解释账本：`trade_records` 本周成交，用于解释加仓、减仓、新开仓、清仓，并参与区间盈亏排名。
+- 清仓止盈不会再把周初已有历史浮盈直接当成本周高光；清仓割肉会保留亏损退出信号。
 - 当前持仓：如果期末快照缺失且结束日期覆盖今天，尝试读取实时持仓作为期末参考。
 - IPO：复用 `get_hk_ipo_list()`。
 - 指数和外部事件：明确显示未接入，不允许脑补。

@@ -148,7 +148,7 @@ def render_weekly_review_markdown(context: dict[str, Any]) -> str:
         lines.extend(["", "## 数据提醒"])
         lines.extend(f"- {item}" for item in warnings[:8])
     lines.append("")
-    lines.append("注：本复盘只读分析，不会下单；P1 的周度表现以持仓快照盈亏变化为主，交易记录用于解释仓位变化。")
+    lines.append("注：本复盘只读分析，不会下单；周度表现优先用交易记录估算已实现盈亏，并结合持仓快照未实现盈亏变化。")
     return "\n".join(lines)
 
 
@@ -312,6 +312,7 @@ def _build_position_changes(
         movement = _movement_label(start=start, end=end, has_start_snapshot=has_start_snapshot, has_end_reference=has_end_reference)
         confidence = _confidence_label(movement)
         trade_summary = trades_by_code.get(code, _empty_trade_summary(code=code))
+        period_pl = _estimate_period_pl(start=start, end=end, trade_summary=trade_summary)
         changes.append(
             {
                 "code": code,
@@ -328,6 +329,9 @@ def _build_position_changes(
                 ),
                 "market_val_delta": end_market_val - start_market_val,
                 "pl_val_delta": end_pl - start_pl,
+                "period_pl": period_pl["amount"],
+                "period_pl_method": period_pl["method"],
+                "realized_pl_estimate": period_pl["realized_pl"],
                 "current_pl_val": end_pl,
                 "current_pl_ratio": end.get("pl_ratio") if end else None,
                 "current_market_val": end_market_val,
@@ -377,6 +381,8 @@ def _ranked_item(item: dict[str, Any], positive: bool) -> dict[str, Any]:
         "type": _highlight_type(item) if positive else _blowup_type(item),
         "amount": amount,
         "pl_val_delta": item["pl_val_delta"],
+        "realized_pl_estimate": item.get("realized_pl_estimate", 0.0),
+        "period_pl_method": item.get("period_pl_method") or "snapshot_pl_delta",
         "current_pl_val": item["current_pl_val"],
         "movement": item["movement"],
         "confidence": item["confidence"],
@@ -403,7 +409,10 @@ def _build_holdings_table(position_changes: list[dict[str, Any]]) -> list[dict[s
                 "market_val": item["current_market_val"],
                 "current_pl_val": item["current_pl_val"],
                 "current_pl_ratio": item["current_pl_ratio"],
-                "weekly_pl_delta": item["pl_val_delta"],
+                "weekly_pl_delta": _rank_amount(item),
+                "snapshot_pl_delta": item["pl_val_delta"],
+                "realized_pl_estimate": item.get("realized_pl_estimate", 0.0),
+                "period_pl_method": item.get("period_pl_method") or "snapshot_pl_delta",
                 "movement": item["movement"],
                 "status": "、".join(statuses),
                 "knowledge_note": item.get("knowledge_note") or "知识库观点待补",
@@ -597,6 +606,7 @@ def _summarize_trades_by_code(trades: list[dict[str, Any]]) -> dict[str, dict[st
         item["name"] = trade.get("stock_name") or item.get("name") or code
         item["currency"] = trade.get("currency") or item.get("currency") or "UNKNOWN"
         item["count"] += 1
+        item["records"].append(trade)
         amount = abs(_number(trade.get("amount")))
         side = str(trade.get("trd_side") or "").lower()
         if "buy" in side or "买" in side:
@@ -618,7 +628,81 @@ def _empty_trade_summary(code: str) -> dict[str, Any]:
         "sell_count": 0,
         "buy_amount": 0.0,
         "sell_amount": 0.0,
+        "records": [],
     }
+
+
+def _estimate_period_pl(
+    start: dict[str, Any] | None,
+    end: dict[str, Any] | None,
+    trade_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Approximate Futu interval P/L using realized sells plus unrealized P/L delta."""
+    start_pl = start["pl_val"] if start else 0.0
+    end_pl = end["pl_val"] if end else 0.0
+    snapshot_delta = end_pl - start_pl
+    realized_result = _estimate_realized_pl(start=start, trades=trade_summary.get("records") or [])
+    if realized_result["usable"]:
+        return {
+            "amount": snapshot_delta + realized_result["realized_pl"],
+            "realized_pl": realized_result["realized_pl"],
+            "method": "realized_plus_snapshot_delta",
+        }
+    if end is None and start is not None:
+        return {
+            "amount": start_pl,
+            "realized_pl": 0.0,
+            "method": "closed_position_start_pl_fallback",
+        }
+    return {
+        "amount": snapshot_delta,
+        "realized_pl": 0.0,
+        "method": "snapshot_pl_delta",
+    }
+
+
+def _estimate_realized_pl(start: dict[str, Any] | None, trades: list[dict[str, Any]]) -> dict[str, Any]:
+    qty = _number(start.get("qty")) if start else 0.0
+    cost_price = _optional_number(start.get("cost_price")) if start else None
+    total_cost = qty * cost_price if cost_price is not None else 0.0
+    realized_pl = 0.0
+    usable = False
+
+    for trade in sorted(trades, key=_trade_sort_key):
+        side = str(trade.get("trd_side") or "").lower()
+        trade_qty = abs(_number(trade.get("qty")))
+        price = _optional_number(trade.get("price"))
+        amount = abs(_number(trade.get("amount")))
+        if trade_qty <= 0:
+            continue
+        if price is None and amount <= 0:
+            continue
+        trade_amount = amount if amount > 0 else trade_qty * float(price)
+        if "buy" in side or "买" in side:
+            qty += trade_qty
+            total_cost += trade_amount
+        elif "sell" in side or "卖" in side:
+            if qty <= 0:
+                continue
+            avg_cost = total_cost / qty if total_cost > 0 else (float(cost_price) if cost_price is not None else 0.0)
+            realized_pl += trade_amount - avg_cost * trade_qty
+            cost_to_remove = avg_cost * min(qty, trade_qty)
+            qty -= trade_qty
+            total_cost = max(0.0, total_cost - cost_to_remove)
+            if qty <= 0:
+                qty = 0.0
+                total_cost = 0.0
+            usable = True
+
+    return {"realized_pl": realized_pl, "usable": usable}
+
+
+def _trade_sort_key(trade: dict[str, Any]) -> tuple[str, str, int]:
+    return (
+        str(trade.get("trade_date") or ""),
+        str(trade.get("create_time") or ""),
+        int(trade.get("id") or 0),
+    )
 
 
 def _movement_label(
@@ -691,18 +775,16 @@ def _review_question(item: dict[str, Any], positive: bool) -> str:
 
 
 def _rank_amount(item: dict[str, Any]) -> float:
-    if item["movement"] == "清仓" and item.get("start"):
-        return _number(item["start"].get("pl_val"))
-    return _number(item.get("pl_val_delta"))
+    return _number(item.get("period_pl", item.get("pl_val_delta")))
 
 
 def _status_labels(item: dict[str, Any]) -> list[str]:
     labels: list[str] = []
     if item["current_market_val"] > 0 and item.get("themes"):
         labels.append("核心持仓")
-    if item["pl_val_delta"] > 0:
+    if _rank_amount(item) > 0:
         labels.append("强势贡献")
-    if item["pl_val_delta"] < 0:
+    if _rank_amount(item) < 0:
         labels.append("本周拖累")
     if item["current_pl_val"] < 0:
         labels.append("历史拖累")
