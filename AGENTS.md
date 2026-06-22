@@ -21,6 +21,16 @@ Read it before changing code, running services, or touching deployment commands.
 - Do not use phased plans as a way to defer normal implementation work. The user expects bundled execution unless a concrete reason is stated.
 - After finishing the technical implementation, review the technical plan for missed items. Complete straightforward misses immediately; for larger or blocked misses, clearly call them out or record them as follow-up work in the appropriate durable place.
 
+## Project Management Discipline
+
+- Use `docs/product/Project-Management-Agent-Protocol.md` as the detailed operating protocol for project delivery tracking.
+- Maintain delivery state in `docs/project-management/Feature-Registry.md` when a PRD, technical plan, implementation status, verification status, or next action changes.
+- A substantial product feature should not enter implementation unless its PRD is ready, or the exception is explicitly recorded with the reason.
+- A substantial product feature should not be considered ready for implementation unless there is a linked technical plan, or the exception is explicitly recorded with the reason.
+- Do not equate code completion with product completion. Product completion requires acceptance criteria, implementation evidence, verification evidence, and any required deployment or user acceptance state.
+- When reviewing or finishing work, check for broken delivery links: incomplete PRDs, PRDs without technical plans, technical plans without implementation evidence, implementations without verification, superseded documents without status notes, and blocked next actions without owners.
+- The Project Management Agent tracks delivery integrity and documentation state. It may flag gaps, request missing product or technical decisions, and update registry status, but it should not silently make product decisions or mark user acceptance on behalf of the user.
+
 ## Worktree Session Mode
 
 - The main workspace `/Users/lishaocheng/code/TurenAgentTool` is for integration, release, urgent hotfixes, and cloud deploy verification.
