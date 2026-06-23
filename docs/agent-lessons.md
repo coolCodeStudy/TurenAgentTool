@@ -30,6 +30,10 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - Remember that ignored runtime directories such as `.venv` are per-worktree. A newly created task worktree usually needs its own venv before running preflight, smoke tests, or scripts.
 - Push explicit commits from task branches; cloud deploy should target pushed refs, never uncommitted local state.
 
+## Project Management Audits
+
+- For routine PRD status questions such as "which PRDs have not started?", run `python3 scripts/audit_prd_status.py` first and use manual document reading only to explain or verify unusual gaps.
+
 ## Secrets And HTTP Entrypoints
 
 - `COMMAND_API_TOKEN` is required only when running the HTTP command API.

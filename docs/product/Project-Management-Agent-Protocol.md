@@ -188,16 +188,17 @@ If no registry update is needed, say why in the final handoff. Examples:
 For a delivery audit:
 
 1. Read `AGENTS.md`, this protocol, and `docs/project-management/Feature-Registry.md`.
-2. Scan `docs/product/` and `docs/techplans/` for new or changed product and technical documents.
-3. For each substantial feature, check PRD status, technical plan status, implementation status, evidence, gaps, and next action.
-4. Update the registry only when there is evidence.
-5. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
-6. Produce three lists:
+2. Run `python3 scripts/audit_prd_status.py` for quick PRD queues, or `python3 scripts/audit_prd_status.py --review` for broader delivery review.
+3. Scan `docs/product/` and `docs/techplans/` for new or changed product and technical documents.
+4. For each substantial feature, check PRD status, technical plan status, implementation status, evidence, gaps, and next action.
+5. Update the registry only when there is evidence.
+6. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
+7. Produce three lists:
    - Incomplete PRDs.
    - Ready PRDs without complete implementation.
    - Technical plans without complete implementation or verification evidence.
-7. Call out stale or superseded docs that need status notes.
-8. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
+8. Call out stale or superseded docs that need status notes.
+9. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
 
 ## Cadence
 

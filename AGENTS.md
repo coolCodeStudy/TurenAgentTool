@@ -30,6 +30,7 @@ Read it before changing code, running services, or touching deployment commands.
 - A substantial product feature should not be considered ready for implementation unless there is a linked technical plan, or the exception is explicitly recorded with the reason.
 - Do not equate code completion with product completion. Product completion requires acceptance criteria, implementation evidence, verification evidence, and any required deployment or user acceptance state.
 - When reviewing or finishing work, check for broken delivery links: incomplete PRDs, PRDs without technical plans, technical plans without implementation evidence, implementations without verification, superseded documents without status notes, and blocked next actions without owners.
+- For a quick PRD delivery-status answer, run `python3 scripts/audit_prd_status.py` before doing a manual document audit.
 - The Project Management Agent tracks delivery integrity and documentation state. It may flag gaps, request missing product or technical decisions, and update registry status, but it should not silently make product decisions or mark user acceptance on behalf of the user.
 
 ## Worktree Session Mode
