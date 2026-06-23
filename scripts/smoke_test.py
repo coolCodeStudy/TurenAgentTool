@@ -21,6 +21,7 @@ from investment_knowledge_mcp.command_router import (
     is_query_command,
     is_research_write_command,
 )
+from investment_knowledge_mcp.command_workbench import parse_workbench_command, render_command_workbench_html
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
@@ -314,6 +315,29 @@ def main() -> None:
             assert natural_analyze_result.ok
             assert "Smoke Test Stock" in natural_analyze_result.message
 
+            decision_alias_result = handle_command(
+                f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                output_dir=Path(tmp_dir),
+            )
+            assert decision_alias_result.ok
+            assert "Smoke Test Stock" in decision_alias_result.message
+
+            workbench_decision = parse_workbench_command("决策 Smoke Test Stock", allow_llm=False)
+            workbench_intel = parse_workbench_command("决策 英特尔", allow_llm=False)
+            workbench_alibaba = parse_workbench_command("决策 阿里", allow_llm=False)
+            workbench_form = parse_workbench_command(
+                action_id="decision_card",
+                fields={"stock": "Smoke Test Stock"},
+                allow_llm=False,
+            )
+            workbench_research_job = parse_workbench_command(
+                action_id="research_create_stock_job",
+                fields={"stock": "Smoke Test Stock"},
+                allow_llm=False,
+            )
+            workbench_unknown = parse_workbench_command("乱买英特尔", allow_llm=False)
+            workbench_html = render_command_workbench_html()
+
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
         )
@@ -395,6 +419,18 @@ def main() -> None:
         assert confirmed_result["user_insight"]["insight"] == SMOKE_CONFIRMED_CANDIDATE
         assert result["stock"]["id"] == stock["id"]
         assert resolve_stock_reference("Smoke Test Stock")[0]["id"] == stock["id"]
+        assert workbench_decision["status"] == "parsed"
+        assert workbench_decision["exact_command"] == f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert workbench_intel["status"] == "parsed"
+        assert workbench_intel["target"]["canonical"] == "US.INTC"
+        assert workbench_alibaba["status"] == "ambiguous_entity"
+        assert len(workbench_alibaba["candidates"]) >= 2
+        assert workbench_form["status"] == "parsed"
+        assert workbench_form["exact_command"] == f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert workbench_research_job["status"] == "parsed"
+        assert workbench_research_job["confirmation_required"]
+        assert workbench_unknown["status"] == "unsupported"
+        assert "Command Workbench" in workbench_html
         assert router_insight_result.ok
         assert router_candidate_result.ok
         assert router_duplicate_candidate_result.ok
@@ -436,6 +472,7 @@ def main() -> None:
         assert is_query_command("复盘 上周")
         assert is_query_command("复盘 2020-01-06 2020-01-12")
         assert is_query_command("查看下周节奏")
+        assert is_query_command(f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}")
         assert _extract_time_range_text("5月收益") == "5月"
         assert _extract_time_range_text("五月份收益") == "五月份"
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()

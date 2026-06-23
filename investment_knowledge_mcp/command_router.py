@@ -391,6 +391,14 @@ def handle_command(
         symbol, market = stock_inspect_match.groups()
         return _handle_stock_decision_card(symbol=symbol, market=market)
 
+    decision_match = re.fullmatch(r"(?:决策|decision)\s+(.+)", cleaned, flags=re.IGNORECASE)
+    if decision_match:
+        target = _parse_stock_target(decision_match.group(1))
+        if target is None:
+            return CommandResult(ok=False, message="决策指令需要股票标的，例如：决策 US.INTC 或 决策 000660 KR")
+        symbol, market = target
+        return _handle_stock_decision_card(symbol=symbol, market=market)
+
     stock_match = re.fullmatch(r"(?:分析|analyze)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
     if stock_match:
         symbol, market = stock_match.groups()
@@ -648,6 +656,7 @@ def is_query_command(command: str) -> bool:
     heuristic_intent = _heuristic_route_intent(normalized)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(r"(?:决策|decision)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|\S+\s+\S+)", normalized, flags=re.IGNORECASE)
         or re.fullmatch(
             r"(?:查看股票|inspect|stock inspect)\s+\S+\s+\S+",
             normalized,
@@ -1942,6 +1951,19 @@ def _clean_stock_query(value: str) -> str:
     cleaned = re.sub(r"^(?:一下|下|这个|这只|这家公司|股票)\s*", "", cleaned)
     cleaned = re.sub(r"\s*(?:这个|这只|这家公司|股票)$", "", cleaned)
     return cleaned.strip()
+
+
+def _parse_stock_target(value: str) -> tuple[str, str] | None:
+    cleaned = value.strip()
+    market_symbol_match = re.fullmatch(r"([A-Za-z]{1,5})\.([A-Za-z0-9._-]+)", cleaned)
+    if market_symbol_match:
+        market, symbol = market_symbol_match.groups()
+        return symbol.upper(), market.upper()
+    symbol_market_match = re.fullmatch(r"(\S+)\s+(\S+)", cleaned)
+    if symbol_market_match:
+        symbol, market = symbol_market_match.groups()
+        return symbol.upper(), market.upper()
+    return None
 
 
 def _strip_trailing_punctuation(value: str) -> str:
@@ -3264,6 +3286,8 @@ def _help_text() -> str:
 - worker日志
 - mcp日志
 - IPO提醒状态
+- 决策 US.INTC
+- 决策 000660 KR
 - 分析 000660 KR
 - 怎么看海力士
 - 分析一下腾讯
