@@ -154,30 +154,35 @@ sequenceDiagram
   GitHub checkout
   只负责拉代码和选择 ref
 
+/opt/investment-ops
+  Independent Ops API control plane
+  Owns its venv and systemd service
+
 /opt/investment-knowledge
-  当前运行目录
-  保留 .env、drafts、运行中挂载目录
-  docker compose 从这里启动
+  Business app root
+  Keeps .env, shared/, releases/, and current -> releases/<sha>
+
+/opt/investment-knowledge/current
+  Active release symlink
+  docker compose starts from here
 ```
 
-部署时从 repo 目录复制源码到运行目录：
+Deploy from the repo checkout into a staged release, then atomically update `current`:
 
 ```bash
 SOURCE_DIR=/opt/investment-knowledge-repo \
-APP_DIR=/opt/investment-knowledge \
+APP_ROOT=/opt/investment-knowledge \
 BUILD_IMAGE=false \
 bash /opt/investment-knowledge-repo/scripts/deploy_from_local_checkout.sh
 ```
 
 `deploy_from_local_checkout.sh` 已经负责：
 
-- 同步 `db/`
-- 同步 `investment_knowledge_mcp/`
-- 同步 `scripts/`
-- 同步 `docs/`
-- 同步 `Dockerfile`
-- 同步 `requirements.txt`
-- 同步 `docker-compose.prod.yml`
+- Staging a complete release under `releases/<sha>`.
+- Preserving shared drafts under `shared/drafts`.
+- Linking the app `.env` into the staged release when present.
+- Switching `current` only after the release has the required files.
+- Rolling `current` back to the previous release if compose activation fails.
 - 重启 `postgres`、`mcp`、`account-snapshot-scheduler`、`ipo-reminder-scheduler`、`dingtalk-stream-bot`
 - 写入本地部署事件
 
@@ -254,6 +259,15 @@ cloud_deploy
 - 需要让 Ops API 在部署事件记录失败时返回可行动错误，或将 deploy event 记录降级为 warning 后继续部署并在结果里标注审计缺口。
 - GitHub Actions quick deploy 不会重建/重启 `weekly-review-web`，周复盘 Web 修复不能依赖当前 quick deploy；短期走 full deploy，长期应把 `weekly-review-web` 纳入 quick deploy 或明确 quick deploy 适用范围。
 - ECS 上 host/systemd 与 Docker container 必须使用不同 DB profile：宿主侧 `127.0.0.1:55432`，容器侧 `postgres:5432`。部署脚本和 compose env 需要防止宿主 `.env` 覆盖容器内连接地址。
+
+Pull-Based Atomic Ops Deploy V2 update:
+
+- The daily deploy mainline is `Codex/MCP -> independent ECS Ops API -> ECS local pull deploy`.
+- The Ops control plane lives in `/opt/investment-ops` with its own venv and systemd service; it no longer reads its running script from the mutable business app directory.
+- The business app root is `/opt/investment-knowledge`; releases are staged under `/opt/investment-knowledge/releases/<sha>` and activated by switching `/opt/investment-knowledge/current`.
+- Quick deploy copies code and recreates compose services without building an image. Full deploy is reserved for dependency/image-layer changes such as `Dockerfile`, `requirements.txt`, or compose image semantics.
+- GitHub Actions remains a secondary/rescue path. The current hosted-runner-to-ECS `:22` failure (`ssh handshake reset by peer`) is documented but no longer blocks daily releases.
+- One-time bootstrap uses Alibaba Cloud ECS Cloud Assistant Run Command to install `/opt/investment-ops`, write `/etc/investment-knowledge/ops-api.env`, and start `investment-ops-api.service`.
 
 以后稳定后可加 webhook：
 

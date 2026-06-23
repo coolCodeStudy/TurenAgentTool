@@ -19,9 +19,12 @@ import threading
 import time
 
 
-APP_DIR = Path(os.getenv("INVESTMENT_DIR", "/opt/investment-knowledge"))
+APP_ROOT = Path(os.getenv("INVESTMENT_APP_ROOT", "/opt/investment-knowledge"))
+APP_DIR = Path(os.getenv("INVESTMENT_DIR", str(APP_ROOT / "current")))
 REPO_DIR = Path(os.getenv("OPS_DEPLOY_REPO_DIR", "/opt/investment-knowledge-repo"))
 COMPOSE_FILE = APP_DIR / "docker-compose.prod.yml"
+COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "turenagenttool_prod")
+COMPOSE_ENV_FILE = Path(os.getenv("COMPOSE_ENV_FILE", str(APP_ROOT / ".env")))
 HOST = os.getenv("OPS_API_HOST", "127.0.0.1")
 PORT = int(os.getenv("OPS_API_PORT", "8767"))
 TOKEN = os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or ""
@@ -41,6 +44,7 @@ DEPLOY_MUTEX = threading.Lock()
 COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
+    "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
     "account-snapshot-scheduler": "account-snapshot-scheduler",
     "ipo-reminder-scheduler": "ipo-reminder-scheduler",
@@ -70,6 +74,9 @@ SERVICE_ALIASES = {
     "ipo-reminder": "ipo-reminder-scheduler",
     "ipo-reminders": "ipo-reminder-scheduler",
     "ipo-scheduler": "ipo-reminder-scheduler",
+    "weekly-review": "weekly-review-web",
+    "weekly_review": "weekly-review-web",
+    "weekly-review-web": "weekly-review-web",
     "futu": "futu-opend",
     "opend": "futu-opend",
     "futu_proxy": "futu-proxy",
@@ -326,6 +333,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         "requested_ref": ref,
         "requested_by": requested_by,
         "repo_dir": str(REPO_DIR),
+        "app_root": str(APP_ROOT),
         "app_dir": str(APP_DIR),
         "async": True,
     }
@@ -403,6 +411,7 @@ def _run_deploy_with_event(
             "requested_ref": ref,
             "requested_by": requested_by,
             "repo_dir": str(REPO_DIR),
+            "app_root": str(APP_ROOT),
             "app_dir": str(APP_DIR),
         }
     )
@@ -427,7 +436,11 @@ def _run_deploy_with_event(
         env = {
             **os.environ,
             "SOURCE_DIR": str(REPO_DIR),
+            "APP_ROOT": str(APP_ROOT),
             "APP_DIR": str(APP_DIR),
+            "RELEASES_DIR": str(APP_ROOT / "releases"),
+            "COMPOSE_PROJECT_NAME": COMPOSE_PROJECT_NAME,
+            "COMPOSE_ENV_FILE": str(COMPOSE_ENV_FILE),
             "BUILD_IMAGE": "true" if mode == "full" else "false",
             "DEPLOY_EVENT_ID": event_id,
         }
@@ -441,7 +454,7 @@ def _run_deploy_with_event(
         if not deploy.ok:
             raise RuntimeError(f"deploy script failed: {_summarize_command_error(deploy.stderr or deploy.stdout)}")
 
-        health = build_deploy_health()
+        health = wait_for_deploy_health()
         metadata["health"] = health
         if warnings:
             metadata["warnings"] = warnings
@@ -492,11 +505,14 @@ def _run_deploy_with_event(
 
 def build_deploy_health() -> dict[str, Any]:
     checks = [
+        _check_required_file("schema", APP_DIR / "db" / "schema.sql"),
+        _check_required_file("compose_file", COMPOSE_FILE),
         _check_compose(),
         _check_socket("postgres", "127.0.0.1", int(os.getenv("POSTGRES_HOST_PORT", "55432"))),
         _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
+        _check_socket("weekly-review-web", "127.0.0.1", int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010"))),
     ]
-    for service in ("dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
+    for service in ("weekly-review-web", "dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
         checks.append(_check_compose_service_running(service))
     return {
         "ok": all(bool(check.get("ok")) for check in checks),
@@ -504,11 +520,31 @@ def build_deploy_health() -> dict[str, Any]:
     }
 
 
+def wait_for_deploy_health(timeout_seconds: float = 90.0, stable_seconds: float = 12.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    first_healthy_at: float | None = None
+    last_health = build_deploy_health()
+    while time.monotonic() < deadline:
+        last_health = build_deploy_health()
+        if last_health.get("ok"):
+            if first_healthy_at is None:
+                first_healthy_at = time.monotonic()
+            if time.monotonic() - first_healthy_at >= stable_seconds:
+                last_health["stable_seconds"] = stable_seconds
+                return last_health
+        else:
+            first_healthy_at = None
+        time.sleep(3)
+    last_health["stable_seconds"] = 0
+    last_health["message"] = f"deploy health did not stay healthy for {stable_seconds:.0f}s"
+    return last_health
+
+
 def read_deploy_event(event_id: int) -> dict[str, Any] | None:
     result = _run(
         [
             PYTHON_BIN,
-            str(APP_DIR / "scripts" / "get_deploy_event.py"),
+            str(_script_path("get_deploy_event.py")),
             str(event_id),
         ],
         cwd=APP_DIR,
@@ -547,7 +583,7 @@ def _record_deploy_start(
     result = _run(
         [
             PYTHON_BIN,
-            str(APP_DIR / "scripts" / "record_deploy_event.py"),
+            str(_script_path("record_deploy_event.py")),
             "start",
             "--source",
             source,
@@ -583,7 +619,7 @@ def _record_deploy_finish(
     result = _run(
         [
             PYTHON_BIN,
-            str(APP_DIR / "scripts" / "record_deploy_event.py"),
+            str(_script_path("record_deploy_event.py")),
             "finish",
             "--id",
             event_id,
@@ -731,10 +767,30 @@ def _check_socket(name: str, host: str, port: int) -> dict[str, Any]:
     return {"name": name, "ok": True, "message": f"{host}:{port} reachable"}
 
 
+def _check_required_file(name: str, path: Path) -> dict[str, Any]:
+    if path.is_file():
+        return {"name": name, "ok": True, "message": str(path)}
+    return {"name": name, "ok": False, "message": f"missing: {path}"}
+
+
 def _compose_command(args: list[str]) -> list[str]:
     if not COMPOSE_FILE.exists():
         raise ValueError(f"compose file not found: {COMPOSE_FILE}")
-    return ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
+    command = ["docker", "compose", "--project-name", COMPOSE_PROJECT_NAME]
+    if COMPOSE_ENV_FILE.is_file():
+        command.extend(["--env-file", str(COMPOSE_ENV_FILE)])
+    command.extend(["-f", str(COMPOSE_FILE), *args])
+    return command
+
+
+def _script_path(name: str) -> Path:
+    app_path = APP_DIR / "scripts" / name
+    if app_path.is_file():
+        return app_path
+    repo_path = REPO_DIR / "scripts" / name
+    if repo_path.is_file():
+        return repo_path
+    return app_path
 
 
 def _run(
