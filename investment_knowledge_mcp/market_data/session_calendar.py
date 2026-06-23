@@ -33,9 +33,12 @@ def _resolve_market_session(market: str, review_dt: datetime, forced_mode: str |
     normalized = market.upper()
     tz = MARKET_TZ.get(normalized, DEFAULT_USER_TZ)
     local_dt = review_dt.astimezone(tz)
+    requested_user_date = review_dt.astimezone(DEFAULT_USER_TZ).date()
     session_date = _latest_weekday(local_dt.date())
     inferred_mode, is_open, elapsed = _infer_mode(normalized, local_dt)
     run_mode = forced_mode or inferred_mode
+    if forced_mode in {"post_close", "pre_open", "intraday"}:
+        session_date = _latest_weekday(requested_user_date)
     if forced_mode == "post_close":
         is_open = False
         elapsed = None
@@ -46,7 +49,7 @@ def _resolve_market_session(market: str, review_dt: datetime, forced_mode: str |
         is_open = True
         elapsed = elapsed if elapsed is not None else 0.5
 
-    if normalized == "US" and local_dt.time() < time(16, 0):
+    if forced_mode is None and normalized == "US" and local_dt.time() < time(16, 0):
         session_date = _latest_weekday(local_dt.date() - timedelta(days=1))
     label = _session_label(normalized, session_date, run_mode)
     return SessionState(

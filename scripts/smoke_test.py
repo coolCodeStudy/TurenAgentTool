@@ -711,6 +711,7 @@ def main() -> None:
         )
         daily_markdown = render_daily_market_review_markdown(daily_context)
         assert daily_context["executive_snapshot"]["market_mood"] in {"risk_on", "narrow_theme"}
+        assert daily_context["sessions"]["US"]["session_date"] == "2020-01-06"
         assert daily_context["markets"]["CN"]["coverage"]["status"] == "complete"
         assert len(daily_context["markets"]["US"]["hot_stocks"]) == 5
         assert len(daily_context["markets"]["HK"]["hot_industries"]) == 5
