@@ -34,7 +34,8 @@ Read it before changing code, running services, or touching deployment commands.
 ## Worktree Session Mode
 
 - The main workspace `/Users/lishaocheng/code/TurenAgentTool` is for integration, release, urgent hotfixes, and cloud deploy verification.
-- When multiple sessions or longer-running tasks are active, create a dedicated task worktree before editing: `bash scripts/create_task_worktree.sh <task-slug>`.
+- When multiple sessions or longer-running tasks are active, every non-trivial editing task must use a dedicated task worktree before editing: `bash scripts/create_task_worktree.sh <task-slug>`.
+- Use the main workspace for read-only checks only when other sessions are active, unless the task is an integration/release/hotfix/cloud-verification task that explicitly belongs in the main workspace.
 - New task worktrees should start from `origin/main` by default. Start from another branch only when the task is explicitly continuing that branch.
 - Use one worktree per session/task. Do not share a task worktree across concurrent sessions.
 - Default task worktrees live under `/Users/lishaocheng/code/TurenAgentTool.worktrees/<task-slug>` and use branch `codex/<task-slug>`.
@@ -42,6 +43,16 @@ Read it before changing code, running services, or touching deployment commands.
 - Do not move, delete, or stage untracked/dirty files from another session while creating or using a worktree.
 - Deploy only pushed commits/refs, not implicit local worktree state. Merge or cherry-pick task work into the release branch deliberately before `/ops/deploy`.
 - Use `docs/codex-session-workflow.md` for the full multi-session branch/worktree flow.
+
+## Development Handoff Discipline
+
+- A development task is not done until its code/doc changes are committed, verification has run or the verification limit is documented, and the related PRD/technical plan has been checked for missed items.
+- If implementation status, verification status, deployment status, or next action changed, update `docs/project-management/Feature-Registry.md` in the same branch before handoff.
+- When a task implements, partially implements, supersedes, or blocks a technical plan, mark that status in the registry instead of leaving `needs_review` for a future agent to rediscover.
+- Before handoff, report the branch, commit SHA, verification performed, registry updates, remaining gaps, and whether the worktree is clean.
+- A task worktree should be clean at handoff. If dirty files remain, list each file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
+- Push the task branch or target branch after committing unless the user explicitly asks to keep the work local. If it remains local-only, record the reason in the final summary.
+- Do not leave untracked experiments, generated files, or partial edits in a shared workspace as the normal result of development. Commit them, move them into the appropriate task worktree, document them as blocked/WIP, or remove only files you created and no longer need.
 
 ## Deployment And Service Boundaries
 

@@ -150,6 +150,33 @@ A feature is product-done only when:
 
 Code-done is not product-done.
 
+## Developer Status Responsibility
+
+Developers and coding agents are responsible for updating delivery state when their work changes it. The Project Management Agent audits and corrects the system, but it should not be the only role that discovers completed, partial, blocked, or superseded work.
+
+Before handoff, the developer or coding agent must:
+
+- Re-read the linked PRD and technical plan.
+- Check each relevant acceptance criterion or implementation step.
+- Complete straightforward missed items immediately.
+- Mark larger misses as `partially_implemented`, `blocked`, `superseded`, or follow-up work in `docs/project-management/Feature-Registry.md`.
+- Record evidence status using code references, tests, smoke checks, deploy events, or user acceptance.
+- Record verification limits when tests or deployment could not be run.
+- Report the branch, commit SHA, verification performed, registry updates, remaining gaps, and worktree cleanliness in the handoff summary.
+
+A task is not ready for handoff if it leaves the registry in a misleading state. In particular:
+
+- Do not leave a completed technical plan as `needs_review`.
+- Do not mark product work `accepted` without explicit user acceptance.
+- Do not mark cloud-served behavior `deployed` without deployment or cloud-side verification evidence.
+- Do not leave dirty or untracked files unexplained in a shared workspace.
+
+If no registry update is needed, say why in the final handoff. Examples:
+
+- The task was a local investigation with no delivery-state change.
+- The task changed internal implementation details without affecting a tracked PRD or technical plan.
+- The task is intentionally WIP and the branch remains open with a documented reason.
+
 ## Audit Workflow
 
 For a delivery audit:

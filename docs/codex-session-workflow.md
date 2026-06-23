@@ -10,6 +10,10 @@ This repository supports multiple Codex sessions, but only if each session has a
 
 Use the main workspace for integration, release, urgent fixes, and cloud verification. Use a task worktree for normal feature, product, or documentation work.
 
+When more than one active session or task exists, a dedicated task worktree is required for every non-trivial editing task. The main workspace should remain available for integration and cloud verification instead of becoming a shared scratchpad.
+
+Read-only checks may run from the main workspace. Editing from the main workspace while other sessions are active is allowed only for integration, release, urgent hotfix, or cloud-verification work that explicitly belongs there.
+
 ## Starting A New Task
 
 For a new independent task, start from the latest `origin/main`:
@@ -68,6 +72,32 @@ Use one of these patterns:
 - Do not push a branch with unrelated product docs, Ops scripts, schema changes, and local experiments bundled together unless the bundle is intentionally the release scope.
 - Do not treat a branch diff against `origin/main` as "uncommitted changes"; it shows all branch work not yet in `main`.
 - Do not delete another session's worktree or untracked files unless the user explicitly asks for that exact cleanup.
+- Do not leave a task "done" with unexplained modified or untracked files in its worktree.
+- Do not leave implemented or superseded technical plans marked as `needs_review` in `docs/project-management/Feature-Registry.md`.
+- Do not rely on a later project-management audit to discover your task's completion status.
+
+## Handoff Checklist
+
+Before a task is handed off, the working session must complete this checklist:
+
+1. Re-read the linked PRD and technical plan.
+2. Finish straightforward missed items, or document larger misses as gaps.
+3. Run local verification appropriate to the change, or document the verification limit.
+4. Update `docs/project-management/Feature-Registry.md` when implementation, verification, deployment, acceptance, blocked, or superseded status changed.
+5. Commit the task changes.
+6. Push the branch or target ref unless the user explicitly asks to keep the work local.
+7. Confirm `git status --short` is clean in the task worktree.
+8. If the worktree is not clean, list every remaining dirty/untracked file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
+
+The handoff summary should include:
+
+- Branch name.
+- Commit SHA.
+- Files or docs changed.
+- Verification performed.
+- Feature Registry updates, or why none were needed.
+- Remaining gaps and next action.
+- Worktree cleanliness.
 
 ## Cleanup Rules
 
@@ -81,3 +111,5 @@ git branch -d codex/<task-slug>
 If a branch still contains useful work that should not yet enter `main`, keep it as a named follow-up branch and record the reason in the final summary or the relevant tech plan.
 
 If a branch only contains obsolete or accidental files, delete those files in that branch before merging anything else.
+
+If a temporary worktree was created only to make a direct `main` documentation or release commit, remove it after the push succeeds. Do not leave temporary worktrees attached to `main`, because that prevents later clean checkout and confuses session ownership.
