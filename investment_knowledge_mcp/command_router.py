@@ -16,6 +16,10 @@ from investment_knowledge_mcp.analysis_provider import (
     generate_stock_analysis_with_openai,
     route_command_intent_with_openai,
 )
+from investment_knowledge_mcp.daily_market_review import (
+    build_daily_market_review,
+    render_daily_market_review_json,
+)
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
@@ -243,6 +247,15 @@ WEEKLY_REVIEW_COMMANDS = {
     "这个星期复盘",
     "周复盘",
     "weekly review",
+}
+
+DAILY_MARKET_REVIEW_COMMANDS = {
+    "每日复盘",
+    "今日复盘",
+    "市场复盘",
+    "日复盘",
+    "复盘今天市场",
+    "daily market review",
 }
 
 NEXT_WEEK_COMMANDS = {
@@ -557,6 +570,10 @@ def handle_command(
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
 
+    daily_market_review_match = _match_daily_market_review_command(cleaned)
+    if daily_market_review_match is not None:
+        return _handle_daily_market_review(daily_market_review_match)
+
     weekly_review_match = _match_weekly_review_command(cleaned)
     if weekly_review_match is not None:
         return _handle_weekly_review(time_range_text=weekly_review_match)
@@ -683,6 +700,7 @@ def is_query_command(command: str) -> bool:
             *RESEARCH_JOB_LIST_COMMANDS,
             *TRADE_REVIEW_COMMANDS,
             *PERFORMANCE_ESTIMATE_COMMANDS,
+            *DAILY_MARKET_REVIEW_COMMANDS,
             *WEEKLY_REVIEW_COMMANDS,
             *NEXT_WEEK_COMMANDS,
             *TRADE_BACKFILL_COMMANDS,
@@ -702,6 +720,7 @@ def is_query_command(command: str) -> bool:
             flags=re.IGNORECASE,
         )
         or _match_weekly_review_command(normalized) is not None
+        or _match_daily_market_review_command(normalized) is not None
         or _match_next_week_command(normalized) is not None
         or _extract_stock_query(normalized) is not None
         or normalized.startswith("__AMBIGUOUS_STOCK__")
@@ -2137,6 +2156,16 @@ def _match_weekly_review_command(command: str) -> str | None:
     return None
 
 
+def _match_daily_market_review_command(command: str) -> str | None:
+    compact = command.strip()
+    if compact in DAILY_MARKET_REVIEW_COMMANDS:
+        return ""
+    for prefix in DAILY_MARKET_REVIEW_COMMANDS:
+        if compact.startswith(prefix + " "):
+            return compact[len(prefix) :].strip()
+    return None
+
+
 def _match_next_week_command(command: str) -> str | None:
     compact = command.strip()
     if compact in NEXT_WEEK_COMMANDS:
@@ -2177,6 +2206,80 @@ def _handle_weekly_review(time_range_text: str | None = None, next_week_only: bo
     if result.saved_report is not None:
         footer = f"\n\n已保存周复盘：review_reports #{result.saved_report.get('id')}"
     return CommandResult(ok=True, message=result.markdown + footer)
+
+
+def _handle_daily_market_review(arg_text: str | None = None) -> CommandResult:
+    try:
+        args = _parse_daily_market_review_args(arg_text or "")
+        result = build_daily_market_review(
+            review_date=args["review_date"],
+            markets=args["markets"],
+            mode=args["mode"],
+            force_refresh=args["force_refresh"],
+            save=True,
+        )
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"生成每日市场复盘失败：{exc}")
+    if args["format"] == "json":
+        return CommandResult(ok=True, message=render_daily_market_review_json(result.context, result.markdown))
+    footer = ""
+    if result.saved_report is not None:
+        footer = f"\n\n已保存每日市场复盘：review_reports #{result.saved_report.get('id')}"
+    elif result.saved_review is not None:
+        footer = f"\n\n已读取已保存每日市场复盘：daily_market_reviews #{result.saved_review.get('id')}"
+    return CommandResult(ok=True, message=result.markdown + footer)
+
+
+def _parse_daily_market_review_args(value: str) -> dict[str, Any]:
+    tokens = value.split()
+    review_date: date | None = None
+    markets: list[str] | None = None
+    mode: str | None = None
+    output_format = "markdown"
+    force_refresh = False
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token == "--force-refresh":
+            force_refresh = True
+            idx += 1
+            continue
+        if token in {"--market", "--markets"} and idx + 1 < len(tokens):
+            markets = [item.strip() for item in tokens[idx + 1].split(",") if item.strip()]
+            idx += 2
+            continue
+        if token == "--mode" and idx + 1 < len(tokens):
+            candidate = tokens[idx + 1].strip()
+            mode = candidate if candidate in {"pre_open", "intraday", "post_close"} else None
+            idx += 2
+            continue
+        if token == "--format" and idx + 1 < len(tokens):
+            candidate_format = tokens[idx + 1].strip().lower()
+            output_format = candidate_format if candidate_format in {"markdown", "json"} else "markdown"
+            idx += 2
+            continue
+        parsed = _parse_iso_date_token(token)
+        if parsed is not None:
+            review_date = parsed
+        idx += 1
+    return {
+        "review_date": review_date,
+        "markets": markets,
+        "mode": mode,
+        "format": output_format,
+        "force_refresh": force_refresh,
+    }
+
+
+def _parse_iso_date_token(value: str) -> date | None:
+    match = re.fullmatch(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", value.strip())
+    if not match:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
 
 
 def _handle_trade_review(time_range_text: str | None = None) -> CommandResult:

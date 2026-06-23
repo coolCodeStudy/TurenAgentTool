@@ -147,12 +147,101 @@ ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS blowups JSONB NOT NULL DEFAU
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS holdings_table JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS next_week JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS story JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS report_key TEXT;
 
 ALTER TABLE review_reports
   DROP CONSTRAINT IF EXISTS review_reports_report_date_key;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_type_period
-  ON review_reports (report_type, period_start, period_end);
+UPDATE review_reports
+SET report_key = CONCAT(
+  report_type,
+  ':',
+  COALESCE(period_start::text, report_date::text),
+  ':',
+  COALESCE(period_end::text, report_date::text)
+)
+WHERE report_key IS NULL;
+
+DROP INDEX IF EXISTS idx_review_reports_type_period;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_report_key
+  ON review_reports (report_key);
+
+ALTER TABLE review_reports ALTER COLUMN report_key SET NOT NULL;
+
+CREATE TABLE IF NOT EXISTS market_data_fetches (
+  id BIGSERIAL PRIMARY KEY,
+  provider TEXT NOT NULL,
+  market TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  session_date DATE,
+  status TEXT NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL,
+  source_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  diagnostics JSONB NOT NULL DEFAULT '{}'::jsonb,
+  raw_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS daily_market_reviews (
+  id BIGSERIAL PRIMARY KEY,
+  review_key TEXT NOT NULL UNIQUE,
+  report_id BIGINT REFERENCES review_reports(id) ON DELETE SET NULL,
+  requested_date DATE NOT NULL,
+  session_label TEXT NOT NULL,
+  markets JSONB NOT NULL DEFAULT '[]'::jsonb,
+  run_mode TEXT NOT NULL,
+  generated_at TIMESTAMPTZ NOT NULL,
+  source_coverage JSONB NOT NULL DEFAULT '{}'::jsonb,
+  structured_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS daily_market_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  review_id BIGINT NOT NULL REFERENCES daily_market_reviews(id) ON DELETE CASCADE,
+  market TEXT NOT NULL,
+  session_date DATE NOT NULL,
+  run_mode TEXT NOT NULL,
+  mood TEXT NOT NULL,
+  sentiment_score NUMERIC,
+  volume_state TEXT NOT NULL,
+  confidence TEXT NOT NULL,
+  snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (review_id, market)
+);
+
+CREATE TABLE IF NOT EXISTS daily_market_hot_stocks (
+  id BIGSERIAL PRIMARY KEY,
+  review_id BIGINT NOT NULL REFERENCES daily_market_reviews(id) ON DELETE CASCADE,
+  market TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  symbol TEXT NOT NULL,
+  name TEXT,
+  move_pct NUMERIC,
+  volume_heat NUMERIC,
+  theme TEXT,
+  catalyst TEXT,
+  confidence TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (review_id, market, rank)
+);
+
+CREATE TABLE IF NOT EXISTS daily_market_hot_industries (
+  id BIGSERIAL PRIMARY KEY,
+  review_id BIGINT NOT NULL REFERENCES daily_market_reviews(id) ON DELETE CASCADE,
+  market TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  industry_name TEXT NOT NULL,
+  theme_label TEXT,
+  performance_pct NUMERIC,
+  volume_heat NUMERIC,
+  confidence TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (review_id, market, rank)
+);
 
 CREATE TABLE IF NOT EXISTS account_snapshots (
   id BIGSERIAL PRIMARY KEY,
@@ -291,6 +380,14 @@ CREATE INDEX IF NOT EXISTS idx_user_insights_target ON user_insights(target_type
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_status ON candidate_insights(status);
 CREATE INDEX IF NOT EXISTS idx_candidate_insights_target ON candidate_insights(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_command_events_created_at ON command_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_market_data_fetches_market_domain
+  ON market_data_fetches(market, domain, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_market_reviews_requested_date
+  ON daily_market_reviews(requested_date DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_market_hot_stocks_symbol
+  ON daily_market_hot_stocks(market, symbol);
+CREATE INDEX IF NOT EXISTS idx_daily_market_hot_industries_name
+  ON daily_market_hot_industries(market, industry_name);
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_type, task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_events_created_at ON task_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deploy_events_created_at ON deploy_events(created_at DESC);

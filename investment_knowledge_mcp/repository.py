@@ -18,6 +18,17 @@ def _normalize_market(market: str) -> str:
     return market.strip().upper()
 
 
+def _default_review_report_key(
+    report_type: str,
+    report_date: str,
+    period_start: str | None,
+    period_end: str | None,
+) -> str:
+    start = period_start or report_date
+    end = period_end or report_date
+    return f"{report_type}:{start}:{end}"
+
+
 def upsert_stock_profile(
     symbol: str,
     market: str,
@@ -951,17 +962,24 @@ def upsert_review_report(
     holdings_table: list[dict[str, Any]] | None = None,
     next_week: list[dict[str, Any]] | None = None,
     story: dict[str, Any] | None = None,
+    report_key: str | None = None,
 ) -> dict[str, Any]:
+    resolved_report_key = report_key or _default_review_report_key(
+        report_type=report_type,
+        report_date=report_date,
+        period_start=period_start,
+        period_end=period_end,
+    )
     with transaction() as conn:
         row = conn.execute(
             """
             INSERT INTO review_reports (
               report_date, portfolio_snapshot, summary, risks, opportunities,
               new_knowledge_candidates, report_type, period_start, period_end,
-              source_status, highlights, blowups, holdings_table, next_week, story
+              source_status, highlights, blowups, holdings_table, next_week, story, report_key
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (report_type, period_start, period_end) DO UPDATE SET
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (report_key) DO UPDATE SET
               report_date = EXCLUDED.report_date,
               portfolio_snapshot = EXCLUDED.portfolio_snapshot,
               summary = EXCLUDED.summary,
@@ -992,9 +1010,197 @@ def upsert_review_report(
                 Jsonb(holdings_table or []),
                 Jsonb(next_week or []),
                 Jsonb(story or {}),
+                resolved_report_key,
             ),
         ).fetchone()
     return to_jsonable(row)
+
+
+def upsert_market_data_fetch(
+    provider: str,
+    market: str,
+    domain: str,
+    status: str,
+    fetched_at: str,
+    session_date: str | None = None,
+    source_refs: list[dict[str, Any]] | None = None,
+    diagnostics: dict[str, Any] | None = None,
+    raw_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO market_data_fetches (
+              provider, market, domain, session_date, status, fetched_at,
+              source_refs, diagnostics, raw_metadata
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                provider,
+                _normalize_market(market),
+                domain,
+                session_date,
+                status,
+                fetched_at,
+                Jsonb(source_refs or []),
+                Jsonb(diagnostics or {}),
+                Jsonb(raw_metadata or {}),
+            ),
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def upsert_daily_market_review(
+    review_key: str,
+    report_id: int | None,
+    requested_date: str,
+    session_label: str,
+    markets: list[str],
+    run_mode: str,
+    generated_at: str,
+    source_coverage: dict[str, Any],
+    structured_payload: dict[str, Any],
+    market_snapshots: list[dict[str, Any]] | None = None,
+    hot_stocks: list[dict[str, Any]] | None = None,
+    hot_industries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        review = conn.execute(
+            """
+            INSERT INTO daily_market_reviews (
+              review_key, report_id, requested_date, session_label, markets,
+              run_mode, generated_at, source_coverage, structured_payload
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (review_key) DO UPDATE SET
+              report_id = EXCLUDED.report_id,
+              requested_date = EXCLUDED.requested_date,
+              session_label = EXCLUDED.session_label,
+              markets = EXCLUDED.markets,
+              run_mode = EXCLUDED.run_mode,
+              generated_at = EXCLUDED.generated_at,
+              source_coverage = EXCLUDED.source_coverage,
+              structured_payload = EXCLUDED.structured_payload,
+              updated_at = now()
+            RETURNING *
+            """,
+            (
+                review_key,
+                report_id,
+                requested_date,
+                session_label,
+                Jsonb([_normalize_market(market) for market in markets]),
+                run_mode,
+                generated_at,
+                Jsonb(source_coverage or {}),
+                Jsonb(structured_payload or {}),
+            ),
+        ).fetchone()
+        review_id = review["id"]
+        conn.execute("DELETE FROM daily_market_snapshots WHERE review_id = %s", (review_id,))
+        conn.execute("DELETE FROM daily_market_hot_stocks WHERE review_id = %s", (review_id,))
+        conn.execute("DELETE FROM daily_market_hot_industries WHERE review_id = %s", (review_id,))
+
+        for item in market_snapshots or []:
+            conn.execute(
+                """
+                INSERT INTO daily_market_snapshots (
+                  review_id, market, session_date, run_mode, mood, sentiment_score,
+                  volume_state, confidence, snapshot, source_status
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    review_id,
+                    _normalize_market(str(item.get("market") or "")),
+                    item.get("session_date"),
+                    item.get("run_mode") or run_mode,
+                    item.get("mood") or "data_insufficient",
+                    item.get("sentiment_score"),
+                    item.get("volume_state") or "data_insufficient",
+                    item.get("confidence") or "low",
+                    Jsonb(item.get("snapshot") or {}),
+                    Jsonb(item.get("source_status") or {}),
+                ),
+            )
+
+        for item in hot_stocks or []:
+            conn.execute(
+                """
+                INSERT INTO daily_market_hot_stocks (
+                  review_id, market, rank, symbol, name, move_pct, volume_heat,
+                  theme, catalyst, confidence, payload
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    review_id,
+                    _normalize_market(str(item.get("market") or "")),
+                    item.get("rank"),
+                    str(item.get("symbol") or ""),
+                    item.get("name"),
+                    item.get("move_pct"),
+                    item.get("volume_heat"),
+                    item.get("theme"),
+                    item.get("catalyst"),
+                    item.get("confidence") or "low",
+                    Jsonb(item),
+                ),
+            )
+
+        for item in hot_industries or []:
+            conn.execute(
+                """
+                INSERT INTO daily_market_hot_industries (
+                  review_id, market, rank, industry_name, theme_label,
+                  performance_pct, volume_heat, confidence, payload
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    review_id,
+                    _normalize_market(str(item.get("market") or "")),
+                    item.get("rank"),
+                    str(item.get("industry") or item.get("industry_name") or ""),
+                    item.get("theme_label") or item.get("theme"),
+                    item.get("performance_pct"),
+                    item.get("volume_heat"),
+                    item.get("confidence") or "low",
+                    Jsonb(item),
+                ),
+            )
+    return to_jsonable(review)
+
+
+def get_daily_market_review_by_key(review_key: str) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT dmr.*, rr.summary AS markdown, rr.report_key, rr.source_status AS report_source_status
+            FROM daily_market_reviews dmr
+            LEFT JOIN review_reports rr ON rr.id = dmr.report_id
+            WHERE dmr.review_key = %s
+            """,
+            (review_key,),
+        ).fetchone()
+    return to_jsonable(row) if row is not None else None
+
+
+def list_daily_market_reviews(limit: int = 20) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT dmr.*, rr.summary AS markdown
+            FROM daily_market_reviews dmr
+            LEFT JOIN review_reports rr ON rr.id = dmr.report_id
+            ORDER BY dmr.generated_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+    return to_jsonable(rows)
 
 
 def upsert_trade_records(

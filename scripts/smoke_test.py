@@ -21,8 +21,14 @@ from investment_knowledge_mcp.command_router import (
     is_query_command,
     is_research_write_command,
 )
+from investment_knowledge_mcp.daily_market_review import (
+    build_daily_market_review,
+    build_daily_market_review_context,
+    render_daily_market_review_markdown,
+)
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
+from investment_knowledge_mcp.market_data.providers.fake import FakeMarketDataProvider
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
 from investment_knowledge_mcp.research.audit import audit_research_draft
 from investment_knowledge_mcp.research.jobs import create_research_job, list_research_jobs, update_research_job
@@ -159,6 +165,23 @@ def cleanup_smoke_data() -> None:
             WHERE report_type = 'weekly'
               AND period_start = DATE '2020-01-06'
               AND period_end = DATE '2020-01-12'
+            """
+        )
+        conn.execute(
+            """
+            DELETE FROM daily_market_reviews
+            WHERE review_key LIKE 'daily_market:2020-01-06:%'
+            """
+        )
+        conn.execute(
+            """
+            DELETE FROM review_reports
+            WHERE report_key LIKE 'daily_market:2020-01-06:%'
+               OR (
+                 report_type = 'daily_market'
+                 AND period_start <= DATE '2020-01-06'
+                 AND period_end >= DATE '2020-01-06'
+               )
             """
         )
         conn.execute(
@@ -679,6 +702,40 @@ def main() -> None:
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end
+        fake_provider = FakeMarketDataProvider()
+        daily_context = build_daily_market_review_context(
+            review_date=weekly_start,
+            markets=["CN", "US", "HK"],
+            mode="post_close",
+            providers=[fake_provider],
+        )
+        daily_markdown = render_daily_market_review_markdown(daily_context)
+        assert daily_context["executive_snapshot"]["market_mood"] in {"risk_on", "narrow_theme"}
+        assert daily_context["markets"]["CN"]["coverage"]["status"] == "complete"
+        assert len(daily_context["markets"]["US"]["hot_stocks"]) == 5
+        assert len(daily_context["markets"]["HK"]["hot_industries"]) == 5
+        assert "## 2. Cross-Market Center Of Gravity" in daily_markdown
+        assert "## 8. Data Coverage And Caveats" in daily_markdown
+        daily_result = build_daily_market_review(
+            review_date=weekly_start,
+            markets=["HK", "CN", "US"],
+            mode="post_close",
+            force_refresh=True,
+            providers=[fake_provider],
+            save=True,
+        )
+        assert daily_result.saved_report is not None
+        assert daily_result.saved_report["report_key"] == "daily_market:2020-01-06:CN,HK,US:post_close"
+        assert daily_result.saved_review is not None
+        assert daily_result.saved_review["review_key"] == "daily_market:2020-01-06:CN,HK,US:post_close"
+        os.environ["DAILY_MARKET_REVIEW_PROVIDER"] = "fake"
+        daily_command_result = handle_command("每日复盘 2020-01-06 --market CN,US,HK --mode post_close --force-refresh")
+        assert daily_command_result.ok
+        assert "Daily Market Review" in daily_command_result.message
+        assert "已保存每日市场复盘" in daily_command_result.message
+        daily_json_result = handle_command("每日复盘 2020-01-06 --market CN,US,HK --mode post_close --format json")
+        assert daily_json_result.ok
+        assert '"review_key": "daily_market:2020-01-06:CN,HK,US:post_close"' in daily_json_result.message
         draft_for_audit = {
             "stock": {
                 "symbol": "AUDIT",
