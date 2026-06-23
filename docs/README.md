@@ -37,6 +37,7 @@ Active product references:
 - [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md)
 - [`product/PRD-command-workbench.md`](product/PRD-command-workbench.md)
 - [`product/PRD-Stock-Valuation-Research.md`](product/PRD-Stock-Valuation-Research.md)
+- [`product/PRD-Kline-Agent.md`](product/PRD-Kline-Agent.md)
 - [`product/PRD-每周复盘.md`](product/PRD-每周复盘.md)
 
 Historical or partially superseded product context:
