@@ -94,14 +94,19 @@ Current InvestmentKnowledge priority:
 
 Product docs live under `docs/product/`.
 
-Recommended files:
+Current product files:
 
 - `Product-Strategy-and-Roadmap.md`
 - `Product-Agent-Working-Protocol.md`
-- `PRD-Weekly-Review.md`
-- `PRD-Investment-Journal-Import.md`
-- `PRD-Decision-Cards.md`
+- `Project-Management-Agent-Protocol.md`
+- `PRD-每周复盘.md`
+- `周复盘Web工作台产品文档.md`
+- `PRD-weekly-review-week-scope-and-force-refresh.md`
+- `PRD-command-workbench.md`
 - `PRD-Stock-Valuation-Research.md`
+
+Recommended future files:
+
 - `Product-Decision-Records.md`
 
 When product direction changes, update the product strategy and product decision records.
@@ -115,4 +120,3 @@ The Product Agent can use mature product-management methods, but should adapt th
 - PRDs are the single source of truth for goals, scope, requirements, and acceptance criteria.
 - Product strategy starts with user, vision, goals, roadmap, and periodic review.
 - The north star metric keeps short-term features aligned with long-term value.
-

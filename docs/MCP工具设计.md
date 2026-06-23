@@ -1,5 +1,7 @@
 # InvestmentKnowledge MCP 工具设计
 
+> Status note: This is the foundational MCP tool design reference. The authoritative tool surface is the current MCP/server code and the current engineering state in `docs/当前工程状态.md`.
+
 ## 设计目标
 
 MCP Server 是大模型和本地知识库之间的边界。大模型负责研究、总结、推理和提问；MCP Server 负责可靠地查询、写入、更新和校验数据。

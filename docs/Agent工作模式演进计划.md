@@ -1,5 +1,7 @@
 # Agent 工作模式演进计划
 
+> Status note: This is historical product and architecture thinking about agent runtime evolution. Current operating rules live in `AGENTS.md`; current multi-session workflow lives in `docs/codex-session-workflow.md`.
+
 ## 背景
 
 当前 InvestmentKnowledge 已经跑通钉钉 Stream、富途 OpenD、OpenAI 持仓分析和 PostgreSQL 知识库雏形，但交互方式仍偏“命令机器人”：

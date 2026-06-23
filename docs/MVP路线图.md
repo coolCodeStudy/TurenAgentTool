@@ -1,5 +1,7 @@
 # MVP 路线图
 
+> Status note: This is a historical MVP roadmap. Use `docs/product/Product-Strategy-and-Roadmap.md` for current product direction and `docs/project-management/Feature-Registry.md` for current delivery tracking.
+
 ## 阶段 0：需求固化
 
 目标：把想法沉淀为可实现的边界。
