@@ -20,6 +20,7 @@ The documentation is intentionally split by decision type:
 | Feature delivery registry | [`project-management/Feature-Registry.md`](project-management/Feature-Registry.md) |
 | Current engineering state | [`当前工程状态.md`](当前工程状态.md) |
 | Durable project milestones | [`project-history.md`](project-history.md) |
+| Lesson capture protocol | [`lesson-capture-protocol.md`](lesson-capture-protocol.md) |
 | Durable agent lessons | [`agent-lessons.md`](agent-lessons.md) |
 | Multi-session Codex workflow | [`codex-session-workflow.md`](codex-session-workflow.md) |
 | Cloud pull deploy contract | [`techplans/cloud-pull-deploy-plan.md`](techplans/cloud-pull-deploy-plan.md) |
@@ -70,6 +71,7 @@ Current durable references:
 
 - [`当前工程状态.md`](当前工程状态.md)
 - [`project-history.md`](project-history.md)
+- [`lesson-capture-protocol.md`](lesson-capture-protocol.md)
 - [`agent-lessons.md`](agent-lessons.md)
 - [`codex-session-workflow.md`](codex-session-workflow.md)
 - [`Ops诊断与CodexApp接入方案.md`](Ops诊断与CodexApp接入方案.md)
@@ -97,3 +99,4 @@ These files are useful for context, but current implementation decisions should 
 - New substantial product work should have a PRD under `docs/product/`.
 - New substantial implementation work should have a technical plan under `docs/techplans/`.
 - Delivery state should be tracked in `docs/project-management/Feature-Registry.md`.
+- Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.

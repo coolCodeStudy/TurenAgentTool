@@ -24,6 +24,7 @@ The Project Management Agent maintains:
 - PRD-to-tech-plan links.
 - Tech-plan implementation status.
 - Verification and deployment evidence.
+- Lesson-capture status for completed substantial tasks.
 - Superseded or historical document markers.
 - Blocked decisions and next actions.
 - The feature registry under `docs/project-management/Feature-Registry.md`.
@@ -35,6 +36,7 @@ It should periodically answer:
 - Which PRDs have not been implemented?
 - Which technical plans are only partially implemented?
 - Which implemented features lack verification or deployment evidence?
+- Which completed tasks produced durable lessons that were not recorded?
 - Which documents conflict, are stale, or have been superseded?
 
 ## Boundaries
@@ -46,6 +48,7 @@ The Project Management Agent may:
 - Add status notes that point to the current source of truth.
 - Request missing product decisions from the user or Product Agent.
 - Request missing implementation or verification evidence from the Development Agent.
+- Request missing lesson capture from the role that performed the work.
 - Propose follow-up tasks when gaps are too large to resolve immediately.
 
 The Project Management Agent must not:
@@ -56,6 +59,7 @@ The Project Management Agent must not:
 - Rewrite PRD scope while performing a delivery audit.
 - Hide blocked work by marking it complete.
 - Delete historical docs only because they are superseded.
+- Invent product or technical lessons without evidence from the work, user direction, or source documents.
 
 ## Source Of Truth
 
@@ -147,6 +151,7 @@ A feature is product-done only when:
 - Deployment evidence exists when the affected surface is cloud-served or user-facing.
 - Follow-up gaps are either completed, recorded as blocked, or explicitly moved out of scope.
 - User acceptance is recorded when the work requires user acceptance.
+- Durable lessons have been recorded according to `../lesson-capture-protocol.md`, or the handoff states why there was no durable lesson.
 
 Code-done is not product-done.
 
@@ -162,6 +167,7 @@ Before handoff, the developer or coding agent must:
 - Mark larger misses as `partially_implemented`, `blocked`, `superseded`, or follow-up work in `docs/project-management/Feature-Registry.md`.
 - Record evidence status using code references, tests, smoke checks, deploy events, or user acceptance.
 - Record verification limits when tests or deployment could not be run.
+- Record durable lessons according to `../lesson-capture-protocol.md`, or state that no durable lesson was found.
 - Report the branch, commit SHA, verification performed, registry updates, remaining gaps, and worktree cleanliness in the handoff summary.
 
 A task is not ready for handoff if it leaves the registry in a misleading state. In particular:
@@ -185,11 +191,13 @@ For a delivery audit:
 2. Scan `docs/product/` and `docs/techplans/` for new or changed product and technical documents.
 3. For each substantial feature, check PRD status, technical plan status, implementation status, evidence, gaps, and next action.
 4. Update the registry only when there is evidence.
-5. Produce three lists:
+5. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
+6. Produce three lists:
    - Incomplete PRDs.
    - Ready PRDs without complete implementation.
    - Technical plans without complete implementation or verification evidence.
-6. Call out stale or superseded docs that need status notes.
+7. Call out stale or superseded docs that need status notes.
+8. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
 
 ## Cadence
 
@@ -199,6 +207,7 @@ Run a project-management check:
 - After a technical plan is created or changed.
 - After implementation finishes.
 - Before declaring a feature complete.
+- During handoff for substantial product, development, deployment, or documentation-cleanup tasks.
 - During a weekly or milestone project review.
 - Whenever the user asks what is unfinished, blocked, or out of sync.
 
@@ -236,3 +245,4 @@ Project Management Agent:
 
 - Owns delivery tracking, status integrity, stale-document detection, and registry maintenance.
 - Escalates missing decisions or evidence to the appropriate role.
+- Audits whether durable lessons were captured, but does not fabricate product or technical lessons on another role's behalf.

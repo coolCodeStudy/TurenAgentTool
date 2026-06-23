@@ -1,7 +1,7 @@
 # Agent Lessons
 
-This file is the compact learning ledger for future agents. It is not a diary.
-Add only lessons that should change future behavior.
+This file is the compact cross-task learning ledger for future agents. It is not a diary.
+Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or in a narrower product, technical, project-management, state, or history document. Add only lessons that should change future behavior.
 
 ## Local Verification Scope
 

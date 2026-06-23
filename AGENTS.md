@@ -10,7 +10,8 @@ Read it before changing code, running services, or touching deployment commands.
 - Read the specific tech plan or doc referenced by the user before implementing.
 - Use English for all new or agent-authored docs, code comments, PRDs, tech plans, and durable notes. Preserve existing non-English content unless the task is to translate or rewrite it.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
-- Do not create routine daily logs. Put durable lessons in `docs/agent-lessons.md`, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
+- Use `docs/lesson-capture-protocol.md` to decide whether a completed task produced a durable lesson and where that lesson belongs.
+- Do not create routine daily logs. Put durable lessons in the appropriate durable document, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
 
 ## Planning And Scope
 
@@ -49,6 +50,7 @@ Read it before changing code, running services, or touching deployment commands.
 - A development task is not done until its code/doc changes are committed, verification has run or the verification limit is documented, and the related PRD/technical plan has been checked for missed items.
 - If implementation status, verification status, deployment status, or next action changed, update `docs/project-management/Feature-Registry.md` in the same branch before handoff.
 - When a task implements, partially implements, supersedes, or blocks a technical plan, mark that status in the registry instead of leaving `needs_review` for a future agent to rediscover.
+- Before handoff, check whether the task produced a durable lesson. Record it in the appropriate document, or state `Lessons: none` with a short reason.
 - Before handoff, report the branch, commit SHA, verification performed, registry updates, remaining gaps, and whether the worktree is clean.
 - A task worktree should be clean at handoff. If dirty files remain, list each file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
 - Push the task branch or target branch after committing unless the user explicitly asks to keep the work local. If it remains local-only, record the reason in the final summary.
@@ -96,6 +98,8 @@ Read it before changing code, running services, or touching deployment commands.
 ## Learning Mechanism
 
 - `AGENTS.md` contains operating rules.
-- `docs/agent-lessons.md` contains durable lessons learned from mistakes.
+- `docs/lesson-capture-protocol.md` defines when to capture a lesson, where it belongs, and what the handoff must say.
+- `docs/agent-lessons.md` contains cross-task agent/process lessons learned from mistakes or repeated workflow corrections.
+- Product, technical, project-management, current-state, and milestone lessons should be recorded in their relevant durable docs instead of being forced into one ledger.
 - `scripts/agent_preflight.py` prints the rules, lessons, git status, and DB target for each new task.
 - If a lesson should prevent future mistakes, update these files rather than adding a dated work log.

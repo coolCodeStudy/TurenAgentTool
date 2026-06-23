@@ -89,6 +89,7 @@ Current InvestmentKnowledge priority:
 - Do not treat candidate insights as formal user opinions.
 - Do not sacrifice the review loop for architectural elegance.
 - Bring every roadmap decision back to the user's long-term investment-practice philosophy.
+- Capture durable product lessons before handoff. Product decisions, user preferences, rejected directions, and acceptance learning should be saved in product docs instead of remaining only in chat.
 
 ## Documentation Rules
 
@@ -112,6 +113,8 @@ Recommended future files:
 When product direction changes, update the product strategy and product decision records.
 
 Before a feature enters development, complete the PRD or tech plan.
+
+When a product discussion or PRD update produces a durable lesson, follow `../lesson-capture-protocol.md` and update the narrowest relevant product document. If no durable product lesson was produced, say so in the handoff summary.
 
 ## Reference Methods
 

@@ -84,10 +84,11 @@ Before a task is handed off, the working session must complete this checklist:
 2. Finish straightforward missed items, or document larger misses as gaps.
 3. Run local verification appropriate to the change, or document the verification limit.
 4. Update `docs/project-management/Feature-Registry.md` when implementation, verification, deployment, acceptance, blocked, or superseded status changed.
-5. Commit the task changes.
-6. Push the branch or target ref unless the user explicitly asks to keep the work local.
-7. Confirm `git status --short` is clean in the task worktree.
-8. If the worktree is not clean, list every remaining dirty/untracked file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
+5. Check `docs/lesson-capture-protocol.md` and record any durable lesson in the appropriate document.
+6. Commit the task changes.
+7. Push the branch or target ref unless the user explicitly asks to keep the work local.
+8. Confirm `git status --short` is clean in the task worktree.
+9. If the worktree is not clean, list every remaining dirty/untracked file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
 
 The handoff summary should include:
 
@@ -96,6 +97,7 @@ The handoff summary should include:
 - Files or docs changed.
 - Verification performed.
 - Feature Registry updates, or why none were needed.
+- Lessons recorded, or why there was no durable lesson.
 - Remaining gaps and next action.
 - Worktree cleanliness.
 
