@@ -184,19 +184,15 @@ jobs:
           script: |
             set -e
 
-            APP_DIR=/opt/investment-knowledge
+            APP_ROOT=/opt/investment-knowledge
+            APP_DIR="$APP_ROOT/current"
             DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
             DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
             RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
 
             test -f "$RELEASE_TAR"
-            sudo mkdir -p "$APP_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_DIR"
-
-            rm -rf "$APP_DIR/db" "$APP_DIR/investment_knowledge_mcp" "$APP_DIR/scripts"
-            tar -xzf "$RELEASE_TAR" -C "$APP_DIR"
-            cd "$APP_DIR"
-            chmod +x scripts/*.sh 2>/dev/null || true
+            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
 
             if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
               DOCKER_COMPOSE="docker compose"
@@ -206,43 +202,35 @@ jobs:
               DOCKER_COMPOSE=""
             fi
 
-            if [ -n "$DOCKER_COMPOSE" ] && [ -f docker-compose.prod.yml ]; then
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate mcp
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate account-snapshot-scheduler
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate ipo-reminder-scheduler
-              $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build --force-recreate dingtalk-stream-bot
-              $DOCKER_COMPOSE -f docker-compose.prod.yml ps
-              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 account-snapshot-scheduler || true
-              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 ipo-reminder-scheduler || true
-              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 dingtalk-stream-bot || true
-              $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 mcp || true
-              if [ -f scripts/install_ops_api_on_ecs.sh ] && [ -f .env ]; then
-                sudo mkdir -p "$DEPLOY_REPO_DIR"
-                sudo chown -R "$(id -un)":"$(id -gn)" "$DEPLOY_REPO_DIR"
-                if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
-                  git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
-                  git -C "$DEPLOY_REPO_DIR" fetch --prune origin
-                else
-                  rm -rf "$DEPLOY_REPO_DIR"
-                  git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
-                fi
-                git -C "$DEPLOY_REPO_DIR" checkout --detach "${{ github.sha }}"
-                git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
-                sudo \
-                  INVESTMENT_DIR="$APP_DIR" \
-                  OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
-                  OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
-                  OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
-                  bash scripts/install_ops_api_on_ecs.sh --start
-                systemctl status investment-ops-api.service --no-pager || true
-                if [ -f /etc/investment-knowledge/ops-api.env ]; then
-                  . /etc/investment-knowledge/ops-api.env
-                  curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
-                fi
+            if [ -n "$DOCKER_COMPOSE" ]; then
+              if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
+                git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
+                git -C "$DEPLOY_REPO_DIR" fetch --prune origin
+              else
+                rm -rf "$DEPLOY_REPO_DIR"
+                git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
               fi
-              if [ -f scripts/install_research_agent_worker_on_ecs.sh ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-                sudo bash scripts/install_research_agent_worker_on_ecs.sh --start || true
+              git -C "$DEPLOY_REPO_DIR" checkout --detach "${{ github.sha }}"
+              git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
+
+              SOURCE_DIR="$DEPLOY_REPO_DIR" \
+                APP_ROOT="$APP_ROOT" \
+                BUILD_IMAGE=false \
+                bash "$DEPLOY_REPO_DIR/scripts/deploy_from_local_checkout.sh"
+
+              sudo \
+                INVESTMENT_APP_ROOT="$APP_ROOT" \
+                OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
+                OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
+                OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
+                bash "$DEPLOY_REPO_DIR/scripts/install_ops_api_on_ecs.sh" --start
+              systemctl status investment-ops-api.service --no-pager || true
+              if [ -f /etc/investment-knowledge/ops-api.env ]; then
+                . /etc/investment-knowledge/ops-api.env
+                curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
+              fi
+              if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
+                sudo bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
                 systemctl status investment-research-agent-worker.service --no-pager || true
               fi
             else
@@ -449,7 +437,8 @@ jobs:
 
             resolve_compose_command
 
-            APP_DIR=/opt/investment-knowledge
+            APP_ROOT=/opt/investment-knowledge
+            APP_DIR="$APP_ROOT/current"
             DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
             DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
             RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
@@ -462,14 +451,10 @@ jobs:
             mkdir -p "$RELEASE_DIR"
             tar -xzf "$RELEASE_TAR" -C "$RELEASE_DIR"
 
-            sudo mkdir -p "$APP_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_DIR"
+            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
 
-            find "$APP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-            cp -a "$RELEASE_DIR"/. "$APP_DIR"/
-            cd "$APP_DIR"
-
-            cat > .env <<'ENV'
+            cat > "$APP_ROOT/.env" <<'ENV'
             COMPOSE_PROJECT_NAME=turenagenttool_prod
             COMPOSE_PROFILES=stream
             APP_IMAGE_TAG=prod
@@ -533,11 +518,9 @@ jobs:
             OPS_API_DEPLOY_TIMEOUT_SECONDS=${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}
             ENV
 
-            sed -i 's/^            //' .env
-            chmod 600 .env
+            sed -i 's/^            //' "$APP_ROOT/.env"
+            chmod 600 "$APP_ROOT/.env"
 
-            sudo mkdir -p "$DEPLOY_REPO_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$DEPLOY_REPO_DIR"
             if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
               git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
               git -C "$DEPLOY_REPO_DIR" fetch --prune origin
@@ -549,23 +532,29 @@ jobs:
             git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
 
             sudo \
-              INVESTMENT_DIR="$APP_DIR" \
+              INVESTMENT_APP_ROOT="$APP_ROOT" \
               OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
               OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
               OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
-              bash scripts/install_ops_api_on_ecs.sh --start
+              bash "$DEPLOY_REPO_DIR/scripts/install_ops_api_on_ecs.sh" --start
             if [ -f /etc/investment-knowledge/ops-api.env ]; then
               . /etc/investment-knowledge/ops-api.env
               curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
             fi
-            if [ -f scripts/install_research_agent_worker_on_ecs.sh ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-              sudo bash scripts/install_research_agent_worker_on_ecs.sh --start || true
+            if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
+              sudo bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
               systemctl status investment-research-agent-worker.service --no-pager || true
             fi
 
             gzip -dc "$IMAGE_TAR" | $DOCKER load
+
+            SOURCE_DIR="$DEPLOY_REPO_DIR" \
+              APP_ROOT="$APP_ROOT" \
+              BUILD_IMAGE=false \
+              bash "$DEPLOY_REPO_DIR/scripts/deploy_from_local_checkout.sh"
+
+            cd "$APP_DIR"
             $DOCKER_COMPOSE -f docker-compose.prod.yml config
-            $DOCKER_COMPOSE -f docker-compose.prod.yml up -d --no-build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
             sleep 20
             $DOCKER_COMPOSE -f docker-compose.prod.yml ps
