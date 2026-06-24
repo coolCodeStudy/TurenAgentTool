@@ -104,6 +104,7 @@ Current product files:
 - `周复盘Web工作台产品文档.md`
 - `PRD-weekly-review-week-scope-and-force-refresh.md`
 - `PRD-command-workbench.md`
+- `PRD-position-discipline-layer.md`
 - `PRD-Stock-Valuation-Research.md`
 
 Recommended future files:

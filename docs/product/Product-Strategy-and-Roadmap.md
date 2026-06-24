@@ -165,6 +165,18 @@ Key capabilities:
 - Keep default task display concise.
 - Route confirmation needs into a clear confirmation queue.
 
+### 7. Position Discipline Layer
+
+Goal: help the user remember why each meaningful holding exists and whether current behavior still follows the original discipline.
+
+Key capabilities:
+
+- Preserve raw buying rationale separately from AI summaries.
+- Maintain user-confirmed position discipline cards for material holdings.
+- Track review dates, invalidation conditions, risk limits, add rules, reduce rules, and attention cost.
+- Generate a small discipline review queue for missing contracts, stale theses, rule breaches, high-attention positions, and theme crowding.
+- Feed discipline outcomes into portfolio analysis, weekly review, and candidate insights.
+
 ## Roadmap
 
 ### P0: Product Foundation
@@ -197,6 +209,14 @@ Key capabilities:
 - Support explicit evidence expansion.
 - Add valuation frame, rerating trigger, and valuation risk fields.
 
+### P3.5: Position Discipline Layer
+
+- Add position discipline cards for material holdings.
+- Add a concise discipline queue.
+- Add discipline state to portfolio analysis.
+- Add discipline checks to weekly review.
+- Keep AI-generated discipline drafts pending until user confirmation.
+
 ### P4: Long-Term Memory and Validation
 
 - Retrieve historical views.
@@ -214,4 +234,3 @@ Key capabilities:
 - Weekly review comes before long daily reports.
 - Valuation explanation comes before target price.
 - The product should be able to run for ten years, not just answer one question.
-

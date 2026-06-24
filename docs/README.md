@@ -36,6 +36,7 @@ Active product references:
 - [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md)
 - [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md)
 - [`product/PRD-command-workbench.md`](product/PRD-command-workbench.md)
+- [`product/PRD-position-discipline-layer.md`](product/PRD-position-discipline-layer.md)
 - [`product/PRD-Stock-Valuation-Research.md`](product/PRD-Stock-Valuation-Research.md)
 - [`product/PRD-Kline-Agent.md`](product/PRD-Kline-Agent.md)
 - [`product/PRD-每周复盘.md`](product/PRD-每周复盘.md)
