@@ -31,6 +31,7 @@ from investment_knowledge_mcp.futu_opend_control import (
     request_phone_verify_code,
     submit_phone_verify_code,
 )
+from investment_knowledge_mcp.kline_agent import investigate_kline_behavior, parse_kline_command
 from investment_knowledge_mcp.ops_client import (
     render_cloud_service_control,
     render_cloud_coding_status,
@@ -367,6 +368,10 @@ def handle_command(
     if ambiguous_match:
         return CommandResult(ok=False, message=f"匹配到多个股票，请说得更具体一点：{ambiguous_match.group(1)}")
 
+    kline_request = parse_kline_command(cleaned)
+    if kline_request is not None:
+        return CommandResult(ok=True, message=investigate_kline_behavior(kline_request))
+
     stock_detail_match = re.fullmatch(
         r"(?:分析详情|查看详情|股票详情|inspect detail|analyze detail)\s+(\S+)\s+(\S+)",
         cleaned,
@@ -656,6 +661,7 @@ def is_query_command(command: str) -> bool:
     heuristic_intent = _heuristic_route_intent(normalized)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or parse_kline_command(normalized) is not None
         or re.fullmatch(r"(?:决策|decision)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|\S+\s+\S+)", normalized, flags=re.IGNORECASE)
         or re.fullmatch(
             r"(?:查看股票|inspect|stock inspect)\s+\S+\s+\S+",
