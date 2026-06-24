@@ -24,10 +24,12 @@ The Project Management Agent maintains:
 - PRD-to-tech-plan links.
 - Tech-plan implementation status.
 - Verification and deployment evidence.
+- Acceptance-test queue status.
 - Lesson-capture status for completed substantial tasks.
 - Superseded or historical document markers.
 - Blocked decisions and next actions.
 - The feature registry under `docs/project-management/Feature-Registry.md`.
+- The acceptance queue under `docs/project-management/Acceptance-Queue.md`.
 
 It should periodically answer:
 
@@ -36,6 +38,7 @@ It should periodically answer:
 - Which PRDs have not been implemented?
 - Which technical plans are only partially implemented?
 - Which implemented features lack verification or deployment evidence?
+- Which deployed or user-facing features have failed, blocked, pending, or stale acceptance tests?
 - Which completed tasks produced durable lessons that were not recorded?
 - Which documents conflict, are stale, or have been superseded?
 
@@ -69,7 +72,8 @@ Use these sources in order:
 2. Product docs under `docs/product/` for product intent, scope, and acceptance criteria.
 3. Technical plans under `docs/techplans/` for implementation contracts.
 4. `docs/project-management/Feature-Registry.md` for delivery tracking.
-5. Code, tests, scripts, deployment events, and user confirmation for evidence.
+5. `docs/project-management/Acceptance-Queue.md` for independent user-facing acceptance-test status.
+6. Code, tests, scripts, deployment events, acceptance-test evidence, and user confirmation for evidence.
 
 When these sources disagree, do not silently choose one. Record the conflict and identify the document that appears to be current, with evidence.
 
@@ -173,6 +177,7 @@ A feature is product-done only when:
 - Acceptance criteria have been checked.
 - Verification evidence exists.
 - Deployment evidence exists when the affected surface is cloud-served or user-facing.
+- Independent acceptance testing is `passed` or `not_required` for cloud-served or user-facing work.
 - Follow-up gaps are either completed, recorded as blocked, or explicitly moved out of scope.
 - User acceptance is `accepted` when the work requires user acceptance, or `not_required` when it does not.
 - Durable lessons have been recorded according to `../lesson-capture-protocol.md`, or the handoff states why there was no durable lesson.
@@ -191,6 +196,7 @@ Before handoff, the developer or coding agent must:
 - Complete straightforward missed items immediately.
 - Mark larger misses as `partially_implemented`, `blocked`, `superseded`, or follow-up work in `docs/project-management/Feature-Registry.md`.
 - Record evidence status using code references, tests, smoke checks, deploy events, or user acceptance.
+- Update `docs/project-management/Acceptance-Queue.md` when user-facing work becomes ready for independent acceptance testing, fails acceptance testing, is blocked, or needs retest.
 - Record verification limits when tests or deployment could not be run.
 - Record durable lessons according to `../lesson-capture-protocol.md`, or state that no durable lesson was found.
 - Report the branch, commit SHA, verification performed, registry updates, remaining gaps, and worktree cleanliness in the handoff summary.
@@ -199,6 +205,7 @@ A task is not ready for handoff if it leaves the registry in a misleading state.
 
 - Do not leave a completed technical plan as `needs_review`.
 - Do not mark user acceptance as `accepted` without explicit user confirmation.
+- Do not ask the user for acceptance when an acceptance-queue row is `failed`, `blocked`, or `needs_retest`, unless the known gap is explicitly presented to the user.
 - If accepted behavior changes materially, mark user acceptance as `needs_reacceptance` instead of leaving it as `accepted`.
 - Do not mark cloud-served behavior `deployed` without deployment or cloud-side verification evidence.
 - Do not leave dirty or untracked files unexplained in a shared workspace.
@@ -217,14 +224,16 @@ For a delivery audit:
 2. Run `python3 scripts/audit_prd_status.py` for quick PRD queues, or `python3 scripts/audit_prd_status.py --review` for broader delivery review.
 3. Scan `docs/product/` and `docs/techplans/` for new or changed product and technical documents.
 4. For each substantial feature, check PRD status, technical plan status, implementation status, evidence, gaps, and next action.
-5. Update the registry only when there is evidence.
-6. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
-7. Produce three lists:
+5. Check `docs/project-management/Acceptance-Queue.md` for pending, failed, blocked, or stale acceptance-test rows.
+6. Update the registry or acceptance queue only when there is evidence.
+7. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
+8. Produce three lists:
    - Incomplete PRDs.
    - Ready PRDs without complete implementation.
    - Technical plans without complete implementation or verification evidence.
-8. Call out stale or superseded docs that need status notes.
-9. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
+   - User-facing features without passing acceptance tests.
+9. Call out stale or superseded docs that need status notes.
+10. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
 
 ## Cadence
 

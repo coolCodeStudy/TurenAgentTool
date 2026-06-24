@@ -17,7 +17,9 @@ The documentation is intentionally split by decision type:
 | Product strategy | [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md) |
 | Product-agent protocol | [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md) |
 | Project-management protocol | [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md) |
+| Acceptance-testing protocol | [`product/Acceptance-Testing-Agent-Protocol.md`](product/Acceptance-Testing-Agent-Protocol.md) |
 | Feature delivery registry | [`project-management/Feature-Registry.md`](project-management/Feature-Registry.md) |
+| Acceptance queue | [`project-management/Acceptance-Queue.md`](project-management/Acceptance-Queue.md) |
 | Current engineering state | [`当前工程状态.md`](当前工程状态.md) |
 | Durable project milestones | [`project-history.md`](project-history.md) |
 | Lesson capture protocol | [`lesson-capture-protocol.md`](lesson-capture-protocol.md) |
@@ -35,6 +37,7 @@ Active product references:
 - [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md)
 - [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md)
 - [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md)
+- [`product/Acceptance-Testing-Agent-Protocol.md`](product/Acceptance-Testing-Agent-Protocol.md)
 - [`product/PRD-command-workbench.md`](product/PRD-command-workbench.md)
 - [`product/PRD-Stock-Valuation-Research.md`](product/PRD-Stock-Valuation-Research.md)
 - [`product/PRD-Kline-Agent.md`](product/PRD-Kline-Agent.md)

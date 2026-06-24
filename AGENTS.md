@@ -28,10 +28,13 @@ Read it before changing code, running services, or touching deployment commands.
 ## Project Management Discipline
 
 - Use `docs/product/Project-Management-Agent-Protocol.md` as the detailed operating protocol for project delivery tracking.
+- Use `docs/product/Acceptance-Testing-Agent-Protocol.md` as the detailed operating protocol for user-facing acceptance testing.
 - Maintain delivery state in `docs/project-management/Feature-Registry.md` when a PRD, technical plan, implementation status, verification status, user acceptance status, or next action changes.
+- Maintain acceptance-test state in `docs/project-management/Acceptance-Queue.md` for deployed or user-facing features that still need independent acceptance testing.
 - A substantial product feature should not enter implementation unless its PRD is ready, or the exception is explicitly recorded with the reason.
 - A substantial product feature should not be considered ready for implementation unless there is a linked technical plan, or the exception is explicitly recorded with the reason.
 - Do not equate code completion with product completion. Product completion requires acceptance criteria, implementation evidence, verification evidence, and any required deployment or user acceptance state.
+- Do not ask the user for acceptance on a cloud-served or user-facing feature while its acceptance-test status is `failed`, `blocked`, or `needs_retest`, unless the user explicitly accepts the known gap.
 - When reviewing or finishing work, check for broken delivery links: incomplete PRDs, PRDs without technical plans, technical plans without implementation evidence, implementations without verification, superseded documents without status notes, and blocked next actions without owners.
 - For a quick PRD delivery-status answer, run `python3 scripts/audit_prd_status.py` before doing a manual document audit.
 - The Project Management Agent tracks delivery integrity and documentation state. It may flag gaps, request missing product or technical decisions, and update registry status, but it should not silently make product decisions or mark user acceptance on behalf of the user.
@@ -53,6 +56,7 @@ Read it before changing code, running services, or touching deployment commands.
 
 - A development task is not done until its code/doc changes are committed, verification has run or the verification limit is documented, and the related PRD/technical plan has been checked for missed items.
 - If implementation status, verification status, deployment status, user acceptance status, or next action changed, update `docs/project-management/Feature-Registry.md` in the same branch before handoff.
+- If a user-facing feature is deployed or ready for user review, update `docs/project-management/Acceptance-Queue.md` or explain why independent acceptance testing is not required.
 - When a task implements, partially implements, supersedes, or blocks a technical plan, mark that status in the registry instead of leaving `needs_review` for a future agent to rediscover.
 - For PRDs with multiple phases, V1/V2 scope, or several material acceptance criteria, update the technical plan's implementation traceability matrix before handoff. Partial PRD completion must list what is implemented, verified, blocked, deferred, and still not started.
 - Before handoff, check whether the task produced a durable lesson. Record it in the appropriate document, or state `Lessons: none` with a short reason.
