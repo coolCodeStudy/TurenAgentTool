@@ -54,6 +54,7 @@ Read it before changing code, running services, or touching deployment commands.
 - A development task is not done until its code/doc changes are committed, verification has run or the verification limit is documented, and the related PRD/technical plan has been checked for missed items.
 - If implementation status, verification status, deployment status, user acceptance status, or next action changed, update `docs/project-management/Feature-Registry.md` in the same branch before handoff.
 - When a task implements, partially implements, supersedes, or blocks a technical plan, mark that status in the registry instead of leaving `needs_review` for a future agent to rediscover.
+- For PRDs with multiple phases, V1/V2 scope, or several material acceptance criteria, update the technical plan's implementation traceability matrix before handoff. Partial PRD completion must list what is implemented, verified, blocked, deferred, and still not started.
 - Before handoff, check whether the task produced a durable lesson. Record it in the appropriate document, or state `Lessons: none` with a short reason.
 - Before handoff, report the branch, commit SHA, verification performed, registry updates, remaining gaps, and whether the worktree is clean.
 - A task worktree should be clean at handoff. If dirty files remain, list each file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.

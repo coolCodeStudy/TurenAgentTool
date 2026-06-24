@@ -144,8 +144,24 @@ A technical plan is ready when it includes:
 - External service, credential, deployment, or database implications.
 - Implementation steps.
 - Verification plan.
+- Implementation traceability for any PRD with multiple phases, V1/V2 scope, or many acceptance criteria.
 - Rollout or deployment requirement, when relevant.
 - Risks and blocked decisions.
+
+## Implementation Traceability
+
+Substantial PRDs must not rely on a single vague `partially_implemented` label. When a PRD has multiple phases, V1/V2 scope, or several material acceptance criteria, its technical plan must include an implementation traceability matrix.
+
+The matrix should track each material PRD scope item or acceptance criterion with:
+
+- Scope item or acceptance criterion.
+- Status: `not_started`, `in_progress`, `implemented`, `verified`, `blocked`, `deferred`, or `accepted`.
+- Evidence: code file, test, smoke check, deploy event, document reference, or user confirmation.
+- Notes: known gap, blocker, verification limit, or reason for deferral.
+
+Use this matrix as the detailed source for partial completion. The feature registry should keep the summary state only: overall technical status, implementation status, evidence status, user acceptance status, known gaps, and next action.
+
+If a developer intentionally implements only V1 of a V1/V2 PRD, the V2 rows must be marked `deferred` or `not_started` with a next action. Do not report the whole PRD as product-done unless all required phases are complete, or the user explicitly moves the remaining scope out of the PRD.
 
 ## Definition Of Done
 
@@ -171,6 +187,7 @@ Before handoff, the developer or coding agent must:
 
 - Re-read the linked PRD and technical plan.
 - Check each relevant acceptance criterion or implementation step.
+- Update the technical plan's implementation traceability matrix when the PRD has multiple phases, V1/V2 scope, or several material acceptance criteria.
 - Complete straightforward missed items immediately.
 - Mark larger misses as `partially_implemented`, `blocked`, `superseded`, or follow-up work in `docs/project-management/Feature-Registry.md`.
 - Record evidence status using code references, tests, smoke checks, deploy events, or user acceptance.
