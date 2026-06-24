@@ -56,6 +56,91 @@ def route_command_intent_with_openai(command: str) -> dict[str, Any] | None:
     return _parse_json_object(text)
 
 
+def propose_command_workbench_parse_with_openai(
+    command: str,
+    *,
+    registry_summary: list[dict[str, Any]],
+    entity_candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if os.getenv("OPENAI_ANALYSIS_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "You are the bounded parser for the InvestmentKnowledge Command Workbench. "
+                    "Return only JSON. Propose a registered action and fields; never execute anything."
+                ),
+            },
+            {
+                "role": "user",
+                "content": build_command_workbench_parse_prompt(
+                    command,
+                    registry_summary=registry_summary,
+                    entity_candidates=entity_candidates,
+                ),
+            },
+        ],
+        "max_output_tokens": 450,
+    }
+
+    with httpx.Client(timeout=45) as client:
+        response = client.post(
+            RESPONSES_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+
+    text = extract_response_text(response.json()).strip()
+    return _parse_json_object(text)
+
+
+def build_command_workbench_parse_prompt(
+    command: str,
+    *,
+    registry_summary: list[dict[str, Any]],
+    entity_candidates: list[dict[str, Any]],
+) -> str:
+    return f"""Map the user input to a Command Workbench parse proposal.
+
+Allowed action registry:
+{json.dumps(registry_summary, ensure_ascii=False)}
+
+Local entity candidates:
+{json.dumps(entity_candidates[:8], ensure_ascii=False)}
+
+Return JSON:
+{{
+  "action_id": "one registered id or unsupported",
+  "fields": {{"stock": "target text if any", "service": "service name if any"}},
+  "confidence": 0.0,
+  "reason": "short reason"
+}}
+
+Rules:
+- Do not invent actions outside the registry.
+- Do not choose an ambiguous entity silently.
+- Do not output an exact command.
+- If the request is trading, deployment, or unsupported maintenance, use action_id "unsupported".
+- Keep fields short; do not include portfolio data, reports, or long context.
+
+User input:
+{command}
+"""
+
+
 def build_intent_router_prompt(command: str) -> str:
     return f"""请把用户输入路由成一个 JSON 对象。
 
