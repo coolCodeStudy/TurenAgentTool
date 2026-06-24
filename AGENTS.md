@@ -15,6 +15,9 @@ Read it before changing code, running services, or touching deployment commands.
 
 ## Planning And Scope
 
+- Before choosing a workflow, classify the task weight and keep the process proportional.
+- Lightweight documentation or project-management status edits may be done directly in the main workspace when it is clean and no concurrent editing session is active. Update the authoritative doc plus necessary direct references, run narrow verification such as `git diff --check` or the relevant audit script, then commit and push.
+- Use the fuller worktree and verification path for code changes, deployment-impacting changes, high-blast-radius documentation rewrites, or any task running alongside other active editing sessions.
 - For product-facing work, use the default sequence: product document, technical plan, then technical implementation.
 - When proposing a technical plan, default to delivering the whole requested scope in one pass when it is safe and reasonably bounded.
 - Prefer technical plans that can be completed in one implementation pass. If a plan cannot be completed in one pass, state the concrete reason before splitting it.

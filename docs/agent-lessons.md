@@ -33,6 +33,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 ## Project Management Audits
 
 - For routine PRD status questions such as "which PRDs have not started?", run `python3 scripts/audit_prd_status.py` first and use manual document reading only to explain or verify unusual gaps.
+- Scale the workflow to the task weight. Small project-management document or status-schema edits should stay lightweight: update the authoritative doc and direct references, run only narrow checks, then commit and push. Do not expand them into a full engineering workflow unless code, deployment, concurrency, or high blast radius requires it.
 
 ## Secrets And HTTP Entrypoints
 
