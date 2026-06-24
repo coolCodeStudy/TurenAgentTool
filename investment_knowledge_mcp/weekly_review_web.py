@@ -11,8 +11,16 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.command_router import handle_command
+from investment_knowledge_mcp.command_workbench import (
+    execution_blocker,
+    list_workbench_actions,
+    parse_workbench_command,
+    render_command_workbench_html,
+)
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
+from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 
 
@@ -31,6 +39,12 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self._write_json(HTTPStatus.OK, {"ok": True})
             return
+        if parsed.path == "/command":
+            self._write_html(HTTPStatus.OK, render_command_workbench_html())
+            return
+        if parsed.path == "/api/command-workbench/actions":
+            self._write_json(HTTPStatus.OK, {"ok": True, "actions": list_workbench_actions()})
+            return
         if parsed.path == "/api/weekly-review":
             if not self._authorized():
                 return
@@ -45,6 +59,18 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path in {"/api/command-workbench/parse", "/api/command-workbench/execute"}:
+            if not self._authorized_for_command_workbench():
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            if parsed.path == "/api/command-workbench/parse":
+                self._handle_workbench_parse(payload)
+            else:
+                self._handle_workbench_execute(payload)
+            return
+
         if not self._authorized():
             return
         if parsed.path == "/api/weekly-review/save":
@@ -63,6 +89,87 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _handle_workbench_parse(self, payload: dict[str, Any]) -> None:
+        raw_input = str(payload.get("text") or "").strip()
+        action_id = _clean_optional_text(payload.get("action_id"))
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        selected_target = payload.get("selected_target") if isinstance(payload.get("selected_target"), dict) else None
+        preview = parse_workbench_command(
+            raw_input,
+            action_id=action_id,
+            fields=fields,
+            selected_target=selected_target,
+        )
+        event = _record_workbench_event(
+            command=raw_input or f"[action] {action_id or 'unknown'}",
+            ok=preview.get("status") == "parsed",
+            message=f"parse status={preview.get('status')} action={preview.get('action_id')}",
+            source="weekly-review-web.command-workbench.parse",
+        )
+        self._write_json(HTTPStatus.OK, {"ok": True, "preview": preview, "event_id": event.get("id") if event else None})
+
+    def _handle_workbench_execute(self, payload: dict[str, Any]) -> None:
+        raw_input = str(payload.get("text") or "").strip()
+        action_id = _clean_optional_text(payload.get("action_id"))
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        selected_target = payload.get("selected_target") if isinstance(payload.get("selected_target"), dict) else None
+        confirmed = bool(payload.get("confirmed"))
+        preview = parse_workbench_command(
+            raw_input,
+            action_id=action_id,
+            fields=fields,
+            selected_target=selected_target,
+        )
+        blocker = execution_blocker(preview, confirmed=confirmed)
+        if blocker:
+            self._write_json(HTTPStatus.CONFLICT, {"ok": False, "error": blocker, "preview": preview})
+            return
+
+        exact_command = str(preview.get("exact_command") or "").strip()
+        try:
+            run_schema()
+            result = handle_command(exact_command)
+            event = record_command_event(
+                command=exact_command,
+                ok=result.ok,
+                message=result.message,
+                sender=_clean_optional_text(payload.get("sender")),
+                source="weekly-review-web.command-workbench.execute",
+            )
+        except Exception as exc:
+            message = f"command failed: {exc}"
+            event = _record_workbench_event(
+                command=exact_command,
+                ok=False,
+                message=message,
+                source="weekly-review-web.command-workbench.execute",
+            )
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "ok": False,
+                    "error": message,
+                    "preview": preview,
+                    "event_id": event.get("id") if event else None,
+                    "executed_command": exact_command,
+                    "raw_input": raw_input,
+                },
+            )
+            return
+
+        status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
+        self._write_json(
+            status,
+            {
+                "ok": result.ok,
+                "message": result.message,
+                "preview": preview,
+                "event_id": event.get("id"),
+                "executed_command": exact_command,
+                "raw_input": raw_input,
+            },
+        )
 
     def _handle_weekly_review_api(self, payload: dict[str, Any], *, save: bool) -> None:
         try:
@@ -111,6 +218,28 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
             return
         self._write_json(HTTPStatus.OK, {"ok": True, "result": result})
+
+    def _authorized_for_command_workbench(self) -> bool:
+        config = get_config()
+        supplied = _authorization_token(self.headers.get("Authorization"))
+        command_token = self.headers.get("X-Command-Token")
+        weekly_token = self.headers.get("X-Weekly-Review-Token")
+        candidates = [
+            (supplied, config.command_api_token),
+            (command_token, config.command_api_token),
+            (supplied, config.weekly_review_web_token),
+            (weekly_token, config.weekly_review_web_token),
+        ]
+        if any(
+            expected and supplied_token and hmac.compare_digest(supplied_token.strip(), expected)
+            for supplied_token, expected in candidates
+        ):
+            return True
+        if not config.command_api_token and not config.weekly_review_web_token:
+            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "command workbench token is not configured"})
+            return False
+        self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+        return False
 
     def _authorized(self) -> bool:
         token = get_config().weekly_review_web_token
@@ -664,6 +793,32 @@ def _first_query_value(payload: dict[str, Any], key: str) -> str | None:
         return None
     cleaned = str(value).strip()
     return cleaned or None
+
+
+def _authorization_token(authorization: str | None) -> str | None:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.removeprefix("Bearer ").strip()
+    return None
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _record_workbench_event(command: str, ok: bool, message: str, source: str) -> dict[str, Any] | None:
+    try:
+        return record_command_event(
+            command=command,
+            ok=ok,
+            message=message,
+            source=source,
+            sender=None,
+        )
+    except Exception:
+        return None
 
 
 def main() -> None:

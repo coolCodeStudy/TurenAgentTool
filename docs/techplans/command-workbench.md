@@ -44,6 +44,7 @@ Implementation should stay narrow:
 
 - `investment_knowledge_mcp/command_workbench.py` new registry, parser, preview model, entity resolver, HTML renderer, and execution guard helpers.
 - `investment_knowledge_mcp/command_api.py` adds `GET /command`, `GET /api/command-workbench/actions`, `POST /api/command-workbench/parse`, and `POST /api/command-workbench/execute`, while preserving legacy `POST /command`.
+- `investment_knowledge_mcp/weekly_review_web.py` also serves `GET /command` and the workbench APIs so the cloud acceptance surface can use the already-public web port `8010`.
 - `investment_knowledge_mcp/command_router.py` adds `决策` / `decision` aliases for the existing stock decision card path.
 - `investment_knowledge_mcp/analysis_provider.py` may expose a bounded LLM parse-proposal helper.
 - `scripts/smoke_test.py` extends local parser/router coverage.
@@ -177,7 +178,7 @@ If required fields are missing, the parser returns `needs_field` and the UI keep
 
 ## UI And Result Cards
 
-`GET /command` renders a self-contained HTML page served by `command_api`.
+`GET /command` renders a self-contained HTML page served by `command_api`. In cloud production, the same page and APIs are mirrored by `weekly_review_web` on the public web port because `command-api` can run internally while port `8001` may not be externally reachable.
 
 V1 layout:
 
@@ -243,9 +244,9 @@ Acceptance checks:
 
 - No database migration is required.
 - No new service is required.
-- The changed surface is the existing `command-api` service.
-- A cloud release would need a normal business-app deploy for the `command-api` container.
-- Because this task is local feature development, do not start production compose or deploy unless separately requested/approved.
+- The changed surfaces are the existing `command-api` service and the public `weekly-review-web` service.
+- `command-api` should be included in `scripts/deploy_from_local_checkout.sh` so quick and full deploys actually start the service.
+- Cloud user acceptance should use `http://47.84.190.191:8010/command` unless port `8001` is explicitly opened for `command-api`.
 
 ## Risks And Follow-Ups
 
