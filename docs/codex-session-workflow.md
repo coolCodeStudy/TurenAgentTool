@@ -83,7 +83,7 @@ Before a task is handed off, the working session must complete this checklist:
 1. Re-read the linked PRD and technical plan.
 2. Finish straightforward missed items, or document larger misses as gaps.
 3. Run local verification appropriate to the change, or document the verification limit.
-4. Update `docs/project-management/Feature-Registry.md` when implementation, verification, deployment, acceptance, blocked, or superseded status changed.
+4. Update `docs/project-management/Feature-Registry.md` when implementation, verification, deployment, user acceptance, blocked, or superseded status changed.
 5. Check `docs/lesson-capture-protocol.md` and record any durable lesson in the appropriate document.
 6. Commit the task changes.
 7. Push the branch or target ref unless the user explicitly asks to keep the work local.

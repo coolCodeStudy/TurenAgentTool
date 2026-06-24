@@ -97,22 +97,30 @@ Technical plan status:
 
 Implementation status:
 
+- `not_applicable`: No implementation is expected for this entry, with the reason recorded.
 - `not_started`: No implementation evidence found.
 - `in_progress`: Work has started but is not complete.
 - `local_verified`: Local tests, smoke checks, or manual verification passed.
 - `deployed`: The relevant cloud or user-facing surface has been deployed and verified.
-- `accepted`: The user has explicitly accepted the behavior.
 - `blocked`: Progress requires a product decision, external credential, data source, infrastructure action, or other explicit unblocker.
 - `needs_review`: Evidence is unclear or conflicting.
 
 Evidence status:
 
 - `none`: No evidence found.
+- `doc_reference`: Documentation, registry entries, or status notes show the delivery state.
 - `code_reference`: Specific files or commits show implementation work.
 - `test_passed`: Tests, smoke checks, or manual checks passed.
 - `deploy_verified`: Deployment or cloud-side verification succeeded.
-- `user_accepted`: The user explicitly accepted the behavior.
 - `needs_review`: Evidence exists but is incomplete or ambiguous.
+
+User acceptance status:
+
+- `not_required`: User acceptance is not required for this internal, historical, documentation-only, or operational entry.
+- `pending`: The work may require user acceptance, but the user has not explicitly accepted or rejected it.
+- `accepted`: The user explicitly accepted the behavior, document, or delivery outcome.
+- `rejected`: The user explicitly rejected the behavior, document, or delivery outcome.
+- `needs_reacceptance`: The user previously accepted it, but the scope, behavior, or implementation changed enough to require renewed acceptance.
 
 ## Definition Of Ready
 
@@ -150,7 +158,7 @@ A feature is product-done only when:
 - Verification evidence exists.
 - Deployment evidence exists when the affected surface is cloud-served or user-facing.
 - Follow-up gaps are either completed, recorded as blocked, or explicitly moved out of scope.
-- User acceptance is recorded when the work requires user acceptance.
+- User acceptance is `accepted` when the work requires user acceptance, or `not_required` when it does not.
 - Durable lessons have been recorded according to `../lesson-capture-protocol.md`, or the handoff states why there was no durable lesson.
 
 Code-done is not product-done.
@@ -173,7 +181,8 @@ Before handoff, the developer or coding agent must:
 A task is not ready for handoff if it leaves the registry in a misleading state. In particular:
 
 - Do not leave a completed technical plan as `needs_review`.
-- Do not mark product work `accepted` without explicit user acceptance.
+- Do not mark user acceptance as `accepted` without explicit user confirmation.
+- If accepted behavior changes materially, mark user acceptance as `needs_reacceptance` instead of leaving it as `accepted`.
 - Do not mark cloud-served behavior `deployed` without deployment or cloud-side verification evidence.
 - Do not leave dirty or untracked files unexplained in a shared workspace.
 
@@ -225,6 +234,7 @@ Each row should include:
 - Technical plan status.
 - Implementation status.
 - Evidence status.
+- User acceptance status.
 - Known gaps.
 - Next action.
 

@@ -22,6 +22,7 @@ class RegistryRow:
     technical_status: str
     implementation: str
     evidence: str
+    user_acceptance: str
     known_gaps: str
     next_action: str
 
@@ -58,7 +59,7 @@ def main() -> None:
             asdict(row)
             for row in rows
             if row.prd_status == "ready"
-            and row.implementation not in {"local_verified", "deployed", "accepted"}
+            and row.implementation not in {"local_verified", "deployed", "not_applicable"}
             and row.implementation != "not_started"
         ],
         "draft_or_needs_review_prds": [
@@ -104,7 +105,7 @@ def parse_registry(path: Path) -> list[RegistryRow]:
             continue
 
         cells = split_markdown_table_row(line)
-        if len(cells) != 9:
+        if len(cells) != 10:
             raise SystemExit(f"Unexpected registry row shape ({len(cells)} cells): {line}")
         rows.append(RegistryRow(*[strip_markdown(cell) for cell in cells]))
 
@@ -156,7 +157,8 @@ def print_section(title: str, items: object) -> None:
         print(
             "  Status: "
             f"prd={row['prd_status']}, tech={row['technical_status']}, "
-            f"implementation={row['implementation']}, evidence={row['evidence']}"
+            f"implementation={row['implementation']}, evidence={row['evidence']}, "
+            f"user_acceptance={row['user_acceptance']}"
         )
         if row["known_gaps"] and row["known_gaps"] != "No active technical implementation expected.":
             print(f"  Gap: {row['known_gaps']}")
