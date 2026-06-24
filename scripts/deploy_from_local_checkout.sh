@@ -239,10 +239,10 @@ chmod +x "$APP_DIR"/scripts/*.sh "$APP_DIR"/scripts/*.py 2>/dev/null || true
 cd "$APP_DIR"
 
 if [ "$BUILD_IMAGE" = "true" ]; then
-  run_compose_step up -d --build postgres mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
+  run_compose_step up -d --build postgres mcp command-api weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
 else
   run_compose_step up -d --no-build postgres
-  run_compose_step up -d --no-build --force-recreate mcp weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
+  run_compose_step up -d --no-build --force-recreate mcp command-api weekly-review-web account-snapshot-scheduler ipo-reminder-scheduler dingtalk-stream-bot
 fi
 
 run_compose_step ps
