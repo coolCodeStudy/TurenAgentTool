@@ -15,6 +15,7 @@ The documentation is intentionally split by decision type:
 |---|---|
 | Agent operating rules | [`../AGENTS.md`](../AGENTS.md) |
 | Product strategy | [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md) |
+| Delivery-coordinator protocol | [`product/Delivery-Coordinator-Protocol.md`](product/Delivery-Coordinator-Protocol.md) |
 | Product-agent protocol | [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md) |
 | Project-management protocol | [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md) |
 | Acceptance-testing protocol | [`product/Acceptance-Testing-Agent-Protocol.md`](product/Acceptance-Testing-Agent-Protocol.md) |
@@ -35,6 +36,7 @@ Product docs should be used before technical planning. They answer what the prod
 Active product references:
 
 - [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md)
+- [`product/Delivery-Coordinator-Protocol.md`](product/Delivery-Coordinator-Protocol.md)
 - [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md)
 - [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md)
 - [`product/Acceptance-Testing-Agent-Protocol.md`](product/Acceptance-Testing-Agent-Protocol.md)
@@ -103,4 +105,5 @@ These files are useful for context, but current implementation decisions should 
 - New substantial product work should have a PRD under `docs/product/`.
 - New substantial implementation work should have a technical plan under `docs/techplans/`.
 - Delivery state should be tracked in `docs/project-management/Feature-Registry.md`.
+- Broad delivery-state, readiness, handoff, and acceptance gaps should be checked with `python3 scripts/audit_delivery_state.py`.
 - Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.

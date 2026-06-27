@@ -27,14 +27,17 @@ Read it before changing code, running services, or touching deployment commands.
 
 ## Project Management Discipline
 
+- Use `docs/product/Delivery-Coordinator-Protocol.md` as the default single-front-door protocol when the user asks about product-feature status, next actions, role routing, handoffs, or acceptance readiness.
 - Use `docs/product/Project-Management-Agent-Protocol.md` as the detailed operating protocol for project delivery tracking.
 - Use `docs/product/Acceptance-Testing-Agent-Protocol.md` as the detailed operating protocol for user-facing acceptance testing.
 - Maintain delivery state in `docs/project-management/Feature-Registry.md` when a PRD, technical plan, implementation status, verification status, user acceptance status, or next action changes.
 - Maintain acceptance-test state in `docs/project-management/Acceptance-Queue.md` for deployed or user-facing features that still need independent acceptance testing.
+- For broad delivery-status, readiness, handoff, or acceptance questions, run `python3 scripts/audit_delivery_state.py` before doing a manual document audit.
 - A substantial product feature should not enter implementation unless its PRD is ready, or the exception is explicitly recorded with the reason.
 - A substantial product feature should not be considered ready for implementation unless there is a linked technical plan, or the exception is explicitly recorded with the reason.
 - Do not equate code completion with product completion. Product completion requires acceptance criteria, implementation evidence, verification evidence, and any required deployment or user acceptance state.
 - Do not ask the user for acceptance on a cloud-served or user-facing feature while its acceptance-test status is `failed`, `blocked`, or `needs_retest`, unless the user explicitly accepts the known gap.
+- Do not route the same product-feature request across multiple role sessions without a Delivery Coordinator handoff packet that names the feature, source PRD, technical plan, registry row, acceptance queue row, scope, next owner, and expected handoff result.
 - When reviewing or finishing work, check for broken delivery links: incomplete PRDs, PRDs without technical plans, technical plans without implementation evidence, implementations without verification, superseded documents without status notes, and blocked next actions without owners.
 - For a quick PRD delivery-status answer, run `python3 scripts/audit_prd_status.py` before doing a manual document audit.
 - The Project Management Agent tracks delivery integrity and documentation state. It may flag gaps, request missing product or technical decisions, and update registry status, but it should not silently make product decisions or mark user acceptance on behalf of the user.
@@ -55,11 +58,13 @@ Read it before changing code, running services, or touching deployment commands.
 ## Development Handoff Discipline
 
 - A development task is not done until its code/doc changes are committed, verification has run or the verification limit is documented, and the related PRD/technical plan has been checked for missed items.
+- For substantial delivery, role-protocol, or user-facing work, run `python3 scripts/audit_delivery_state.py` before handoff, or explain why the audit is not applicable.
 - If implementation status, verification status, deployment status, user acceptance status, or next action changed, update `docs/project-management/Feature-Registry.md` in the same branch before handoff.
 - If a user-facing feature is deployed or ready for user review, update `docs/project-management/Acceptance-Queue.md` or explain why independent acceptance testing is not required.
 - When a task implements, partially implements, supersedes, or blocks a technical plan, mark that status in the registry instead of leaving `needs_review` for a future agent to rediscover.
 - For PRDs with multiple phases, V1/V2 scope, or several material acceptance criteria, update the technical plan's implementation traceability matrix before handoff. Partial PRD completion must list what is implemented, verified, blocked, deferred, and still not started.
 - Before handoff, check whether the task produced a durable lesson. Record it in the appropriate document, or state `Lessons: none` with a short reason.
+- Before handoff, do not leave routine daily-log files under `docs/每日工作记录/`; move any durable content to the appropriate durable document or remove files you created.
 - Before handoff, report the branch, commit SHA, verification performed, registry updates, remaining gaps, and whether the worktree is clean.
 - A task worktree should be clean at handoff. If dirty files remain, list each file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
 - Push the task branch or target branch after committing unless the user explicitly asks to keep the work local. If it remains local-only, record the reason in the final summary.

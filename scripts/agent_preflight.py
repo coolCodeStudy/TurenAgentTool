@@ -14,6 +14,7 @@ def main() -> None:
     print()
     _print_git_status()
     _print_database_target()
+    _print_daily_log_policy()
     _print_file_excerpt("AGENTS.md", max_lines=80)
     _print_file_excerpt("docs/agent-lessons.md", max_lines=120)
 
@@ -55,6 +56,29 @@ def _print_database_target() -> None:
     print(f"- POSTGRES_PORT={port}")
     print(f"- POSTGRES_DB={database}")
     print("- Verify this target before running services or write commands.")
+    print()
+
+
+def _print_daily_log_policy() -> None:
+    daily_log_dir = PROJECT_ROOT / "docs/每日工作记录"
+    print("## Daily Log Policy")
+    if not daily_log_dir.exists():
+        print("- routine daily-log directory not present")
+        print()
+        return
+
+    files = sorted(path for path in daily_log_dir.rglob("*") if path.is_file())
+    if not files:
+        print("- routine daily-log directory exists but contains no files")
+        print()
+        return
+
+    print("- routine daily-log files are present and should not be kept by default")
+    for path in files[:5]:
+        print(f"- {path.relative_to(PROJECT_ROOT)}")
+    if len(files) > 5:
+        print(f"- ... {len(files) - 5} more entries not shown ...")
+    print("- move durable content to durable docs or remove files you created")
     print()
 
 

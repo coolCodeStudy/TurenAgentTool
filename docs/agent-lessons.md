@@ -35,6 +35,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - For routine PRD status questions such as "which PRDs have not started?", run `python3 scripts/audit_prd_status.py` first and use manual document reading only to explain or verify unusual gaps.
 - Scale the workflow to the task weight. Small project-management document or status-schema edits should stay lightweight: update the authoritative doc and direct references, run only narrow checks, then commit and push. Do not expand them into a full engineering workflow unless code, deployment, concurrency, or high blast radius requires it.
 - For user-facing or cloud-served features, treat acceptance testing as a separate gate from developer verification and deployment verification. Test one PRD/user journey at a time from the real user surface, record the result in `docs/project-management/Acceptance-Queue.md`, and do not ask the user for acceptance while the row is `failed`, `blocked`, or `needs_retest` unless the known gap is explicitly presented.
+- For multi-role product-feature delivery, use the Delivery Coordinator as the single front door. Answer or route by feature, create a handoff packet when another role/session must act, and keep the user focused on status, owner, blocker, and next decision instead of making them restate context to Product, Engineering, Testing, and Project Management separately.
 
 ## Secrets And HTTP Entrypoints
 

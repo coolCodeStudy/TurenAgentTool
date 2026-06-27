@@ -20,6 +20,7 @@ The agent should make gaps visible, keep statuses current, and prevent finished 
 
 The Project Management Agent maintains:
 
+- Delivery Coordinator handoff consistency when user requests cross Product, Engineering, Acceptance Testing, and Project Management.
 - PRD completeness status.
 - PRD-to-tech-plan links.
 - Tech-plan implementation status.
@@ -33,6 +34,7 @@ The Project Management Agent maintains:
 
 It should periodically answer:
 
+- Which role owns the next step for a product feature?
 - Which PRDs are incomplete?
 - Which ready PRDs have no technical plan?
 - Which PRDs have not been implemented?
@@ -69,11 +71,12 @@ The Project Management Agent must not:
 Use these sources in order:
 
 1. `AGENTS.md` for mandatory agent operating rules.
-2. Product docs under `docs/product/` for product intent, scope, and acceptance criteria.
-3. Technical plans under `docs/techplans/` for implementation contracts.
-4. `docs/project-management/Feature-Registry.md` for delivery tracking.
-5. `docs/project-management/Acceptance-Queue.md` for independent user-facing acceptance-test status.
-6. Code, tests, scripts, deployment events, acceptance-test evidence, and user confirmation for evidence.
+2. `docs/product/Delivery-Coordinator-Protocol.md` for role routing and handoff packets.
+3. Product docs under `docs/product/` for product intent, scope, and acceptance criteria.
+4. Technical plans under `docs/techplans/` for implementation contracts.
+5. `docs/project-management/Feature-Registry.md` for delivery tracking.
+6. `docs/project-management/Acceptance-Queue.md` for independent user-facing acceptance-test status.
+7. Code, tests, scripts, deployment events, acceptance-test evidence, and user confirmation for evidence.
 
 When these sources disagree, do not silently choose one. Record the conflict and identify the document that appears to be current, with evidence.
 
@@ -221,19 +224,20 @@ If no registry update is needed, say why in the final handoff. Examples:
 For a delivery audit:
 
 1. Read `AGENTS.md`, this protocol, and `docs/project-management/Feature-Registry.md`.
-2. Run `python3 scripts/audit_prd_status.py` for quick PRD queues, or `python3 scripts/audit_prd_status.py --review` for broader delivery review.
-3. Scan `docs/product/` and `docs/techplans/` for new or changed product and technical documents.
-4. For each substantial feature, check PRD status, technical plan status, implementation status, evidence, gaps, and next action.
-5. Check `docs/project-management/Acceptance-Queue.md` for pending, failed, blocked, or stale acceptance-test rows.
-6. Update the registry or acceptance queue only when there is evidence.
-7. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
-8. Produce three lists:
+2. Run `python3 scripts/audit_delivery_state.py` for broad delivery gaps, handoff readiness, acceptance queue gaps, and documentation-routing issues.
+3. Run `python3 scripts/audit_prd_status.py` for quick PRD queues, or `python3 scripts/audit_prd_status.py --review` for PRD-focused delivery review.
+4. Scan `docs/product/` and `docs/techplans/` for new or changed product and technical documents.
+5. For each substantial feature, check PRD status, technical plan status, implementation status, evidence, gaps, and next action.
+6. Check `docs/project-management/Acceptance-Queue.md` for pending, failed, blocked, or stale acceptance-test rows.
+7. Update the registry or acceptance queue only when there is evidence.
+8. Check whether completed substantial tasks have a lesson-capture statement or a corresponding durable-doc update.
+9. Produce these lists:
    - Incomplete PRDs.
    - Ready PRDs without complete implementation.
    - Technical plans without complete implementation or verification evidence.
    - User-facing features without passing acceptance tests.
-9. Call out stale or superseded docs that need status notes.
-10. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
+10. Call out stale or superseded docs that need status notes.
+11. Call out missing lesson capture that should be handled by the Product Agent or Development Agent.
 
 ## Cadence
 
@@ -267,6 +271,13 @@ Each row should include:
 Use links to real documents and evidence. If evidence is not known, write `needs_review` instead of guessing.
 
 ## Interaction With Other Roles
+
+Delivery Coordinator:
+
+- Owns the single-front-door experience for the user.
+- Routes work to Product, Development, Acceptance Testing, and Project Management with a handoff packet.
+- Uses the Project Management Agent for registry, queue, and documentation integrity audits.
+- Does not override role-specific gates or mark user acceptance.
 
 Product Agent:
 
