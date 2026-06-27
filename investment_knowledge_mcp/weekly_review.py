@@ -48,8 +48,8 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "account_snapshots": {"status": "missing", "count": 0},
         "trades": {"status": "missing", "count": 0},
         "positions": {"status": "missing", "fetched_at": None},
-        "indexes": {"status": "missing", "reason": "index provider not configured"},
-        "events": {"status": "missing", "reason": "external event provider not implemented"},
+        "indexes": {"status": "missing", "reason": "指数数据源未接入"},
+        "events": {"status": "missing", "reason": "外部事件源未接入"},
         "ipo": {"status": "missing", "count": 0},
     }
     warnings: list[str] = []

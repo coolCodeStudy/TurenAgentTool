@@ -147,11 +147,46 @@ ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS blowups JSONB NOT NULL DEFAU
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS holdings_table JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS next_week JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS story JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS token_usage JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'review_reports'
+      AND column_name = 'report_key'
+  ) THEN
+    UPDATE review_reports
+    SET report_key = COALESCE(
+      report_key,
+      report_type || ':' || COALESCE(period_start::text, report_date::text) || ':' || COALESCE(period_end::text, report_date::text)
+    )
+    WHERE report_key IS NULL;
+
+    ALTER TABLE review_reports ALTER COLUMN report_key DROP NOT NULL;
+  END IF;
+END $$;
 
 ALTER TABLE review_reports
   DROP CONSTRAINT IF EXISTS review_reports_report_date_key;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_type_period
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname = 'idx_review_reports_type_period'
+      AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+  ) THEN
+    DROP INDEX idx_review_reports_type_period;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_review_reports_type_period
   ON review_reports (report_type, period_start, period_end);
 
 CREATE TABLE IF NOT EXISTS account_snapshots (

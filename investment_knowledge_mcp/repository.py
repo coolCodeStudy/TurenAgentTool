@@ -952,7 +952,58 @@ def upsert_review_report(
     next_week: list[dict[str, Any]] | None = None,
     story: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    values = (
+        report_date,
+        Jsonb(portfolio_snapshot or {}),
+        summary,
+        Jsonb(risks or []),
+        Jsonb(opportunities or []),
+        Jsonb(new_knowledge_candidates or []),
+        report_type,
+        period_start,
+        period_end,
+        Jsonb(source_status or {}),
+        Jsonb(highlights or []),
+        Jsonb(blowups or []),
+        Jsonb(holdings_table or []),
+        Jsonb(next_week or []),
+        Jsonb(story or {}),
+    )
     with transaction() as conn:
+        existing = _find_review_report_row(
+            conn,
+            report_date=report_date,
+            report_type=report_type,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if existing:
+            row = conn.execute(
+                """
+                UPDATE review_reports
+                SET
+                  report_date = %s,
+                  portfolio_snapshot = %s,
+                  summary = %s,
+                  risks = %s,
+                  opportunities = %s,
+                  new_knowledge_candidates = %s,
+                  report_type = %s,
+                  period_start = %s,
+                  period_end = %s,
+                  source_status = %s,
+                  highlights = %s,
+                  blowups = %s,
+                  holdings_table = %s,
+                  next_week = %s,
+                  story = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (*values, existing["id"]),
+            ).fetchone()
+            return to_jsonable(row)
+
         row = conn.execute(
             """
             INSERT INTO review_reports (
@@ -961,40 +1012,61 @@ def upsert_review_report(
               source_status, highlights, blowups, holdings_table, next_week, story
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (report_type, period_start, period_end) DO UPDATE SET
-              report_date = EXCLUDED.report_date,
-              portfolio_snapshot = EXCLUDED.portfolio_snapshot,
-              summary = EXCLUDED.summary,
-              risks = EXCLUDED.risks,
-              opportunities = EXCLUDED.opportunities,
-              new_knowledge_candidates = EXCLUDED.new_knowledge_candidates,
-              source_status = EXCLUDED.source_status,
-              highlights = EXCLUDED.highlights,
-              blowups = EXCLUDED.blowups,
-              holdings_table = EXCLUDED.holdings_table,
-              next_week = EXCLUDED.next_week,
-              story = EXCLUDED.story
             RETURNING *
             """,
-            (
-                report_date,
-                Jsonb(portfolio_snapshot or {}),
-                summary,
-                Jsonb(risks or []),
-                Jsonb(opportunities or []),
-                Jsonb(new_knowledge_candidates or []),
-                report_type,
-                period_start,
-                period_end,
-                Jsonb(source_status or {}),
-                Jsonb(highlights or []),
-                Jsonb(blowups or []),
-                Jsonb(holdings_table or []),
-                Jsonb(next_week or []),
-                Jsonb(story or {}),
-            ),
+            values,
         ).fetchone()
     return to_jsonable(row)
+
+
+def get_review_report(
+    report_type: str,
+    period_start: str,
+    period_end: str,
+) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = _find_review_report_row(
+            conn,
+            report_date=period_end,
+            report_type=report_type,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    return to_jsonable(row) if row else None
+
+
+def _find_review_report_row(
+    conn: Connection,
+    *,
+    report_date: str,
+    report_type: str,
+    period_start: str | None,
+    period_end: str | None,
+) -> dict[str, Any] | None:
+    if period_start and period_end:
+        return conn.execute(
+            """
+            SELECT *
+            FROM review_reports
+            WHERE report_type = %s
+              AND period_start = %s
+              AND period_end = %s
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (report_type, period_start, period_end),
+        ).fetchone()
+    return conn.execute(
+        """
+        SELECT *
+        FROM review_reports
+        WHERE report_type = %s
+          AND report_date = %s
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (report_type, report_date),
+    ).fetchone()
 
 
 def upsert_trade_records(

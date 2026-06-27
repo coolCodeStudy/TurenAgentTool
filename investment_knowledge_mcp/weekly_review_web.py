@@ -48,7 +48,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/weekly-review":
             if not self._authorized():
                 return
-            self._handle_weekly_review_api(parse_qs(parsed.query), save=False)
+            self._handle_weekly_review_read(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
             if not self._authorized():
@@ -73,11 +73,23 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
         if not self._authorized():
             return
+        if parsed.path == "/api/weekly-review/generate":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._handle_weekly_review_generate(payload, force=False)
+            return
+        if parsed.path == "/api/weekly-review/refresh":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._handle_weekly_review_generate(payload, force=True)
+            return
         if parsed.path == "/api/weekly-review/save":
             payload = self._read_json_body()
             if payload is None:
                 return
-            self._handle_weekly_review_api(payload, save=True)
+            self._handle_weekly_review_save(payload)
             return
 
         candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
@@ -171,24 +183,103 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _handle_weekly_review_api(self, payload: dict[str, Any], *, save: bool) -> None:
+    def _handle_weekly_review_read(self, payload: dict[str, Any]) -> None:
         try:
-            start, end = _resolve_request_range(payload)
+            start, end = _resolve_week_request(payload)
             run_schema()
-            result = build_weekly_review(start=start, end=end, save=False)
-            saved_report = None
-            markdown = _first_query_value(payload, "markdown") or result.markdown
-            if save:
-                saved_report = save_weekly_review_report(context=result.context, markdown=markdown)
+            report = repository.get_review_report("weekly", start.isoformat(), end.isoformat())
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         except Exception as exc:
-            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_weekly_error(exc)})
+            return
+
+        if report:
+            self._write_json(HTTPStatus.OK, _report_response(report, start=start, end=end, status="existing"))
             return
 
         self._write_json(
             HTTPStatus.OK,
             {
                 "ok": True,
+                "status": "missing",
+                "week": _week_payload(start, end),
+                "context": _empty_week_context(start, end),
+                "markdown": "",
+                "saved_report": None,
+            },
+        )
+
+    def _handle_weekly_review_generate(self, payload: dict[str, Any], *, force: bool) -> None:
+        try:
+            start, end = _resolve_week_request(payload)
+            if force and not _truthy(_first_query_value(payload, "force")):
+                self._write_json(
+                    HTTPStatus.CONFLICT,
+                    {"ok": False, "error": "请先确认强制刷新。本操作会重新读取数据并覆盖本周自动生成内容。"},
+                )
+                return
+            run_schema()
+            existing = repository.get_review_report("weekly", start.isoformat(), end.isoformat())
+            if existing and not force:
+                self._write_json(
+                    HTTPStatus.OK,
+                    _report_response(existing, start=start, end=end, status="existing", already_exists=True),
+                )
+                return
+            result = build_weekly_review(start=start, end=end, save=True)
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_weekly_error(exc)})
+            return
+
+        status = "refreshed" if force else "generated"
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "status": status,
+                "week": _week_payload(start, end),
                 "context": result.context,
+                "markdown": result.markdown,
+                "saved_report": result.saved_report,
+            },
+        )
+
+    def _handle_weekly_review_save(self, payload: dict[str, Any]) -> None:
+        try:
+            start, end = _resolve_week_request(payload)
+            markdown = _first_query_value(payload, "markdown")
+            if not markdown:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "请先生成或填写报告内容，再保存。"})
+                return
+            run_schema()
+            existing = repository.get_review_report("weekly", start.isoformat(), end.isoformat())
+            context = payload.get("context") if isinstance(payload.get("context"), dict) else None
+            if context is None and existing:
+                context = existing.get("portfolio_snapshot") if isinstance(existing.get("portfolio_snapshot"), dict) else None
+            if context is None:
+                self._write_json(HTTPStatus.CONFLICT, {"ok": False, "error": "请先生成本周复盘，再保存报告。"})
+                return
+            context = _normalize_report_context(context, start=start, end=end)
+            saved_report = save_weekly_review_report(context=context, markdown=markdown)
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_weekly_error(exc, saving=True)})
+            return
+
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "status": "saved",
+                "week": _week_payload(start, end),
+                "context": context,
                 "markdown": markdown,
                 "saved_report": saved_report,
             },
@@ -390,6 +481,13 @@ def render_weekly_review_workbench_html() -> str:
       flex-wrap: wrap;
       justify-content: flex-end;
     }}
+    .token-field {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
     input, select, button {{
       font: inherit;
       height: 34px;
@@ -558,14 +656,16 @@ def render_weekly_review_workbench_html() -> str:
           <p class="subtitle">基于交易记录、账户快照、当前持仓、IPO 和知识库生成草稿。</p>
         </div>
         <div class="controls">
-          <input id="start" type="date" value="{start.isoformat()}" aria-label="开始日期">
-          <input id="end" type="date" value="{end.isoformat()}" aria-label="结束日期">
-          <input id="api-token" type="password" placeholder="访问令牌" aria-label="访问令牌">
+          <button id="prev-week" type="button">上一周</button>
+          <button id="this-week" type="button">本周</button>
+          <input id="week-date" type="date" value="{start.isoformat()}" aria-label="复盘周">
+          <label class="token-field"><span>访问令牌</span><input id="api-token" type="password" autocomplete="off" placeholder="用于保存和私有访问" aria-label="访问令牌"></label>
           <button id="generate" class="primary">生成复盘</button>
+          <button id="refresh">强制刷新</button>
           <button id="save">保存报告</button>
         </div>
       </div>
-      <div id="message" class="notice">尚未生成。选择日期后点击生成复盘。</div>
+      <div id="message" class="notice">正在读取本周复盘状态。</div>
       <div id="source-status" class="status-grid" aria-live="polite"></div>
       <section id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
       <section id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
@@ -587,42 +687,88 @@ def render_weekly_review_workbench_html() -> str:
     </aside>
   </div>
   <script>
-    const state = {{ context: null, markdown: "", holdings: [] }};
+    const state = {{ context: null, markdown: "", holdings: [], week: null, reportStatus: "loading" }};
     const $ = (selector) => document.querySelector(selector);
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
     const message = $("#message");
 
-    $("#generate").addEventListener("click", () => loadReview(false));
-    $("#save").addEventListener("click", () => loadReview(true));
+    $("#generate").addEventListener("click", () => loadReview("generate"));
+    $("#refresh").addEventListener("click", () => loadReview("refresh"));
+    $("#save").addEventListener("click", () => loadReview("save"));
+    $("#prev-week").addEventListener("click", () => shiftWeek(-7));
+    $("#this-week").addEventListener("click", () => setThisWeek());
+    $("#week-date").addEventListener("change", () => loadReview("read"));
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
     $("#api-token").value = localStorage.getItem("weekly_review_web_token") || "";
+    loadReview("read");
 
-    async function loadReview(save) {{
+    async function loadReview(action) {{
       setBusy(true);
-      message.textContent = save ? "正在保存正式复盘..." : "正在生成复盘草稿...";
+      if (action === "refresh") {{
+        const weekText = state.week ? `${{state.week.week}}（${{state.week.start}} 至 ${{state.week.end}}）` : "当前选择周";
+        if (!window.confirm(`强制刷新 ${{weekText}}？\\n\\n系统会重新读取数据并覆盖这一周的自动生成内容。`)) {{
+          setBusy(false);
+          return;
+        }}
+      }}
+      message.textContent = {{
+        read: "正在读取复盘状态...",
+        generate: "正在生成并保存本周复盘...",
+        refresh: "正在强制刷新本周复盘...",
+        save: "正在保存当前报告..."
+      }}[action] || "正在处理...";
       try {{
-        const payload = {{ start: $("#start").value, end: $("#end").value, markdown: $("#markdown-text").value }};
+        const payload = {{ week_start: $("#week-date").value, markdown: $("#markdown-text").value, context: state.context }};
         const headers = authHeaders();
-        const response = save
-          ? await fetch("/api/weekly-review/save", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify(payload) }})
-          : await fetch(`/api/weekly-review?start=${{encodeURIComponent(payload.start)}}&end=${{encodeURIComponent(payload.end)}}`, {{ headers }});
+        let response;
+        if (action === "read") {{
+          response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(payload.week_start)}}`, {{ headers }});
+        }} else if (action === "generate") {{
+          response = await fetch("/api/weekly-review/generate", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify({{ week_start: payload.week_start }}) }});
+        }} else if (action === "refresh") {{
+          response = await fetch("/api/weekly-review/refresh", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify({{ week_start: payload.week_start, force: true }}) }});
+        }} else {{
+          response = await fetch("/api/weekly-review/save", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify(payload) }});
+        }}
         const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "生成失败");
+        if (!data.ok) throw new Error(data.error || "处理失败");
         persistToken();
+        state.week = data.week || state.week;
+        if (state.week && state.week.start) $("#week-date").value = state.week.start;
+        state.reportStatus = data.status || "existing";
         state.context = data.context;
         state.markdown = data.markdown || "";
-        state.holdings = data.context.holdings_table || [];
+        state.holdings = data.context ? data.context.holdings_table || [] : [];
         renderAll();
-        message.textContent = save && data.saved_report
-          ? `已保存正式复盘：review_reports #${{data.saved_report.id}}`
-          : "草稿已生成，保存前请检查故事、下周展望和数据缺口。";
-        if (save) loadCandidates();
+        message.textContent = statusMessage(action, data);
+        if (action === "save") loadCandidates();
       }} catch (error) {{
-        message.textContent = `生成失败：${{error.message}}`;
+        message.textContent = `处理失败：${{error.message}}`;
       }} finally {{
         setBusy(false);
       }}
+    }}
+
+    function statusMessage(action, data) {{
+      if (data.status === "missing") return "这一周还没有复盘。点击生成复盘会创建并保存一条周复盘记录。";
+      if (data.already_exists) return "这一周已有复盘，已读取现有内容，没有重新生成。";
+      if (action === "save" && data.saved_report) return `已保存报告：review_reports #${{data.saved_report.id}}`;
+      if (action === "refresh") return "强制刷新完成，已覆盖这一周的自动生成内容。";
+      if (action === "generate") return "复盘已生成并保存，请检查故事、下周展望和数据缺口。";
+      return "已读取这一周的复盘内容。";
+    }}
+
+    function shiftWeek(days) {{
+      const current = parseDateInput($("#week-date").value) || new Date();
+      current.setDate(current.getDate() + days);
+      $("#week-date").value = formatDateInput(current);
+      loadReview("read");
+    }}
+
+    function setThisWeek() {{
+      $("#week-date").value = formatDateInput(new Date());
+      loadReview("read");
     }}
 
     async function loadCandidates() {{
@@ -646,6 +792,10 @@ def render_weekly_review_workbench_html() -> str:
     }}
 
     function renderAll() {{
+      if (!state.context) {{
+        renderStatus({{}});
+        return;
+      }}
       renderStatus(state.context.source_status || {{}});
       slot("highlights").innerHTML = rankedTable(state.context.highlights || [], true);
       slot("blowups").innerHTML = rankedTable(state.context.blowups || [], false);
@@ -731,6 +881,7 @@ def render_weekly_review_workbench_html() -> str:
 
     function setBusy(busy) {{
       $("#generate").disabled = busy;
+      $("#refresh").disabled = busy;
       $("#save").disabled = busy;
     }}
     function authHeaders() {{
@@ -742,11 +893,38 @@ def render_weekly_review_workbench_html() -> str:
       if (token) localStorage.setItem("weekly_review_web_token", token);
     }}
     function statusText(item) {{
-      if (!item) return "missing";
+      if (!item) return "缺失";
       const status = item.status || "unknown";
+      const labels = {{
+        ok: "已读取",
+        partial: "部分可用",
+        missing: "缺失",
+        realtime: "实时读取",
+        snapshot: "来自快照",
+        backfilled: "已回补",
+        fallback: "降级可用"
+      }};
       const count = item.count === undefined ? "" : `，${{item.count}} 条`;
-      const reason = item.reason ? `，${{item.reason}}` : "";
-      return `${{status}}${{count}}${{reason}}`;
+      const reason = readableReason(item.reason);
+      return `${{labels[status] || "状态待确认"}}${{count}}${{reason ? "，" + reason : ""}}`;
+    }}
+    function readableReason(reason) {{
+      if (!reason) return "";
+      const text = String(reason);
+      if (text.toLowerCase().includes("provider")) return "数据源未接入";
+      return text;
+    }}
+    function parseDateInput(value) {{
+      if (!value) return null;
+      const parts = value.split("-").map(Number);
+      if (parts.length !== 3 || parts.some((item) => Number.isNaN(item))) return null;
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }}
+    function formatDateInput(date) {{
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${{year}}-${{month}}-${{day}}`;
     }}
     function formatMoney(value, currency) {{
       const number = Number(value || 0);
@@ -767,22 +945,145 @@ def render_weekly_review_workbench_html() -> str:
 </html>"""
 
 
-def _resolve_request_range(payload: dict[str, Any]) -> tuple[date, date]:
-    start_text = _first_query_value(payload, "start")
-    end_text = _first_query_value(payload, "end")
-    if start_text and end_text:
-        start = date.fromisoformat(str(start_text).replace("/", "-"))
-        end = date.fromisoformat(str(end_text).replace("/", "-"))
-        if end < start:
-            start, end = end, start
-        return start, end
+def _resolve_week_request(payload: dict[str, Any]) -> tuple[date, date]:
+    week_text = _first_query_value(payload, "week")
+    if week_text:
+        match = re.fullmatch(r"(\d{4})-?W(\d{1,2})", week_text, flags=re.IGNORECASE)
+        if not match:
+            raise ValueError("周格式应为 YYYY-Www，例如 2026-W25。")
+        year = int(match.group(1))
+        week = int(match.group(2))
+        try:
+            start = date.fromisocalendar(year, week, 1)
+        except ValueError as exc:
+            raise ValueError("周格式无效，请选择一个有效自然周。") from exc
+        return start, start + timedelta(days=6)
+
+    date_text = (
+        _first_query_value(payload, "week_start")
+        or _first_query_value(payload, "date")
+        or _first_query_value(payload, "start")
+    )
+    if date_text:
+        try:
+            selected = date.fromisoformat(str(date_text).replace("/", "-"))
+        except ValueError as exc:
+            raise ValueError("日期格式应为 YYYY-MM-DD。") from exc
+        start = selected - timedelta(days=selected.weekday())
+        return start, start + timedelta(days=6)
     return _default_week_range()
+
+
+def _resolve_request_range(payload: dict[str, Any]) -> tuple[date, date]:
+    return _resolve_week_request(payload)
+
+
+def _report_response(
+    report: dict[str, Any],
+    *,
+    start: date,
+    end: date,
+    status: str,
+    already_exists: bool = False,
+) -> dict[str, Any]:
+    context = report.get("portfolio_snapshot") if isinstance(report.get("portfolio_snapshot"), dict) else {}
+    context = _normalize_report_context(context, start=start, end=end)
+    return {
+        "ok": True,
+        "status": status,
+        "already_exists": already_exists,
+        "week": _week_payload(start, end),
+        "context": context,
+        "markdown": report.get("summary") or "",
+        "saved_report": report,
+    }
+
+
+def _normalize_report_context(context: dict[str, Any], *, start: date, end: date) -> dict[str, Any]:
+    normalized = dict(context)
+    normalized["period"] = {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "label": f"{start.isoformat()} 至 {end.isoformat()}",
+    }
+    normalized["source_status"] = _friendly_source_status(normalized.get("source_status") or {})
+    normalized.setdefault("highlights", [])
+    normalized.setdefault("blowups", [])
+    normalized.setdefault("holdings_table", [])
+    normalized.setdefault("next_week", [])
+    normalized.setdefault("story", {})
+    normalized.setdefault("candidate_insights", [])
+    normalized.setdefault("warnings", [])
+    return normalized
+
+
+def _friendly_source_status(source_status: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    reason_replacements = {
+        "index provider not configured": "指数数据源未接入",
+        "external event provider not implemented": "外部事件源未接入",
+    }
+    for key, value in source_status.items():
+        if not isinstance(value, dict):
+            result[key] = value
+            continue
+        item = dict(value)
+        reason = item.get("reason")
+        if isinstance(reason, str):
+            item["reason"] = reason_replacements.get(reason, reason)
+        result[key] = item
+    return result
+
+
+def _empty_week_context(start: date, end: date) -> dict[str, Any]:
+    return {
+        "period": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "label": f"{start.isoformat()} 至 {end.isoformat()}",
+        },
+        "source_status": {
+            "account_snapshots": {"status": "missing", "count": 0},
+            "trades": {"status": "missing", "count": 0},
+            "positions": {"status": "missing"},
+            "ipo": {"status": "missing", "count": 0},
+            "indexes": {"status": "missing", "reason": "指数数据源未接入"},
+            "events": {"status": "missing", "reason": "外部事件源未接入"},
+        },
+        "highlights": [],
+        "blowups": [],
+        "holdings_table": [],
+        "next_week": [],
+        "story": {},
+        "candidate_insights": [],
+        "warnings": [],
+    }
+
+
+def _week_payload(start: date, end: date) -> dict[str, str]:
+    calendar = start.isocalendar()
+    return {
+        "week": f"{calendar.year}-W{calendar.week:02d}",
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "label": f"{start.isoformat()} 至 {end.isoformat()}",
+    }
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _public_weekly_error(exc: Exception, *, saving: bool = False) -> str:
+    if saving:
+        return "保存失败：数据库结构或连接暂时不可用，请稍后重试；维护者可查看服务日志定位具体原因。"
+    return "周复盘处理失败：数据源或数据库暂时不可用，请稍后重试；维护者可查看服务日志定位具体原因。"
 
 
 def _default_week_range() -> tuple[date, date]:
     today = datetime.now(SHANGHAI_TZ).date()
     start = today - timedelta(days=today.weekday())
-    return start, today
+    return start, start + timedelta(days=6)
 
 
 def _first_query_value(payload: dict[str, Any], key: str) -> str | None:
