@@ -68,11 +68,52 @@ def main() -> None:
         action="store_true",
         help="Include worktree cleanliness checks for pre-handoff use.",
     )
+    parser.add_argument(
+        "--feature",
+        help="Filter findings to one feature name, PRD, technical plan, or acceptance queue item.",
+    )
+    parser.add_argument(
+        "--handoff-packet",
+        metavar="FEATURE",
+        help="Print a Delivery Coordinator handoff packet for the named feature.",
+    )
     args = parser.parse_args()
 
     rows = parse_registry(REGISTRY_PATH)
     acceptance_rows = parse_acceptance_queue(ACCEPTANCE_QUEUE_PATH)
     findings = audit(rows, acceptance_rows, include_handoff=args.handoff)
+
+    if args.handoff_packet:
+        row = find_registry_row(rows, args.handoff_packet)
+        if row is None:
+            raise SystemExit(f"No Feature Registry row matched: {args.handoff_packet}")
+        matching_acceptance = find_acceptance_row(row, acceptance_rows)
+        packet = build_handoff_packet(
+            row,
+            matching_acceptance,
+            matching_findings(row, findings),
+        )
+        if args.json:
+            print(json.dumps(packet, ensure_ascii=False, indent=2))
+        else:
+            print_handoff_packet(packet)
+        return
+
+    if args.feature:
+        rows = [row for row in rows if matches_feature(row, args.feature)]
+        matching_features = {row.feature for row in rows}
+        matching_acceptance_rows = [
+            row
+            for row in acceptance_rows
+            if matches_acceptance(row, args.feature)
+            or any(row_matches_acceptance_feature(registry_row, row) for registry_row in rows)
+        ]
+        matching_features.update(row.feature for row in matching_acceptance_rows)
+        findings = [
+            finding
+            for finding in findings
+            if matches_text(finding.item, args.feature) or finding.item in matching_features
+        ]
 
     grouped = group_findings(findings)
     report = {
@@ -306,14 +347,137 @@ def needs_acceptance_queue(row: RegistryRow) -> bool:
 
 
 def has_acceptance_row(row: RegistryRow, acceptance_rows: Iterable[AcceptanceRow]) -> bool:
-    row_tokens = feature_tokens(row.feature)
     for acceptance_row in acceptance_rows:
-        acceptance_tokens = feature_tokens(acceptance_row.feature)
-        if normalize(row.feature) == normalize(acceptance_row.feature):
-            return True
-        if len(row_tokens & acceptance_tokens) >= 2:
+        if row_matches_acceptance_feature(row, acceptance_row):
             return True
     return False
+
+
+def row_matches_acceptance_feature(row: RegistryRow, acceptance_row: AcceptanceRow) -> bool:
+    row_tokens = feature_tokens(row.feature)
+    acceptance_tokens = feature_tokens(acceptance_row.feature)
+    return normalize(row.feature) == normalize(acceptance_row.feature) or len(row_tokens & acceptance_tokens) >= 2
+
+
+def find_registry_row(rows: Iterable[RegistryRow], query: str) -> RegistryRow | None:
+    exact_matches = [row for row in rows if normalize(row.feature) == normalize(query)]
+    if exact_matches:
+        return exact_matches[0]
+    matches = [row for row in rows if matches_feature(row, query)]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        names = ", ".join(row.feature for row in matches)
+        raise SystemExit(f"Multiple Feature Registry rows matched {query!r}: {names}")
+    return None
+
+
+def find_acceptance_row(row: RegistryRow, acceptance_rows: Iterable[AcceptanceRow]) -> AcceptanceRow | None:
+    for acceptance_row in acceptance_rows:
+        if row_matches_acceptance_feature(row, acceptance_row):
+            return acceptance_row
+    return None
+
+
+def matching_findings(row: RegistryRow, findings: Iterable[Finding]) -> list[Finding]:
+    return [finding for finding in findings if finding.item == row.feature]
+
+
+def build_handoff_packet(
+    row: RegistryRow,
+    acceptance_row: AcceptanceRow | None,
+    findings: list[Finding],
+) -> dict[str, str]:
+    next_owner = infer_next_owner(row, acceptance_row, findings)
+    acceptance_required = "yes" if needs_acceptance_queue(row) else "no"
+    acceptance_row_ref = (
+        f"{acceptance_row.item_id} ({acceptance_row.status}, {acceptance_row.severity})"
+        if acceptance_row
+        else "not_applicable" if acceptance_required == "no" else "missing"
+    )
+    blockers = "; ".join(f"{finding.category}: {finding.detail}" for finding in findings)
+    if acceptance_row and acceptance_row.status in {"failed", "blocked", "needs_retest", "pending"}:
+        blockers = append_text(blockers, f"acceptance: {acceptance_row.status} - {acceptance_row.findings}")
+
+    return {
+        "Task": f"Advance {row.feature} to the next delivery state.",
+        "Coordinator": "Delivery Coordinator",
+        "Current owner": next_owner,
+        "Source PRD": row.product_doc,
+        "Technical plan": row.technical_plan,
+        "Feature Registry row": row.feature,
+        "Acceptance Queue row": acceptance_row_ref,
+        "Branch or worktree": "Create a dedicated task worktree for non-trivial edits; use main only for lightweight docs/status integration.",
+        "Scope": row.next_action or "Review the linked PRD, technical plan, registry row, and acceptance state.",
+        "Out of scope": "Do not mark user acceptance as accepted; do not silently change PRD scope; do not create routine daily logs.",
+        "Acceptance criteria": "Use the linked PRD acceptance criteria; if missing or unclear, route to Product Agent before implementation.",
+        "Verification required": infer_verification_required(row),
+        "Acceptance testing required": acceptance_required,
+        "Known gaps or blockers": blockers or row.known_gaps or "none registered",
+        "User decisions needed": infer_user_decisions(row, findings),
+        "Next owner": next_owner,
+        "Expected handoff result": infer_expected_handoff(row, acceptance_row, next_owner),
+    }
+
+
+def infer_next_owner(
+    row: RegistryRow,
+    acceptance_row: AcceptanceRow | None,
+    findings: Iterable[Finding],
+) -> str:
+    categories = {finding.category for finding in findings}
+    if row.prd_status in {"draft", "needs_review", "missing"} or "needs_product_decision" in categories:
+        return "Product Agent"
+    if acceptance_row and acceptance_row.status in {"failed", "blocked", "needs_retest"}:
+        return "Development Agent"
+    if row.technical_status == "missing" or row.implementation in {"not_started", "in_progress", "needs_review"}:
+        return "Development Agent"
+    if acceptance_row and acceptance_row.status == "pending":
+        return "Acceptance Testing Agent"
+    if needs_acceptance_queue(row) and acceptance_row is None:
+        return "Acceptance Testing Agent"
+    return "Project Management Agent"
+
+
+def infer_verification_required(row: RegistryRow) -> str:
+    if row.implementation in {"not_started", "in_progress", "needs_review"}:
+        return "Define and run the technical-plan verification before handoff."
+    if row.implementation == "deployed":
+        return "Keep deployment evidence current; run cloud/user-surface checks when behavior changes."
+    if row.technical_status == "missing":
+        return "Technical plan verification section must be created before implementation."
+    return "Run narrow local verification or explain why verification is not applicable."
+
+
+def infer_user_decisions(row: RegistryRow, findings: Iterable[Finding]) -> str:
+    if row.prd_status in {"draft", "needs_review", "missing"}:
+        return "Product scope or source-of-truth decision is required."
+    if any(finding.category == "needs_product_decision" for finding in findings):
+        return "Product decision is required before implementation or acceptance."
+    if row.user_acceptance in {"pending", "needs_reacceptance"}:
+        return "User acceptance is required only after implementation, verification, and acceptance testing pass."
+    return "none registered"
+
+
+def infer_expected_handoff(
+    row: RegistryRow,
+    acceptance_row: AcceptanceRow | None,
+    next_owner: str,
+) -> str:
+    if next_owner == "Product Agent":
+        return "PRD status is ready, deprecated, superseded, or explicitly blocked with a product decision."
+    if next_owner == "Development Agent" and row.technical_status == "missing":
+        return "Technical plan is created and Feature Registry is updated."
+    if next_owner == "Development Agent":
+        return "Implementation or fix is committed, verified, registry is updated, and acceptance row is moved to needs_retest when applicable."
+    if next_owner == "Acceptance Testing Agent":
+        status = acceptance_row.status if acceptance_row else "pending"
+        return f"Acceptance Queue moves from {status} to passed, failed, or blocked with evidence."
+    return "Registry and queue states are reconciled with evidence."
+
+
+def append_text(prefix: str, suffix: str) -> str:
+    return f"{prefix}; {suffix}" if prefix else suffix
 
 
 def parse_registry(path: Path) -> list[RegistryRow]:
@@ -377,6 +541,40 @@ def feature_tokens(value: str) -> set[str]:
     return {token for token in re.split(r"[^a-z0-9]+", value.lower()) if len(token) >= 3}
 
 
+def matches_feature(row: RegistryRow, query: str) -> bool:
+    values = [
+        row.feature,
+        row.product_doc,
+        row.technical_plan,
+        row.prd_status,
+        row.technical_status,
+        row.implementation,
+        row.evidence,
+        row.user_acceptance,
+        row.known_gaps,
+        row.next_action,
+    ]
+    return any(matches_text(value, query) for value in values)
+
+
+def matches_acceptance(row: AcceptanceRow, query: str) -> bool:
+    values = [
+        row.item_id,
+        row.feature,
+        row.surface,
+        row.status,
+        row.severity,
+        row.evidence,
+        row.findings,
+        row.next_action,
+    ]
+    return any(matches_text(value, query) for value in values)
+
+
+def matches_text(value: str, query: str) -> bool:
+    return normalize(query) in normalize(value)
+
+
 def registered_prd_filenames(rows: Iterable[RegistryRow]) -> set[str]:
     filenames: set[str] = set()
     for row in rows:
@@ -424,6 +622,13 @@ def print_text_report(grouped: dict[str, list[Finding]]) -> None:
             if finding.next_action:
                 print(f"  Next: {finding.next_action}")
         print()
+
+
+def print_handoff_packet(packet: dict[str, str]) -> None:
+    print("## Delivery Handoff")
+    print()
+    for key, value in packet.items():
+        print(f"- {key}: {value}")
 
 
 if __name__ == "__main__":

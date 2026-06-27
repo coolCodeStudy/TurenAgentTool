@@ -43,7 +43,9 @@ When the user asks about a product feature, use this flow:
 3. Read `docs/project-management/Acceptance-Queue.md` when the feature is user-facing or cloud-served.
 4. Read the linked PRD and technical plan when the request requires product or engineering judgment.
 5. Run `python3 scripts/audit_delivery_state.py` when the question is about overall status, missing work, readiness, handoff, or acceptance.
-6. Answer with:
+6. For a specific feature, run `python3 scripts/audit_delivery_state.py --feature "<feature name>"`.
+7. Before routing a substantial task to another role or session, run `python3 scripts/audit_delivery_state.py --handoff-packet "<feature name>"`.
+8. Answer with:
    - current state;
    - next owner;
    - blocker or gap;
@@ -130,6 +132,13 @@ Use it before:
 - asking the user for acceptance;
 - weekly or milestone project review;
 - cleaning documentation state.
+
+Common commands:
+
+- `python3 scripts/audit_delivery_state.py`: full delivery gap audit.
+- `python3 scripts/audit_delivery_state.py --feature "Kline Agent"`: feature-specific delivery status.
+- `python3 scripts/audit_delivery_state.py --handoff-packet "Kline Agent"`: coordinator handoff packet.
+- `python3 scripts/audit_delivery_state.py --handoff --strict`: pre-handoff gate including worktree cleanliness.
 
 The audit script is not the final authority. It finds likely gaps. The coordinator must still read the linked PRD, technical plan, registry row, acceptance queue row, and evidence before making a high-impact claim.
 
