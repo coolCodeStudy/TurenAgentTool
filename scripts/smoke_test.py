@@ -64,7 +64,11 @@ from investment_knowledge_mcp.repository import (
     upsert_trade_records,
 )
 from investment_knowledge_mcp.weekly_review import build_weekly_review, build_weekly_review_context, render_weekly_review_markdown
-from investment_knowledge_mcp.weekly_review_web import _resolve_request_range, render_weekly_review_workbench_html
+from investment_knowledge_mcp.weekly_review_web import (
+    _resolve_request_range,
+    _resolve_week_request,
+    render_weekly_review_workbench_html,
+)
 
 SMOKE_SYMBOL = "SMOKE001"
 SMOKE_MARKET = "TEST"
@@ -712,10 +716,23 @@ def main() -> None:
         assert "InvestmentKnowledge" in weekly_web_html
         assert "本周复盘" in weekly_web_html
         assert "/api/weekly-review/save" in weekly_web_html
+        assert "/api/weekly-review/generate" in weekly_web_html
+        assert "/api/weekly-review/refresh" in weekly_web_html
+        assert "week-date" in weekly_web_html
+        assert "id=\"start\"" not in weekly_web_html
+        assert "id=\"end\"" not in weekly_web_html
+        assert "index provider not configured" not in weekly_web_html
+        assert "external event provider not implemented" not in weekly_web_html
         assert "data-slot=\"holdings\"" in weekly_web_html
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end
+        week_start, week_end = _resolve_week_request({"week": "2020-W02"})
+        assert week_start == weekly_start
+        assert week_end == weekly_end
+        selected_start, selected_end = _resolve_week_request({"week_start": "2020-01-08"})
+        assert selected_start == weekly_start
+        assert selected_end == weekly_end
         draft_for_audit = {
             "stock": {
                 "symbol": "AUDIT",

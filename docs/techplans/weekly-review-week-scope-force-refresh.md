@@ -121,3 +121,13 @@ P1, implemented after P0:
 - Realtime holdings are current state, not historical evidence.
 - News, macro, and theme sources are high-noise and should stay out of normal page load.
 - Save must never regenerate context; otherwise the cost-control promise is broken even if the UI looks correct.
+
+## Implementation Traceability
+
+### 2026-06-28 development update
+
+- Implemented the P0 Web API split in `investment_knowledge_mcp/weekly_review_web.py`: read-only `GET /api/weekly-review`, missing-only `POST /api/weekly-review/generate`, explicit `POST /api/weekly-review/refresh` with `force=true`, and non-regenerating `POST /api/weekly-review/save`.
+- Replaced arbitrary start/end controls in the weekly-review page with a natural-week date selector plus previous/current week controls.
+- Added product-language source status normalization so old internal provider strings are not shown to users.
+- Updated `repository.upsert_review_report()` to update the latest weekly row by period before inserting, so duplicate historical rows do not break the P0 flow.
+- Verification completed: Python syntax checks and no-database Web contract checks. Full smoke was blocked because local PostgreSQL `localhost:55432` refused connections.

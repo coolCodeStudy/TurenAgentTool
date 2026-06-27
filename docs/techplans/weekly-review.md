@@ -354,3 +354,24 @@ UNIQUE (report_type, period_start, period_end)
 - 自动比较上周“下周展望”和本周结果。
 - 支持候选心得一键确认/拒绝。
 - 做 Web 页面，但 Markdown 仍保留为主输出。
+
+## Implementation Traceability
+
+### 2026-06-28 development update
+
+Implemented or preserved:
+
+- Six-section weekly Markdown generation remains implemented in `investment_knowledge_mcp/weekly_review.py`.
+- Weekly report persistence now updates the latest row for `(report_type, period_start, period_end)` instead of depending on a unique `ON CONFLICT` path, matching the current one-row-per-natural-week contract.
+- `db/schema.sql` now handles a legacy `review_reports.report_key` column by backfilling missing keys and dropping the legacy `NOT NULL` requirement so weekly saves do not fail with raw database constraint errors.
+- The Web API now separates read, generate, force-refresh, and save:
+  - `GET /api/weekly-review?week_start=YYYY-MM-DD` reads only.
+  - `POST /api/weekly-review/generate` generates only when missing.
+  - `POST /api/weekly-review/refresh` requires `force=true` and overwrites the same weekly row.
+  - `POST /api/weekly-review/save` saves submitted Markdown/context without hidden regeneration.
+- The Web UI now uses a natural-week selector and product-language source status strings for missing index and external-event sources.
+
+Still follow-up product/tech work:
+
+- External index, macro, news/theme, and opportunity-list providers remain out of scope for this fix and should stay visible as source gaps.
+- Full local smoke verification requires PostgreSQL on `localhost:55432`; in this task that database was unavailable, so only syntax and no-database weekly Web contract checks ran locally.
