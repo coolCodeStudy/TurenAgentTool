@@ -753,7 +753,7 @@ def render_weekly_review_workbench_html() -> str:
     function statusMessage(action, data) {{
       if (data.status === "missing") return "这一周还没有复盘。点击生成复盘会创建并保存一条周复盘记录。";
       if (data.already_exists) return "这一周已有复盘，已读取现有内容，没有重新生成。";
-      if (action === "save" && data.saved_report) return `已保存报告：review_reports #${{data.saved_report.id}}`;
+      if (action === "save" && data.saved_report) return "报告已保存。";
       if (action === "refresh") return "强制刷新完成，已覆盖这一周的自动生成内容。";
       if (action === "generate") return "复盘已生成并保存，请检查故事、下周展望和数据缺口。";
       return "已读取这一周的复盘内容。";
