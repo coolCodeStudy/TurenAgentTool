@@ -35,6 +35,12 @@ It is intentionally not a day-by-day log.
 - Task 2 was validated with a real cloud research sample: ASML US completed queueing, claiming, source expansion, draft, audit/review, artifact writeback, and import.
 - Task 3 changed default stock display to Level 1 decision cards while keeping full evidence and artifacts available through explicit detail/verbose paths.
 
+## Delivery System
+
+- Delivery Coordinator became the single front door for product-feature delivery questions, with handoff packets routing work across Product, Development, Acceptance Testing, and Project Management.
+- Delivery-state tooling was added through `scripts/audit_delivery_state.py`, covering broad audits, feature-specific checks, handoff-packet generation, acceptance queue gaps, routine daily-log detection, and pre-handoff strict gates.
+- The first coordinator workflow exercise classified Kline Agent as ready for technical planning, Command Workbench as pending independent acceptance testing, and Weekly Review Web as blocked by failed acceptance testing.
+
 ## Known Open Items
 
 - `/mcp` public access protection remains a security TODO; short-term deployments rely on network/security-group restrictions.
