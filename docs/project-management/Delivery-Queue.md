@@ -19,7 +19,7 @@ This file is not a daily log. Add a row only when work is actively dispatched, r
 
 | ID | Feature | Target Role | Dispatch Status | Thread Or Branch | Source | Expected Result | Next Action |
 |---|---|---|---|---|---|---|---|
-| DQ-2026-06-28-001 | Weekly review generator | Development Agent | dispatched | `pendingWorktreeId=local:1fd65d59-fd91-4207-a6f6-e1d255397556` | `scripts/audit_delivery_state.py --dispatch-prompt "Weekly review generator"` from main commit `febac51` | Fix Weekly Review Web acceptance blocker, update registry/traceability, and move `AT-2026-06-25-001` to `needs_retest` when ready. | Wait for Development Agent result, then coordinator reviews and dispatches Acceptance Testing retest if ready. |
+| DQ-2026-06-28-001 | Weekly review generator | Development Agent | returned | thread `019f09ec-9eae-7b90-a87e-a3626cb2fe1d`; branch `origin/codex/weekly-review-generator-fix`; dev commit `44b48f3` | `scripts/audit_delivery_state.py --dispatch-prompt "Weekly review generator"` from main commit `febac51` | Fix Weekly Review Web acceptance blocker, update registry/traceability, and move `AT-2026-06-25-001` to `needs_retest` when ready. | Coordinator cherry-picked the fix to local `main` as `445a892`; push `main`, deploy the cloud weekly-review Web surface, then dispatch Acceptance Testing retest if deployment verification passes. |
 
 ## Rules
 
