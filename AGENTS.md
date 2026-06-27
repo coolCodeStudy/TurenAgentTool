@@ -68,7 +68,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Before handoff, do not leave routine daily-log files under `docs/每日工作记录/`; move any durable content to the appropriate durable document or remove files you created.
 - Before handoff, report the branch, commit SHA, verification performed, registry updates, remaining gaps, and whether the worktree is clean.
 - A task worktree should be clean at handoff. If dirty files remain, list each file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
-- Push the task branch or target branch after committing unless the user explicitly asks to keep the work local. If it remains local-only, record the reason in the final summary.
+- Push the task branch or target branch immediately after committing unless the user explicitly asks to keep the work local. Do not wait for the user to ask whether a completed commit was pushed. If it remains local-only, record the reason in the final summary.
 - Do not leave untracked experiments, generated files, or partial edits in a shared workspace as the normal result of development. Commit them, move them into the appropriate task worktree, document them as blocked/WIP, or remove only files you created and no longer need.
 
 ## Deployment And Service Boundaries
