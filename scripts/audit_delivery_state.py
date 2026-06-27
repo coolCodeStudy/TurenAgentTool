@@ -77,22 +77,35 @@ def main() -> None:
         metavar="FEATURE",
         help="Print a Delivery Coordinator handoff packet for the named feature.",
     )
+    parser.add_argument(
+        "--dispatch-prompt",
+        metavar="FEATURE",
+        help="Print the next-role prompt suitable for Delivery Coordinator dispatch.",
+    )
     args = parser.parse_args()
 
     rows = parse_registry(REGISTRY_PATH)
     acceptance_rows = parse_acceptance_queue(ACCEPTANCE_QUEUE_PATH)
     findings = audit(rows, acceptance_rows, include_handoff=args.handoff)
 
-    if args.handoff_packet:
-        row = find_registry_row(rows, args.handoff_packet)
+    if args.handoff_packet or args.dispatch_prompt:
+        query = args.handoff_packet or args.dispatch_prompt
+        row = find_registry_row(rows, query)
         if row is None:
-            raise SystemExit(f"No Feature Registry row matched: {args.handoff_packet}")
+            raise SystemExit(f"No Feature Registry row matched: {query}")
         matching_acceptance = find_acceptance_row(row, acceptance_rows)
         packet = build_handoff_packet(
             row,
             matching_acceptance,
             matching_findings(row, findings),
         )
+        if args.dispatch_prompt:
+            prompt = build_dispatch_prompt(packet)
+            if args.json:
+                print(json.dumps({"dispatch_prompt": prompt, "handoff_packet": packet}, ensure_ascii=False, indent=2))
+            else:
+                print(prompt)
+            return
         if args.json:
             print(json.dumps(packet, ensure_ascii=False, indent=2))
         else:
@@ -418,6 +431,37 @@ def build_handoff_packet(
         "Next owner": next_owner,
         "Expected handoff result": infer_expected_handoff(row, acceptance_row, next_owner),
     }
+
+
+def build_dispatch_prompt(packet: dict[str, str]) -> str:
+    role = packet["Next owner"]
+    feature = packet["Feature Registry row"]
+    sections = [
+        f"You are the {role} for {feature}.",
+        "",
+        "Use the Delivery Handoff packet below as your source of truth.",
+        "",
+        "Mandatory repo workflow:",
+        "- Run `.venv/bin/python scripts/agent_preflight.py` first unless this is a tiny factual check.",
+        "- Check `git status --short --branch` before edits.",
+        "- Use a dedicated task worktree for non-trivial code, deployment, or broad documentation edits.",
+        "- Read the linked PRD, technical plan, Feature Registry row, and Acceptance Queue row when applicable.",
+        "- Do not create routine daily logs.",
+        "- Do not mark user acceptance as accepted.",
+        "- Update Feature Registry, Acceptance Queue, Delivery Queue, or technical-plan traceability when your work changes delivery state.",
+        "- Run narrow verification and document any verification limit.",
+        "- Commit and push after completing the work unless explicitly told to keep it local.",
+        "",
+        "Definition of done:",
+        "- The expected handoff result below is satisfied or a precise blocker is recorded.",
+        "- The worktree is clean or every dirty file is explained.",
+        "- The final response states branch, commit SHA, verification, registry/queue updates, remaining gaps, lessons, push result, and worktree cleanliness.",
+        "",
+        "## Delivery Handoff",
+        "",
+    ]
+    sections.extend(f"- {key}: {value}" for key, value in packet.items())
+    return "\n".join(sections)
 
 
 def infer_next_owner(

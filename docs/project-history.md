@@ -39,6 +39,7 @@ It is intentionally not a day-by-day log.
 
 - Delivery Coordinator became the single front door for product-feature delivery questions, with handoff packets routing work across Product, Development, Acceptance Testing, and Project Management.
 - Delivery-state tooling was added through `scripts/audit_delivery_state.py`, covering broad audits, feature-specific checks, handoff-packet generation, acceptance queue gaps, routine daily-log detection, and pre-handoff strict gates.
+- Delivery Coordinator was upgraded from handoff-only guidance to dispatch-first coordination, with `Delivery-Queue.md` for active dispatch tracking and `--dispatch-prompt` for next-role prompts.
 - The first coordinator workflow exercise classified Kline Agent as ready for technical planning, Command Workbench as pending independent acceptance testing, and Weekly Review Web as blocked by failed acceptance testing.
 
 ## Known Open Items

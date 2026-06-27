@@ -32,8 +32,10 @@ Read it before changing code, running services, or touching deployment commands.
 - Use `docs/product/Acceptance-Testing-Agent-Protocol.md` as the detailed operating protocol for user-facing acceptance testing.
 - Maintain delivery state in `docs/project-management/Feature-Registry.md` when a PRD, technical plan, implementation status, verification status, user acceptance status, or next action changes.
 - Maintain acceptance-test state in `docs/project-management/Acceptance-Queue.md` for deployed or user-facing features that still need independent acceptance testing.
+- Maintain dispatch state in `docs/project-management/Delivery-Queue.md` when Delivery Coordinator dispatches work to another role/thread/session or receives a returned result that needs follow-up.
 - For broad delivery-status, readiness, handoff, or acceptance questions, run `python3 scripts/audit_delivery_state.py` before doing a manual document audit.
 - For feature-specific coordination, use `python3 scripts/audit_delivery_state.py --feature "<feature>"`; before routing substantial work to another role/session, generate the handoff with `python3 scripts/audit_delivery_state.py --handoff-packet "<feature>"`.
+- When the user asks the Delivery Coordinator to follow through, route, assign, or reduce manual coordination, use Dispatch Mode: generate `python3 scripts/audit_delivery_state.py --dispatch-prompt "<feature>"`, send it to the next role/thread when tools are available, and report `dispatched`, `not_executed`, or `blocked`.
 - A substantial product feature should not enter implementation unless its PRD is ready, or the exception is explicitly recorded with the reason.
 - A substantial product feature should not be considered ready for implementation unless there is a linked technical plan, or the exception is explicitly recorded with the reason.
 - Do not equate code completion with product completion. Product completion requires acceptance criteria, implementation evidence, verification evidence, and any required deployment or user acceptance state.

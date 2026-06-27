@@ -21,6 +21,7 @@ The documentation is intentionally split by decision type:
 | Acceptance-testing protocol | [`product/Acceptance-Testing-Agent-Protocol.md`](product/Acceptance-Testing-Agent-Protocol.md) |
 | Feature delivery registry | [`project-management/Feature-Registry.md`](project-management/Feature-Registry.md) |
 | Acceptance queue | [`project-management/Acceptance-Queue.md`](project-management/Acceptance-Queue.md) |
+| Delivery queue | [`project-management/Delivery-Queue.md`](project-management/Delivery-Queue.md) |
 | Current engineering state | [`当前工程状态.md`](当前工程状态.md) |
 | Durable project milestones | [`project-history.md`](project-history.md) |
 | Lesson capture protocol | [`lesson-capture-protocol.md`](lesson-capture-protocol.md) |
@@ -105,6 +106,7 @@ These files are useful for context, but current implementation decisions should 
 - New substantial product work should have a PRD under `docs/product/`.
 - New substantial implementation work should have a technical plan under `docs/techplans/`.
 - Delivery state should be tracked in `docs/project-management/Feature-Registry.md`.
+- Role/thread dispatch state should be tracked in `docs/project-management/Delivery-Queue.md` when work is actually dispatched or returned.
 - Broad delivery-state, readiness, handoff, and acceptance gaps should be checked with `python3 scripts/audit_delivery_state.py`.
 - Feature-specific coordination should use `python3 scripts/audit_delivery_state.py --feature "<feature>"` and `python3 scripts/audit_delivery_state.py --handoff-packet "<feature>"`.
 - Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.
