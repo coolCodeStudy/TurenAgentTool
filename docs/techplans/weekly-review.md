@@ -459,6 +459,15 @@ Follow-up cloud-source fix on `codex/weekly-review-cloud-sources`:
 - Added official disclosure/reference fallback evidence for top US/HK/CN holdings and known ETF/product pages, so `event_summary[]` can carry traceable company evidence when live official-source scraping returns no dated documents.
 - Reference-only evidence remains partial and keeps `dated_company_events`, `macro_calendar`, and `general_news_theme_feed` visible as blocked categories. This should unblock Coordinator cloud verification of non-empty index/event evidence, but Acceptance Testing must still judge whether the evidence quality satisfies `AT-2026-06-28-001`.
 
+Coordinator verification of the follow-up cloud-source fix:
+
+- Integrated returned commit `31aa130` as main commit `9381a1a`.
+- Local checks passed: `py_compile` for changed modules, `git diff --check`, feature delivery audit, and mocked fallback fixture with Futu unavailable, Yahoo index rows present, official-source collection empty, and reference event evidence populated.
+- Automatic quick deploy run `28326901616` succeeded; manual full deploy run `28326950490` succeeded.
+- Cloud force-refresh for week `2026-06-22` succeeded and saved `/private/tmp/weekly-review-cloud-refresh-20260622.json`.
+- Cloud output met the coordinator retest gate: `source_status.indexes.status=partial`, `source_status.indexes.provider=yahoo_chart`, `index_summary` count `7`, `source_status.events.status=partial`, `event_summary` count `6`, `knowledge_evidence` count `16`, and story claims present.
+- Remaining quality risks for Acceptance Testing: Futu remains unavailable, Yahoo fallback missed `ChiNext Index` and `STAR 50`, event evidence is reference/partial rather than dated company events, and macro calendar/general news firehose remain blocked.
+
 ## Implementation Traceability
 
 ### 2026-06-28 development update
