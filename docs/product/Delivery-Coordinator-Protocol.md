@@ -22,6 +22,7 @@ The Delivery Coordinator must:
 - Decide which role should act next.
 - Produce a handoff packet before sending work to another role or session.
 - Dispatch work to the next role when dispatch tools are available and the user asked the coordinator to follow through.
+- Review returned role/session output, integrate or reject returned branches, and continue to the next owner when the next action is known.
 - Keep the user-facing answer focused on feature status, next owner, blockers, and decisions needed from the user.
 - Run or request delivery audits when status is unclear.
 - Prevent work from being called done when required registry, acceptance, verification, or lesson-capture gates are missing.
@@ -35,6 +36,7 @@ The Delivery Coordinator must not:
 - Create routine daily logs.
 - Stop at "next owner is X" when the user asked the coordinator to follow through and dispatch tools are available.
 - Hide unresolved role handoffs inside chat history.
+- Treat a child role's pushed branch, final message, or pending worktree id as delivery closure before the return has been reviewed and the next action is recorded.
 
 ## Default User Flow
 
@@ -121,6 +123,39 @@ Handoff-only mode is allowed only when:
 
 Handoff-only is not enough when the user asked the coordinator to reduce manual coordination and continue the work.
 
+## Coordinator Return Gate
+
+Dispatch is not closed when another role/thread/session is created. A dispatched role's final response or pushed branch means the work has returned to the coordinator for review.
+
+When a dispatched role returns, the coordinator must:
+
+1. Inspect the returned response, branch, commit, changed files, verification, queue updates, and lesson statement.
+2. Decide whether the returned work should be integrated, rejected, or sent back for correction.
+3. If integrating a branch, preserve newer `main` rules and cherry-pick or manually port only the valid returned changes when the branch was based on an older main.
+4. Update `docs/project-management/Delivery-Queue.md`:
+   - mark the returned role's row as `returned`, `closed`, or `blocked`;
+   - record the returned branch or commit when known;
+   - create a new row for the next role when more work is required.
+5. Update `Feature-Registry.md`, `Acceptance-Queue.md`, PRD, or technical plan state when the returned work changes durable delivery truth.
+6. Run the relevant delivery audit and narrow verification.
+7. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
+
+The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
+
+Every returned role should make the coordinator's next step obvious by ending with:
+
+```markdown
+Return to Coordinator:
+- Branch:
+- Commit:
+- Push:
+- Verification:
+- Delivery-state updates:
+- Remaining gaps:
+- Recommended next owner:
+- Recommended next handoff:
+```
+
 ## Routing Rules
 
 Route to Product Agent when:
@@ -159,6 +194,7 @@ A feature is not ready to present as done unless:
 - User acceptance is `accepted` only when the user explicitly accepted it.
 - Durable lessons were recorded in the right place, or the handoff says `Lessons: none` with a reason.
 - The branch or worktree is clean, or every remaining dirty file is explained.
+- Any dispatched role result that affects the feature has passed the Coordinator Return Gate, and no open `dispatched` or `returned` queue item has a clear next action left unhandled.
 
 ## Audit And Automation
 

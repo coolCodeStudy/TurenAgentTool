@@ -386,14 +386,32 @@ def find_registry_row(rows: Iterable[RegistryRow], query: str) -> RegistryRow | 
 
 
 def find_acceptance_row(row: RegistryRow, acceptance_rows: Iterable[AcceptanceRow]) -> AcceptanceRow | None:
-    for acceptance_row in acceptance_rows:
-        if row_matches_acceptance_feature(row, acceptance_row):
-            return acceptance_row
-    return None
+    matches = [
+        acceptance_row
+        for acceptance_row in acceptance_rows
+        if row_matches_acceptance_feature(row, acceptance_row)
+    ]
+    if not matches:
+        return None
+    priority = {
+        "failed": 0,
+        "blocked": 1,
+        "needs_retest": 2,
+        "pending": 3,
+        "passed": 4,
+        "not_required": 5,
+    }
+    return sorted(matches, key=lambda item: priority.get(item.status, 99))[0]
 
 
 def matching_findings(row: RegistryRow, findings: Iterable[Finding]) -> list[Finding]:
-    return [finding for finding in findings if finding.item == row.feature]
+    row_tokens = feature_tokens(row.feature)
+    return [
+        finding
+        for finding in findings
+        if finding.item == row.feature
+        or len(row_tokens & feature_tokens(finding.item)) >= 2
+    ]
 
 
 def build_handoff_packet(
@@ -452,11 +470,13 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- Run narrow verification and document any verification limit.",
         "- Check `docs/lesson-capture-protocol.md` before handoff; record only durable lessons that pass the quality bar, otherwise state `Lessons: none`.",
         "- Commit and push after completing the work unless explicitly told to keep it local.",
+        "- Return your result to the Delivery Coordinator; your pushed branch or final message is a returned role result, not delivery closure.",
         "",
         "Definition of done:",
         "- The expected handoff result below is satisfied or a precise blocker is recorded.",
         "- The worktree is clean or every dirty file is explained.",
         "- The final response states branch, commit SHA, verification, registry/queue updates, remaining gaps, `Lessons recorded: ...` or `Lessons: none; ...`, push result, and worktree cleanliness.",
+        "- The final response includes a `Return to Coordinator` block naming the recommended next owner and next handoff.",
         "",
         "## Delivery Handoff",
         "",
