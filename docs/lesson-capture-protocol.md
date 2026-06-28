@@ -74,6 +74,12 @@ Development Agent:
 - Captures implementation, verification, deployment, environment, and source-gap lessons in the relevant technical or operating docs.
 - Updates delivery state when a lesson changes implementation or verification status.
 
+Acceptance Testing Agent:
+
+- Captures acceptance-standard, evidence, tooling-limit, and product-quality lessons in the acceptance protocol, acceptance queue, product docs, or agent lessons as appropriate.
+- Distinguishes a technical flow pass from a product-value failure when the user-facing output is not useful enough for the product promise.
+- Does not mark user acceptance as accepted.
+
 Project Management Agent:
 
 - Checks whether completed work captured required lessons.

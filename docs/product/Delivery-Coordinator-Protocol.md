@@ -193,3 +193,21 @@ Record a lesson only when it is:
 - written to the narrowest durable document.
 
 Routine progress notes belong nowhere by default. Durable state goes to `docs/当前工程状态.md`, milestones go to `docs/project-history.md`, delivery state goes to `docs/project-management/Feature-Registry.md`, and acceptance state goes to `docs/project-management/Acceptance-Queue.md`.
+
+## Role Learning Loop
+
+For every substantial delivery flow that routes work across Product, Development, Acceptance Testing, or Project Management, the coordinator must close the loop on role learning before declaring the flow done.
+
+The coordinator must check and report:
+
+- Product learning: whether a product scope decision, acceptance standard, user preference, or rejected direction should update the PRD or product protocol.
+- Engineering learning: whether an implementation assumption, source constraint, verification limit, deployment lesson, or technical follow-up should update the technical plan or engineering handoff.
+- Testing learning: whether a new acceptance dimension, blind spot, failure mode, browser/tooling limit, or evidence standard should update the Acceptance Testing protocol or queue.
+- Coordinator learning: whether routing, dispatch, state tracking, or handoff behavior should update this protocol, `AGENTS.md`, `docs/agent-lessons.md`, or project-management state.
+
+The coordinator must apply the lesson quality bar from `../lesson-capture-protocol.md`. A role learning item should be recorded only when it comes from user correction, repeated workflow failure, or concrete delivery evidence and will improve future delivery.
+
+Every final coordinator summary for a substantial flow must include one of:
+
+- `Role learning recorded: <files updated and short reason>.`
+- `Role learning: none; <short reason>.`
