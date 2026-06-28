@@ -12,6 +12,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - When fixing a bug the user found on a cloud-served product page, local tests are only the pre-release gate. After they pass, continue to the release conversation: identify the exact push/deploy step, request approval for remote credentials or cloud service actions, then perform approved deployment and cloud verification.
 - All new or agent-authored docs, code comments, PRDs, tech plans, and durable notes must be in English. If editing an existing non-English document, keep untouched existing content as-is but write any new agent-authored section in English unless the user explicitly asks for translation into another language.
 - Do not hide missing product data or optional-source gaps as a substitute for completing the integration. If the product surface reasonably needs macro, news/theme, opportunity, or similar context, first investigate and connect an available source; keep transparent user-facing diagnostics until the source is genuinely implemented or a concrete product decision says it is out of scope.
+- For value-generating product surfaces, acceptance testing must judge whether the output is useful enough for the product promise, not only whether missing data is explained safely. A Weekly Review can pass flow/persistence/error-copy tests and still fail user acceptance if missing index/event sources make the story shallow or non-actionable.
 
 ## Service Startup Preflight
 

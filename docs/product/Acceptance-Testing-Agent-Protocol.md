@@ -170,4 +170,6 @@ It must also make missing or degraded data sources understandable to the user. I
 - Provide a user-readable degraded-state explanation and next action; or
 - Treat the missing source as a known product gap that blocks acceptance.
 
+Acceptance testing must also judge story usefulness, not only string safety. If the overall story is mostly a holdings-snapshot summary and lacks the market, index, news, event, or theme context needed to explain why the week happened, record that as a product-quality acceptance failure even when the Web flow, persistence, and degraded-state copy work correctly.
+
 Internal messages such as `index provider not configured` or `external event provider not implemented` should not appear as normal product copy in the main user flow.
