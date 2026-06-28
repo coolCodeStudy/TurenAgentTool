@@ -365,8 +365,8 @@ The first implementation pass uses a bounded provider set:
 
 | Source family | Provider | Context field | Required fields |
 | --- | --- | --- | --- |
-| Market indexes | Futu OpenD daily K-line via `get_futu_market_bars()` | `index_summary[]` | `code`, `name`, `market`, `weekly_change_pct`, `largest_daily_move`, `environment_label`, `portfolio_relevance`, `source.provider`, `source.metric`, `source.start_date`, `source.end_date` |
-| Company announcements / filings | `OfficialResearchProvider` for supported US/HK holdings and contributors/detractors | `event_summary[]` | `category`, `code`, `name`, `source_name`, `source_type`, `published_at`, `title`, `url`, `freshness`, `summary`, `citation` |
+| Market indexes | Futu OpenD daily K-line via `get_futu_market_bars()`, falling back to no-key Yahoo chart daily bars when OpenD is unavailable in cloud Web containers | `index_summary[]` | `code`, `name`, `market`, `weekly_change_pct`, `largest_daily_move`, `environment_label`, `portfolio_relevance`, `source.provider`, `source.metric`, `source.start_date`, `source.end_date` |
+| Company announcements / filings | `OfficialResearchProvider` for supported US/HK holdings and contributors/detractors, falling back to official company disclosure/reference URLs for top holdings when live collection returns no dated documents | `event_summary[]` | `category`, `code`, `name`, `source_name`, `source_type`, `published_at` or `checked_at`, `title`, `url`, `freshness`, `summary`, `citation` |
 | Theme context | Existing sector mappings and sector knowledge from `repository.get_stock_context()` | `knowledge_evidence[]` | `source_type`, `id`, `code`, `name`, `summary`, `citation`, optional linked `source` metadata |
 | User knowledge | Existing `user_insights`, `candidate_insights`, stock/sector/global memory from `repository.get_stock_context()` | `knowledge_evidence[]` | same evidence fields as theme context |
 
@@ -430,6 +430,7 @@ Every generated claim must cite one or more structured inputs such as `index:<co
 
 - Fixture/local smoke: run the weekly review smoke path and assert the new story fields, source-status vocabulary, and absence of old internal/provider-not-configured copy.
 - Provider-missing check: run in an environment without Futu/OpenD and confirm the report degrades to `provider_unavailable` or `source_blocked` without throwing or exposing internals.
+- Cloud fallback check: run with Futu/OpenD unavailable and mocked Yahoo chart bars; verify `source_status.indexes.status=partial`, `index_summary[]` contains index rows, `source.provider=yahoo_chart`, and `event_summary[]` contains official disclosure/reference evidence instead of remaining empty.
 - Provider-available check: on cloud or an approved Futu/OpenD environment, generate the current natural week and verify index rows, event/knowledge evidence, and story citations in both Markdown and Web JSON.
 - Acceptance retest: after deployment, route `AT-2026-06-28-001` back to Acceptance Testing for a focused source-completeness and story-quality retest.
 
@@ -450,6 +451,13 @@ Verification limits:
 - Full `scripts/smoke_test.py` could not run in the coordinator environment because PostgreSQL on `localhost:55432` was not reachable.
 - Futu/OpenD provider-available verification still requires the cloud or another approved provider environment.
 - The branch was later pushed to `main` at `8147cb8`, automatic quick deploy run `28326148823` succeeded, and manual full deploy run `28326192300` succeeded. Cloud HTML verification passed for the new index slot and absence of old provider-not-connected copy. Cloud force-refresh for week `2026-06-22` produced the new story structure, but provider-available verification did not pass: indexes returned `provider_unavailable`, events returned `source_blocked`, and cloud output had no `index_summary` or `event_summary` rows. `AT-2026-06-28-001` must remain `failed` until cloud source/provider evidence is available or Product changes the acceptance bar.
+
+Follow-up cloud-source fix on `codex/weekly-review-cloud-sources`:
+
+- Added `investment_knowledge_mcp/market_data_provider.py` with a no-key Yahoo chart fallback for the required index basket.
+- Updated `weekly_review.py` so Futu index failure falls through to Yahoo chart before marking indexes unavailable.
+- Added official disclosure/reference fallback evidence for top US/HK/CN holdings and known ETF/product pages, so `event_summary[]` can carry traceable company evidence when live official-source scraping returns no dated documents.
+- Reference-only evidence remains partial and keeps `dated_company_events`, `macro_calendar`, and `general_news_theme_feed` visible as blocked categories. This should unblock Coordinator cloud verification of non-empty index/event evidence, but Acceptance Testing must still judge whether the evidence quality satisfies `AT-2026-06-28-001`.
 
 ## Implementation Traceability
 
