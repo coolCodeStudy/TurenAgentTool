@@ -366,7 +366,9 @@ The first implementation pass uses a bounded provider set:
 | Source family | Provider | Context field | Required fields |
 | --- | --- | --- | --- |
 | Market indexes | Futu OpenD daily K-line via `get_futu_market_bars()`, falling back to no-key Yahoo chart daily bars when OpenD is unavailable in cloud Web containers | `index_summary[]` | `code`, `name`, `market`, `weekly_change_pct`, `largest_daily_move`, `environment_label`, `portfolio_relevance`, `source.provider`, `source.metric`, `source.start_date`, `source.end_date` |
-| Company announcements / filings | `OfficialResearchProvider` for supported US/HK holdings and contributors/detractors, falling back to official company disclosure/reference URLs for top holdings when live collection returns no dated documents | `event_summary[]` | `category`, `code`, `name`, `source_name`, `source_type`, `published_at` or `checked_at`, `title`, `url`, `freshness`, `summary`, `citation` |
+| Company announcements / filings | `OfficialResearchProvider` for supported US/HK holdings and contributors/detractors | `event_summary[]` | `category`, `code`, `name`, `source_name`, `source_type`, `published_at` or `checked_at`, `title`, `url`, `freshness`, `summary`, `citation` |
+| Dated company/theme news | No-key Yahoo Finance RSS via `event_data_provider.get_yahoo_finance_news_events()` for top holdings and bounded theme proxy symbols, used before disclosure-reference fallback | `event_summary[]` | `category`, `code`, `name`, `linked_ticker`, `linked_theme`, `source_name`, `source_type`, `source_id`, `published_at`, `checked_at`, `title`, `url`, `freshness`, `summary`, `citation` |
+| Disclosure references | Official company disclosure/reference URLs for top holdings when live dated company/theme event collection returns no usable events | `event_summary[]` | `category`, `code`, `name`, `source_name`, `source_type`, `checked_at`, `title`, `url`, `freshness=reference_source`, `summary`, `citation` |
 | Theme context | Existing sector mappings and sector knowledge from `repository.get_stock_context()` | `knowledge_evidence[]` | `source_type`, `id`, `code`, `name`, `summary`, `citation`, optional linked `source` metadata |
 | User knowledge | Existing `user_insights`, `candidate_insights`, stock/sector/global memory from `repository.get_stock_context()` | `knowledge_evidence[]` | same evidence fields as theme context |
 
@@ -399,7 +401,7 @@ Safe degraded copy must continue to hide internal provider names, table names, s
 
 - Portfolio/trade facts: `highlights`, `blowups`, `position_changes`, `holdings_table`, and trade summaries.
 - Index facts: `index_summary` rows with close-to-close metrics and largest daily move.
-- Event/theme facts: `event_summary` rows from official/company sources and `knowledge_evidence` rows from local stock/sector/user memory.
+- Event/theme facts: `event_summary` rows from official/company sources, dated company/theme news, and disclosure-reference fallback rows, plus `knowledge_evidence` rows from local stock/sector/user memory.
 - Source facts: `source_status` entries, including missing and blocked categories.
 
 Story output must include:
@@ -422,15 +424,16 @@ Every generated claim must cite one or more structured inputs such as `index:<co
 - The Weekly Review page no longer shows the old fixed “index/external event source not connected” content when generated context contains source-status and evidence fields.
 - Each active portfolio market has at least one available broad index, or the report is clearly marked `source_blocked`.
 - Material AI/semiconductor/growth exposure gets a relevant proxy index when available, or the missing proxy is visible in `source_status.indexes`.
-- At least one external company/filing/event category or local theme/user-knowledge evidence is included in the story evidence chain; if no evidence exists, `source_status.events` must be `source_blocked`.
+- At least one dated external company, theme/news, or macro event category is included in the story evidence chain with `published_at` or event date, title/description, URL or stable source id, linked ticker/theme when applicable, and source-to-claim citations. Reference/search URLs alone do not satisfy this criterion.
 - The story uses the required seven-part structure and includes source-to-claim citations.
-- Missing macro calendar and general news/theme firehose coverage remain visible as partial/source-blocked categories until a later provider fills them or Product removes them from scope.
+- Missing macro calendar coverage remains visible as a partial/source-blocked category until a later provider fills it or Product removes it from scope.
 
 ### Verification Plan
 
 - Fixture/local smoke: run the weekly review smoke path and assert the new story fields, source-status vocabulary, and absence of old internal/provider-not-configured copy.
 - Provider-missing check: run in an environment without Futu/OpenD and confirm the report degrades to `provider_unavailable` or `source_blocked` without throwing or exposing internals.
-- Cloud fallback check: run with Futu/OpenD unavailable and mocked Yahoo chart bars; verify `source_status.indexes.status=partial`, `index_summary[]` contains index rows, `source.provider=yahoo_chart`, and `event_summary[]` contains official disclosure/reference evidence instead of remaining empty.
+- Cloud fallback check: run with Futu/OpenD unavailable and mocked Yahoo chart bars; verify `source_status.indexes.status=partial`, `index_summary[]` contains index rows, `source.provider=yahoo_chart`, and `event_summary[]` contains either dated Yahoo Finance RSS company/theme evidence or, only when dated collection is empty, official disclosure/reference evidence.
+- Dated event check: fixture and live-provider smoke must prove at least one `event_summary[]` row can carry `published_at`, `source_id` or URL, linked ticker/theme metadata, and a cited story claim.
 - Provider-available check: on cloud or an approved Futu/OpenD environment, generate the current natural week and verify index rows, event/knowledge evidence, and story citations in both Markdown and Web JSON.
 - Acceptance retest: after deployment, route `AT-2026-06-28-001` back to Acceptance Testing for a focused source-completeness and story-quality retest.
 
@@ -467,6 +470,13 @@ Coordinator verification of the follow-up cloud-source fix:
 - Cloud force-refresh for week `2026-06-22` succeeded and saved `/private/tmp/weekly-review-cloud-refresh-20260622.json`.
 - Cloud output met the coordinator retest gate: `source_status.indexes.status=partial`, `source_status.indexes.provider=yahoo_chart`, `index_summary` count `7`, `source_status.events.status=partial`, `event_summary` count `6`, `knowledge_evidence` count `16`, and story claims present.
 - Remaining quality risks for Acceptance Testing: Futu remains unavailable, Yahoo fallback missed `ChiNext Index` and `STAR 50`, event evidence is reference/partial rather than dated company events, and macro calendar/general news firehose remain blocked.
+
+Acceptance retest return and dated-event fix:
+
+- Acceptance retest branch `origin/codex/weekly-review-acceptance-retest-20260628` at `c32ba3f` was accepted as a valid failed retest. The page/API, Yahoo index fallback, story fields, and old missing-source copy passed, but `event_summary[]` was still only disclosure reference/search URLs with no dated `published_at` event evidence.
+- Development branch `codex/weekly-review-dated-events` adds `investment_knowledge_mcp/event_data_provider.py` with a no-key Yahoo Finance RSS provider and wires it into `weekly_review.py` before the disclosure-reference fallback. It queries top portfolio holdings plus bounded theme proxy symbols, filters to dated/relevant company or theme news inside the review week, and emits `published_at`, `source_id`, URL, linked ticker/theme metadata, freshness, summary, and citation fields.
+- `source_status.events` now reports provider `yahoo_finance_rss` and checked category `dated_company_or_theme_news` when dated RSS evidence is present. In that case the remaining blocked category is `macro_calendar`; if dated collection is empty, the report still falls back to disclosure/reference URLs and keeps `dated_company_events`, `macro_calendar`, and `general_news_theme_feed` visible as blocked.
+- Local verification passed for syntax, a mocked dated-event fixture, and a live Yahoo Finance RSS provider smoke returning dated 2026-06-28 items. Full `scripts/smoke_test.py` remains blocked in this worktree because PostgreSQL on `localhost:55432` is not running.
 
 ## Implementation Traceability
 
