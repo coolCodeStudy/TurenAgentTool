@@ -669,7 +669,7 @@ def render_weekly_review_workbench_html() -> str:
       <div id="source-status" class="status-grid" aria-live="polite"></div>
       <section id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
       <section id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
-      <section id="indexes"><h2>3. 指数</h2><div class="empty">指数数据源未接入，本周不做指数归因。</div></section>
+      <section id="indexes"><h2>3. 指数</h2><div data-slot="indexes"></div></section>
       <section id="story"><h2>4. 整体故事</h2><div data-slot="story"></div></section>
       <section id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
       <section id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><select id="market-filter"><option value="">全部市场</option></select><select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></div><div data-slot="holdings"></div></section>
@@ -799,6 +799,7 @@ def render_weekly_review_workbench_html() -> str:
       renderStatus(state.context.source_status || {{}});
       slot("highlights").innerHTML = rankedTable(state.context.highlights || [], true);
       slot("blowups").innerHTML = rankedTable(state.context.blowups || [], false);
+      slot("indexes").innerHTML = indexTable(state.context.index_summary || [], (state.context.source_status || {{}}).indexes);
       slot("story").innerHTML = storyBlock(state.context.story || {{}}, state.context.warnings || []);
       slot("next-week").innerHTML = nextWeekTable(state.context.next_week || []);
       $("#markdown-text").value = state.markdown;
@@ -814,6 +815,7 @@ def render_weekly_review_workbench_html() -> str:
         ["港股新股", sourceStatus.ipo],
         ["指数", sourceStatus.indexes],
         ["外部事件", sourceStatus.events],
+        ["本地知识", sourceStatus.local_knowledge],
       ];
       $("#source-status").innerHTML = entries.map(([label, item]) => `
         <div class="status"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(statusText(item))}}</span></div>
@@ -833,13 +835,30 @@ def render_weekly_review_workbench_html() -> str:
     function storyBlock(story, warnings) {{
       const items = [
         ["主线", story.mainline || "待观察"],
-        ["加速因素", "本周暂未接入外部事件源，不做新闻/社媒/公告归因。"],
+        ["市场环境", story.market_environment || "待观察"],
+        ["组合归因", story.portfolio_attribution || "待观察"],
+        ["事件/主题证据", story.event_evidence || "待补"],
         ["负向信号", story.negative_signals || "待观察"],
         ["和我组合的关系", story.portfolio_relation || "待观察"],
         ["下周验证点", story.next_validation || "待观察"],
       ];
+      const claims = story.claims || [];
+      const claimHtml = claims.length ? `<div class="notice">${{claims.slice(0, 4).map((claim) => `${{claim.type || "证据"}}：${{claim.text || ""}}`).map(escapeHtml).join("；")}}</div>` : "";
       const warningHtml = warnings.length ? `<div class="notice">${{escapeHtml(warnings.slice(0, 4).join("；"))}}</div>` : "";
-      return `${{warningHtml}}<ul class="story-list">${{items.map(([k, v]) => `<li><strong>${{escapeHtml(k)}}：</strong>${{escapeHtml(v)}}</li>`).join("")}}</ul>`;
+      return `${{warningHtml}}${{claimHtml}}<ul class="story-list">${{items.map(([k, v]) => `<li><strong>${{escapeHtml(k)}}：</strong>${{escapeHtml(v)}}</li>`).join("")}}</ul>`;
+    }}
+
+    function indexTable(items, status) {{
+      if (!items.length) {{
+        return `<div class="empty">${{escapeHtml(statusText(status))}}</div>`;
+      }}
+      return `<table><thead><tr><th>指数</th><th>市场</th><th class="money">本周涨跌</th><th>最大单日波动</th><th>环境</th><th>组合影响</th></tr></thead><tbody>
+        ${{items.map((item) => {{
+          const move = item.largest_daily_move || {{}};
+          const moveText = move.date ? `${{move.date}} ${{formatPercent(move.change_pct)}}` : "待补";
+          return `<tr><td>${{escapeHtml(item.name)}}</td><td>${{escapeHtml(item.market)}}</td><td class="money ${{moneyClass(item.weekly_change_pct)}}">${{formatPercent(item.weekly_change_pct)}}</td><td>${{escapeHtml(moveText)}}</td><td>${{escapeHtml(item.environment_label || "待观察")}}</td><td>${{escapeHtml(item.portfolio_relevance || "待观察")}}</td></tr>`;
+        }}).join("")}}
+      </tbody></table>`;
     }}
 
     function nextWeekTable(items) {{
@@ -898,7 +917,10 @@ def render_weekly_review_workbench_html() -> str:
       const labels = {{
         ok: "已读取",
         partial: "部分可用",
+        checked_empty: "已检查无材料",
         missing: "缺失",
+        provider_unavailable: "数据源暂不可用",
+        source_blocked: "源数据阻塞",
         realtime: "实时读取",
         snapshot: "来自快照",
         backfilled: "已回补",
@@ -911,7 +933,6 @@ def render_weekly_review_workbench_html() -> str:
     function readableReason(reason) {{
       if (!reason) return "";
       const text = String(reason);
-      if (text.toLowerCase().includes("provider")) return "数据源未接入";
       return text;
     }}
     function parseDateInput(value) {{
@@ -934,6 +955,10 @@ def render_weekly_review_workbench_html() -> str:
       if (value === null || value === undefined || value === "") return "";
       const number = Math.abs(Number(value)) > 1 ? Number(value) : Number(value) * 100;
       return ` / ${{number.toFixed(2)}}%`;
+    }}
+    function formatPercent(value) {{
+      const number = Number(value || 0);
+      return `${{number >= 0 ? "+" : ""}}${{number.toFixed(2)}}%`;
     }}
     function moneyClass(value) {{ return Number(value || 0) < 0 ? "neg" : "pos"; }}
     function escapeHtml(value) {{
@@ -1047,8 +1072,9 @@ def _empty_week_context(start: date, end: date) -> dict[str, Any]:
             "trades": {"status": "missing", "count": 0},
             "positions": {"status": "missing"},
             "ipo": {"status": "missing", "count": 0},
-            "indexes": {"status": "missing", "reason": "指数数据源未接入"},
-            "events": {"status": "missing", "reason": "外部事件源未接入"},
+            "indexes": {"status": "missing", "provider": "futu", "count": 0},
+            "events": {"status": "missing", "providers": ["official_sources"], "count": 0},
+            "local_knowledge": {"status": "missing", "count": 0},
         },
         "highlights": [],
         "blowups": [],
