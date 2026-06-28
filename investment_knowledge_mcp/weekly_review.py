@@ -14,6 +14,10 @@ from investment_knowledge_mcp.futu_provider import (
     get_futu_trade_history,
     get_hk_ipo_list,
 )
+from investment_knowledge_mcp.market_data_provider import (
+    MarketDataProviderError,
+    get_yahoo_market_bars,
+)
 from investment_knowledge_mcp.research.official_sources import OfficialResearchProvider
 
 
@@ -380,35 +384,51 @@ def _load_index_summary(
     detected_themes: list[str],
 ) -> list[dict[str, Any]]:
     codes = [item["code"] for item in REQUIRED_INDEXES]
+    provider_errors: list[str] = []
     try:
         snapshot = get_futu_market_bars(codes=codes, start=start.isoformat(), end=end.isoformat())
     except FutuProviderError as exc:
         reason = _friendly_provider_error(str(exc), family="指数")
-        source_status["indexes"] = {
-            "status": "provider_unavailable",
-            "provider": "futu",
-            "count": 0,
-            "reason": reason,
-        }
-        warnings.append(f"指数行情读取失败：{reason}")
-        return []
+        provider_errors.append(f"futu: {reason}")
     except Exception as exc:
         reason = _friendly_provider_error(str(exc), family="指数")
-        source_status["indexes"] = {
-            "status": "provider_unavailable",
-            "provider": "futu",
-            "count": 0,
-            "reason": reason,
-        }
-        warnings.append(f"指数行情读取失败：{reason}")
-        return []
+        provider_errors.append(f"futu: {reason}")
+
+    if provider_errors:
+        try:
+            snapshot = get_yahoo_market_bars(codes=codes, start=start.isoformat(), end=end.isoformat())
+        except MarketDataProviderError as exc:
+            reason = _friendly_provider_error(str(exc), family="指数")
+            provider_errors.append(f"yahoo_chart: {reason}")
+            source_status["indexes"] = {
+                "status": "provider_unavailable",
+                "providers": ["futu", "yahoo_chart"],
+                "count": 0,
+                "reason": "；".join(provider_errors[:3]),
+            }
+            warnings.append(f"指数行情读取失败：{source_status['indexes']['reason']}")
+            return []
+        except Exception as exc:
+            reason = _friendly_provider_error(str(exc), family="指数")
+            provider_errors.append(f"yahoo_chart: {reason}")
+            source_status["indexes"] = {
+                "status": "provider_unavailable",
+                "providers": ["futu", "yahoo_chart"],
+                "count": 0,
+                "reason": "；".join(provider_errors[:3]),
+            }
+            warnings.append(f"指数行情读取失败：{source_status['indexes']['reason']}")
+            return []
+        warnings.append(f"富途指数行情不可用，已使用 Yahoo chart 作为云端备用指数源。")
+
+    provider_name = getattr(snapshot, "source", "unknown")
+    bars_by_code = getattr(snapshot, "bars_by_code", {})
 
     rows: list[dict[str, Any]] = []
     missing: list[str] = []
-    by_code = snapshot.bars_by_code
     for index in REQUIRED_INDEXES:
-        bars = by_code.get(index["code"]) or []
-        metric = _index_metric(index=index, bars=bars, detected_themes=detected_themes)
+        bars = bars_by_code.get(index["code"]) or []
+        metric = _index_metric(index=index, bars=bars, detected_themes=detected_themes, provider=provider_name)
         if metric is None:
             missing.append(index["name"])
             continue
@@ -417,19 +437,21 @@ def _load_index_summary(
     covered_markets = {_market_family(row.get("market")) for row in rows}
     uncovered_active = sorted(market for market in active_markets if market not in covered_markets)
     status = "ok"
-    if missing:
+    if missing or provider_errors:
         status = "partial"
     if uncovered_active or not rows:
         status = "source_blocked"
     source_status["indexes"] = {
         "status": status,
-        "provider": snapshot.source,
+        "provider": provider_name,
+        "providers": ["futu", provider_name] if provider_errors and provider_name != "futu" else [provider_name],
         "count": len(rows),
         "fetched_at": snapshot.fetched_at.isoformat(),
         "metric": "close_to_close",
         "missing": missing,
         "active_markets": sorted(active_markets),
         "uncovered_active_markets": uncovered_active,
+        "provider_errors": provider_errors,
         "reason": _index_status_reason(status=status, missing=missing, uncovered_active=uncovered_active),
     }
     if status == "source_blocked":
@@ -458,15 +480,30 @@ def _build_source_evidence(
         position_changes=position_changes,
         warnings=warnings,
     )
+    if not events:
+        events = _collect_reference_event_evidence(
+            end=end,
+            position_changes=position_changes,
+            knowledge_evidence=knowledge,
+        )
     if events:
+        has_reference_only = all(str(item.get("freshness")) == "reference_source" for item in events)
         source_status["events"] = {
             "status": "partial",
-            "providers": ["official_sources", "local_theme_context"],
+            "providers": ["official_sources", "official_reference_fallback", "local_theme_context"],
             "count": len(events),
             "checked_categories": ["company_announcements_or_filings", "sector_theme_context", "user_knowledge"],
-            "source_blocked_categories": ["macro_calendar", "general_news_theme_feed"],
+            "source_blocked_categories": (
+                ["dated_company_events", "macro_calendar", "general_news_theme_feed"]
+                if has_reference_only
+                else ["macro_calendar", "general_news_theme_feed"]
+            ),
             "themes": detected_themes,
-            "reason": "公司公告/财报和本地主题证据已接入；宏观日历和通用新闻源仍待接入。",
+            "reason": (
+                "已接入公司披露入口和本地主题证据；仍缺少本周 dated company events、宏观日历和通用新闻源。"
+                if has_reference_only
+                else "公司公告/财报和本地主题证据已接入；宏观日历和通用新闻源仍待接入。"
+            ),
         }
     else:
         source_status["events"] = {
@@ -482,7 +519,12 @@ def _build_source_evidence(
     return {"events": events, "knowledge": knowledge}
 
 
-def _index_metric(index: dict[str, str], bars: list[dict[str, Any]], detected_themes: list[str]) -> dict[str, Any] | None:
+def _index_metric(
+    index: dict[str, str],
+    bars: list[dict[str, Any]],
+    detected_themes: list[str],
+    provider: str,
+) -> dict[str, Any] | None:
     clean_bars = [bar for bar in bars if _optional_number(bar.get("close")) is not None]
     if len(clean_bars) < 2:
         return None
@@ -511,7 +553,7 @@ def _index_metric(index: dict[str, str], bars: list[dict[str, Any]], detected_th
         "environment_label": _index_environment_label(index=index, weekly_change_pct=weekly_change_pct),
         "portfolio_relevance": _index_relevance(index=index, detected_themes=detected_themes),
         "source": {
-            "provider": "futu",
+            "provider": provider,
             "metric": "close_to_close",
             "start_date": clean_bars[0].get("date"),
             "end_date": clean_bars[-1].get("date"),
@@ -566,6 +608,117 @@ def _collect_official_event_evidence(
     if errors:
         warnings.append("部分外部事件源读取失败：" + "；".join(errors[:3]))
     return _dedupe_events(events)[:10]
+
+
+def _collect_reference_event_evidence(
+    end: date,
+    position_changes: list[dict[str, Any]],
+    knowledge_evidence: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for target in _event_targets(position_changes)[:6]:
+        reference = _official_reference_for_target(target)
+        if reference is None:
+            continue
+        events.append(
+            {
+                "category": "company_disclosure_reference",
+                "code": target.get("code"),
+                "name": target.get("name"),
+                "theme": target.get("theme"),
+                "source_name": reference["publisher"],
+                "source_type": reference["source_type"],
+                "published_at": None,
+                "checked_at": end.isoformat(),
+                "title": reference["title"],
+                "url": reference["url"],
+                "freshness": "reference_source",
+                "summary": reference["summary"],
+                "citation": _citation_label(reference["publisher"], reference["title"]),
+            }
+        )
+    if not events:
+        for entry in knowledge_evidence[:6]:
+            source = entry.get("source") if isinstance(entry.get("source"), dict) else {}
+            if not source or not source.get("url"):
+                continue
+            events.append(
+                {
+                    "category": "local_research_source",
+                    "code": entry.get("code"),
+                    "name": entry.get("name"),
+                    "theme": None,
+                    "source_name": source.get("publisher") or "local research source",
+                    "source_type": "local_research_source",
+                    "published_at": None,
+                    "checked_at": end.isoformat(),
+                    "title": source.get("title") or entry.get("summary"),
+                    "url": source.get("url"),
+                    "freshness": "reference_source",
+                    "summary": _trim(entry.get("summary"), 220),
+                    "citation": _citation_label(source.get("publisher") or "local research source", source.get("title")),
+                }
+            )
+    return _dedupe_events(events)[:10]
+
+
+def _official_reference_for_target(target: dict[str, Any]) -> dict[str, str] | None:
+    code = str(target.get("code") or "").upper()
+    market = str(target.get("market") or "").upper()
+    symbol = str(target.get("symbol") or "").upper()
+    name = str(target.get("name") or symbol or code).strip()
+    known_urls = {
+        "US.DRAM": {
+            "publisher": "Roundhill Investments",
+            "source_type": "fund_page",
+            "title": "Roundhill Memory ETF product page",
+            "url": "https://www.roundhillinvestments.com/etf/dram/",
+        },
+        "US.TLT": {
+            "publisher": "iShares",
+            "source_type": "fund_page",
+            "title": "iShares 20+ Year Treasury Bond ETF product page",
+            "url": "https://www.ishares.com/us/products/239454/ishares-20-year-treasury-bond-etf",
+        },
+        "US.PSLV": {
+            "publisher": "Sprott",
+            "source_type": "fund_page",
+            "title": "Sprott Physical Silver Trust product page",
+            "url": "https://sprott.com/investment-strategies/physical-bullion-trusts/silver/",
+        },
+    }
+    if code in known_urls:
+        reference = dict(known_urls[code])
+        reference["summary"] = f"{name} 的官方产品/披露入口，用于核对基金或产品层面的持仓主题和风险披露。"
+        return reference
+    if market == "US" and symbol:
+        return {
+            "publisher": "SEC EDGAR",
+            "source_type": "company_disclosure_reference",
+            "title": f"SEC company filings search for {symbol}",
+            "url": f"https://www.sec.gov/edgar/search/#/q={symbol}",
+            "summary": f"{name} 的 SEC 披露检索入口，用于核对本周或近前公告、财报和 8-K/10-Q/10-K 文件。",
+        }
+    if market == "HK" and symbol:
+        stock = symbol.lstrip("0") or symbol
+        return {
+            "publisher": "HKEXnews",
+            "source_type": "company_disclosure_reference",
+            "title": f"HKEXnews disclosure search for {symbol}",
+            "url": f"https://www1.hkexnews.hk/search/titlesearch.xhtml?lang=en&category=0&market=SEHK&stock={stock}",
+            "summary": f"{name} 的港交所公告检索入口，用于核对本周或近前公告、业绩和交易披露。",
+        }
+    if market in {"SH", "SZ", "CN"} and symbol:
+        publisher = "SSE" if market == "SH" else "SZSE"
+        base = "https://www.sse.com.cn/disclosure/listedinfo/announcement/" if market == "SH" else "https://www.szse.cn/disclosure/listed/notice/index.html"
+        return {
+            "publisher": publisher,
+            "source_type": "company_disclosure_reference",
+            "title": f"{publisher} disclosure search for {symbol}",
+            "url": base,
+            "summary": f"{name} 的交易所公告入口，用于核对本周或近前公告、业绩和交易披露。",
+        }
+    return None
 
 
 def _collect_local_knowledge_evidence(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -693,7 +846,21 @@ def _friendly_provider_error(message: str, family: str) -> str:
     lower = text.lower()
     if "未安装" in text or "import" in lower:
         return f"{family}数据依赖未安装，当前环境只能生成源数据阻塞草稿。"
-    if any(marker in lower for marker in ("connection", "connect", "timeout", "refused", "dns", "network")):
+    if any(
+        marker in lower
+        for marker in (
+            "connection",
+            "connect",
+            "timeout",
+            "refused",
+            "dns",
+            "network",
+            "nodename",
+            "name or service",
+            "temporary failure",
+            "urlopen",
+        )
+    ):
         return f"{family}数据源暂时不可连接，当前环境只能生成源数据阻塞草稿。"
     if "opend" in lower or "127.0.0.1" in lower or "localhost" in lower:
         return f"{family}数据源暂时不可用，当前环境只能生成源数据阻塞草稿。"
@@ -1164,6 +1331,7 @@ def _event_story_text(
             "nearest_prior": "近前材料",
             "undated_source": "未标日期材料",
             "future_or_next_window": "后续窗口材料",
+            "reference_source": "公司披露入口",
         }.get(str(event.get("freshness")), str(event.get("freshness") or "材料"))
         parts.append(f"{freshness}：{event.get('source_name')}《{event.get('title')}》")
     if knowledge_evidence:
