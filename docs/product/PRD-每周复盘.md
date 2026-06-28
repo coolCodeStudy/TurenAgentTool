@@ -324,6 +324,103 @@
 - 事实和推断分开展示。
 - 推断只能进入 `candidate_insights`，不能进入正式 `user_insights`。
 
+## 2026-06-28 Product Acceptance Addendum: Source Completeness And Story Quality
+
+This addendum resolves failed user acceptance item `AT-2026-06-28-001`. The prior Web-flow acceptance result only proves that the page can read, generate, refresh, save, and degrade safely. It does not make Weekly Review product-complete. A generated report is product-acceptable only when it explains why the week happened using source-backed market, event, theme, portfolio, and user-knowledge inputs.
+
+### Minimum Index Context
+
+Required acceptance basket:
+
+| Market | Required indexes |
+| --- | --- |
+| US | S&P 500, Nasdaq 100, SOX Semiconductor Index |
+| Hong Kong | Hang Seng Index, Hang Seng Tech Index, Hang Seng China Enterprises Index |
+| Mainland China | CSI 300, ChiNext Index, STAR 50 |
+
+Required weekly metrics for each available required index:
+
+- Weekly change over the review week, using a consistent close-to-close or prior-close-to-week-close convention that is named in `source_status`.
+- Largest daily move during the review week, including date, direction, and percent move when available.
+- A market-environment label such as broad risk-on, broad risk-off, growth-led, semiconductor-led, Hong Kong growth-led, A-share theme-led, or mixed/rotation.
+- Portfolio/theme relevance, explicitly mapping the index move to the user's holdings, trades, and dominant themes such as AI infrastructure, HBM/memory, optical communication, Hong Kong growth, innovative drugs, crypto finance, robotics, or other detected themes.
+
+Degraded behavior:
+
+- If one required index is unavailable but the provider returns other indexes for the same market, the report may still generate as `partial` and must name the missing index, show the remaining evidence, and avoid claims that depend on the missing index.
+- For product acceptance, each active portfolio market in the review week must have at least one representative broad index available, and AI/semiconductor or growth exposure must have at least one relevant proxy available when those themes are material to holdings or trades.
+- If an entire active market's index coverage is unavailable, or if the report cannot provide any relevant proxy for a material portfolio theme, the report may be shown as a transparent source-blocked draft but must not be considered product-acceptable.
+
+### Minimum External Event, News, And Theme Context
+
+Required event categories for acceptance:
+
+| Category | Minimum bar |
+| --- | --- |
+| Holding company announcements and earnings | For top holdings, largest contributors, largest detractors, new positions, and closed positions, check company announcements, earnings, guidance, filings, or exchange notices during the review week. |
+| Macro and market calendar | Check major central-bank, rates, inflation, jobs, liquidity, and market-calendar items that plausibly explain broad index movement during the week. |
+| Sector and theme news | Check material theme-level news for the user's active themes, especially AI infrastructure, memory/HBM, semiconductors, optical communication/CPO, Hong Kong growth, innovative drugs, crypto finance, robotics, and other themes detected from holdings/trades. |
+| User knowledge and insights | Include relevant `user_insights`, `candidate_insights`, `knowledge_items`, sector mappings, and prior review context already stored in the local knowledge base. |
+
+Source freshness and evidence expectations:
+
+- External company, macro, and theme sources should be from the review week, or from the nearest prior dated event that was clearly still being priced during the review week.
+- Next-week outlook items may include dated calendar events within the next 14 calendar days.
+- Every external event used in the story must carry at least source name, publication or event date, title/description, URL or stable source identifier, and the linked ticker/theme when applicable.
+- Internal knowledge sources must carry the source type and local identifier or summary so a reviewer can trace the statement back to knowledge, insight, candidate insight, or sector mapping data.
+- If a required provider returns no relevant events, the report should say the category was checked and no material event was found. If the provider is unavailable or not implemented, that is a source gap, not a passing empty result.
+
+Acceptable first implementation pass:
+
+- A bounded provider set is acceptable: one reliable market-index provider, one company-announcement or earnings/calendar source, one general news/theme source, and the existing local knowledge-base sources.
+- The first pass may prioritize holdings, trades, top contributors/detractors, and detected portfolio themes instead of crawling the entire market.
+- Raw social-media firehose ingestion, sentiment scoring, full research-report summarization, paid data-only sources, and one-click promotion of generated ideas into formal user insights remain out of scope unless a later product decision adds them.
+- Social or community summaries may be included only when source freshness and citation metadata meet the evidence bar above; otherwise they should be omitted rather than paraphrased from memory.
+
+### Overall Story Acceptance Bar
+
+The overall story must be useful enough to explain why the week happened, not only list what changed in the holdings snapshot.
+
+Minimum input diversity for product acceptance:
+
+- Portfolio/trade facts: highlights, blowups, position changes, and current holdings table.
+- Index facts: required broad and theme-relevant index context for active markets.
+- Event/theme facts: at least one checked external company, macro, or sector/theme event category relevant to the week's portfolio movement.
+- User knowledge facts: relevant stored knowledge, insights, candidate insights, or sector mappings when available.
+
+Required story structure:
+
+```text
+本周故事：
+- 主线：
+- 市场环境：
+- 组合归因：
+- 事件/主题证据：
+- 负向信号：
+- 和我组合的关系：
+- 下周验证点：
+```
+
+Each story claim must separate observed facts from interpretation and cite one or more structured inputs: index, holding/transaction, external event, user knowledge, or source-status fact. The model may summarize and connect evidence, but it must not invent market causes, company events, or social sentiment.
+
+Missing-source handling:
+
+- Missing required sources should produce a clearly labeled source-blocked or partial draft, with the missing categories and next engineering/data action visible.
+- The product must not pass acceptance merely because it says data is missing. If missing sources prevent the story from explaining the market and portfolio drivers, the acceptance result remains failed or blocked until sources are implemented or an explicit product decision removes that source from scope.
+- The page should still preserve safe degraded behavior: no raw provider names, table names, stack traces, or internal implementation messages as normal user copy.
+
+### Engineering Handoff Requirement
+
+Before implementation resumes, Engineering must update `docs/techplans/weekly-review.md` to cover:
+
+- Source providers and schemas for required indexes, company/earnings/calendar events, macro/calendar items, sector/theme news, and local knowledge inputs.
+- `source_status` semantics for `ok`, `partial`, `checked_empty`, `missing`, `provider_unavailable`, and `source_blocked`.
+- Story-generation input contract, citation/evidence fields, and source-to-claim traceability.
+- Fallback and degraded behavior that distinguishes product-acceptable partial data from source-blocked drafts.
+- Verification plan, including fixture-level checks, provider-missing checks, cloud Weekly Review checks, and a focused acceptance retest for `AT-2026-06-28-001`.
+
+Implementation should not proceed from the old P1/P2 split that treated index and external-event sources as non-blocking future enhancements. That split is superseded for the source-completeness and story-quality acceptance scope.
+
 ## 数据模型影响
 
 第一版复用现有表：
@@ -367,11 +464,12 @@ created_at
 - 整体故事必须标记输入来源和数据缺口。
 - 新产生的观点只能进入候选心得。
 - 所有命令不允许交易、不调用解锁。
+- The 2026-06-28 source-completeness addendum supersedes the older degraded-source acceptance bar for `AT-2026-06-28-001`: missing index and external-event providers can be safely displayed, but they are no longer sufficient for product acceptance when they prevent a source-backed weekly story.
 
 ## P2 增强
 
-- 接入雪球/Twitter/X 的持仓相关事件抓取。
-- 接入财报日历和宏观日历。
+- 接入雪球/Twitter/X 的持仓相关事件抓取；minimum external event coverage is now required by the 2026-06-28 addendum, while broad social firehose ingestion remains P2.
+- 接入财报日历和宏观日历；minimum calendar/event coverage is now required by the 2026-06-28 addendum before source-completeness acceptance can pass.
 - 自动比较本周复盘和上周“下周展望”，判断哪些被验证、证伪或遗漏。
 - 支持用户对每个候选心得一键确认/拒绝。
 - 支持 Web 页面，但第一版仍以 Markdown 为主。
