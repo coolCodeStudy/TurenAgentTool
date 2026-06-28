@@ -433,6 +433,24 @@ Every generated claim must cite one or more structured inputs such as `index:<co
 - Provider-available check: on cloud or an approved Futu/OpenD environment, generate the current natural week and verify index rows, event/knowledge evidence, and story citations in both Markdown and Web JSON.
 - Acceptance retest: after deployment, route `AT-2026-06-28-001` back to Acceptance Testing for a focused source-completeness and story-quality retest.
 
+### Coordinator Return Gate Status
+
+2026-06-28: Development returned `origin/codex/weekly-review-source-completeness` at `ce36764`. The Delivery Coordinator accepted the branch for integration and cherry-picked it locally as `80da965` on `codex/weekly-review-source-completeness-integration`; coordinator state is recorded on the same local branch.
+
+Local coordinator verification passed:
+
+- `python3 -m py_compile investment_knowledge_mcp/futu_provider.py investment_knowledge_mcp/weekly_review.py investment_knowledge_mcp/weekly_review_web.py scripts/smoke_test.py`
+- `git diff --check origin/main..HEAD`
+- `python3 scripts/audit_delivery_state.py --feature "Weekly review generator"`
+- Web HTML render assertions for the new index slot and absence of old provider-not-configured copy
+- Mocked weekly-review fixture assertions for index summary, source status, story fields, claims, and Markdown copy
+
+Verification limits:
+
+- Full `scripts/smoke_test.py` could not run in the coordinator environment because PostgreSQL on `localhost:55432` was not reachable.
+- Futu/OpenD provider-available verification still requires the cloud or another approved provider environment.
+- Push/deploy is blocked in the coordinator environment by missing GitHub HTTPS credentials, so `AT-2026-06-28-001` must remain `failed` until an authenticated integration session pushes/deploys the integrated ref and verifies the cloud surface.
+
 ## Implementation Traceability
 
 ### 2026-06-28 development update
