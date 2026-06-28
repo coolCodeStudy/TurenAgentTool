@@ -449,7 +449,7 @@ Verification limits:
 
 - Full `scripts/smoke_test.py` could not run in the coordinator environment because PostgreSQL on `localhost:55432` was not reachable.
 - Futu/OpenD provider-available verification still requires the cloud or another approved provider environment.
-- Push/deploy is blocked in the coordinator environment by missing GitHub HTTPS credentials, so `AT-2026-06-28-001` must remain `failed` until an authenticated integration session pushes/deploys the integrated ref and verifies the cloud surface.
+- The branch was later pushed to `main` at `8147cb8`, automatic quick deploy run `28326148823` succeeded, and manual full deploy run `28326192300` succeeded. Cloud HTML verification passed for the new index slot and absence of old provider-not-connected copy. Cloud force-refresh for week `2026-06-22` produced the new story structure, but provider-available verification did not pass: indexes returned `provider_unavailable`, events returned `source_blocked`, and cloud output had no `index_summary` or `event_summary` rows. `AT-2026-06-28-001` must remain `failed` until cloud source/provider evidence is available or Product changes the acceptance bar.
 
 ## Implementation Traceability
 
