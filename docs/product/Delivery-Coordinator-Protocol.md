@@ -205,7 +205,11 @@ The coordinator must check and report:
 - Testing learning: whether a new acceptance dimension, blind spot, failure mode, browser/tooling limit, or evidence standard should update the Acceptance Testing protocol or queue.
 - Coordinator learning: whether routing, dispatch, state tracking, or handoff behavior should update this protocol, `AGENTS.md`, `docs/agent-lessons.md`, or project-management state.
 
-The coordinator must apply the lesson quality bar from `../lesson-capture-protocol.md`. A role learning item should be recorded only when it comes from user correction, repeated workflow failure, or concrete delivery evidence and will improve future delivery.
+The coordinator must apply the quality bar and anti-overlearning guardrail from `../lesson-capture-protocol.md`.
+
+The operating rule is: check always, record rarely, place narrowly, and review stale lessons. A role learning item should be recorded only when it comes from user correction, repeated workflow failure, or concrete delivery evidence and will improve future delivery. The coordinator must not write lessons merely to show that the system is evolving.
+
+If an existing lesson becomes stale, too broad, contradicted by later evidence, or replaced by a clearer higher-authority rule, the coordinator may route or perform cleanup by merging, replacing, marking it superseded, or removing it from the narrowest durable document.
 
 Every final coordinator summary for a substantial flow must include one of:
 

@@ -450,7 +450,7 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- Do not mark user acceptance as accepted.",
         "- Update Feature Registry, Acceptance Queue, Delivery Queue, or technical-plan traceability when your work changes delivery state.",
         "- Run narrow verification and document any verification limit.",
-        "- Check `docs/lesson-capture-protocol.md` before handoff and record any durable role lesson in the narrowest correct document.",
+        "- Check `docs/lesson-capture-protocol.md` before handoff; record only durable lessons that pass the quality bar, otherwise state `Lessons: none`.",
         "- Commit and push after completing the work unless explicitly told to keep it local.",
         "",
         "Definition of done:",

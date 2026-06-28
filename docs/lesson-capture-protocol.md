@@ -53,6 +53,20 @@ A poor lesson is:
 - An unverified guess written as a rule.
 - A vague reminder such as "be careful" without a concrete trigger or action.
 
+## Anti-Overlearning Guardrail
+
+Checking for lessons is mandatory for substantial work, but recording a lesson is not mandatory. The default outcome may be `Lessons: none`.
+
+Record a lesson only when at least one of these is true:
+
+- The user explicitly corrected a behavior, expectation, or delivery standard that should apply again.
+- The same failure pattern or confusion has happened more than once.
+- Concrete delivery evidence shows the lesson will improve future product quality, engineering reliability, verification, deployment, or state tracking.
+
+Do not write a lesson merely to show that the system is learning. If a lesson would only restate "be careful", "test more", "improve UX", or "read the docs", do not record it.
+
+Lessons can be changed later. If a lesson becomes stale, too broad, contradicted by later evidence, or replaced by a clearer higher-authority rule, Project Management or the Delivery Coordinator may merge, replace, mark as superseded, or remove it in the narrowest durable document.
+
 ## Required Handoff Statement
 
 Every substantial task handoff should include one of these:

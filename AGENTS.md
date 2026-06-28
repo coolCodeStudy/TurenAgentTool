@@ -11,7 +11,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Use English for all new or agent-authored docs, code comments, PRDs, tech plans, and durable notes. Preserve existing non-English content unless the task is to translate or rewrite it.
 - Prefer local, narrow verification first: unit/smoke checks, CLI scripts, and the exact module entrypoint touched by the task.
 - Use `docs/lesson-capture-protocol.md` to decide whether a completed task produced a durable lesson and where that lesson belongs.
-- For substantial Delivery Coordinator flows, close the role learning loop before declaring done: Product, Engineering, Testing, and Coordinator lessons must be recorded in the narrowest durable document, or the handoff must state `Role learning: none` with a reason.
+- For substantial Delivery Coordinator flows, close the role learning loop before declaring done. Check Product, Engineering, Testing, and Coordinator learning, but record lessons only when they pass `docs/lesson-capture-protocol.md`; otherwise state `Role learning: none` with a reason.
 - Do not create routine daily logs. Put durable lessons in the appropriate durable document, durable state in `docs/当前工程状态.md`, and milestones in `docs/project-history.md`.
 
 ## Planning And Scope
