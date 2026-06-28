@@ -247,6 +247,7 @@ Acceptance checks:
 - The changed surfaces are the existing `command-api` service and the public `weekly-review-web` service.
 - `command-api` should be included in `scripts/deploy_from_local_checkout.sh` so quick and full deploys actually start the service.
 - Cloud user acceptance should use `http://47.84.190.191:8010/command` unless port `8001` is explicitly opened for `command-api`.
+- The public `weekly-review-web` service must receive `COMMAND_API_TOKEN` so Command Workbench parse/execute endpoints are configured even when `WEEKLY_REVIEW_WEB_TOKEN` is intentionally unset for the weekly-review APIs.
 
 ## Risks And Follow-Ups
 
