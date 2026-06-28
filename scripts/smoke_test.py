@@ -702,7 +702,11 @@ def main() -> None:
         assert "TEST.CUT" not in weekly_context["story"]["mainline"]
         assert "TEST.CUT" in weekly_context["story"]["negative_signals"]
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_markdown
-        assert "指数数据源未接入" in weekly_markdown
+        assert weekly_context["source_status"]["indexes"]["status"] in {"ok", "partial", "provider_unavailable", "source_blocked"}
+        assert weekly_context["source_status"]["events"]["status"] in {"partial", "source_blocked"}
+        assert "市场环境" in weekly_markdown
+        assert "事件/主题证据" in weekly_markdown
+        assert "指数数据源未接入" not in weekly_markdown
         weekly_result = build_weekly_review(start=weekly_start, end=weekly_end, save=True)
         assert weekly_result.saved_report is not None
         assert weekly_result.saved_report["report_type"] == "weekly"

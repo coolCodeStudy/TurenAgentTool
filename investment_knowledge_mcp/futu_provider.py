@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import inspect
 import re
+import socket
 import time
 from typing import Any
 
@@ -42,6 +43,15 @@ class TradeHistorySnapshot:
     end: str
     account_info: dict[str, Any] | None = None
     account_error: str | None = None
+    source: str = "futu"
+
+
+@dataclass(frozen=True)
+class MarketBarSnapshot:
+    bars_by_code: dict[str, list[dict[str, Any]]]
+    fetched_at: datetime
+    start: str
+    end: str
     source: str = "futu"
 
 
@@ -100,6 +110,11 @@ def get_hk_ipo_list(config: AppConfig | None = None, include_orders: bool = True
 def get_futu_trade_history(start: str, end: str, config: AppConfig | None = None) -> TradeHistorySnapshot:
     config = config or get_config()
     return _fetch_trade_history(config=config, start=start, end=end)
+
+
+def get_futu_market_bars(codes: list[str], start: str, end: str, config: AppConfig | None = None) -> MarketBarSnapshot:
+    config = config or get_config()
+    return _fetch_market_bars(config=config, codes=codes, start=start, end=end)
 
 
 def get_futu_cash_flows(start: str, end: str, config: AppConfig | None = None) -> CashFlowSnapshot:
@@ -384,6 +399,67 @@ def _fetch_cash_flows(config: AppConfig, start: str, end: str) -> CashFlowSnapsh
         context.close()
 
 
+def _fetch_market_bars(config: AppConfig, codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+    cleaned_codes = [code.strip().upper() for code in codes if code and code.strip()]
+    if not cleaned_codes:
+        return MarketBarSnapshot(
+            bars_by_code={},
+            fetched_at=datetime.now(timezone.utc),
+            start=start,
+            end=end,
+        )
+
+    _ensure_opend_reachable(host=config.futu_opend_host, port=config.futu_opend_port, family="市场行情")
+
+    try:
+        import futu as ft
+    except ImportError as exc:
+        raise FutuProviderError("futu-api 未安装，无法读取市场行情。") from exc
+    except Exception as exc:
+        raise FutuProviderError(f"futu-api 初始化失败，无法读取市场行情：{exc}") from exc
+
+    quote_context = _create_quote_context(
+        ft.OpenQuoteContext,
+        {
+            "host": config.futu_opend_host,
+            "port": config.futu_opend_port,
+        },
+    )
+    try:
+        bars_by_code: dict[str, list[dict[str, Any]]] = {}
+        errors: list[str] = []
+        for code in cleaned_codes:
+            try:
+                ret, data = _history_kline_query(quote_context, ft=ft, code=code, start=start, end=end)
+            except Exception as exc:
+                errors.append(f"{code}: {exc}")
+                continue
+            if ret != ft.RET_OK:
+                errors.append(f"{code}: {data}")
+                continue
+            bars_by_code[code] = _normalize_market_bars(data)
+
+        if not bars_by_code and errors:
+            raise FutuProviderError("富途行情查询失败：" + "；".join(errors[:5]))
+
+        return MarketBarSnapshot(
+            bars_by_code=bars_by_code,
+            fetched_at=datetime.now(timezone.utc),
+            start=start,
+            end=end,
+        )
+    finally:
+        quote_context.close()
+
+
+def _ensure_opend_reachable(host: str, port: int, family: str) -> None:
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return
+    except OSError as exc:
+        raise FutuProviderError(f"{family}读取需要 Futu OpenD {host}:{port} 可用。") from exc
+
+
 def _position_list_query(context: Any, kwargs: dict[str, Any]) -> tuple[Any, Any]:
     supported_kwargs = _filter_supported_kwargs(context.position_list_query, kwargs)
     return _call_with_keyword_retry(context.position_list_query, supported_kwargs)
@@ -443,6 +519,24 @@ def _ipo_list_query(context: Any, market: Any) -> tuple[Any, Any]:
         if "keyword" not in str(exc) and "positional" not in str(exc):
             raise
         return context.get_ipo_list(market)
+
+
+def _history_kline_query(context: Any, *, ft: Any, code: str, start: str, end: str) -> tuple[Any, Any]:
+    if not hasattr(context, "request_history_kline"):
+        raise FutuProviderError("当前 futu-api 版本没有 request_history_kline，无法读取指数行情。")
+    kwargs: dict[str, Any] = {
+        "code": code,
+        "start": start,
+        "end": end,
+    }
+    k_day = _optional_enum_value(getattr(ft, "KLType", None), "K_DAY")
+    if k_day is not None:
+        kwargs["ktype"] = k_day
+    autype_none = _optional_enum_value(getattr(ft, "AuType", None), "NONE")
+    if autype_none is not None:
+        kwargs["autype"] = autype_none
+    supported_kwargs = _filter_supported_kwargs(context.request_history_kline, kwargs)
+    return _call_with_keyword_retry(context.request_history_kline, supported_kwargs)
 
 
 def _create_trade_context(context_cls: Any, kwargs: dict[str, Any]) -> Any:
@@ -527,6 +621,39 @@ def _normalize_ipos(data: Any) -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _normalize_market_bars(data: Any) -> list[dict[str, Any]]:
+    if hasattr(data, "to_dict"):
+        records = data.to_dict("records")
+    elif isinstance(data, list):
+        records = data
+    else:
+        records = []
+
+    normalized = []
+    for row in records:
+        item = to_jsonable(row)
+        trade_date = _clean_empty(item.get("time_key") or item.get("date") or item.get("trade_date"))
+        if isinstance(trade_date, str) and len(trade_date) >= 10:
+            trade_date = trade_date[:10]
+        normalized.append(
+            {
+                "date": trade_date,
+                "open": _optional_number(item.get("open")),
+                "close": _optional_number(item.get("close")),
+                "high": _optional_number(item.get("high")),
+                "low": _optional_number(item.get("low")),
+                "volume": _optional_number(item.get("volume")),
+                "turnover": _optional_number(item.get("turnover")),
+                "change_rate": _optional_number(item.get("change_rate")),
+                "raw": item,
+            }
+        )
+    return sorted(
+        [item for item in normalized if item.get("date") and item.get("close") is not None],
+        key=lambda item: str(item.get("date")),
+    )
 
 
 def _clean_empty(value: Any) -> Any:

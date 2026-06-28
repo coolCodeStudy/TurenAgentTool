@@ -355,6 +355,84 @@ UNIQUE (report_type, period_start, period_end)
 - 支持候选心得一键确认/拒绝。
 - 做 Web 页面，但 Markdown 仍保留为主输出。
 
+## 2026-06-28 Source Completeness Update
+
+This section supersedes the older P1/P2 split for `AT-2026-06-28-001`. Index context, external company/event evidence, theme context, and local user-knowledge evidence are now part of the acceptance scope for Weekly Review content quality.
+
+### Provider Set And Schemas
+
+The first implementation pass uses a bounded provider set:
+
+| Source family | Provider | Context field | Required fields |
+| --- | --- | --- | --- |
+| Market indexes | Futu OpenD daily K-line via `get_futu_market_bars()` | `index_summary[]` | `code`, `name`, `market`, `weekly_change_pct`, `largest_daily_move`, `environment_label`, `portfolio_relevance`, `source.provider`, `source.metric`, `source.start_date`, `source.end_date` |
+| Company announcements / filings | `OfficialResearchProvider` for supported US/HK holdings and contributors/detractors | `event_summary[]` | `category`, `code`, `name`, `source_name`, `source_type`, `published_at`, `title`, `url`, `freshness`, `summary`, `citation` |
+| Theme context | Existing sector mappings and sector knowledge from `repository.get_stock_context()` | `knowledge_evidence[]` | `source_type`, `id`, `code`, `name`, `summary`, `citation`, optional linked `source` metadata |
+| User knowledge | Existing `user_insights`, `candidate_insights`, stock/sector/global memory from `repository.get_stock_context()` | `knowledge_evidence[]` | same evidence fields as theme context |
+
+The required index basket is:
+
+- US: S&P 500 (`US.SPX`), Nasdaq 100 (`US.NDX`), SOX Semiconductor Index (`US.SOX`)
+- Hong Kong: Hang Seng Index (`HK.HSI`), Hang Seng Tech Index (`HK.HSTECH`), Hang Seng China Enterprises Index (`HK.HSCEI`)
+- Mainland China: CSI 300 (`SH.000300`), ChiNext Index (`SZ.399006`), STAR 50 (`SH.000688`)
+
+Index weekly change uses a named close-to-close convention over the available bars inside the review week. Largest daily move uses the largest absolute close-to-close daily change inside the same bar set.
+
+### `source_status` Semantics
+
+Weekly Review source families use these statuses:
+
+| Status | Meaning | Product behavior |
+| --- | --- | --- |
+| `ok` | Required source family is available for the required coverage. | Story may make claims from this source family with citations. |
+| `partial` | Some useful evidence is available, but at least one required item/category is missing. | Story may use available evidence and must name the missing coverage. |
+| `checked_empty` | Provider ran and returned no relevant material events or knowledge. | Story may say the category was checked empty; this is different from an unavailable provider. |
+| `missing` | No source data was loaded and no provider check succeeded. | Story must avoid claims depending on this family. |
+| `provider_unavailable` | Provider exists but is unreachable, not installed, or failed in this environment. | Report is a transparent degraded draft. |
+| `source_blocked` | Required acceptance coverage cannot be met, such as an active market without a representative index or no usable event evidence. | Report may render safely, but the source gap remains an acceptance blocker. |
+
+Safe degraded copy must continue to hide internal provider names, table names, stack traces, and raw database errors from normal user copy.
+
+### Story Input Contract
+
+`story` is generated from structured context only:
+
+- Portfolio/trade facts: `highlights`, `blowups`, `position_changes`, `holdings_table`, and trade summaries.
+- Index facts: `index_summary` rows with close-to-close metrics and largest daily move.
+- Event/theme facts: `event_summary` rows from official/company sources and `knowledge_evidence` rows from local stock/sector/user memory.
+- Source facts: `source_status` entries, including missing and blocked categories.
+
+Story output must include:
+
+```text
+mainline
+market_environment
+portfolio_attribution
+event_evidence
+negative_signals
+portfolio_relation
+next_validation
+claims[] with type, text, citations[]
+```
+
+Every generated claim must cite one or more structured inputs such as `index:<code>`, `holding:<code>`, an official-source citation, or a local-memory citation like `stock_insight:<id>`.
+
+### Acceptance Criteria For `AT-2026-06-28-001`
+
+- The Weekly Review page no longer shows the old fixed “index/external event source not connected” content when generated context contains source-status and evidence fields.
+- Each active portfolio market has at least one available broad index, or the report is clearly marked `source_blocked`.
+- Material AI/semiconductor/growth exposure gets a relevant proxy index when available, or the missing proxy is visible in `source_status.indexes`.
+- At least one external company/filing/event category or local theme/user-knowledge evidence is included in the story evidence chain; if no evidence exists, `source_status.events` must be `source_blocked`.
+- The story uses the required seven-part structure and includes source-to-claim citations.
+- Missing macro calendar and general news/theme firehose coverage remain visible as partial/source-blocked categories until a later provider fills them or Product removes them from scope.
+
+### Verification Plan
+
+- Fixture/local smoke: run the weekly review smoke path and assert the new story fields, source-status vocabulary, and absence of old internal/provider-not-configured copy.
+- Provider-missing check: run in an environment without Futu/OpenD and confirm the report degrades to `provider_unavailable` or `source_blocked` without throwing or exposing internals.
+- Provider-available check: on cloud or an approved Futu/OpenD environment, generate the current natural week and verify index rows, event/knowledge evidence, and story citations in both Markdown and Web JSON.
+- Acceptance retest: after deployment, route `AT-2026-06-28-001` back to Acceptance Testing for a focused source-completeness and story-quality retest.
+
 ## Implementation Traceability
 
 ### 2026-06-28 development update

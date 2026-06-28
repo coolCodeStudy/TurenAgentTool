@@ -9,13 +9,94 @@ from zoneinfo import ZoneInfo
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
+    get_futu_market_bars,
     get_futu_positions,
     get_futu_trade_history,
     get_hk_ipo_list,
 )
+from investment_knowledge_mcp.research.official_sources import OfficialResearchProvider
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+REQUIRED_INDEXES: list[dict[str, str]] = [
+    {
+        "code": "US.SPX",
+        "name": "S&P 500",
+        "market": "US",
+        "role": "broad",
+        "relevance": "美股风险偏好和美元资产组合背景",
+    },
+    {
+        "code": "US.NDX",
+        "name": "Nasdaq 100",
+        "market": "US",
+        "role": "growth",
+        "relevance": "美股成长和 AI 相关持仓的风险偏好代理",
+    },
+    {
+        "code": "US.SOX",
+        "name": "SOX Semiconductor Index",
+        "market": "US",
+        "role": "semiconductor",
+        "relevance": "半导体、AI 基础设施、HBM/memory 持仓代理",
+    },
+    {
+        "code": "HK.HSI",
+        "name": "Hang Seng Index",
+        "market": "HK",
+        "role": "broad",
+        "relevance": "港股整体风险偏好",
+    },
+    {
+        "code": "HK.HSTECH",
+        "name": "Hang Seng Tech Index",
+        "market": "HK",
+        "role": "growth",
+        "relevance": "港股成长、互联网和科技持仓代理",
+    },
+    {
+        "code": "HK.HSCEI",
+        "name": "Hang Seng China Enterprises Index",
+        "market": "HK",
+        "role": "broad",
+        "relevance": "中资港股和国企风险偏好",
+    },
+    {
+        "code": "SH.000300",
+        "name": "CSI 300",
+        "market": "CN",
+        "role": "broad",
+        "relevance": "A 股大盘和人民币资产风险偏好",
+    },
+    {
+        "code": "SZ.399006",
+        "name": "ChiNext Index",
+        "market": "CN",
+        "role": "growth",
+        "relevance": "A 股成长和题材风险偏好",
+    },
+    {
+        "code": "SH.000688",
+        "name": "STAR 50",
+        "market": "CN",
+        "role": "semiconductor",
+        "relevance": "科创和半导体/硬科技主题代理",
+    },
+]
+
+SOURCE_STATUS_LABELS = {
+    "ok": "已读取",
+    "partial": "部分可用",
+    "checked_empty": "已检查但无材料事件",
+    "missing": "缺失",
+    "provider_unavailable": "数据源暂不可用",
+    "source_blocked": "源数据阻塞",
+    "realtime": "实时读取",
+    "snapshot": "来自快照",
+    "backfilled": "已回补",
+    "fallback": "降级可用",
+}
 
 
 @dataclass(frozen=True)
@@ -48,8 +129,9 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "account_snapshots": {"status": "missing", "count": 0},
         "trades": {"status": "missing", "count": 0},
         "positions": {"status": "missing", "fetched_at": None},
-        "indexes": {"status": "missing", "reason": "指数数据源未接入"},
-        "events": {"status": "missing", "reason": "外部事件源未接入"},
+        "indexes": {"status": "missing", "provider": "futu", "count": 0},
+        "events": {"status": "missing", "providers": ["official_sources"], "count": 0},
+        "local_knowledge": {"status": "missing", "count": 0},
         "ipo": {"status": "missing", "count": 0},
     }
     warnings: list[str] = []
@@ -92,6 +174,24 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
     blowups = _top_blowups(position_changes)
     holdings_table = _build_holdings_table(position_changes)
     ipo_items = _load_ipo_items(source_status=source_status, warnings=warnings)
+    active_markets = _active_portfolio_markets(position_changes=position_changes, trades=trades)
+    detected_themes = _detect_portfolio_themes(position_changes)
+    index_summary = _load_index_summary(
+        start=start,
+        end=end,
+        source_status=source_status,
+        warnings=warnings,
+        active_markets=active_markets,
+        detected_themes=detected_themes,
+    )
+    source_evidence = _build_source_evidence(
+        start=start,
+        end=end,
+        position_changes=position_changes,
+        source_status=source_status,
+        warnings=warnings,
+        detected_themes=detected_themes,
+    )
     next_week = _build_next_week_items(position_changes=position_changes, ipo_items=ipo_items)
 
     return {
@@ -114,10 +214,20 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
             "records": trades,
             "by_code": list(trades_by_code.values()),
         },
-        "index_summary": [],
-        "event_summary": [],
+        "index_summary": index_summary,
+        "event_summary": source_evidence["events"],
+        "knowledge_evidence": source_evidence["knowledge"],
+        "detected_themes": detected_themes,
         "next_week": next_week,
-        "story": _build_story(context_warnings=warnings, position_changes=position_changes),
+        "story": _build_story(
+            context_warnings=warnings,
+            position_changes=position_changes,
+            index_summary=index_summary,
+            event_summary=source_evidence["events"],
+            knowledge_evidence=source_evidence["knowledge"],
+            source_status=source_status,
+            detected_themes=detected_themes,
+        ),
         "candidate_insights": [],
         "warnings": warnings,
     }
@@ -134,7 +244,7 @@ def render_weekly_review_markdown(context: dict[str, Any]) -> str:
     lines.extend(["", "## 2. 炸裂时刻"])
     lines.extend(_render_ranked_table(context.get("blowups") or [], positive=False))
     lines.extend(["", "## 3. 指数"])
-    lines.append("- 指数数据源未接入，本周不做指数归因。")
+    lines.extend(_render_index_summary(context.get("index_summary") or [], context.get("source_status", {}).get("indexes")))
     lines.extend(["", "## 4. 整体故事"])
     lines.extend(_render_story(context.get("story") or {}))
     lines.extend(["", "## 5. 下周展望"])
@@ -261,8 +371,449 @@ def _load_ipo_items(source_status: dict[str, Any], warnings: list[str]) -> list[
     return ipos
 
 
+def _load_index_summary(
+    start: date,
+    end: date,
+    source_status: dict[str, Any],
+    warnings: list[str],
+    active_markets: set[str],
+    detected_themes: list[str],
+) -> list[dict[str, Any]]:
+    codes = [item["code"] for item in REQUIRED_INDEXES]
+    try:
+        snapshot = get_futu_market_bars(codes=codes, start=start.isoformat(), end=end.isoformat())
+    except FutuProviderError as exc:
+        reason = _friendly_provider_error(str(exc), family="指数")
+        source_status["indexes"] = {
+            "status": "provider_unavailable",
+            "provider": "futu",
+            "count": 0,
+            "reason": reason,
+        }
+        warnings.append(f"指数行情读取失败：{reason}")
+        return []
+    except Exception as exc:
+        reason = _friendly_provider_error(str(exc), family="指数")
+        source_status["indexes"] = {
+            "status": "provider_unavailable",
+            "provider": "futu",
+            "count": 0,
+            "reason": reason,
+        }
+        warnings.append(f"指数行情读取失败：{reason}")
+        return []
+
+    rows: list[dict[str, Any]] = []
+    missing: list[str] = []
+    by_code = snapshot.bars_by_code
+    for index in REQUIRED_INDEXES:
+        bars = by_code.get(index["code"]) or []
+        metric = _index_metric(index=index, bars=bars, detected_themes=detected_themes)
+        if metric is None:
+            missing.append(index["name"])
+            continue
+        rows.append(metric)
+
+    covered_markets = {_market_family(row.get("market")) for row in rows}
+    uncovered_active = sorted(market for market in active_markets if market not in covered_markets)
+    status = "ok"
+    if missing:
+        status = "partial"
+    if uncovered_active or not rows:
+        status = "source_blocked"
+    source_status["indexes"] = {
+        "status": status,
+        "provider": snapshot.source,
+        "count": len(rows),
+        "fetched_at": snapshot.fetched_at.isoformat(),
+        "metric": "close_to_close",
+        "missing": missing,
+        "active_markets": sorted(active_markets),
+        "uncovered_active_markets": uncovered_active,
+        "reason": _index_status_reason(status=status, missing=missing, uncovered_active=uncovered_active),
+    }
+    if status == "source_blocked":
+        warnings.append(source_status["indexes"]["reason"])
+    return rows
+
+
+def _build_source_evidence(
+    start: date,
+    end: date,
+    position_changes: list[dict[str, Any]],
+    source_status: dict[str, Any],
+    warnings: list[str],
+    detected_themes: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    knowledge = _collect_local_knowledge_evidence(position_changes)
+    source_status["local_knowledge"] = {
+        "status": "ok" if knowledge else "checked_empty",
+        "count": len(knowledge),
+        "sources": sorted({item.get("source_type", "local") for item in knowledge}),
+    }
+
+    events = _collect_official_event_evidence(
+        start=start,
+        end=end,
+        position_changes=position_changes,
+        warnings=warnings,
+    )
+    if events:
+        source_status["events"] = {
+            "status": "partial",
+            "providers": ["official_sources", "local_theme_context"],
+            "count": len(events),
+            "checked_categories": ["company_announcements_or_filings", "sector_theme_context", "user_knowledge"],
+            "source_blocked_categories": ["macro_calendar", "general_news_theme_feed"],
+            "themes": detected_themes,
+            "reason": "公司公告/财报和本地主题证据已接入；宏观日历和通用新闻源仍待接入。",
+        }
+    else:
+        source_status["events"] = {
+            "status": "source_blocked",
+            "providers": ["official_sources", "local_theme_context"],
+            "count": 0,
+            "checked_categories": ["company_announcements_or_filings", "sector_theme_context", "user_knowledge"],
+            "source_blocked_categories": ["macro_calendar", "general_news_theme_feed"],
+            "themes": detected_themes,
+            "reason": "未取得可引用的公司公告/财报/主题事件证据；宏观日历和通用新闻源仍待接入。",
+        }
+        warnings.append(source_status["events"]["reason"])
+    return {"events": events, "knowledge": knowledge}
+
+
+def _index_metric(index: dict[str, str], bars: list[dict[str, Any]], detected_themes: list[str]) -> dict[str, Any] | None:
+    clean_bars = [bar for bar in bars if _optional_number(bar.get("close")) is not None]
+    if len(clean_bars) < 2:
+        return None
+    first_close = _number(clean_bars[0].get("close"))
+    last_close = _number(clean_bars[-1].get("close"))
+    weekly_change_pct = ((last_close - first_close) / first_close * 100.0) if first_close else 0.0
+    largest_move: dict[str, Any] = {}
+    previous_close = first_close
+    for bar in clean_bars[1:]:
+        close = _number(bar.get("close"))
+        change_pct = ((close - previous_close) / previous_close * 100.0) if previous_close else 0.0
+        if not largest_move or abs(change_pct) > abs(_number(largest_move.get("change_pct"))):
+            largest_move = {
+                "date": bar.get("date"),
+                "change_pct": change_pct,
+                "direction": "up" if change_pct >= 0 else "down",
+            }
+        previous_close = close
+    return {
+        "code": index["code"],
+        "name": index["name"],
+        "market": index["market"],
+        "role": index["role"],
+        "weekly_change_pct": weekly_change_pct,
+        "largest_daily_move": largest_move,
+        "environment_label": _index_environment_label(index=index, weekly_change_pct=weekly_change_pct),
+        "portfolio_relevance": _index_relevance(index=index, detected_themes=detected_themes),
+        "source": {
+            "provider": "futu",
+            "metric": "close_to_close",
+            "start_date": clean_bars[0].get("date"),
+            "end_date": clean_bars[-1].get("date"),
+        },
+    }
+
+
+def _collect_official_event_evidence(
+    start: date,
+    end: date,
+    position_changes: list[dict[str, Any]],
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    targets = _event_targets(position_changes)
+    if not targets:
+        return []
+    provider = OfficialResearchProvider(timeout_seconds=8.0, max_excerpt_chars=1000, max_sources=2)
+    events: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for target in targets[:6]:
+        market = str(target.get("market") or "").upper()
+        if market not in {"US", "HK"}:
+            continue
+        try:
+            bundle = provider.collect(
+                symbol=str(target.get("symbol") or ""),
+                market=market,
+                company_name=target.get("name"),
+            )
+        except Exception as exc:
+            errors.append(f"{target.get('code')}: {_friendly_provider_error(str(exc), family='外部事件')}")
+            continue
+        for source in bundle.sources[:2]:
+            source_payload = source.to_draft_source()
+            published_date = _date_from_any(source_payload.get("published_at"))
+            events.append(
+                {
+                    "category": "company_announcements_or_filings",
+                    "code": target.get("code"),
+                    "name": target.get("name"),
+                    "theme": target.get("theme"),
+                    "source_name": source_payload.get("publisher") or "official source",
+                    "source_type": source_payload.get("source_type"),
+                    "published_at": source_payload.get("published_at"),
+                    "title": source_payload.get("title"),
+                    "url": source_payload.get("url"),
+                    "freshness": _freshness_label(published_date=published_date, start=start, end=end),
+                    "summary": _trim(source_payload.get("content_excerpt") or source_payload.get("notes") or source_payload.get("title"), 220),
+                    "citation": _citation_label(source_payload.get("publisher") or "official", source_payload.get("title")),
+                }
+            )
+    if errors:
+        warnings.append("部分外部事件源读取失败：" + "；".join(errors[:3]))
+    return _dedupe_events(events)[:10]
+
+
+def _collect_local_knowledge_evidence(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in position_changes:
+        for entry in item.get("knowledge_evidence") or []:
+            key = "|".join(str(entry.get(part) or "") for part in ("source_type", "id", "summary"))
+            if key in seen:
+                continue
+            seen.add(key)
+            evidence.append(entry)
+    return evidence[:16]
+
+
+def _knowledge_evidence_from_context(context: dict[str, Any], stock: dict[str, Any]) -> list[dict[str, Any]]:
+    source_by_id = {str(source.get("id")): source for source in context.get("sources") or [] if source.get("id") is not None}
+    entries: list[dict[str, Any]] = []
+    for sector in context.get("sectors") or []:
+        text = _sector_path_text(sector)
+        if text:
+            entries.append(
+                {
+                    "source_type": "sector_mapping",
+                    "id": sector.get("relation_id") or sector.get("sector_id"),
+                    "code": stock.get("code"),
+                    "name": stock.get("name"),
+                    "summary": text,
+                    "citation": f"sector_mapping:{sector.get('relation_id') or sector.get('sector_id')}",
+                }
+            )
+    evidence_groups = [
+        ("stock_knowledge", context.get("stock_knowledge") or []),
+        ("stock_insight", context.get("stock_insights") or []),
+        ("stock_candidate_insight", context.get("stock_candidate_insights") or []),
+        ("sector_knowledge", context.get("sector_knowledge") or []),
+        ("sector_insight", context.get("sector_insights") or []),
+        ("global_insight", context.get("global_insights") or []),
+        ("global_candidate_insight", context.get("global_candidate_insights") or []),
+    ]
+    for source_type, rows in evidence_groups:
+        for row in rows[:3]:
+            source = source_by_id.get(str(row.get("source_id")))
+            summary = _first_nonempty(row.get("normalized_summary"), row.get("content"), row.get("insight"))
+            if not summary:
+                continue
+            entries.append(
+                {
+                    "source_type": source_type,
+                    "id": row.get("id"),
+                    "code": stock.get("code"),
+                    "name": stock.get("name"),
+                    "summary": _trim(summary, 180),
+                    "source": {
+                        "id": source.get("id") if source else None,
+                        "title": source.get("title") if source else None,
+                        "publisher": source.get("publisher") if source else None,
+                        "url": source.get("url") if source else None,
+                    },
+                    "citation": f"{source_type}:{row.get('id')}",
+                }
+            )
+    return entries[:8]
+
+
 def _positions_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return _normalize_positions(snapshot.get("positions") or [])
+
+
+def _active_portfolio_markets(position_changes: list[dict[str, Any]], trades: list[dict[str, Any]]) -> set[str]:
+    markets: set[str] = set()
+    for item in position_changes:
+        if item.get("start") or item.get("end") or _number(item.get("current_market_val")):
+            market = _market_family(item.get("market"))
+            if market:
+                markets.add(market)
+    for trade in trades:
+        code = str(trade.get("code") or "")
+        market, _symbol = _split_code(code)
+        family = _market_family(market)
+        if family:
+            markets.add(family)
+    return markets
+
+
+def _detect_portfolio_themes(position_changes: list[dict[str, Any]]) -> list[str]:
+    theme_markers = [
+        ("AI 基础设施", ("ai", "人工智能", "基础设施", "服务器", "光通信", "cpo", "pcb", "玻璃基板")),
+        ("HBM/memory", ("hbm", "memory", "dram", "内存", "存储", "海力士", "sk hynix")),
+        ("半导体", ("semiconductor", "半导体", "芯片", "科创")),
+        ("港股成长", ("港股", "恒生科技", "互联网", "美团", "阿里", "小米")),
+        ("创新药", ("创新药", "biotech", "医药", "药")),
+        ("加密金融", ("crypto", "bitcoin", "circle", "加密")),
+        ("机器人", ("robot", "机器人")),
+        ("太空", ("space", "rocket", "太空")),
+    ]
+    text = " ".join(
+        " ".join(
+            [
+                str(item.get("code") or ""),
+                str(item.get("name") or ""),
+                " ".join(str(theme) for theme in item.get("themes") or []),
+                str(item.get("knowledge_note") or ""),
+            ]
+        ).lower()
+        for item in position_changes
+    )
+    detected = [name for name, markers in theme_markers if any(marker.lower() in text for marker in markers)]
+    return detected or ["组合持仓"]
+
+
+def _market_family(market: Any) -> str:
+    value = str(market or "").upper()
+    if value in {"US"}:
+        return "US"
+    if value in {"HK"}:
+        return "HK"
+    if value in {"CN", "SH", "SZ"}:
+        return "CN"
+    return value
+
+
+def _friendly_provider_error(message: str, family: str) -> str:
+    text = str(message or "").strip()
+    lower = text.lower()
+    if "未安装" in text or "import" in lower:
+        return f"{family}数据依赖未安装，当前环境只能生成源数据阻塞草稿。"
+    if any(marker in lower for marker in ("connection", "connect", "timeout", "refused", "dns", "network")):
+        return f"{family}数据源暂时不可连接，当前环境只能生成源数据阻塞草稿。"
+    if "opend" in lower or "127.0.0.1" in lower or "localhost" in lower:
+        return f"{family}数据源暂时不可用，当前环境只能生成源数据阻塞草稿。"
+    if "富途" in text:
+        return f"{family}数据源暂时不可用，当前环境只能生成源数据阻塞草稿。"
+    return text or f"{family}数据源暂时不可用。"
+
+
+def _index_status_reason(status: str, missing: list[str], uncovered_active: list[str]) -> str:
+    if status == "ok":
+        return "必需指数篮子已读取。"
+    parts: list[str] = []
+    if missing:
+        parts.append("缺少指数：" + "、".join(missing[:6]))
+    if uncovered_active:
+        parts.append("活跃市场缺少代表指数：" + "、".join(uncovered_active))
+    return "；".join(parts) if parts else "指数数据部分可用。"
+
+
+def _index_environment_label(index: dict[str, str], weekly_change_pct: float) -> str:
+    role = index.get("role")
+    if weekly_change_pct >= 1.0:
+        if role == "semiconductor":
+            return "semiconductor-led"
+        if role == "growth":
+            return "growth-led"
+        return "broad risk-on"
+    if weekly_change_pct <= -1.0:
+        return "broad risk-off"
+    return "mixed/rotation"
+
+
+def _index_relevance(index: dict[str, str], detected_themes: list[str]) -> str:
+    relevance = index.get("relevance") or "组合市场环境代理"
+    role = index.get("role")
+    if role == "semiconductor" and any(theme in {"AI 基础设施", "HBM/memory", "半导体"} for theme in detected_themes):
+        return relevance + "；本周组合检测到 AI/半导体相关主题"
+    if role == "growth" and any(theme in {"港股成长", "机器人", "加密金融"} for theme in detected_themes):
+        return relevance + "；本周组合检测到成长/高波动主题"
+    return relevance
+
+
+def _event_targets(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked = sorted(
+        [item for item in position_changes if item.get("code")],
+        key=lambda item: (abs(_rank_amount(item)), _number(item.get("current_market_val"))),
+        reverse=True,
+    )
+    targets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in ranked:
+        code = str(item.get("code") or "")
+        if code in seen:
+            continue
+        seen.add(code)
+        targets.append(
+            {
+                "code": code,
+                "symbol": item.get("symbol"),
+                "market": item.get("market"),
+                "name": item.get("name"),
+                "theme": " / ".join(item.get("themes") or []),
+            }
+        )
+    return targets
+
+
+def _date_from_any(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _freshness_label(published_date: date | None, start: date, end: date) -> str:
+    if published_date is None:
+        return "undated_source"
+    if start <= published_date <= end:
+        return "review_week"
+    if published_date < start:
+        return "nearest_prior"
+    return "future_or_next_window"
+
+
+def _trim(value: Any, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _first_nonempty(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _citation_label(source_name: Any, title: Any) -> str:
+    source = str(source_name or "source").strip()
+    clean_title = _trim(title, 80)
+    return f"{source}: {clean_title}" if clean_title else source
+
+
+def _dedupe_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        key = "|".join(str(event.get(part) or "") for part in ("code", "url", "title"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+    return deduped
 
 
 def _normalize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -360,6 +911,7 @@ def _attach_knowledge(position_changes: list[dict[str, Any]], warnings: list[str
         item["themes"] = [_sector_path_text(sector) for sector in sectors[:3] if _sector_path_text(sector)]
         note = _first_text(context.get("stock_insights") or []) or _first_text(context.get("stock_knowledge") or [])
         item["knowledge_note"] = note
+        item["knowledge_evidence"] = _knowledge_evidence_from_context(context=context, stock=item)
 
 
 def _top_highlights(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -479,16 +1031,161 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
     return items
 
 
-def _build_story(context_warnings: list[str], position_changes: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_story(
+    context_warnings: list[str],
+    position_changes: list[dict[str, Any]],
+    index_summary: list[dict[str, Any]],
+    event_summary: list[dict[str, Any]],
+    knowledge_evidence: list[dict[str, Any]],
+    source_status: dict[str, Any],
+    detected_themes: list[str],
+) -> dict[str, Any]:
     leaders = [item for item in sorted(position_changes, key=_rank_amount, reverse=True)[:3] if _rank_amount(item) > 0]
     laggards = [item for item in sorted(position_changes, key=_rank_amount)[:3] if _rank_amount(item) < 0]
+    strongest_index = max(index_summary, key=lambda item: _number(item.get("weekly_change_pct")), default=None)
+    weakest_index = min(index_summary, key=lambda item: _number(item.get("weekly_change_pct")), default=None)
+    claims: list[dict[str, Any]] = []
+    if strongest_index:
+        claims.append(
+            {
+                "type": "index",
+                "text": (
+                    f"{strongest_index.get('name')} 本周 {_fmt_signed_percent(strongest_index.get('weekly_change_pct'))}，"
+                    f"市场标签为 {strongest_index.get('environment_label')}。"
+                ),
+                "citations": [f"index:{strongest_index.get('code')}"],
+            }
+        )
+    if leaders:
+        claims.append(
+            {
+                "type": "portfolio",
+                "text": f"组合高光主要来自 {_names(leaders)}。",
+                "citations": [f"holding:{item.get('code')}" for item in leaders[:3]],
+            }
+        )
+    if laggards:
+        claims.append(
+            {
+                "type": "portfolio",
+                "text": f"组合拖累主要来自 {_names(laggards)}。",
+                "citations": [f"holding:{item.get('code')}" for item in laggards[:3]],
+            }
+        )
+    if event_summary:
+        event = event_summary[0]
+        claims.append(
+            {
+                "type": "external_event",
+                "text": f"{event.get('name') or event.get('code')} 有可追溯外部材料：{event.get('title')}",
+                "citations": [event.get("citation") or f"event:{event.get('code')}"],
+            }
+        )
+    if knowledge_evidence:
+        entry = knowledge_evidence[0]
+        claims.append(
+            {
+                "type": "user_knowledge",
+                "text": f"本地知识提示 {entry.get('name') or entry.get('code') or '组合'}：{entry.get('summary')}",
+                "citations": [entry.get("citation") or "local_knowledge"],
+            }
+        )
+
+    index_status = (source_status.get("indexes") or {}).get("status")
+    event_status = (source_status.get("events") or {}).get("status")
+    source_blockers = []
+    if index_status in {"source_blocked", "provider_unavailable", "missing"}:
+        source_blockers.append("指数")
+    if event_status in {"source_blocked", "provider_unavailable", "missing"}:
+        source_blockers.append("外部事件")
+
+    market_environment = "、".join(
+        f"{item.get('name')} {_fmt_signed_percent(item.get('weekly_change_pct'))}"
+        for item in index_summary[:4]
+    )
+    if not market_environment:
+        market_environment = "指数源暂不可用，本周只能把市场环境标记为源数据阻塞草稿。"
+
+    event_text = _event_story_text(event_summary=event_summary, knowledge_evidence=knowledge_evidence, source_blockers=source_blockers)
+    relation_parts = []
+    if strongest_index:
+        relation_parts.append(f"{strongest_index.get('name')} 对应 {strongest_index.get('portfolio_relevance')}")
+    if weakest_index and weakest_index is not strongest_index:
+        relation_parts.append(f"{weakest_index.get('name')} 是本周较弱市场代理")
+    if detected_themes:
+        relation_parts.append("检测到主题：" + "、".join(detected_themes[:5]))
+    if source_blockers:
+        relation_parts.append("仍有源数据阻塞：" + "、".join(source_blockers))
+
     return {
-        "mainline": _names(leaders) or "本周缺少足够快照，暂不归纳主线。",
+        "mainline": _story_mainline(leaders=leaders, index_summary=index_summary, detected_themes=detected_themes),
+        "market_environment": market_environment,
+        "portfolio_attribution": _portfolio_attribution_text(leaders=leaders, laggards=laggards),
+        "event_evidence": event_text,
         "negative_signals": _names(laggards) or "暂未从快照差分中识别明显拖累项。",
-        "portfolio_relation": "本周故事主要基于持仓 snapshot 的盈亏变化；指数和外部事件源未接入。",
-        "next_validation": "下周优先验证本周贡献/拖累标的的逻辑是否延续，并继续补齐每日交易与快照。",
+        "portfolio_relation": "；".join(relation_parts) or "本周组合关系仍需要更多指数、事件和知识库证据。",
+        "next_validation": _next_validation_text(leaders=leaders, laggards=laggards, source_blockers=source_blockers),
         "data_gaps": context_warnings[:5],
+        "claims": claims,
     }
+
+
+def _story_mainline(leaders: list[dict[str, Any]], index_summary: list[dict[str, Any]], detected_themes: list[str]) -> str:
+    pieces: list[str] = []
+    if detected_themes:
+        pieces.append("主题上以 " + "、".join(detected_themes[:3]) + " 为主")
+    if index_summary:
+        strongest = max(index_summary, key=lambda item: _number(item.get("weekly_change_pct")))
+        pieces.append(f"市场代理中 {strongest.get('name')} 最强({_fmt_signed_percent(strongest.get('weekly_change_pct'))})")
+    if leaders:
+        pieces.append("组合贡献来自 " + _names(leaders[:3]))
+    return "；".join(pieces) if pieces else "本周缺少足够快照和市场证据，暂不归纳主线。"
+
+
+def _portfolio_attribution_text(leaders: list[dict[str, Any]], laggards: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    if leaders:
+        parts.append("高光：" + "、".join(f"{item['name']} {_fmt_money(_rank_amount(item), item.get('currency'))}" for item in leaders[:3]))
+    if laggards:
+        parts.append("拖累：" + "、".join(f"{item['name']} {_fmt_money(_rank_amount(item), item.get('currency'))}" for item in laggards[:3]))
+    return "；".join(parts) if parts else "组合归因需要至少两端快照或交易记录。"
+
+
+def _event_story_text(
+    event_summary: list[dict[str, Any]],
+    knowledge_evidence: list[dict[str, Any]],
+    source_blockers: list[str],
+) -> str:
+    parts: list[str] = []
+    if event_summary:
+        event = event_summary[0]
+        freshness = {
+            "review_week": "本周材料",
+            "nearest_prior": "近前材料",
+            "undated_source": "未标日期材料",
+            "future_or_next_window": "后续窗口材料",
+        }.get(str(event.get("freshness")), str(event.get("freshness") or "材料"))
+        parts.append(f"{freshness}：{event.get('source_name')}《{event.get('title')}》")
+    if knowledge_evidence:
+        evidence = knowledge_evidence[0]
+        parts.append(f"本地知识：{evidence.get('summary')}")
+    if source_blockers:
+        parts.append("仍阻塞：" + "、".join(source_blockers))
+    return "；".join(parts) if parts else "公司公告/财报、主题新闻和本地知识均未形成可引用证据。"
+
+
+def _next_validation_text(
+    leaders: list[dict[str, Any]],
+    laggards: list[dict[str, Any]],
+    source_blockers: list[str],
+) -> str:
+    names = [f"{item['name']} {item['code']}" for item in [*leaders[:2], *laggards[:2]]]
+    parts = []
+    if names:
+        parts.append("验证 " + "、".join(names) + " 的贡献/拖累逻辑是否延续")
+    if source_blockers:
+        parts.append("补齐 " + "、".join(source_blockers) + " 源数据后重新生成故事")
+    return "；".join(parts) if parts else "下周继续积累快照、交易、指数和事件证据。"
 
 
 def save_weekly_review_report(context: dict[str, Any], markdown: str) -> dict[str, Any]:
@@ -529,13 +1226,50 @@ def _render_ranked_table(items: list[dict[str, Any]], positive: bool) -> list[st
 
 
 def _render_story(story: dict[str, Any]) -> list[str]:
-    return [
+    lines = [
         f"- 主线：{story.get('mainline') or '待观察'}",
-        "- 加速因素：本周暂未接入外部事件源，不做新闻/社媒/公告归因。",
+        f"- 市场环境：{story.get('market_environment') or '待观察'}",
+        f"- 组合归因：{story.get('portfolio_attribution') or '待观察'}",
+        f"- 事件/主题证据：{story.get('event_evidence') or '待补'}",
         f"- 负向信号：{story.get('negative_signals') or '待观察'}",
         f"- 和我组合的关系：{story.get('portfolio_relation') or '待观察'}",
         f"- 下周验证点：{story.get('next_validation') or '待观察'}",
     ]
+    claims = story.get("claims") or []
+    if claims:
+        lines.extend(["", "证据链："])
+        for claim in claims[:6]:
+            citations = "；".join(str(item) for item in claim.get("citations") or [])
+            suffix = f"（来源：{citations}）" if citations else ""
+            lines.append(f"- {claim.get('type', '观察')}：{claim.get('text', '')}{suffix}")
+    return lines
+
+
+def _render_index_summary(items: list[dict[str, Any]], status: dict[str, Any] | None) -> list[str]:
+    lines: list[str] = []
+    if status and status.get("status") in {"provider_unavailable", "source_blocked"}:
+        reason = status.get("reason") or "指数数据暂时不可用"
+        lines.append(f"- 指数源状态：{_status_text(status)}。{reason}")
+    if not items:
+        return lines or ["- 指数数据已检查但暂无可用行情，本周不做指数归因。"]
+    lines.extend(
+        [
+            "| 指数 | 市场 | 本周涨跌 | 最大单日波动 | 市场环境 | 对组合影响 |",
+            "| --- | --- | ---: | --- | --- | --- |",
+        ]
+    )
+    for item in items:
+        move = item.get("largest_daily_move") or {}
+        move_text = (
+            f"{move.get('date')} {_fmt_signed_percent(move.get('change_pct'))}"
+            if move.get("date")
+            else "待补"
+        )
+        lines.append(
+            f"| {item.get('name')} | {item.get('market')} | {_fmt_signed_percent(item.get('weekly_change_pct'))} | "
+            f"{move_text} | {item.get('environment_label') or '待观察'} | {item.get('portfolio_relevance') or '待观察'} |"
+        )
+    return lines
 
 
 def _render_next_week_items(items: list[dict[str, Any]]) -> list[str]:
@@ -572,8 +1306,9 @@ def _render_source_status(source_status: dict[str, Any]) -> list[str]:
         f"- 账户快照：{_status_text(source_status.get('account_snapshots'))}",
         f"- 交易记录：{_status_text(source_status.get('trades'))}",
         f"- 当前持仓：{_status_text(source_status.get('positions'))}",
-        "- 指数：数据源未接入。",
-        "- 外部事件：数据源未接入。",
+        f"- 指数：{_status_text(source_status.get('indexes'))}",
+        f"- 外部事件：{_status_text(source_status.get('events'))}",
+        f"- 本地知识：{_status_text(source_status.get('local_knowledge'))}",
         f"- 港股 IPO：{_status_text(source_status.get('ipo'))}",
     ]
 
@@ -852,12 +1587,23 @@ def _names(items: list[dict[str, Any]]) -> str:
 
 def _status_text(item: dict[str, Any] | None) -> str:
     if not item:
-        return "missing"
+        return "缺失"
     status = item.get("status") or "unknown"
+    label = SOURCE_STATUS_LABELS.get(str(status), str(status))
     count = item.get("count")
+    reason = item.get("reason")
+    missing = item.get("missing")
+    suffixes: list[str] = []
     if count is not None:
-        return f"{status}，{count} 条"
-    return str(status)
+        suffixes.append(f"{count} 条")
+    if missing:
+        if isinstance(missing, list):
+            suffixes.append("缺少 " + "、".join(str(value) for value in missing[:4]))
+        else:
+            suffixes.append(f"缺少 {missing}")
+    if reason:
+        suffixes.append(str(reason))
+    return "，".join([label, *suffixes])
 
 
 def _fmt_money(value: Any, currency: str | None = None) -> str:
@@ -871,6 +1617,11 @@ def _fmt_ratio_suffix(value: Any) -> str:
     if ratio is None:
         return ""
     return f" / {ratio * 100:.2f}%"
+
+
+def _fmt_signed_percent(value: Any) -> str:
+    number = _number(value)
+    return f"{number:+.2f}%"
 
 
 def _delta_optional(end_value: Any, start_value: Any) -> float | None:
