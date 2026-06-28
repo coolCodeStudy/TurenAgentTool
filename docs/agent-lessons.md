@@ -39,6 +39,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - For multi-role product-feature delivery, use the Delivery Coordinator as the single front door. Answer or route by feature, create a handoff packet when another role/session must act, and keep the user focused on status, owner, blocker, and next decision instead of making them restate context to Product, Engineering, Testing, and Project Management separately.
 - A Delivery Coordinator response that only names the next owner is not enough when the user's goal is reduced manual coordination. Default to Dispatch Mode: attempt to send the generated prompt to the next role/thread when tools are available, or explicitly say `Dispatch not executed` with the reason and the smallest user action needed.
 - A Delivery Coordinator dispatch is not closed when a child role/session pushes a branch or posts a final message. The coordinator must apply the Return Gate: inspect the returned result, integrate or reject it, update `Delivery-Queue.md`, and dispatch the next owner or record the blocker.
+- Passive waiting breaks multi-session delivery. After dispatching a child role/thread, the coordinator must establish an active watch path such as a heartbeat/monitor, explicit child-thread polling, or a recorded `Monitoring not active` blocker with the exact resume action.
 
 ## Secrets And HTTP Entrypoints
 

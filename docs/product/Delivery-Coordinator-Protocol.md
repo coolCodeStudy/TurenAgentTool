@@ -123,6 +123,18 @@ Handoff-only mode is allowed only when:
 
 Handoff-only is not enough when the user asked the coordinator to reduce manual coordination and continue the work.
 
+## Active Watch Rule
+
+A coordinator that dispatches work to another role/thread/session must not rely on passive waiting as the only continuation mechanism.
+
+Immediately after dispatch, the coordinator must do one of:
+
+- keep an active watch on the child thread/session until it returns;
+- create or rely on a project-manager heartbeat/monitor that can inspect returned child work and wake the coordinator;
+- explicitly record `Monitoring not active` with the reason and the smallest user or project-manager action required to resume the flow.
+
+The handoff is incomplete if the coordinator only says "I will wait" without a concrete wake-up path. When a child role returns and the feature coordinator is idle, the global project manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate.
+
 ## Coordinator Return Gate
 
 Dispatch is not closed when another role/thread/session is created. A dispatched role's final response or pushed branch means the work has returned to the coordinator for review.
