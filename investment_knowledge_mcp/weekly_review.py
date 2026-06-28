@@ -7,6 +7,10 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.event_data_provider import (
+    EventDataProviderError,
+    get_yahoo_finance_news_events,
+)
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_market_bars,
@@ -100,6 +104,28 @@ SOURCE_STATUS_LABELS = {
     "snapshot": "来自快照",
     "backfilled": "已回补",
     "fallback": "降级可用",
+}
+
+THEME_NEWS_PROXY_SYMBOLS: dict[str, list[str]] = {
+    "AI 基础设施": ["NVDA", "AVGO", "SMH"],
+    "HBM/memory": ["MU", "NVDA", "DRAM"],
+    "半导体": ["SMH", "SOXX", "NVDA"],
+    "港股成长": ["9988.HK", "3690.HK", "1810.HK"],
+    "创新药": ["XBI", "BNTX", "1177.HK"],
+    "加密金融": ["CRCL", "COIN", "BTC-USD"],
+    "机器人": ["BOTZ", "ISRG", "ROK"],
+    "太空": ["RKLB", "LUNR", "ASTS"],
+}
+
+THEME_NEWS_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "AI 基础设施": ("ai", "artificial intelligence", "data center", "infrastructure", "server", "gpu"),
+    "HBM/memory": ("hbm", "memory", "dram", "micron", "sk hynix", "sandisk", "high-bandwidth"),
+    "半导体": ("semiconductor", "chip", "foundry", "sox", "smh"),
+    "港股成长": ("hong kong", "hang seng tech", "alibaba", "meituan", "xiaomi", "china tech"),
+    "创新药": ("biotech", "drug", "clinical", "fda", "pharma"),
+    "加密金融": ("crypto", "bitcoin", "stablecoin", "circle", "coinbase"),
+    "机器人": ("robot", "automation", "surgical robot"),
+    "太空": ("space", "rocket", "satellite", "launch"),
 }
 
 
@@ -474,12 +500,20 @@ def _build_source_evidence(
         "sources": sorted({item.get("source_type", "local") for item in knowledge}),
     }
 
-    events = _collect_official_event_evidence(
+    official_events = _collect_official_event_evidence(
         start=start,
         end=end,
         position_changes=position_changes,
         warnings=warnings,
     )
+    news_events = _collect_dated_news_event_evidence(
+        start=start,
+        end=end,
+        position_changes=position_changes,
+        detected_themes=detected_themes,
+        warnings=warnings,
+    )
+    events = _dedupe_events([*official_events, *news_events])[:10]
     if not events:
         events = _collect_reference_event_evidence(
             end=end,
@@ -488,21 +522,34 @@ def _build_source_evidence(
         )
     if events:
         has_reference_only = all(str(item.get("freshness")) == "reference_source" for item in events)
+        has_dated_external = any(_is_dated_external_event(item) for item in events)
+        providers = ["official_sources", "local_theme_context"]
+        if news_events:
+            providers.insert(1, "yahoo_finance_rss")
+        if has_reference_only:
+            providers.insert(1, "official_reference_fallback")
+        checked_categories = ["company_announcements_or_filings", "sector_theme_context", "user_knowledge"]
+        if news_events:
+            checked_categories.insert(1, "dated_company_or_theme_news")
         source_status["events"] = {
             "status": "partial",
-            "providers": ["official_sources", "official_reference_fallback", "local_theme_context"],
+            "providers": providers,
             "count": len(events),
-            "checked_categories": ["company_announcements_or_filings", "sector_theme_context", "user_knowledge"],
+            "checked_categories": checked_categories,
             "source_blocked_categories": (
                 ["dated_company_events", "macro_calendar", "general_news_theme_feed"]
                 if has_reference_only
-                else ["macro_calendar", "general_news_theme_feed"]
+                else (["macro_calendar"] if has_dated_external else ["macro_calendar", "general_news_theme_feed"])
             ),
             "themes": detected_themes,
             "reason": (
                 "已接入公司披露入口和本地主题证据；仍缺少本周 dated company events、宏观日历和通用新闻源。"
                 if has_reference_only
-                else "公司公告/财报和本地主题证据已接入；宏观日历和通用新闻源仍待接入。"
+                else (
+                    "已接入本周 dated company/theme news 和本地主题证据；宏观日历仍待接入。"
+                    if has_dated_external
+                    else "公司公告/财报和本地主题证据已接入；宏观日历和通用新闻源仍待接入。"
+                )
             ),
         }
     else:
@@ -607,6 +654,57 @@ def _collect_official_event_evidence(
             )
     if errors:
         warnings.append("部分外部事件源读取失败：" + "；".join(errors[:3]))
+    return _dedupe_events(events)[:10]
+
+
+def _collect_dated_news_event_evidence(
+    start: date,
+    end: date,
+    position_changes: list[dict[str, Any]],
+    detected_themes: list[str],
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    targets = _news_event_targets(position_changes=position_changes, detected_themes=detected_themes)
+    if not targets:
+        return []
+    symbols = [target["news_symbol"] for target in targets]
+    try:
+        snapshot = get_yahoo_finance_news_events(symbols=symbols, start=start, end=end, timeout_seconds=6.0)
+    except EventDataProviderError as exc:
+        warnings.append("部分外部新闻源读取失败：" + _friendly_provider_error(str(exc), family="外部新闻"))
+        return []
+
+    target_by_symbol = {target["news_symbol"]: target for target in targets}
+    events: list[dict[str, Any]] = []
+    for item in snapshot.events:
+        target = target_by_symbol.get(str(item.get("query_symbol") or "").upper())
+        if target is None:
+            continue
+        if not _news_item_matches_target(item=item, target=target):
+            continue
+        published_date = _date_from_any(item.get("published_at"))
+        category = "dated_company_news" if target.get("code") else "dated_theme_news"
+        linked_theme = target.get("theme") or target.get("linked_theme")
+        events.append(
+            {
+                "category": category,
+                "code": target.get("code"),
+                "name": target.get("name") or linked_theme,
+                "theme": linked_theme,
+                "linked_ticker": target.get("code"),
+                "linked_theme": linked_theme,
+                "source_name": item.get("source_name") or "Yahoo Finance",
+                "source_type": item.get("source_type") or "financial_news_rss",
+                "source_id": item.get("source_id"),
+                "published_at": item.get("published_at"),
+                "checked_at": snapshot.fetched_at.isoformat(),
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "freshness": _freshness_label(published_date=published_date, start=start, end=end),
+                "summary": _trim(item.get("summary") or item.get("title"), 260),
+                "citation": _citation_label(item.get("source_name") or "Yahoo Finance", item.get("title")),
+            }
+        )
     return _dedupe_events(events)[:10]
 
 
@@ -928,6 +1026,84 @@ def _event_targets(position_changes: list[dict[str, Any]]) -> list[dict[str, Any
     return targets
 
 
+def _news_event_targets(position_changes: list[dict[str, Any]], detected_themes: list[str]) -> list[dict[str, Any]]:
+    targets: list[dict[str, Any]] = []
+    seen_symbols: set[str] = set()
+    for target in _event_targets(position_changes)[:8]:
+        news_symbol = _yahoo_news_symbol(target)
+        if not news_symbol or news_symbol in seen_symbols:
+            continue
+        seen_symbols.add(news_symbol)
+        targets.append({**target, "news_symbol": news_symbol, "keywords": _target_keywords(target)})
+
+    for theme in detected_themes[:6]:
+        for symbol in THEME_NEWS_PROXY_SYMBOLS.get(theme, [])[:2]:
+            news_symbol = symbol.upper()
+            if news_symbol in seen_symbols:
+                continue
+            seen_symbols.add(news_symbol)
+            targets.append(
+                {
+                    "code": None,
+                    "symbol": symbol,
+                    "market": None,
+                    "name": theme,
+                    "theme": theme,
+                    "linked_theme": theme,
+                    "news_symbol": news_symbol,
+                    "keywords": _theme_keywords(theme),
+                }
+            )
+    return targets[:14]
+
+
+def _yahoo_news_symbol(target: dict[str, Any]) -> str:
+    market = str(target.get("market") or "").upper()
+    symbol = str(target.get("symbol") or "").strip().upper()
+    if not symbol:
+        return ""
+    if market == "US":
+        return symbol
+    if market == "HK":
+        stripped = symbol.lstrip("0") or symbol
+        return f"{stripped}.HK"
+    if market == "SH":
+        return f"{symbol}.SS"
+    if market in {"SZ", "CN"}:
+        return f"{symbol}.SZ"
+    return ""
+
+
+def _target_keywords(target: dict[str, Any]) -> list[str]:
+    keywords = [
+        str(target.get("symbol") or "").lower(),
+        str(target.get("name") or "").lower(),
+        str(target.get("code") or "").lower(),
+    ]
+    for piece in str(target.get("theme") or "").replace("/", " ").split():
+        if len(piece) >= 3:
+            keywords.append(piece.lower())
+    for theme, markers in THEME_NEWS_KEYWORDS.items():
+        if theme in str(target.get("theme") or ""):
+            keywords.extend(marker.lower() for marker in markers)
+    return [keyword for keyword in dict.fromkeys(keywords) if len(keyword) >= 2]
+
+
+def _theme_keywords(theme: str) -> list[str]:
+    keywords = [theme.lower()]
+    keywords.extend(marker.lower() for marker in THEME_NEWS_KEYWORDS.get(theme, ()))
+    return [keyword for keyword in dict.fromkeys(keywords) if len(keyword) >= 2]
+
+
+def _news_item_matches_target(item: dict[str, Any], target: dict[str, Any]) -> bool:
+    text = " ".join(str(item.get(part) or "") for part in ("title", "summary")).lower()
+    keywords = target.get("keywords") or []
+    if any(keyword and keyword in text for keyword in keywords):
+        return True
+    query_symbol = str(item.get("query_symbol") or "").split(".")[0].lower()
+    return bool(query_symbol and query_symbol in text)
+
+
 def _date_from_any(value: Any) -> date | None:
     if isinstance(value, date):
         return value
@@ -981,6 +1157,14 @@ def _dedupe_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         deduped.append(event)
     return deduped
+
+
+def _is_dated_external_event(event: dict[str, Any]) -> bool:
+    if str(event.get("freshness")) == "reference_source":
+        return False
+    if not event.get("published_at"):
+        return False
+    return str(event.get("category") or "").startswith(("dated_", "company_announcements"))
 
 
 def _normalize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1241,10 +1425,12 @@ def _build_story(
         )
     if event_summary:
         event = event_summary[0]
+        event_date = _date_from_any(event.get("published_at"))
+        date_text = f"{event_date.isoformat()} " if event_date else ""
         claims.append(
             {
                 "type": "external_event",
-                "text": f"{event.get('name') or event.get('code')} 有可追溯外部材料：{event.get('title')}",
+                "text": f"{event.get('name') or event.get('code') or event.get('theme')} 有{date_text}可追溯外部材料：{event.get('title')}",
                 "citations": [event.get("citation") or f"event:{event.get('code')}"],
             }
         )
@@ -1326,6 +1512,7 @@ def _event_story_text(
     parts: list[str] = []
     if event_summary:
         event = event_summary[0]
+        event_date = _date_from_any(event.get("published_at"))
         freshness = {
             "review_week": "本周材料",
             "nearest_prior": "近前材料",
@@ -1333,7 +1520,8 @@ def _event_story_text(
             "future_or_next_window": "后续窗口材料",
             "reference_source": "公司披露入口",
         }.get(str(event.get("freshness")), str(event.get("freshness") or "材料"))
-        parts.append(f"{freshness}：{event.get('source_name')}《{event.get('title')}》")
+        date_suffix = f"（{event_date.isoformat()}）" if event_date else ""
+        parts.append(f"{freshness}{date_suffix}：{event.get('source_name')}《{event.get('title')}》")
     if knowledge_evidence:
         evidence = knowledge_evidence[0]
         parts.append(f"本地知识：{evidence.get('summary')}")
