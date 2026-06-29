@@ -154,6 +154,29 @@ Do not use a Global Project Manager heartbeat as the normal watch path for a fea
 
 When a child role returns and the feature coordinator is idle, the Global Project Manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate. That is a recovery path, not the designed steady state.
 
+## Deploy Intent And Serialization
+
+Production deploy or service restart is a shared global resource. A Feature Coordinator may request or trigger deploy, but it must use the shared GitHub Actions deploy workflow or Ops API deploy path and must not bypass the deploy lock with ad hoc SSH, direct `docker compose up`, or service restarts unless the user explicitly asks for urgent manual recovery.
+
+Before requesting or triggering production deploy, the coordinator must record or report:
+
+```markdown
+Deploy Intent:
+- Feature:
+- Ref or commit:
+- Deploy mode: quick | full | restart-only
+- Affected services:
+- Reason:
+- Verification URL or command:
+- Watch owner/path:
+```
+
+The deploy request is incomplete if the affected services, verification target, or watch owner is unknown.
+
+GitHub Actions production deploys use the `production-deploy` concurrency group. If another deploy is already running or queued, do not launch a second deploy channel for the same ref. Wait, record the blocker, or let the shared deploy path serialize the request.
+
+The current Ops API already has an in-process mutex and file lock for `/ops/deploy`. P0 does not add a separate deploy queue; use `Delivery-Queue.md` to record deploy intent, deploy completion, or `blocked` state. Add a dedicated Deploy Queue only if Delivery Queue becomes too noisy.
+
 ## Coordinator Return Gate
 
 Dispatch is not closed when another role/thread/session is created. A dispatched role's final response or pushed branch means the work has returned to the coordinator for review.

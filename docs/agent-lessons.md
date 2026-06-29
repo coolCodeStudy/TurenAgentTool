@@ -41,6 +41,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - A Delivery Coordinator dispatch is not closed when a child role/session pushes a branch or posts a final message. The coordinator must apply the Return Gate: inspect the returned result, integrate or reject it, update `Delivery-Queue.md`, and dispatch the next owner or record the blocker.
 - Passive waiting breaks multi-session delivery. After dispatching a child role/thread, the feature coordinator must establish its own active watch path such as a feature-scoped heartbeat/monitor, explicit child-thread polling, or a recorded `Monitoring not active` blocker with the exact resume action.
 - The Global Project Manager should not become the default watcher for every feature's child threads. Use the Global PM for portfolio health, escalation, stale-coordinator recovery, cross-feature conflict resolution, and user decisions; normal child-thread Return Gate ownership stays with the feature coordinator.
+- Production deploy/restart is a shared global resource, even when individual developers or feature coordinators are allowed to request it. Always use the shared deploy workflow or Ops API deploy path, record Deploy Intent, and avoid ad hoc parallel deploy channels that can restart the same cloud services concurrently.
 
 ## Secrets And HTTP Entrypoints
 

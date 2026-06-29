@@ -33,5 +33,7 @@ This file is not a daily log. Add a row only when work is actively dispatched, r
 - If dispatch tools are unavailable, the coordinator must state `Dispatch not executed`, give the reason, and provide the exact next-role prompt.
 - When dispatch succeeds, add or update a row with the target role, thread or branch when known, source handoff, expected result, and next action.
 - The row's `Next Action` should state the feature coordinator's watch owner/path or explicitly say `Monitoring not active` with the resume action. Do not rely on a Global Project Manager monitor as the default watch path for feature-level dispatches.
+- For deploy-related rows, include Deploy Intent in `Source`, `Expected Result`, or `Next Action`: feature, ref or commit, mode, affected services, reason, verification target, and watch owner/path.
+- Use this queue for lightweight deploy request, deploy completed, or blocked-by-active-deploy states. Do not create a separate Deploy Queue until Delivery Queue becomes too noisy for coordination.
 - When a role returns a branch or final result, update the existing row through the Coordinator Return Gate before creating or dispatching the next row.
 - Do not use this queue for routine status notes. Long-lived delivery truth remains in `Feature-Registry.md` and `Acceptance-Queue.md`.

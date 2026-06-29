@@ -15,6 +15,10 @@ on:
           - quick
           - full
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   detect_changes:
     runs-on: ubuntu-latest
