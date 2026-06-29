@@ -757,6 +757,12 @@ def render_command_workbench_html() -> str:
     $("#smart-input").addEventListener("keydown", (event) => {
       if (event.key === "Enter") parseSmartInput();
     });
+    $("#smart-input").addEventListener("input", () => {
+      if (!state.preview) return;
+      state.preview = null;
+      state.selectedTarget = null;
+      $("#preview").innerHTML = `<div class="notice">Preview cleared. Press Preview again before running this command.</div>`;
+    });
 
     loadActions();
     renderHistory();
@@ -1137,12 +1143,11 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
     if stock_exact:
         parsed = _parse_stock_target(stock_exact)
         if parsed is not None:
-            symbol, market = parsed
             return _preview_from_action(
                 ParseContext(
                     raw_input=text,
                     action_id="decision_card",
-                    selected_target=_candidate(symbol=symbol, market=market, name="", confidence=1.0, source="exact"),
+                    fields={"stock": stock_exact},
                     parse_source="exact_command",
                     confidence=1.0,
                 )
@@ -1156,12 +1161,11 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
     if detail_exact:
         parsed = _parse_stock_target(detail_exact)
         if parsed is not None:
-            symbol, market = parsed
             return _preview_from_action(
                 ParseContext(
                     raw_input=text,
                     action_id="decision_detail",
-                    selected_target=_candidate(symbol=symbol, market=market, name="", confidence=1.0, source="exact"),
+                    fields={"stock": detail_exact},
                     parse_source="exact_command",
                     confidence=1.0,
                 )
@@ -1171,12 +1175,11 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
     if draft_exact:
         parsed = _parse_stock_target(draft_exact)
         if parsed is not None:
-            symbol, market = parsed
             return _preview_from_action(
                 ParseContext(
                     raw_input=text,
                     action_id="decision_refresh",
-                    selected_target=_candidate(symbol=symbol, market=market, name="", confidence=1.0, source="exact"),
+                    fields={"stock": draft_exact},
                     parse_source="exact_command",
                     confidence=1.0,
                 )
@@ -1186,12 +1189,11 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
     if job_exact:
         parsed = _parse_stock_target(job_exact)
         if parsed is not None:
-            symbol, market = parsed
             return _preview_from_action(
                 ParseContext(
                     raw_input=text,
                     action_id="research_create_stock_job",
-                    selected_target=_candidate(symbol=symbol, market=market, name="", confidence=1.0, source="exact"),
+                    fields={"stock": job_exact},
                     parse_source="exact_command",
                     confidence=1.0,
                 )
@@ -1259,7 +1261,7 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             candidates = resolve_stock_candidates(stock_query)
             if not candidates:
                 status = "needs_entity"
-                recovery_message = f'I recognized {action.label}, but could not resolve "{stock_query}" to a stock. Enter a symbol such as US.INTC or 000660 KR.'
+                recovery_message = f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". Enter a stock already in the knowledge base, such as US.INTC or 000660 KR.'
             elif len(candidates) == 1:
                 target = candidates[0]
                 confidence = min(confidence, float(target.get("confidence") or confidence))
@@ -1342,7 +1344,40 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
     except Exception:
         pass
 
-    return _dedupe_candidates(candidates)
+    return _filter_profiled_candidates(_dedupe_candidates(candidates))
+
+
+def _filter_profiled_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    profiled: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate.get("source") == "stock_profile":
+            profiled.append(candidate)
+            continue
+        resolved = _candidate_with_stock_profile(candidate)
+        if resolved is not None:
+            profiled.append(resolved)
+    return _dedupe_candidates(profiled)
+
+
+def _candidate_with_stock_profile(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    symbol = str(candidate.get("symbol") or "").strip().upper()
+    market = str(candidate.get("market") or "").strip().upper()
+    if not symbol or not market:
+        return None
+    try:
+        rows = repository.resolve_stock_reference(symbol)
+    except Exception:
+        return candidate
+    for row in rows:
+        if str(row.get("symbol") or "").upper() == symbol and str(row.get("market") or "").upper() == market:
+            return _candidate(
+                symbol=symbol,
+                market=market,
+                name=str(row.get("name") or candidate.get("name") or ""),
+                confidence=float(candidate.get("confidence") or 0.94),
+                source=str(candidate.get("source") or "stock_profile"),
+            )
+    return None
 
 
 def _parse_with_llm(raw_input: str) -> dict[str, Any] | None:
