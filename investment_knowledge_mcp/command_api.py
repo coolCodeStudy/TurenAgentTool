@@ -8,6 +8,7 @@ from typing import Any
 
 from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.command_workbench import (
+    command_workbench_auth_error_payload,
     execution_blocker,
     list_workbench_actions,
     parse_workbench_command,
@@ -38,7 +39,7 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path in {"/api/command-workbench/parse", "/api/command-workbench/execute"}:
-            if not self._require_authorized():
+            if not self._require_authorized(workbench=True):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -173,7 +174,7 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _require_authorized(self) -> bool:
+    def _require_authorized(self, *, workbench: bool = False) -> bool:
         token = get_config().command_api_token
         if not token:
             self._write_json(
@@ -182,7 +183,8 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
             )
             return False
         if not _authorized(self.headers.get("Authorization"), self.headers.get("X-Command-Token"), token):
-            self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+            payload = command_workbench_auth_error_payload() if workbench else {"ok": False, "error": "unauthorized"}
+            self._write_json(HTTPStatus.UNAUTHORIZED, payload)
             return False
         return True
 
