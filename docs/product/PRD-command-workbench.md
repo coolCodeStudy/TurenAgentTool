@@ -542,13 +542,27 @@ Exact command: 决策 US.INTC
 Side effect: saves a traceable decision ticket; does not trade.
 ```
 
+### 14.6 P0 Access Token UX
+
+For P0, Command Workbench may use one fixed private access token shared by the owner/test workflow. This token is configured outside the repository in the cloud runtime, not committed to code or docs.
+
+The page must optimize for low friction:
+
+- Keep a password-style access-token field on `/command`.
+- Store the entered token only in this browser's localStorage.
+- Tell the user that the token stays in this browser and is used to preview and run private commands.
+- When the token is missing or invalid, show a recoverable message asking the user to enter the access token and preview again.
+- Keep tokens out of recent history, result cards, screenshots, logs, docs, and command events.
+
+P0 must not be blocked on multi-user login, OAuth, short-lived token issuance, rotation UI, or separate read/write tokens. Those are P1 follow-ups if the command workbench expands beyond the owner/test workflow.
+
 ## 15. Safety And Permission Boundaries
 
 - No trading action can be executed from `/command`.
 - Durable writes must require explicit confirmation.
 - Maintenance actions must show affected service and environment.
 - Deployment actions are out of scope for the public command workbench unless protected by a separate admin flow.
-- Access tokens must not appear in recent history, logs, or result cards.
+- Access tokens must not appear in recent history, logs, result cards, docs, command events, or screenshots.
 - Parser confidence must be visible when a command was inferred from natural text.
 
 ## 16. Metrics

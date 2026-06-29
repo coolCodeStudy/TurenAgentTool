@@ -192,6 +192,18 @@ V1 layout:
 
 Result cards initially wrap existing plain-text router output while adding structured metadata around it.
 
+### P0 Access Token UX Addendum
+
+Command Workbench P0 uses one fixed private owner/test token configured in cloud runtime, preferably through `COMMAND_API_TOKEN` for the workbench endpoints. A dedicated `WEEKLY_REVIEW_WEB_TOKEN` may still be used for weekly-review APIs, but multi-user login, OAuth, short-lived token issuance, token rotation UI, and separate read/write tokens are P1 follow-ups.
+
+Implementation requirements:
+
+- The `/command` token field remains `type="password"` and persists only to browser localStorage key `command_workbench_token`.
+- The page must explain that the token is stored only in this browser and is required for private previews/runs.
+- Missing-token and invalid-token 401 responses should render product-language recovery copy, not only raw `unauthorized`.
+- Recent/pinned history, result cards, telemetry, docs, screenshots, and logs must not include token values.
+- Acceptance testing may use a local non-committed secret path or an existing browser-local session; test evidence must never reveal the token.
+
 ## Telemetry
 
 No schema migration is required in V1.
