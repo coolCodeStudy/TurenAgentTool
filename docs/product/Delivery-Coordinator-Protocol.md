@@ -13,6 +13,19 @@ The coordinator is an orchestration role. It does not replace the specialized ro
 - Acceptance Testing Agent owns independent user-facing acceptance testing.
 - Project Management Agent owns delivery integrity, registry state, queue state, and documentation consistency.
 
+### Feature Coordinator And Global Project Manager
+
+Feature-level Delivery Coordinators own one product feature flow. They are responsible for that feature's dispatches, child-role returns, Coordinator Return Gate, queue updates, and next-owner decisions.
+
+The Global Project Manager owns portfolio health across features. It should audit coordinator health, stuck flows, cross-feature conflicts, and user decisions, but it should not be the default watcher for every child thread of every feature.
+
+Escalate from a Feature Coordinator to the Global Project Manager only when:
+
+- a user decision, credential, budget, priority, or cross-feature conflict is needed;
+- the coordinator cannot create or maintain its own watch path;
+- the coordinator is blocked or stale and needs recovery;
+- a delivery-system rule or process defect needs to be changed.
+
 ## Responsibilities
 
 The Delivery Coordinator must:
@@ -127,13 +140,19 @@ Handoff-only is not enough when the user asked the coordinator to reduce manual 
 
 A coordinator that dispatches work to another role/thread/session must not rely on passive waiting as the only continuation mechanism.
 
+Watch ownership belongs to the feature-level coordinator that dispatched the role. The Global Project Manager may supervise portfolio health, but it is not the normal watch owner for feature-level child threads.
+
 Immediately after dispatch, the coordinator must do one of:
 
 - keep an active watch on the child thread/session until it returns;
-- create or rely on a project-manager heartbeat/monitor that can inspect returned child work and wake the coordinator;
+- create a feature-scoped heartbeat/monitor owned by the feature coordinator;
 - explicitly record `Monitoring not active` with the reason and the smallest user or project-manager action required to resume the flow.
 
-The handoff is incomplete if the coordinator only says "I will wait" without a concrete wake-up path. When a child role returns and the feature coordinator is idle, the global project manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate.
+The handoff is incomplete if the coordinator only says "I will wait" without a concrete wake-up path.
+
+Do not use a Global Project Manager heartbeat as the normal watch path for a feature dispatch. A Global Project Manager monitor is allowed only as an escalation or portfolio audit mechanism, such as detecting stale coordinators, missing watch paths, or returned child work that the feature coordinator failed to process.
+
+When a child role returns and the feature coordinator is idle, the Global Project Manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate. That is a recovery path, not the designed steady state.
 
 ## Coordinator Return Gate
 
