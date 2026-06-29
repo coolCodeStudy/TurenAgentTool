@@ -421,6 +421,148 @@ Before implementation resumes, Engineering must update `docs/techplans/weekly-re
 
 Implementation should not proceed from the old P1/P2 split that treated index and external-event sources as non-blocking future enhancements. That split is superseded for the source-completeness and story-quality acceptance scope.
 
+## 2026-06-30 P1 Product Addendum: Holder-Level Attribution
+
+This addendum defines the next P1 follow-up after Weekly Review V1 user acceptance. The user accepted the V1 report as useful, but a top holding row such as `胜宏科技 HK.02476 | 盈利回撤 | -6,920.00 HKD | 持仓未变 / 高 | 拖累来自持仓表现，需要确认逻辑是否变化` is still too blind for investment use. A contributor or drag row must explain why the move may have happened, how well the explanation is supported, whether the user's thesis changed, and what should be validated next.
+
+### Product Scope
+
+P1 holder-level attribution applies to the largest contributors and laggards in the Weekly Review, not to every holding. The first pass should cover:
+
+- Top 3 positive contributors and top 3 negative contributors by weekly holding attribution, using the existing ranking logic.
+- Any additional holding that is both a material position and marked `core`, `high_volatility`, or `needs_research` when it is not already in the top contributor/laggard set.
+- Both Markdown and Web surfaces, with the same underlying structured attribution data.
+
+For each covered holding, the report must say more than price and P/L:
+
+| Field | Required product meaning |
+| --- | --- |
+| Attribution verdict | Whether the move is likely market/benchmark-driven, theme/sector-driven, single-stock-event-driven, fundamental/cost-driver-driven, position/trade-behavior-driven, thesis/knowledge-driven, mixed, or unexplained. |
+| Cause candidates | 1-4 possible explanations, each with evidence, source type, date, and confidence. |
+| Evidence trace | Source name, source type, date, URL or stable local identifier, and the claim it supports. |
+| Confidence | `high`, `medium`, `low`, or `rumor_watch`, based on source quality and corroboration. |
+| Thesis impact | `supports_thesis`, `challenges_thesis`, `neutral_noise`, `needs_research`, or `invalidates_unless_confirmed`. |
+| Next validation | The next concrete check: announcement, earnings/guidance, margin/cost trend, upstream input price, sector index, peer move, user thesis note, or trade/risk review. |
+
+The output may say "no supported cause found" when source coverage is insufficient. That is preferable to a confident but unsupported explanation.
+
+### Attribution Pattern
+
+Each holder-level attribution card should decompose the move across these lenses:
+
+| Lens | Examples of evidence | Product behavior |
+| --- | --- | --- |
+| Market / benchmark | Active-market broad index, risk-on/risk-off label, exchange-wide selloff or rally. | Use when the holding moved with the market; do not overfit stock-specific explanations. |
+| Theme / sector | Semiconductor, AI infrastructure, PCB, HBM/memory, optical communication, Hong Kong growth, innovative drugs, crypto finance, robotics, or other mapped themes. | Explain whether the holding followed or diverged from the theme basket. |
+| Single-stock event | Company announcement, earnings, guidance, customer/order news, regulatory notice, major media item, dated market essay. | Prefer official/company or reputable dated sources; cite date and source. |
+| Fundamentals / cost drivers | Revenue/order expectation, gross margin, upstream material prices, copper/fiberglass/laminate/PCB supply-chain cost pressure, utilization, pricing power, FX, rates. | Treat as a driver candidate unless confirmed by company data or multiple reliable sources. |
+| Position / trade behavior | Added, reduced, unchanged, new, closed, leverage/ETF exposure, realized/unrealized split. | Explain whether the user's own position behavior amplified or reduced the weekly impact. |
+| User thesis / knowledge | Confirmed insights, candidate insights, stock/sector knowledge, prior review thesis, watch conditions. | Explicitly state whether the week's evidence supports or challenges the user's stored thesis. |
+
+The report should distinguish:
+
+- `Observed`: price/P&L, index/theme moves, position/trade changes, dated source facts.
+- `Inferred`: likely relationship between evidence and holding performance.
+- `Unverified`: rumor, social discussion, single unconfirmed essay, or a plausible cost-driver narrative without direct confirmation.
+
+### Rumor, Social, And Market-Essay Evidence
+
+Social evidence such as Xueqiu posts, Twitter/X posts, forum discussion, market essays, broker chat summaries, and reposted rumors may be used only as labeled cause candidates. The system must not launder these into facts.
+
+Allowed P1 source handling:
+
+| Source type | Allowed label | Confidence ceiling | Requirements |
+| --- | --- | --- | --- |
+| Official company announcement, exchange filing, earnings call, audited report | `official` | `high` | Date, title, URL or filing id, linked ticker. |
+| Reputable financial news, market data provider news, dated industry publication | `news_or_industry` | `medium` unless corroborated | Date, title, URL/source id, linked ticker/theme. |
+| Dated market essay or analyst-style public article | `market_essay` | `medium` when evidence-based; otherwise `low` | Date, author/source when available, URL/source id, separated facts vs opinion. |
+| Xueqiu, Twitter/X, forums, reposted screenshots, unsourced rumor | `social_rumor` | `rumor_watch` | Date, platform/source, URL/source id when available, exact claim summary, and clear "unverified" label. |
+| Local user insight or candidate insight | `user_knowledge` | follows its stored status | Local identifier or summary and whether it is confirmed or candidate. |
+
+Rumor/social rules:
+
+- A rumor may explain "what the market may be trading" but not "what is true."
+- Rumor/social evidence cannot be the only basis for `high` or `medium` confidence.
+- If a rumor is paired with price action but no corroborating official/news/fundamental source, the card should use `rumor_watch` and `thesis_impact=needs_research`.
+- If later official evidence confirms or refutes the rumor, the official evidence should supersede the rumor while keeping traceability to the prior watch item when useful.
+- The system should not scrape or bypass login-gated social feeds in P1 unless a compliant provider or user-supplied source artifact is available.
+
+Non-goals for this P1:
+
+- No live Xueqiu scraping requirement.
+- No full social-media firehose, sentiment score, or popularity ranking.
+- No automatic trading instruction or stop-loss/take-profit command.
+- No promotion of rumor-derived claims into formal user insights without explicit user confirmation.
+- No claim that an attribution cause is definitive unless evidence actually supports that standard.
+
+### Output Shape
+
+Markdown should add a holder-level attribution subsection under highlights/blowups or immediately after the current holdings table:
+
+```text
+### 持仓归因卡：HK.02476 胜宏科技
+
+- 本周影响：盈利回撤 -6,920.00 HKD；持仓未变；归因置信度：position high / cause low-to-rumor_watch
+- 归因判断：mixed / single-stock-event-watch + cost-driver-watch
+- 可能原因：
+  1. Q2 performance miss rumor or market essay discussion
+     - Evidence: social_rumor or market_essay, source/date/link if available
+     - Confidence: rumor_watch or low
+     - Thesis impact: needs_research
+  2. Upstream material/cost inflation pressure for PCB supply chain
+     - Evidence: industry/news/cost-driver source/date/link when available
+     - Confidence: low or medium depending on corroboration
+     - Thesis impact: challenges_thesis if margin pressure is relevant to the stored thesis
+- 和我的逻辑关系：If the thesis is AI PCB demand growth, the next check is whether cost pressure only compresses short-term margin or also weakens order/growth assumptions.
+- 下周验证点：check company announcement/earnings guidance, gross-margin commentary, upstream copper/laminate/cost trend, peer PCB movement, and whether user thesis notes mention margin tolerance.
+```
+
+Web should expose the same content as a compact expandable attribution card for each covered holding:
+
+| Web element | Required behavior |
+| --- | --- |
+| Attribution badge | Shows dominant attribution lens and confidence, such as `Theme + Rumor Watch` or `Market-driven / Medium`. |
+| Cause candidate list | Shows candidate title, confidence label, source type, source/date, and one-line evidence. |
+| Evidence links | Link or stable source id is visible when available; local knowledge ids may be rendered as traceable labels. |
+| Thesis impact | Uses product-language labels; does not issue trade instructions. |
+| Next validation | Shows the next concrete check as an action-oriented research item. |
+| Source gap state | If no usable evidence exists, the card says which source category is missing and what provider/user input would unblock it. |
+
+The Web card must not show raw stack traces, provider exceptions, database table names, or internal prompts.
+
+### Acceptance Criteria
+
+P1 holder-level attribution is acceptable when:
+
+1. A generated Weekly Review includes structured attribution cards for the top contributors and laggards defined in scope.
+2. Each card includes attribution verdict, cause candidates or a transparent "no supported cause found" state, evidence/source/date, confidence label, thesis impact, and next validation.
+3. Cause candidates cover the practical lenses of market/benchmark, theme/sector, single-stock event, fundamentals/cost drivers, position/trade behavior, and user thesis/knowledge when relevant evidence exists.
+4. Rumor/social evidence is labeled as `social_rumor` or equivalent user-facing copy, capped at `rumor_watch`, and never rewritten as confirmed fact.
+5. The system can represent a Xueqiu-style or market-essay claim when supplied by a compliant provider, cached artifact, manual source input, or other approved source path; live Xueqiu scraping is not required for P1 acceptance.
+6. A Shenghong Technology (`HK.02476` / `胜宏科技`) style laggard card can show both "Q2 miss rumor/market essay" and "upstream cost inflation pressure" as separate cause candidates when those sources are present, with different confidence and thesis-impact labels.
+7. If those Shenghong sources are not present, the card still remains actionable by showing missing source categories and next validation steps instead of a generic "holding performance drag" sentence.
+8. Markdown and Web output are consistent in content, source traceability, confidence labels, and source-gap behavior.
+9. New attribution inferences remain candidate-level and do not automatically write formal user insights.
+
+Acceptance-test focus:
+
+- Fixture test with `HK.02476` as a top laggard, unchanged position, negative weekly attribution, one supplied Xueqiu-style rumor/essay source about possible Q2 miss, and one supplied industry/cost source about upstream cost inflation. Expected: two separate candidates, rumor labeled `rumor_watch`, cost-driver labeled according to source quality, thesis impact `needs_research` or `challenges_thesis`, and concrete next validation.
+- Fixture/provider-missing test with the same holding but no social/news/cost sources. Expected: no invented cause; visible source gap and next validation.
+- Cross-lens test where a holding moved with its benchmark/theme. Expected: market/theme attribution is allowed and the system does not force a single-stock story.
+- Web rendering test for compact/expanded attribution cards, evidence labels, and absence of raw internals.
+- Markdown rendering test for readable attribution cards with traceable evidence and confidence labels.
+
+### Recommended Development Handoff Scope
+
+Development should update `docs/techplans/weekly-review.md` before implementation, then implement the holder-level attribution context and renderers. Recommended technical scope:
+
+- Add a structured `holder_attribution[]` context field keyed by ticker/name and linked to `highlights`, `blowups`, `holdings_table`, `event_summary`, `index_summary`, `knowledge_evidence`, and trade/position-change facts.
+- Add source classification and confidence rules for `official`, `news_or_industry`, `market_essay`, `social_rumor`, and `user_knowledge`.
+- Add cause-candidate generation that decomposes market/theme/single-stock/fundamental-cost/position/user-thesis lenses without claiming certainty.
+- Add Markdown and Web rendering for attribution cards.
+- Add fixtures for the Shenghong `HK.02476` acceptance scenario, provider-missing fallback, and source-label safety.
+- Keep live Xueqiu scraping out of scope unless Product and Engineering approve a compliant provider path.
+
 ## 数据模型影响
 
 第一版复用现有表：
