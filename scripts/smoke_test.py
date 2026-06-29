@@ -21,7 +21,11 @@ from investment_knowledge_mcp.command_router import (
     is_query_command,
     is_research_write_command,
 )
-from investment_knowledge_mcp.command_workbench import parse_workbench_command, render_command_workbench_html
+from investment_knowledge_mcp.command_workbench import (
+    command_workbench_auth_error_payload,
+    parse_workbench_command,
+    render_command_workbench_html,
+)
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.portfolio_graph import build_portfolio_graph_queue, render_portfolio_graph_queue
@@ -341,6 +345,7 @@ def main() -> None:
             )
             workbench_unknown = parse_workbench_command("乱买英特尔", allow_llm=False)
             workbench_html = render_command_workbench_html()
+            workbench_auth_error = command_workbench_auth_error_payload()
 
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
@@ -435,6 +440,11 @@ def main() -> None:
         assert workbench_research_job["confirmation_required"]
         assert workbench_unknown["status"] == "unsupported"
         assert "Command Workbench" in workbench_html
+        assert 'type="password"' in workbench_html
+        assert "command_workbench_token" in workbench_html
+        assert "stored only in this browser" in workbench_html
+        assert workbench_auth_error["error"] == "unauthorized"
+        assert "preview again" in workbench_auth_error["message"]
         assert router_insight_result.ok
         assert router_candidate_result.ok
         assert router_duplicate_candidate_result.ok
