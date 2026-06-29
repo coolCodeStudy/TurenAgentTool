@@ -582,6 +582,67 @@ def render_weekly_review_workbench_html() -> str:
       margin: 0;
       padding-left: 18px;
     }}
+    .attribution-grid {{
+      display: grid;
+      gap: 10px;
+    }}
+    .attribution-card {{
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      overflow: hidden;
+    }}
+    .attribution-card summary {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      cursor: pointer;
+      list-style: none;
+    }}
+    .attribution-card summary::-webkit-details-marker {{ display: none; }}
+    .attribution-title {{
+      min-width: 0;
+      font-weight: 700;
+    }}
+    .attribution-meta {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }}
+    .badge {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--chip);
+      padding: 5px 8px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .badge.rumor {{ color: var(--warn); border-color: #e7c069; background: #fff8e8; }}
+    .attribution-body {{
+      border-top: 1px solid #edf1f5;
+      padding: 12px;
+    }}
+    .candidate {{
+      border-left: 3px solid var(--line);
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: #fbfcfd;
+    }}
+    .candidate strong {{ display: block; margin-bottom: 4px; }}
+    .candidate p {{
+      margin: 4px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .gap-list {{
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
     .markdown {{
       min-height: 180px;
       width: 100%;
@@ -673,6 +734,7 @@ def render_weekly_review_workbench_html() -> str:
       <section id="story"><h2>4. 整体故事</h2><div data-slot="story"></div></section>
       <section id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
       <section id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><select id="market-filter"><option value="">全部市场</option></select><select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></div><div data-slot="holdings"></div></section>
+      <section id="attribution"><h2>7. 持仓归因卡</h2><div data-slot="attribution"></div></section>
       <section id="markdown"><h2>报告草稿</h2><textarea id="markdown-text" class="markdown" spellcheck="false"></textarea></section>
       <section id="candidates"><h2>候选心得</h2><div data-slot="candidates" class="empty">保存报告后可在这里确认或拒绝候选心得。</div></section>
     </main>
@@ -683,6 +745,7 @@ def render_weekly_review_workbench_html() -> str:
       <a href="#story">4. 整体故事</a>
       <a href="#next-week">5. 下周展望</a>
       <a href="#holdings">6. 当前持仓分析</a>
+      <a href="#attribution">7. 持仓归因卡</a>
       <a href="#source-status">数据源状态</a>
     </aside>
   </div>
@@ -802,6 +865,7 @@ def render_weekly_review_workbench_html() -> str:
       slot("indexes").innerHTML = indexTable(state.context.index_summary || [], (state.context.source_status || {{}}).indexes);
       slot("story").innerHTML = storyBlock(state.context.story || {{}}, state.context.warnings || []);
       slot("next-week").innerHTML = nextWeekTable(state.context.next_week || []);
+      slot("attribution").innerHTML = attributionCards(state.context.holder_attribution || []);
       $("#markdown-text").value = state.markdown;
       renderMarketOptions();
       renderHoldings();
@@ -886,6 +950,41 @@ def render_weekly_review_workbench_html() -> str:
       slot("holdings").innerHTML = `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
         ${{rows.map((row) => `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money">${{formatMoney(row.market_val, row.currency)}}</td><td class="money ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`).join("")}}
       </tbody></table>`;
+    }}
+
+    function attributionCards(cards) {{
+      if (!cards.length) return `<div class="empty">暂无持仓归因卡。</div>`;
+      return `<div class="attribution-grid">${{cards.map((card) => {{
+        const confidence = card.confidence || "low";
+        const badgeClass = confidence === "rumor_watch" ? "badge rumor" : "badge";
+        const candidates = card.cause_candidates || [];
+        const candidateHtml = candidates.length ? candidates.map((candidate) => `
+          <div class="candidate">
+            <strong>${{escapeHtml(candidate.title || candidate.lens || "Cause candidate")}}</strong>
+            <p>${{escapeHtml(candidate.claim || candidate.evidence || "")}}</p>
+            <p>Evidence: ${{escapeHtml([candidate.source_type, candidate.source_name, candidate.source_date].filter(Boolean).join(" / "))}}${{candidate.url ? ` / ${{escapeHtml(candidate.url)}}` : candidate.source_id ? ` / ${{escapeHtml(candidate.source_id)}}` : ""}}</p>
+            <p>Confidence: ${{escapeHtml(candidate.confidence || "low")}}；Thesis impact: ${{escapeHtml(candidate.thesis_impact || "needs_research")}}；Lens: ${{escapeHtml(candidate.lens || "待确认")}}</p>
+            <p>Next validation: ${{escapeHtml(candidate.next_validation || "待补")}}</p>
+          </div>
+        `).join("") : `<div class="empty">No supported cause found from current structured sources.</div>`;
+        const gaps = card.source_gaps || [];
+        const gapHtml = gaps.length ? `<ul class="gap-list">${{gaps.map((gap) => `<li>${{escapeHtml(gap)}}</li>`).join("")}}</ul>` : "";
+        const validation = (card.next_validation || []).join("；");
+        return `<details class="attribution-card">
+          <summary>
+            <div>
+              <div class="attribution-title">${{escapeHtml(card.code)}} ${{escapeHtml(card.name)}}</div>
+              <div class="attribution-meta">${{formatMoney(card.weekly_pl, card.currency)}}；${{escapeHtml(card.movement || "仓位变化待确认")}}；${{escapeHtml(card.attribution_verdict || "unexplained")}}</div>
+            </div>
+            <span class="${{badgeClass}}">${{escapeHtml(card.dominant_lens || "mixed")}} / ${{escapeHtml(confidence)}}</span>
+          </summary>
+          <div class="attribution-body">
+            ${{candidateHtml}}
+            ${{gapHtml}}
+            <div class="notice">Thesis impact: ${{escapeHtml(card.thesis_impact || "needs_research")}}；${{escapeHtml(card.thesis_relationship || "")}}${{validation ? "；Next: " + escapeHtml(validation) : ""}}</div>
+          </div>
+        </details>`;
+      }}).join("")}}</div>`;
     }}
 
     function renderCandidates(items) {{
@@ -1035,6 +1134,7 @@ def _normalize_report_context(context: dict[str, Any], *, start: date, end: date
     normalized.setdefault("highlights", [])
     normalized.setdefault("blowups", [])
     normalized.setdefault("holdings_table", [])
+    normalized.setdefault("holder_attribution", [])
     normalized.setdefault("next_week", [])
     normalized.setdefault("story", {})
     normalized.setdefault("candidate_insights", [])
@@ -1079,6 +1179,7 @@ def _empty_week_context(start: date, end: date) -> dict[str, Any]:
         "highlights": [],
         "blowups": [],
         "holdings_table": [],
+        "holder_attribution": [],
         "next_week": [],
         "story": {},
         "candidate_insights": [],

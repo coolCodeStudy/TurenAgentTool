@@ -128,6 +128,33 @@ THEME_NEWS_KEYWORDS: dict[str, tuple[str, ...]] = {
     "太空": ("space", "rocket", "satellite", "launch"),
 }
 
+ATTRIBUTION_SOURCE_TYPES = {"official", "news_or_industry", "market_essay", "social_rumor", "user_knowledge"}
+ATTRIBUTION_CONFIDENCE_ORDER = {"rumor_watch": 0, "low": 1, "medium": 2, "high": 3}
+COST_DRIVER_KEYWORDS = (
+    "cost",
+    "margin",
+    "inflation",
+    "copper",
+    "laminate",
+    "fiberglass",
+    "glass fiber",
+    "raw material",
+    "upstream",
+    "成本",
+    "毛利",
+    "涨价",
+    "通胀",
+    "铜",
+    "覆铜板",
+    "玻纤",
+    "玻璃纤维",
+    "上游",
+    "原材料",
+    "pcb",
+)
+RUMOR_KEYWORDS = ("rumor", "unverified", "xueqiu", "social", "传闻", "雪球", "小作文", "未证实")
+MISS_KEYWORDS = ("miss", "below expectation", "performance", "earnings", "q2", "不及预期", "业绩", "二季度", "q2")
+
 
 @dataclass(frozen=True)
 class WeeklyReviewResult:
@@ -223,6 +250,17 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         detected_themes=detected_themes,
     )
     next_week = _build_next_week_items(position_changes=position_changes, ipo_items=ipo_items)
+    holder_attribution = _build_holder_attribution(
+        position_changes=position_changes,
+        highlights=highlights,
+        blowups=blowups,
+        holdings_table=holdings_table,
+        event_summary=source_evidence["events"],
+        index_summary=index_summary,
+        knowledge_evidence=source_evidence["knowledge"],
+        trades_by_code=trades_by_code,
+        source_status=source_status,
+    )
 
     return {
         "period": {
@@ -247,6 +285,7 @@ def build_weekly_review_context(start: date, end: date) -> dict[str, Any]:
         "index_summary": index_summary,
         "event_summary": source_evidence["events"],
         "knowledge_evidence": source_evidence["knowledge"],
+        "holder_attribution": holder_attribution,
         "detected_themes": detected_themes,
         "next_week": next_week,
         "story": _build_story(
@@ -281,6 +320,8 @@ def render_weekly_review_markdown(context: dict[str, Any]) -> str:
     lines.extend(_render_next_week_items(context.get("next_week") or []))
     lines.extend(["", "## 6. 当前持仓分析"])
     lines.extend(_render_holdings_table(context.get("holdings_table") or []))
+    lines.extend(["", "## 7. 持仓归因卡"])
+    lines.extend(_render_holder_attribution(context.get("holder_attribution") or []))
     lines.extend(["", "## 数据口径"])
     lines.extend(_render_source_status(context.get("source_status") or {}))
     warnings = context.get("warnings") or []
@@ -1382,6 +1423,484 @@ def _build_next_week_items(position_changes: list[dict[str, Any]], ipo_items: li
     return items
 
 
+def _build_holder_attribution(
+    position_changes: list[dict[str, Any]],
+    highlights: list[dict[str, Any]],
+    blowups: list[dict[str, Any]],
+    holdings_table: list[dict[str, Any]],
+    event_summary: list[dict[str, Any]],
+    index_summary: list[dict[str, Any]],
+    knowledge_evidence: list[dict[str, Any]],
+    trades_by_code: dict[str, dict[str, Any]],
+    source_status: dict[str, Any],
+) -> list[dict[str, Any]]:
+    position_by_code = {str(item.get("code") or ""): item for item in position_changes if item.get("code")}
+    holding_by_code = {str(item.get("code") or ""): item for item in holdings_table if item.get("code")}
+    highlight_codes = {str(item.get("code") or "") for item in highlights if item.get("code")}
+    blowup_codes = {str(item.get("code") or "") for item in blowups if item.get("code")}
+    covered_codes: list[str] = []
+    for item in [*highlights, *blowups]:
+        code = str(item.get("code") or "")
+        if code and code not in covered_codes:
+            covered_codes.append(code)
+
+    material_rows = sorted(holdings_table, key=lambda row: _number(row.get("market_val")), reverse=True)
+    for row in material_rows[:8]:
+        code = str(row.get("code") or "")
+        status = str(row.get("status") or "")
+        if not code or code in covered_codes:
+            continue
+        if any(label in status for label in ("核心持仓", "高波动", "补研究")):
+            covered_codes.append(code)
+
+    cards: list[dict[str, Any]] = []
+    for code in covered_codes[:8]:
+        item = position_by_code.get(code)
+        if item is None:
+            continue
+        holding = holding_by_code.get(code, {})
+        matching_events = _matching_attribution_events(item=item, events=event_summary)
+        matching_knowledge = _matching_knowledge_evidence(item=item, evidence=knowledge_evidence)
+        candidates = _event_cause_candidates(item=item, events=matching_events)
+        market_candidate = _market_cause_candidate(item=item, index_summary=index_summary)
+        if market_candidate is not None:
+            candidates.append(market_candidate)
+        theme_candidate = _theme_or_knowledge_candidate(item=item, knowledge=matching_knowledge)
+        if theme_candidate is not None:
+            candidates.append(theme_candidate)
+        position_candidate = _position_trade_candidate(item=item, trade_summary=trades_by_code.get(code))
+        if position_candidate is not None:
+            candidates.append(position_candidate)
+
+        candidates = _dedupe_candidates(candidates)[:4]
+        source_gaps = _attribution_source_gaps(
+            item=item,
+            candidates=candidates,
+            source_status=source_status,
+            matching_events=matching_events,
+        )
+        confidence = _aggregate_attribution_confidence(candidates)
+        thesis_impact = _aggregate_thesis_impact(candidates)
+        lenses = [str(candidate.get("lens") or "") for candidate in candidates if candidate.get("lens")]
+        external_lenses = [lens for lens in lenses if lens not in {"position_trade_behavior", "user_thesis_knowledge"}]
+        no_supported_external_cause = not external_lenses
+        verdict = _attribution_verdict(candidates=candidates, no_supported_external_cause=no_supported_external_cause)
+        cards.append(
+            {
+                "code": code,
+                "name": item.get("name") or holding.get("name") or code,
+                "currency": item.get("currency") or holding.get("currency") or "UNKNOWN",
+                "weekly_pl": _rank_amount(item),
+                "movement": item.get("movement"),
+                "position_confidence": item.get("confidence"),
+                "attribution_verdict": verdict,
+                "dominant_lens": _dominant_lens(candidates),
+                "confidence": confidence,
+                "thesis_impact": thesis_impact,
+                "cause_candidates": candidates,
+                "evidence": [_candidate_evidence_payload(candidate) for candidate in candidates if candidate.get("source_type")],
+                "source_gaps": source_gaps,
+                "no_supported_external_cause": no_supported_external_cause,
+                "thesis_relationship": _thesis_relationship_text(
+                    item=item,
+                    candidates=candidates,
+                    no_supported_external_cause=no_supported_external_cause,
+                ),
+                "next_validation": _card_next_validation(candidates=candidates, source_gaps=source_gaps),
+                "links": {
+                    "highlight": code if code in highlight_codes else None,
+                    "blowup": code if code in blowup_codes else None,
+                    "holding": code if code in holding_by_code else None,
+                    "events": [_event_link_id(event) for event in matching_events],
+                    "knowledge": [entry.get("citation") or entry.get("id") for entry in matching_knowledge],
+                    "trades": code if (trades_by_code.get(code) or {}).get("count") else None,
+                },
+            }
+        )
+    return cards
+
+
+def _matching_attribution_events(item: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    code = str(item.get("code") or "")
+    themes = {str(theme).lower() for theme in item.get("themes") or [] if theme}
+    matches: list[dict[str, Any]] = []
+    for event in events:
+        event_code = str(event.get("code") or event.get("linked_ticker") or "")
+        event_theme = str(event.get("theme") or event.get("linked_theme") or "").lower()
+        if event_code and event_code == code:
+            matches.append(event)
+            continue
+        if event_theme and any(event_theme in theme or theme in event_theme for theme in themes):
+            matches.append(event)
+    return matches[:6]
+
+
+def _matching_knowledge_evidence(item: dict[str, Any], evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    code = str(item.get("code") or "")
+    themes = {str(theme).lower() for theme in item.get("themes") or [] if theme}
+    matches: list[dict[str, Any]] = []
+    for entry in evidence:
+        entry_code = str(entry.get("code") or "")
+        summary = str(entry.get("summary") or "").lower()
+        if entry_code and entry_code == code:
+            matches.append(entry)
+            continue
+        if any(theme and theme in summary for theme in themes):
+            matches.append(entry)
+    return matches[:4]
+
+
+def _event_cause_candidates(item: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for event in events:
+        if str(event.get("freshness") or "") == "reference_source":
+            continue
+        source_type = _classify_attribution_source(event)
+        text = " ".join(str(event.get(part) or "") for part in ("title", "summary", "source_type", "source_name")).lower()
+        lens = "fundamentals_cost_drivers" if _contains_any(text, COST_DRIVER_KEYWORDS) else "single_stock_event"
+        title = _candidate_title_from_event(event=event, lens=lens, source_type=source_type)
+        candidates.append(
+            {
+                "lens": lens,
+                "title": title,
+                "claim": _candidate_claim(event=event, lens=lens, source_type=source_type),
+                "source_type": source_type,
+                "source_name": event.get("source_name") or event.get("source") or "source",
+                "source_date": _source_date_text(event),
+                "url": event.get("url"),
+                "source_id": event.get("source_id") or event.get("citation"),
+                "confidence": _source_confidence(source_type=source_type, event=event),
+                "thesis_impact": _candidate_thesis_impact(item=item, lens=lens, source_type=source_type, text=text),
+                "evidence": _trim(event.get("summary") or event.get("title"), 260),
+                "next_validation": _candidate_next_validation(lens=lens, source_type=source_type),
+                "observed_inferred_unverified": _evidence_nature(source_type),
+            }
+        )
+    return candidates
+
+
+def _market_cause_candidate(item: dict[str, Any], index_summary: list[dict[str, Any]]) -> dict[str, Any] | None:
+    market = _market_family(item.get("market"))
+    market_indexes = [row for row in index_summary if _market_family(row.get("market")) == market]
+    if not market_indexes:
+        return None
+    best = max(market_indexes, key=lambda row: abs(_number(row.get("weekly_change_pct"))), default=None)
+    if best is None:
+        return None
+    index_move = _number(best.get("weekly_change_pct"))
+    weekly_pl = _rank_amount(item)
+    same_direction = (index_move >= 0 and weekly_pl >= 0) or (index_move <= 0 and weekly_pl <= 0)
+    if abs(index_move) < 0.5 and not same_direction:
+        return None
+    relation = "同向" if same_direction else "背离"
+    return {
+        "lens": "market_benchmark",
+        "title": f"{best.get('name')} market benchmark {relation}",
+        "claim": f"{best.get('name')} 本周 {_fmt_signed_percent(index_move)}，与该持仓周度影响{relation}，可作为市场/基准解释候选。",
+        "source_type": "official" if best.get("source") else "news_or_industry",
+        "source_name": (best.get("source") or {}).get("provider") or "index_summary",
+        "source_date": (best.get("source") or {}).get("end_date"),
+        "url": None,
+        "source_id": f"index:{best.get('code')}",
+        "confidence": "medium",
+        "thesis_impact": "neutral_noise" if same_direction else "needs_research",
+        "evidence": best.get("portfolio_relevance") or best.get("environment_label") or "",
+        "next_validation": "Compare the holding against its market and sector proxy again next week before assigning a single-stock cause.",
+        "observed_inferred_unverified": "observed_and_inferred",
+    }
+
+
+def _theme_or_knowledge_candidate(item: dict[str, Any], knowledge: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not knowledge:
+        return None
+    entry = knowledge[0] if knowledge else {}
+    summary = entry.get("summary") or "本地主题映射待补"
+    source_type = "user_knowledge" if entry else "user_knowledge"
+    return {
+        "lens": "user_thesis_knowledge" if entry else "theme_sector",
+        "title": "User thesis / theme context",
+        "claim": f"本地知识或主题映射提示：{_trim(summary, 180)}",
+        "source_type": source_type,
+        "source_name": entry.get("source_type") or "local_knowledge",
+        "source_date": None,
+        "url": (entry.get("source") or {}).get("url") if isinstance(entry.get("source"), dict) else None,
+        "source_id": entry.get("citation") or entry.get("id") or "theme_mapping",
+        "confidence": "medium" if entry else "low",
+        "thesis_impact": "needs_research" if _rank_amount(item) < 0 else "supports_thesis",
+        "evidence": _trim(summary, 240),
+        "next_validation": "Check whether this week's evidence changes the stored thesis, or only changes short-term timing.",
+        "observed_inferred_unverified": "inferred",
+    }
+
+
+def _position_trade_candidate(item: dict[str, Any], trade_summary: dict[str, Any] | None) -> dict[str, Any] | None:
+    trade_summary = trade_summary or {}
+    trade_text = ""
+    if trade_summary.get("count"):
+        trade_text = (
+            f"{int(trade_summary.get('buy_count') or 0)} buys / {int(trade_summary.get('sell_count') or 0)} sells; "
+            f"buy amount {_fmt_money(trade_summary.get('buy_amount'), trade_summary.get('currency'))}, "
+            f"sell amount {_fmt_money(trade_summary.get('sell_amount'), trade_summary.get('currency'))}"
+        )
+    else:
+        trade_text = "No interval trades found for this holding; weekly impact mainly came from holding performance."
+    return {
+        "lens": "position_trade_behavior",
+        "title": "Position / trade behavior",
+        "claim": f"{item.get('movement') or '仓位变化待确认'}；{trade_text}",
+        "source_type": "official",
+        "source_name": "account_snapshots_and_trade_records",
+        "source_date": None,
+        "url": None,
+        "source_id": f"holding:{item.get('code')}",
+        "confidence": _position_confidence_for_attribution(item.get("confidence")),
+        "thesis_impact": "neutral_noise",
+        "evidence": trade_text,
+        "next_validation": "Review whether position size amplified the weekly contribution or drawdown.",
+        "observed_inferred_unverified": "observed",
+    }
+
+
+def _attribution_source_gaps(
+    item: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    source_status: dict[str, Any],
+    matching_events: list[dict[str, Any]],
+) -> list[str]:
+    lenses = {str(candidate.get("lens") or "") for candidate in candidates}
+    gaps: list[str] = []
+    event_status = (source_status.get("events") or {}).get("status")
+    if "single_stock_event" not in lenses:
+        gaps.append("No supported single-stock event cause found; check company announcement, earnings/guidance, dated news, or supplied market-essay/rumor artifact.")
+    if "fundamentals_cost_drivers" not in lenses:
+        gaps.append("No supported fundamentals/cost-driver source found; check margin commentary, upstream input prices, supplier cost data, and peer PCB movement.")
+    if event_status in {"missing", "provider_unavailable", "source_blocked"} and not matching_events:
+        gaps.append("External event source coverage is blocked or empty for this holding.")
+    if not item.get("knowledge_evidence") and not item.get("knowledge_note"):
+        gaps.append("Local thesis/knowledge evidence is missing for this holding.")
+    return gaps[:4]
+
+
+def _classify_attribution_source(source: dict[str, Any]) -> str:
+    raw = " ".join(
+        str(source.get(part) or "")
+        for part in ("source_type", "source_name", "category", "publisher", "platform")
+    ).lower()
+    if _contains_any(raw, RUMOR_KEYWORDS) or "forum" in raw or "twitter" in raw or "xueqiu" in raw:
+        return "social_rumor"
+    if "market_essay" in raw or "essay" in raw or "analyst" in raw or "opinion" in raw or "小作文" in raw:
+        return "market_essay"
+    if "user" in raw or "knowledge" in raw or "insight" in raw or "candidate" in raw or "sector_mapping" in raw:
+        return "user_knowledge"
+    if "official" in raw or "filing" in raw or "announcement" in raw or "exchange" in raw or "hkex" in raw or "sec" in raw or "disclosure" in raw:
+        return "official"
+    if "news" in raw or "rss" in raw or "industry" in raw or "yahoo" in raw or "financial" in raw or "provider" in raw:
+        return "news_or_industry"
+    explicit = str(source.get("normalized_source_type") or "").lower()
+    return explicit if explicit in ATTRIBUTION_SOURCE_TYPES else "news_or_industry"
+
+
+def _position_confidence_for_attribution(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"高", "high"}:
+        return "high"
+    if text in {"中", "medium"}:
+        return "medium"
+    if text in {"低", "low"}:
+        return "low"
+    return "medium"
+
+
+def _source_confidence(source_type: str, event: dict[str, Any]) -> str:
+    if source_type == "social_rumor":
+        return "rumor_watch"
+    if source_type == "official":
+        return "high" if event.get("published_at") else "medium"
+    if source_type == "news_or_industry":
+        return "medium"
+    if source_type == "market_essay":
+        return "medium" if event.get("evidence_based") else "low"
+    if source_type == "user_knowledge":
+        text = str(event.get("source_type") or event.get("category") or "").lower()
+        return "low" if "candidate" in text else "medium"
+    return "low"
+
+
+def _candidate_title_from_event(event: dict[str, Any], lens: str, source_type: str) -> str:
+    text = " ".join(str(event.get(part) or "") for part in ("title", "summary")).lower()
+    if source_type == "social_rumor" and _contains_any(text, MISS_KEYWORDS):
+        return "Q2 performance miss rumor / social discussion"
+    if source_type == "market_essay" and _contains_any(text, MISS_KEYWORDS):
+        return "Q2 performance miss market essay"
+    if lens == "fundamentals_cost_drivers":
+        return "Upstream cost / margin pressure candidate"
+    return _trim(event.get("title") or event.get("summary") or "Single-stock event candidate", 120)
+
+
+def _candidate_claim(event: dict[str, Any], lens: str, source_type: str) -> str:
+    summary = _trim(event.get("summary") or event.get("title"), 220)
+    if source_type == "social_rumor":
+        return f"Unverified social/rumor source says: {summary}. Treat this only as a market-watch candidate, not a fact."
+    if source_type == "market_essay":
+        return f"Dated market essay frames a possible driver: {summary}. Treat opinion separately from confirmed facts."
+    if lens == "fundamentals_cost_drivers":
+        return f"Industry/source evidence points to a possible cost or margin driver: {summary}"
+    return summary
+
+
+def _candidate_thesis_impact(item: dict[str, Any], lens: str, source_type: str, text: str) -> str:
+    if source_type == "social_rumor":
+        return "needs_research"
+    if lens == "fundamentals_cost_drivers":
+        return "challenges_thesis"
+    if _rank_amount(item) < 0 and source_type in {"official", "news_or_industry", "market_essay"}:
+        return "challenges_thesis" if not _contains_any(text, RUMOR_KEYWORDS) else "needs_research"
+    if _rank_amount(item) > 0 and source_type in {"official", "news_or_industry"}:
+        return "supports_thesis"
+    return "neutral_noise"
+
+
+def _candidate_next_validation(lens: str, source_type: str) -> str:
+    if source_type == "social_rumor":
+        return "Check company announcement, earnings/guidance, and reputable dated follow-up before treating the rumor as real."
+    if lens == "fundamentals_cost_drivers":
+        return "Validate gross margin guidance, upstream material prices, supplier commentary, and peer PCB movement."
+    if lens == "single_stock_event":
+        return "Check the dated source against company filings, earnings calendar, and follow-up news."
+    return "Compare market/theme movement with holding-specific evidence next week."
+
+
+def _evidence_nature(source_type: str) -> str:
+    if source_type == "social_rumor":
+        return "unverified"
+    if source_type == "market_essay":
+        return "inferred"
+    return "observed" if source_type in {"official", "news_or_industry"} else "inferred"
+
+
+def _source_date_text(source: dict[str, Any]) -> str | None:
+    value = source.get("published_at") or source.get("checked_at") or source.get("date")
+    if not value:
+        return None
+    return str(value)[:10]
+
+
+def _event_link_id(event: dict[str, Any]) -> str:
+    return str(event.get("source_id") or event.get("citation") or event.get("url") or event.get("title") or "event")
+
+
+def _candidate_evidence_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_type": candidate.get("source_type"),
+        "source_name": candidate.get("source_name"),
+        "source_date": candidate.get("source_date"),
+        "url": candidate.get("url"),
+        "source_id": candidate.get("source_id"),
+        "claim": candidate.get("claim"),
+        "confidence": candidate.get("confidence"),
+    }
+
+
+def _aggregate_attribution_confidence(candidates: list[dict[str, Any]]) -> str:
+    source_confidences = [
+        str(candidate.get("confidence") or "low")
+        for candidate in candidates
+        if candidate.get("lens") != "position_trade_behavior"
+    ]
+    if not source_confidences:
+        return "low"
+    non_rumor = [value for value in source_confidences if value != "rumor_watch"]
+    if not non_rumor:
+        return "rumor_watch"
+    return max(non_rumor, key=lambda value: ATTRIBUTION_CONFIDENCE_ORDER.get(value, 1))
+
+
+def _aggregate_thesis_impact(candidates: list[dict[str, Any]]) -> str:
+    impacts = [str(candidate.get("thesis_impact") or "neutral_noise") for candidate in candidates]
+    for value in ("invalidates_unless_confirmed", "challenges_thesis", "needs_research", "supports_thesis"):
+        if value in impacts:
+            return value
+    return "neutral_noise"
+
+
+def _dominant_lens(candidates: list[dict[str, Any]]) -> str:
+    lenses = [str(candidate.get("lens") or "") for candidate in candidates if candidate.get("lens")]
+    external = [lens for lens in lenses if lens not in {"position_trade_behavior", "user_thesis_knowledge"}]
+    if len(set(external)) >= 2:
+        return "mixed"
+    if external:
+        return external[0]
+    if lenses:
+        return lenses[0]
+    return "unexplained"
+
+
+def _attribution_verdict(candidates: list[dict[str, Any]], no_supported_external_cause: bool) -> str:
+    if no_supported_external_cause:
+        return "unexplained / no_supported_external_cause"
+    lens_labels = []
+    for lens in dict.fromkeys(str(candidate.get("lens") or "") for candidate in candidates):
+        if lens == "single_stock_event":
+            lens_labels.append("single_stock_event_watch")
+        elif lens == "fundamentals_cost_drivers":
+            lens_labels.append("fundamentals_cost_watch")
+        elif lens == "market_benchmark":
+            lens_labels.append("market_benchmark")
+        elif lens == "theme_sector":
+            lens_labels.append("theme_sector")
+        elif lens == "user_thesis_knowledge":
+            lens_labels.append("user_thesis")
+    if len(lens_labels) > 1:
+        return "mixed / " + " + ".join(lens_labels[:4])
+    return lens_labels[0] if lens_labels else "unexplained"
+
+
+def _thesis_relationship_text(
+    item: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    no_supported_external_cause: bool,
+) -> str:
+    themes = " / ".join(str(theme) for theme in item.get("themes") or []) or "current thesis"
+    if no_supported_external_cause:
+        return f"{themes}: no supported external cause was found, so treat the weekly move as a research queue item rather than a thesis change."
+    if any(candidate.get("thesis_impact") == "challenges_thesis" for candidate in candidates):
+        return f"{themes}: cost, event, or negative evidence may challenge the thesis; validate whether it affects long-term demand, margin, or only short-term sentiment."
+    if any(candidate.get("thesis_impact") == "supports_thesis" for candidate in candidates):
+        return f"{themes}: available evidence is directionally supportive, but still requires source follow-through."
+    return f"{themes}: evidence is not strong enough to update the thesis without more validation."
+
+
+def _card_next_validation(candidates: list[dict[str, Any]], source_gaps: list[str]) -> list[str]:
+    validations: list[str] = []
+    for candidate in candidates:
+        text = str(candidate.get("next_validation") or "").strip()
+        if text and text not in validations:
+            validations.append(text)
+    for gap in source_gaps[:2]:
+        if "single-stock" in gap:
+            validations.append("Find a dated company or reputable-news source before assigning a single-stock cause.")
+        elif "fundamentals/cost" in gap:
+            validations.append("Check margin/cost trend, upstream input prices, and peer supply-chain moves.")
+    return validations[:5] or ["Continue monitoring price action, source evidence, and user thesis notes next week."]
+
+
+def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = "|".join(str(candidate.get(part) or "") for part in ("lens", "title", "source_id", "source_type"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    lower = str(text or "").lower()
+    return any(keyword.lower() in lower for keyword in keywords)
+
+
 def _build_story(
     context_warnings: list[str],
     position_changes: list[dict[str, Any]],
@@ -1655,6 +2174,66 @@ def _render_holdings_table(rows: list[dict[str, Any]]) -> list[str]:
             f"{row['movement']} | {row['status']} | {row['next_step']} |"
         )
     return lines
+
+
+def _render_holder_attribution(cards: list[dict[str, Any]]) -> list[str]:
+    if not cards:
+        return ["- 暂无持仓归因卡。"]
+    lines: list[str] = []
+    for card in cards:
+        lines.extend(
+            [
+                f"### 持仓归因卡：{card.get('code')} {card.get('name')}",
+                "",
+                (
+                    f"- 本周影响：{_fmt_money(card.get('weekly_pl'), card.get('currency'))}；"
+                    f"{card.get('movement') or '仓位变化待确认'}；"
+                    f"归因置信度：position {card.get('position_confidence') or '待确认'} / cause {card.get('confidence') or 'low'}"
+                ),
+                f"- 归因判断：{card.get('attribution_verdict') or 'unexplained'}",
+                f"- Thesis impact：{card.get('thesis_impact') or 'needs_research'}",
+                "- 可能原因：",
+            ]
+        )
+        candidates = card.get("cause_candidates") or []
+        if candidates:
+            for index, candidate in enumerate(candidates, start=1):
+                lines.append(f"  {index}. {candidate.get('title') or candidate.get('lens') or 'Cause candidate'}")
+                lines.append(f"     - Evidence: {_candidate_evidence_text(candidate)}")
+                lines.append(
+                    f"     - Confidence: {candidate.get('confidence') or 'low'}；"
+                    f"Thesis impact: {candidate.get('thesis_impact') or 'needs_research'}；"
+                    f"Nature: {candidate.get('observed_inferred_unverified') or 'inferred'}"
+                )
+                lines.append(f"     - Next validation: {candidate.get('next_validation') or '待补'}")
+        else:
+            lines.append("  1. No supported cause found from current structured sources.")
+        source_gaps = card.get("source_gaps") or []
+        if source_gaps:
+            lines.append("- Source gaps:")
+            for gap in source_gaps:
+                lines.append(f"  - {gap}")
+        thesis = card.get("thesis_relationship")
+        if thesis:
+            lines.append(f"- 和我的逻辑关系：{thesis}")
+        validations = card.get("next_validation") or []
+        if validations:
+            lines.append("- 下周验证点：" + "；".join(str(item) for item in validations))
+        lines.append("")
+    return lines
+
+
+def _candidate_evidence_text(candidate: dict[str, Any]) -> str:
+    pieces = [
+        str(candidate.get("source_type") or "source"),
+        str(candidate.get("source_name") or ""),
+        str(candidate.get("source_date") or ""),
+    ]
+    source = " / ".join(piece for piece in pieces if piece)
+    link = candidate.get("url") or candidate.get("source_id")
+    evidence = str(candidate.get("evidence") or candidate.get("claim") or "").strip()
+    link_text = f" / {link}" if link else ""
+    return f"{source}{link_text}；{evidence}".strip("；")
 
 
 def _render_source_status(source_status: dict[str, Any]) -> list[str]:
