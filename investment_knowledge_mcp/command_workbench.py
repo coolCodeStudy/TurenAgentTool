@@ -17,6 +17,11 @@ from investment_knowledge_mcp.command_router import (
     WORKER_STATUS_COMMANDS,
 )
 
+COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
+    "Enter the private Command Workbench access token and preview again. "
+    "The token is stored only in this browser and is required for private previews and runs."
+)
+
 
 COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
     "Enter the private Command Workbench access token and preview again. "
@@ -460,6 +465,19 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
     if preview_requires_confirmation(preview) and not confirmed:
         return "Confirmation is required before running this command."
     return None
+
+
+def command_workbench_auth_error_payload() -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": "unauthorized",
+        "message": COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE,
+        "recovery": {
+            "title": "Access token required",
+            "next_action": "Enter the private access token and preview again.",
+            "storage": "Stored only in this browser localStorage key command_workbench_token.",
+        },
+    }
 
 
 def render_command_workbench_html() -> str:

@@ -359,6 +359,130 @@ UNIQUE (report_type, period_start, period_end)
 
 This section supersedes the older P1/P2 split for `AT-2026-06-28-001`. Index context, external company/event evidence, theme context, and local user-knowledge evidence are now part of the acceptance scope for Weekly Review content quality.
 
+## 2026-06-30 Holder-Level Attribution Update
+
+This section implements the P1 follow-up tracked by `AT-2026-06-30-001`. Weekly Review V1 was accepted by the user on 2026-06-29, but the contributor/laggard rows are still too shallow when a large holding moves. The next implementation pass adds a structured `holder_attribution[]` field that explains top holding moves with source-aware cause candidates instead of generic P/L copy.
+
+### Scope
+
+P1 holder-level attribution covers:
+
+- Top 3 positive contributors from `highlights[]`.
+- Top 3 negative contributors from `blowups[]`.
+- Any additional material current holding marked as core, high volatility, or needs research by the holdings table when it is not already covered.
+
+The context remains provider-fed. P1 does not add live Xueqiu, Twitter/X, forum, or login-gated social scraping. Rumor, market-essay, and cost-driver material may enter only when supplied by an approved provider, cached artifact, fixture, manual source input, or existing structured `event_summary[]` / `knowledge_evidence[]` rows.
+
+### Context Contract
+
+`build_weekly_review_context()` now returns:
+
+```python
+{
+    "holder_attribution": [
+        {
+            "code": "HK.02476",
+            "name": "胜宏科技",
+            "currency": "HKD",
+            "weekly_pl": -6920.0,
+            "movement": "持仓未变",
+            "position_confidence": "高",
+            "attribution_verdict": "mixed / single_stock_event_watch + fundamentals_cost_watch",
+            "dominant_lens": "mixed",
+            "confidence": "rumor_watch|low|medium|high",
+            "thesis_impact": "needs_research|challenges_thesis|supports_thesis|neutral_noise",
+            "cause_candidates": [
+                {
+                    "lens": "single_stock_event",
+                    "title": "Q2 performance miss rumor or market essay discussion",
+                    "claim": "Unverified market discussion may be one thing traders are watching.",
+                    "source_type": "social_rumor",
+                    "source_name": "manual_fixture_or_provider_source",
+                    "source_date": "2026-06-30",
+                    "url": "https://...",
+                    "confidence": "rumor_watch",
+                    "thesis_impact": "needs_research",
+                    "evidence": "...",
+                    "next_validation": "Check company announcement, earnings guidance, and dated reputable follow-up.",
+                }
+            ],
+            "evidence": [],
+            "source_gaps": [],
+            "next_validation": [],
+            "links": {
+                "highlight": None,
+                "blowup": "HK.02476",
+                "holding": "HK.02476",
+                "events": ["..."],
+                "knowledge": ["..."],
+                "trades": "HK.02476",
+            },
+        }
+    ]
+}
+```
+
+The builder links attribution cards to existing `highlights[]`, `blowups[]`, `holdings_table[]`, `event_summary[]`, `index_summary[]`, `knowledge_evidence[]`, and trade summaries by `code` / linked ticker / theme where available.
+
+### Source Classification And Confidence
+
+Attribution source classification is explicit:
+
+| Input source | Normalized type | Confidence ceiling | Handling |
+| --- | --- | --- | --- |
+| Official announcement, filing, earnings call, audited report | `official` | `high` | Can support a high-confidence cause when dated and ticker-linked. |
+| Reputable financial news, market data news, dated industry publication | `news_or_industry` | `medium` | Can support medium confidence, or high only when corroborated by official evidence in a later pass. |
+| Dated market essay or analyst-style public article | `market_essay` | `medium` when evidence-based, otherwise `low` | Render as a candidate and separate facts from opinion where supplied. |
+| Xueqiu, Twitter/X, forums, reposted screenshots, unsourced rumor | `social_rumor` | `rumor_watch` | Must be labeled unverified and must not be rewritten as fact. |
+| Local confirmed/candidate user insight or stock/sector knowledge | `user_knowledge` | stored-status dependent, implemented as `medium` for confirmed/local knowledge and `low` for candidate knowledge | Used to explain thesis relationship, not to prove an external cause. |
+
+Rumor/social rules are enforced in code:
+
+- `social_rumor` always maps to `confidence=rumor_watch`.
+- Rumor-only cards use `thesis_impact=needs_research`.
+- Rumor claims are rendered as "market may be watching" / "unverified" candidates, never as confirmed causes.
+- Rumor candidates are not written to formal user insights.
+
+### Attribution Lenses
+
+Cause candidates use these lenses:
+
+- `market_benchmark`: broad index move for the holding market.
+- `theme_sector`: detected theme / sector evidence from local knowledge or theme news.
+- `single_stock_event`: dated ticker-linked event, announcement, news, essay, or rumor.
+- `fundamentals_cost_drivers`: revenue/order/margin/upstream cost evidence such as copper, laminate, fiberglass, PCB supply-chain cost pressure, utilization, pricing, FX, or rates.
+- `position_trade_behavior`: unchanged/increased/reduced/new/closed position and trade summary facts.
+- `user_thesis_knowledge`: stored stock/sector/user knowledge and whether the week challenges or supports it.
+
+If no usable external cause evidence exists, the card still renders with observed position/trade facts plus a transparent `source_gaps[]` state and concrete validation steps.
+
+### Rendering
+
+Markdown renders a `## 7. 持仓归因卡` section after the holdings table. Each card includes weekly impact, position confidence, attribution verdict, cause candidates, evidence/source/date, confidence, thesis impact, and next validation.
+
+The Web surface renders the same `holder_attribution[]` as compact expandable cards after the holdings table. Cards expose confidence badges, source labels, evidence links/source ids, thesis impact, next validation, and source gaps. Web copy must not expose raw provider exceptions, table names, stack traces, or prompts.
+
+### Traceability Matrix
+
+| Product requirement | Implementation target | Verification |
+| --- | --- | --- |
+| Structured `holder_attribution[]` linked to existing Weekly Review context | `investment_knowledge_mcp/weekly_review.py` builder after source evidence is loaded | Fixture assertions for links and coverage |
+| Cause candidates with verdict, evidence/source/date, confidence, thesis impact, next validation | Attribution candidate builder and Markdown/Web renderers | `HK.02476` fixture and Markdown/Web rendering assertions |
+| Lenses for market, theme, single-stock, fundamentals/cost, position/trade, user thesis | Candidate builder helper functions | Cross-lens fixture plus source-missing fallback |
+| Source classification for official/news/essay/rumor/user knowledge | Source normalization helpers | Source-label safety fixture |
+| Rumor capped at `rumor_watch` and not laundered as fact | Source confidence ceiling and copy helpers | Rumor fixture checks |
+| No live Xueqiu scraping in P1 | No new scraping provider added | Code review and fixture-only tests |
+
+### Verification Plan
+
+- `python3 -m py_compile investment_knowledge_mcp/weekly_review.py investment_knowledge_mcp/weekly_review_web.py`
+- `python3 -m unittest tests.test_weekly_review_holder_attribution`
+- Fixture checks for `HK.02476` / Shenghong Technology with unchanged position, negative weekly attribution, supplied Q2 miss rumor/market-essay source, and supplied upstream cost-inflation source.
+- Provider-missing fallback check: same holding without usable events renders source gaps and next validation without invented causes.
+- Source-label safety check: `social_rumor` remains `rumor_watch`; `news_or_industry` cost-driver evidence remains separate and higher confidence than rumor.
+- `git diff --check`
+- `python3 scripts/audit_delivery_state.py --feature "Weekly review generator"`
+
 ### Provider Set And Schemas
 
 The first implementation pass uses a bounded provider set:
