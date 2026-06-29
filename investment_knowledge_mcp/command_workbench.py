@@ -17,6 +17,11 @@ from investment_knowledge_mcp.command_router import (
     WORKER_STATUS_COMMANDS,
 )
 
+COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
+    "Enter the private Command Workbench access token and preview again. "
+    "The token is stored only in this browser and is required for private previews and runs."
+)
+
 
 @dataclass(frozen=True)
 class CommandAction:
@@ -443,6 +448,19 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
     return None
 
 
+def command_workbench_auth_error_payload() -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": "unauthorized",
+        "message": COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE,
+        "recovery": {
+            "title": "Access token required",
+            "next_action": "Enter the private access token and preview again.",
+            "storage": "Stored only in this browser localStorage key command_workbench_token.",
+        },
+    }
+
+
 def render_command_workbench_html() -> str:
     return """<!doctype html>
 <html lang="en">
@@ -681,9 +699,10 @@ def render_command_workbench_html() -> str:
       <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
       <div class="input-row">
         <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
-        <input id="api-token" type="password" autocomplete="off" placeholder="Access token">
+        <input id="api-token" type="password" autocomplete="off" placeholder="Private access token" aria-describedby="token-help">
         <button id="parse" class="primary">Preview</button>
       </div>
+      <p id="token-help" class="notice">Private previews and runs require the Command Workbench access token. It is stored only in this browser under localStorage key <code>command_workbench_token</code>.</p>
       <section id="preview-section">
         <h2>Parsed Preview</h2>
         <div id="preview"><div class="notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
@@ -782,7 +801,12 @@ def render_command_workbench_html() -> str:
         body: JSON.stringify(payload)
       });
       const data = await response.json();
-      if (!response.ok && !data.preview) throw new Error(data.error || "Request failed");
+      if (!response.ok && !data.preview) {
+        const error = new Error(recoveryMessage(response, data));
+        error.status = response.status;
+        error.payload = data;
+        throw error;
+      }
       return data;
     }
 
@@ -887,7 +911,7 @@ def render_command_workbench_html() -> str:
       const status = data.ok ? `<span class="ok">success</span>` : `<span class="bad">failed</span>`;
       const event = data.event_id ? `Event #${data.event_id}` : "No event id";
       const exact = data.executed_command || (data.preview && data.preview.exact_command) || "";
-      const message = data.message || data.error || "";
+      const message = resultMessage(data);
       $("#result").innerHTML = `
         <div><span class="label">Status</span>${status} · ${escapeHtml(event)}</div>
         <div><span class="label">Executed command</span><code>${escapeHtml(exact)}</code></div>
@@ -930,6 +954,19 @@ def render_command_workbench_html() -> str:
     function authHeaders() {
       const token = $("#api-token").value.trim();
       return token ? { "Authorization": `Bearer ${token}` } : {};
+    }
+    function recoveryMessage(response, data) {
+      if (response.status === 401) {
+        return data.message || "Enter the private Command Workbench access token and preview again. The token is stored only in this browser and is required for private previews and runs.";
+      }
+      return data.message || data.error || "Request failed";
+    }
+    function resultMessage(data) {
+      if (data.message) return data.message;
+      if (data.error === "unauthorized" || data.error === "access_token_required") {
+        return "Enter the private Command Workbench access token and preview again. The token is stored only in this browser and is required for private previews and runs.";
+      }
+      return data.error || "";
     }
     function persistToken() {
       const token = $("#api-token").value.trim();

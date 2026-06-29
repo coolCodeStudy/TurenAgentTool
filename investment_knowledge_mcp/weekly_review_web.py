@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.command_workbench import (
+    command_workbench_auth_error_payload,
     execution_blocker,
     list_workbench_actions,
     parse_workbench_command,
@@ -329,7 +330,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         if not config.command_api_token and not config.weekly_review_web_token:
             self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "command workbench token is not configured"})
             return False
-        self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+        self._write_json(HTTPStatus.UNAUTHORIZED, command_workbench_auth_error_payload())
         return False
 
     def _authorized(self) -> bool:
