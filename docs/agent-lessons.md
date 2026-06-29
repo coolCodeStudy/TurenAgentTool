@@ -45,6 +45,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - `COMMAND_API_TOKEN` is required only when running the HTTP command API.
 - Use strong tokens for command-api. Do not write temporary tokens, secrets, or credentials into docs, commits, logs, or summaries.
 - If HTTP auth or gateway integration is not part of the task, prefer CLI/MCP verification over command-api verification.
+- For browser acceptance tests that enter secrets into password fields, do not preserve raw DOM snapshots as evidence; DOM tooling can expose input values even when screenshots visually mask them. Use sanitized structured checks and screenshots with secret fields cleared or masked.
 
 ## Git Trust Boundary
 
