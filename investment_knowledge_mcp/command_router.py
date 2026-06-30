@@ -391,6 +391,15 @@ def handle_command(
         symbol, market = stock_inspect_match.groups()
         return _handle_stock_decision_card(symbol=symbol, market=market)
 
+    stock_bootstrap_match = re.fullmatch(
+        r"(?:创建股票档案|初始化股票|initialize stock profile)\s+(\S+)\s+(\S+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if stock_bootstrap_match:
+        symbol, market = stock_bootstrap_match.groups()
+        return _handle_bootstrap_stock_profile(symbol=symbol, market=market)
+
     decision_match = re.fullmatch(r"(?:决策|decision)\s+(.+)", cleaned, flags=re.IGNORECASE)
     if decision_match:
         target = _parse_stock_target(decision_match.group(1))
@@ -737,6 +746,11 @@ def is_research_write_command(command: str) -> bool:
     return bool(
         normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
+        or re.fullmatch(
+            r"(?:创建股票档案|初始化股票|initialize stock profile)\s+\S+\s+\S+",
+            normalized,
+            flags=re.IGNORECASE,
+        )
         or _match_research_job_requeue_limit(normalized) is not None
         or re.fullmatch(r"(?:创建研究任务|create research job)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
         or re.fullmatch(r"(?:取消研究任务|停止研究任务|cancel research job)\s+#?\d+", normalized, flags=re.IGNORECASE)
@@ -827,6 +841,33 @@ def _handle_stock_decision_card(symbol: str, market: str) -> CommandResult:
         return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
     card = build_stock_decision_card(context, latest_research_job=_latest_research_job(symbol, market))
     return CommandResult(ok=True, message=render_stock_decision_card(card))
+
+
+def _handle_bootstrap_stock_profile(symbol: str, market: str) -> CommandResult:
+    normalized_symbol = symbol.strip().upper()
+    normalized_market = market.strip().upper()
+    if not normalized_symbol or not normalized_market:
+        return CommandResult(ok=False, message="创建股票档案需要股票代码和市场，例如：创建股票档案 MSTR US")
+
+    stock = repository.upsert_stock_profile(
+        symbol=normalized_symbol,
+        market=normalized_market,
+        name=f"{normalized_market}.{normalized_symbol}",
+        core_business=(
+            "Minimal profile initialized from Command Workbench. "
+            "Run a research job or add facts before treating analysis as complete."
+        ),
+        stock_character="Needs research.",
+        notable_history="Initialized by Command Workbench missing-stock recovery.",
+    )
+    return CommandResult(
+        ok=True,
+        message=(
+            f"已创建最小股票档案：{stock['market']}.{stock['symbol']}。\n"
+            f"下一步可以重新预览并运行：决策 {stock['market']}.{stock['symbol']}。\n"
+            "这个档案只解决可操作入口，不代表已经完成公司基本面研究。"
+        ),
+    )
 
 
 def _latest_research_job(symbol: str, market: str) -> dict[str, Any] | None:
@@ -1963,6 +2004,8 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     if symbol_market_match:
         symbol, market = symbol_market_match.groups()
         return symbol.upper(), market.upper()
+    if re.fullmatch(r"[A-Z]{1,5}", cleaned):
+        return cleaned.upper(), "US"
     return None
 
 

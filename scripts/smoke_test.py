@@ -339,6 +339,8 @@ def main() -> None:
                 fields={"stock": "Smoke Test Stock"},
                 allow_llm=False,
             )
+            workbench_missing_symbol = parse_workbench_command("决策 TSTZZ", allow_llm=False)
+            workbench_bootstrap = parse_workbench_command("创建股票档案 TSTZZ US", allow_llm=False)
             workbench_unknown = parse_workbench_command("乱买英特尔", allow_llm=False)
             workbench_html = render_command_workbench_html()
 
@@ -433,6 +435,12 @@ def main() -> None:
         assert workbench_form["exact_command"] == f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}"
         assert workbench_research_job["status"] == "parsed"
         assert workbench_research_job["confirmation_required"]
+        assert workbench_missing_symbol["status"] == "parsed"
+        assert workbench_missing_symbol["action_id"] == "bootstrap_stock_profile"
+        assert workbench_missing_symbol["exact_command"] == "创建股票档案 TSTZZ US"
+        assert workbench_missing_symbol["confirmation_required"]
+        assert workbench_bootstrap["status"] == "parsed"
+        assert workbench_bootstrap["exact_command"] == "创建股票档案 TSTZZ US"
         assert workbench_unknown["status"] == "unsupported"
         assert "Command Workbench" in workbench_html
         assert router_insight_result.ok

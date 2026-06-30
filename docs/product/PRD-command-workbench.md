@@ -580,6 +580,7 @@ Quality metrics:
 8. Access token input remains separate from command history.
 9. Existing exact commands still work for advanced users.
 10. No unsupported free text reaches command execution.
+11. A valid market-qualified or uppercase US stock symbol that is not yet in stock profiles, such as `US.MSTR` or `MSTR`, does not dead-end as an unknown command. The workbench offers a confirmed stock-profile initialization path, then lets the user preview the decision command again.
 
 ## 18. Open Questions
 

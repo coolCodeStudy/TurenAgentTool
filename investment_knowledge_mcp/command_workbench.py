@@ -23,12 +23,6 @@ COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
 )
 
 
-COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
-    "Enter the private Command Workbench access token and preview again. "
-    "The token is stored only in this browser and is required for private previews and runs."
-)
-
-
 def command_workbench_auth_error_payload() -> dict[str, Any]:
     return {
         "ok": False,
@@ -169,6 +163,22 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=(),
         expected_output="Recovery message explaining that decision history is not available yet.",
         supports_execution=False,
+    ),
+    "bootstrap_stock_profile": CommandAction(
+        id="bootstrap_stock_profile",
+        action_family="Decision",
+        label="Initialize stock profile",
+        description="Create a minimal stock profile when a valid symbol is not in the knowledge base yet.",
+        aliases=("创建股票档案", "初始化股票", "initialize stock profile"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="创建股票档案 {symbol} {market}",
+        safety_level="writes_durable_record",
+        confirmation_required=True,
+        result_type="stock_profile_bootstrap",
+        side_effects="Creates a minimal stock profile row. Does not trade and does not invent analysis facts.",
+        data_sources=("stock profile",),
+        expected_output="A minimal stock profile is created so decision/research commands can continue.",
     ),
     "portfolio_positions": CommandAction(
         id="portfolio_positions",
@@ -465,19 +475,6 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
     if preview_requires_confirmation(preview) and not confirmed:
         return "Confirmation is required before running this command."
     return None
-
-
-def command_workbench_auth_error_payload() -> dict[str, Any]:
-    return {
-        "ok": False,
-        "error": "unauthorized",
-        "message": COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE,
-        "recovery": {
-            "title": "Access token required",
-            "next_action": "Enter the private access token and preview again.",
-            "storage": "Stored only in this browser localStorage key command_workbench_token.",
-        },
-    }
 
 
 def render_command_workbench_html() -> str:
@@ -1100,6 +1097,26 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    bootstrap_target = _match_first(
+        text,
+        [
+            r"^创建股票档案\s+(.+)$",
+            r"^初始化股票\s+(.+)$",
+            r"^initialize stock profile\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if bootstrap_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "bootstrap_stock_profile",
+                "deterministic_alias",
+                0.98,
+                fields={"stock": bootstrap_target},
+            )
+        )
+
     decision_target = _match_first(
         text,
         [
@@ -1199,6 +1216,24 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
                 )
             )
 
+    bootstrap_exact = _match_first(
+        text,
+        [r"^(?:创建股票档案|初始化股票|initialize stock profile)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if bootstrap_exact:
+        parsed = _parse_stock_target(bootstrap_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="bootstrap_stock_profile",
+                    fields={"stock": bootstrap_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
     simple_exact = {
         "本周复盘": "weekly_current",
         "weekly review": "weekly_current",
@@ -1257,11 +1292,41 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
         if not stock_query:
             status = "needs_field"
             recovery_message = "Choose a stock target before running this action."
+        elif action.id == "bootstrap_stock_profile":
+            target = _symbol_candidate_from_query(stock_query)
+            if target is None:
+                status = "needs_entity"
+                recovery_message = (
+                    "Enter a market-qualified symbol such as US.MSTR, MSTR US, HK.09988, or 000660 KR "
+                    "before initializing a stock profile."
+                )
+            else:
+                confidence = min(confidence, float(target.get("confidence") or confidence))
         else:
             candidates = resolve_stock_candidates(stock_query)
             if not candidates:
+                bootstrap_target = _symbol_candidate_from_query(stock_query)
+                if bootstrap_target is not None:
+                    return _preview_from_action(
+                        ParseContext(
+                            raw_input=context.raw_input,
+                            action_id="bootstrap_stock_profile",
+                            fields={"stock": f"{bootstrap_target['market']}.{bootstrap_target['symbol']}"},
+                            selected_target=bootstrap_target,
+                            parse_source=context.parse_source,
+                            confidence=min(confidence, float(bootstrap_target.get("confidence") or confidence)),
+                            recovery_message=(
+                                f'I recognized {action.label}, but {bootstrap_target["market"]}.'
+                                f'{bootstrap_target["symbol"]} is not in the stock profile database yet. '
+                                "Initialize a minimal stock profile, then preview the decision command again."
+                            ),
+                        )
+                    )
                 status = "needs_entity"
-                recovery_message = f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". Enter a stock already in the knowledge base, such as US.INTC or 000660 KR.'
+                recovery_message = (
+                    f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
+                    "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                )
             elif len(candidates) == 1:
                 target = candidates[0]
                 confidence = min(confidence, float(target.get("confidence") or confidence))
@@ -1345,6 +1410,20 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
         pass
 
     return _filter_profiled_candidates(_dedupe_candidates(candidates))
+
+
+def _symbol_candidate_from_query(query: str) -> dict[str, Any] | None:
+    parsed = _parse_stock_target(query)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    return _candidate(
+        symbol=symbol,
+        market=market,
+        name=f"{market.upper()}.{symbol.upper()}",
+        confidence=1.0,
+        source="symbol",
+    )
 
 
 def _filter_profiled_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1487,6 +1566,8 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
         symbol, market = symbol_market_match.groups()
         if re.fullmatch(r"[A-Za-z]{1,5}", market):
             return symbol.upper(), market.upper()
+    if re.fullmatch(r"[A-Z]{1,5}", cleaned):
+        return cleaned.upper(), "US"
     return None
 
 
