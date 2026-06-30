@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp import daily_market_brief as dmb
-from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot
+from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
 
 
 class FakeDailyBriefRepository:
@@ -145,6 +145,53 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertTrue(latest.ok)
         self.assertEqual(specific.message, generated.markdown)
         self.assertIn("每日市场简报｜港股", latest.message)
+
+    def test_command_fixture_generation_uses_fixture_indexes(self) -> None:
+        generated = command_router.handle_command("生成每日市场简报 CN 2026-06-30 fixture")
+        rerun = command_router.handle_command("重跑每日市场简报 CN 2026-06-30 fixture")
+
+        self.assertTrue(generated.ok)
+        self.assertTrue(rerun.ok)
+        self.assertIn("Shanghai Composite", generated.message)
+        self.assertIn("Shenzhen Component", generated.message)
+        self.assertIn("CSI 300", generated.message)
+        self.assertIn("ChiNext Index", generated.message)
+        self.assertIn("STAR 50", generated.message)
+        self.assertNotIn("暂无可用核心指数数据", generated.message)
+        self.assertIn("review_reports #1", generated.message)
+        self.assertIn("review_reports #1", rerun.message)
+
+    def test_cross_market_fixture_generation_coexists_for_same_date(self) -> None:
+        for market, required_index in (
+            ("CN", "Shanghai Composite"),
+            ("HK", "Hang Seng Index"),
+            ("US", "S&P 500"),
+        ):
+            result = command_router.handle_command(f"生成每日市场简报 {market} 2026-06-30 fixture")
+            self.assertTrue(result.ok)
+            self.assertIn(required_index, result.message)
+
+        self.assertEqual(len(self.fake_repository.rows), 3)
+        self.assertIn(("CN", "2026-06-30"), self.fake_repository.rows)
+        self.assertIn(("HK", "2026-06-30"), self.fake_repository.rows)
+        self.assertIn(("US", "2026-06-30"), self.fake_repository.rows)
+
+    def test_degraded_index_output_uses_product_language(self) -> None:
+        def blocked_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+            raise MarketDataProviderError("Yahoo chart fallback returned no usable bars: CERTIFICATE_VERIFY_FAILED")
+
+        result = dmb.build_daily_market_brief(
+            market="HK",
+            market_date=date(2026, 6, 30),
+            save=False,
+            market_bar_loader=blocked_loader,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+        )
+
+        self.assertIn(dmb.INDEX_DEGRADED_COPY, result.markdown)
+        self.assertNotIn("Yahoo chart fallback", result.markdown)
+        self.assertNotIn("CERTIFICATE_VERIFY_FAILED", result.markdown)
+        self.assertIn("核心指数：数据源暂不可用", result.markdown)
 
     def test_scheduler_session_date_respects_market_close_timezone(self) -> None:
         before_us_close = datetime(2026, 6, 30, 12, 0, tzinfo=ZoneInfo("Asia/Singapore"))

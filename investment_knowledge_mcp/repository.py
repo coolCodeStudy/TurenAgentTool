@@ -1047,6 +1047,8 @@ def upsert_daily_market_brief_report(
     normalized_market = market.strip().upper()
     with transaction() as conn:
         existing = _find_daily_market_brief_row(conn, market=normalized_market, market_date=market_date)
+        report_key = _daily_market_brief_report_key(normalized_market, market_date)
+        has_report_key = _review_reports_has_column(conn, "report_key")
         values = (
             market_date,
             Jsonb(context or {}),
@@ -1058,6 +1060,27 @@ def upsert_daily_market_brief_report(
             Jsonb(story or {}),
         )
         if existing:
+            if has_report_key:
+                row = conn.execute(
+                    """
+                    UPDATE review_reports
+                    SET
+                      report_date = %s,
+                      portfolio_snapshot = %s,
+                      summary = %s,
+                      report_type = %s,
+                      period_start = %s,
+                      period_end = %s,
+                      source_status = %s,
+                      story = %s,
+                      report_key = %s,
+                      refreshed_at = now()
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (*values, report_key, existing["id"]),
+                ).fetchone()
+                return to_jsonable(row)
             row = conn.execute(
                 """
                 UPDATE review_reports
@@ -1075,6 +1098,20 @@ def upsert_daily_market_brief_report(
                 RETURNING *
                 """,
                 (*values, existing["id"]),
+            ).fetchone()
+            return to_jsonable(row)
+
+        if has_report_key:
+            row = conn.execute(
+                """
+                INSERT INTO review_reports (
+                  report_date, portfolio_snapshot, summary, report_type, period_start,
+                  period_end, source_status, story, generated_at, report_key
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), %s)
+                RETURNING *
+                """,
+                (*values, report_key),
             ).fetchone()
             return to_jsonable(row)
 
@@ -1129,6 +1166,26 @@ def _find_daily_market_brief_row(conn: Connection, *, market: str, market_date: 
         """,
         (market_date, market),
     ).fetchone()
+
+
+def _daily_market_brief_report_key(market: str, market_date: str) -> str:
+    normalized_market = market.strip().upper()
+    return f"daily_market_brief:{normalized_market}:{market_date}:{market_date}"
+
+
+def _review_reports_has_column(conn: Connection, column_name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = 'review_reports'
+            AND column_name = %s
+        ) AS has_column
+        """,
+        (column_name,),
+    ).fetchone()
+    return bool(row and row["has_column"])
 
 
 def _find_review_report_row(

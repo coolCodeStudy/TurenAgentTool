@@ -34,6 +34,8 @@ P0 reuses `review_reports` without a migration. Rows use:
 
 Repository helpers find existing rows by `report_type = daily_market_brief`, `report_date`, and `portfolio_snapshot->'market'->>'code'`. Reruns update the existing market/date row instead of creating another confusing report.
 
+Acceptance-fix update: databases that still have the legacy `review_reports.report_key` column or `idx_review_reports_report_key` unique index are handled safely. `db/schema.sql` rewrites existing daily-market-brief keys to `daily_market_brief:<market>:<start>:<end>`, gives duplicate legacy rows a non-conflicting suffix, drops the stale unique index, and adds a non-unique market/date lookup index. `repository.upsert_daily_market_brief_report` also writes the market-aware `report_key` when that legacy column exists, so CN/HK/US same-date briefs can coexist and same-market reruns remain idempotent.
+
 ## Provider Strategy
 
 P0 does not add a paid provider dependency.
@@ -70,23 +72,23 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 - `python3 scripts/audit_delivery_state.py --feature "Daily market brief"`
 - `.venv/bin/python -m unittest tests.test_daily_market_brief`
 - `.venv/bin/python -m py_compile investment_knowledge_mcp/daily_market_brief.py investment_knowledge_mcp/command_router.py investment_knowledge_mcp/repository.py investment_knowledge_mcp/market_data_provider.py`
-- Optional local command smoke with fixture generation if a database is available.
+- Local command smoke with `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py ...` covering CN/HK/US fixture generation, specific/latest retrieval, same-market rerun idempotency, cross-market same-date coexistence, weekend/no-session behavior, and forced degraded product-language output.
 
 ## Implementation Traceability
 
 | PRD scope / acceptance criterion | Status | Evidence | Notes |
 |---|---|---|---|
-| CN brief includes required P0 indexes, sectors/industries, gainers, flow/degraded state, volume baselines, source labels, date, timestamp | verified | `investment_knowledge_mcp/daily_market_brief.py`; `.venv/bin/python -m unittest tests.test_daily_market_brief` | CN fixture verifies full rendered shape and idempotent persistence. Live sectors/gainers/flow degrade until a configured full-market provider exists. |
-| HK brief includes required P0 indexes, sectors/industries when supported, gainers, flow/degraded state, turnover baselines | implemented | `investment_knowledge_mcp/daily_market_brief.py`; command retrieval test uses HK saved report | Same provider limitation as CN for live sectors/gainers; fixture path verifies retrieval shape. |
-| US brief includes required P0 indexes, sectors/industries when supported, common-stock gainers, explicit flow degraded state, volume baselines | verified | `tests/test_daily_market_brief.py::test_live_us_defaults_to_explicit_capital_flow_degraded_state` | US flow defaults to unsupported per PRD; sectors/gainers degrade without a configured full-market provider. |
+| CN brief includes required P0 indexes, sectors/industries, gainers, flow/degraded state, volume baselines, source labels, date, timestamp | verified | `tests.test_daily_market_brief`; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-30 fixture` | CN command fixture now uses deterministic index bars and renders all five P0 indexes; same-market rerun reused `review_reports #130`. Live sectors/gainers/flow degrade until a configured full-market provider exists. |
+| HK brief includes required P0 indexes, sectors/industries when supported, gainers, flow/degraded state, turnover baselines | verified | `tests.test_daily_market_brief`; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 HK 2026-06-30 fixture` | HK command fixture renders all three P0 indexes and saved beside CN as `review_reports #131`. Same provider limitation as CN for live sectors/gainers. |
+| US brief includes required P0 indexes, sectors/industries when supported, common-stock gainers, explicit flow degraded state, volume baselines | verified | `tests.test_daily_market_brief`; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 US 2026-06-30 fixture` | US command fixture renders all four P0 indexes and saved beside CN/HK as `review_reports #132`; US flow remains explicit degraded state per PRD. |
 | Independent market scheduler and rerun semantics | verified | `run_daily_market_brief_scheduler_forever`, `run_daily_market_brief_once`; scheduler timezone unit test | Scheduler is ready as a module entrypoint; cloud service wiring is out of P0. |
-| Idempotent storage by report type, market, market date | verified | `repository.upsert_daily_market_brief_report`; fake-repository idempotency test | Uses JSONB market key in `portfolio_snapshot`, no DB migration. |
-| Missing provider coverage visible in user language | verified | Renderer and degraded-state unit test | Source status is explicit for sectors/gainers/flow. |
+| Idempotent storage by report type, market, market date | verified | `repository.upsert_daily_market_brief_report`; `db/schema.sql`; DB smoke on `POSTGRES_PORT=55433` | Existing rows show market-aware keys: CN `#130`, HK `#131`, and US `#132` for `2026-06-30`; weekend CN `#133` also saved. |
+| Missing provider coverage visible in user language | verified | Renderer and degraded-state unit test; forced command-router provider failure | Source status is explicit for sectors/gainers/flow; raw provider/SSL/internal exception text is not rendered in user-facing Markdown. |
 | Command surface retrieves latest and specified market/date | verified | `command_router.py`; command retrieval unit test | HTTP command API is not required for local verification. |
-| Stored report includes structured context and source status | implemented | `repository.upsert_daily_market_brief_report` | Context is stored in `portfolio_snapshot`; status in `source_status`. Full DB smoke awaits an available local/cloud database. |
+| Stored report includes structured context and source status | verified | `repository.upsert_daily_market_brief_report`; DB smoke on `POSTGRES_PORT=55433` | Context is stored in `portfolio_snapshot`; status in `source_status`; saved rows were retrieved through the command surface. |
 | Narrative is understandable and has no buy/sell recommendations | verified | Markdown assertions in `tests/test_daily_market_brief.py` | Renderer describes market breadth/leadership/liquidity/data gaps only. |
-| Holiday/no-session runs produce explicit skipped/no-session state | verified | Weekend no-session unit test | Full holiday calendars remain a future provider enhancement. |
-| Independent acceptance testing before user acceptance | in_progress | `AT-2026-06-30-002` moved to `needs_retest` | Acceptance Testing should run the command surface on this branch or after integration/deploy; user acceptance remains pending. |
+| Holiday/no-session runs produce explicit skipped/no-session state | verified | Weekend no-session unit test; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-27 fixture` | Weekend command saved `review_reports #133` with explicit no-session copy. Full holiday calendars remain a future provider enhancement. |
+| Independent acceptance testing before user acceptance | needs_retest | `AT-2026-06-30-002` moved to `needs_retest` after the acceptance-failure fix and local command verification | Acceptance Testing should rerun the command surface on this branch or after coordinator integration; user acceptance remains pending. |
 
 ## Risks And Blockers
 
