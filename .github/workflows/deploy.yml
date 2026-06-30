@@ -234,7 +234,7 @@ jobs:
                 curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
               fi
               if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-                sudo bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
+                sudo INVESTMENT_DIR="$APP_DIR" bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
                 systemctl status investment-research-agent-worker.service --no-pager || true
               fi
             else
@@ -546,7 +546,7 @@ jobs:
               curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
             fi
             if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-              sudo bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
+              sudo INVESTMENT_DIR="$APP_DIR" bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
               systemctl status investment-research-agent-worker.service --no-pager || true
             fi
 
