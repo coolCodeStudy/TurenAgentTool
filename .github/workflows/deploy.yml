@@ -14,6 +14,10 @@ on:
           - auto
           - quick
           - full
+      deploy_reason:
+        description: "Required when manually selecting full; explain the Docker/dependency/Compose reason."
+        required: false
+        type: string
 
 concurrency:
   group: production-deploy
@@ -34,14 +38,26 @@ jobs:
 
       - name: Pick deployment mode
         id: pick
+        env:
+          REQUESTED_DEPLOY_MODE: ${{ inputs.deploy_mode || 'auto' }}
+          REQUESTED_DEPLOY_REASON: ${{ inputs.deploy_reason || '' }}
         run: |
           set -e
 
-          requested="${{ inputs.deploy_mode || 'auto' }}"
+          requested="$REQUESTED_DEPLOY_MODE"
+          deploy_reason="$REQUESTED_DEPLOY_REASON"
+          trimmed_reason="$(printf '%s' "$deploy_reason" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           if [ "$requested" = "quick" ] || [ "$requested" = "full" ]; then
+            if [ "$requested" = "full" ] && [ -z "$trimmed_reason" ]; then
+              echo "::error::Manual full deploy requires deploy_reason. Use full only for Dockerfile, requirements.txt, docker-compose.prod.yml, image/build/dependency, or production service-structure changes."
+              exit 1
+            fi
             echo "deploy_mode=$requested" >> "$GITHUB_OUTPUT"
             echo "changed_files=manual-$requested" >> "$GITHUB_OUTPUT"
             echo "Manual deployment mode: $requested"
+            if [ -n "$trimmed_reason" ]; then
+              echo "Manual deploy reason: $trimmed_reason"
+            fi
             exit 0
           fi
 
@@ -63,27 +79,8 @@ jobs:
           changed_file_list="$(mktemp)"
           printf '%s\n' "$changed_files" > "$changed_file_list"
 
-          mode="quick"
-          while IFS= read -r file; do
-            file="${file#"${file%%[![:space:]]*}"}"
-            file="${file%"${file##*[![:space:]]}"}"
-            [ -z "$file" ] && continue
-            echo "Classifying changed file: $file"
-            case "$file" in
-              docs/*|*.md|db/*|investment_knowledge_mcp/*|investment_knowledge_mcp/**/*|scripts/*.py|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
-                echo "  -> quick-compatible"
-                ;;
-              *)
-                echo "  -> requires full deploy"
-                mode="full"
-                break
-                ;;
-            esac
-          done < "$changed_file_list"
-
-          if [ -z "$changed_files" ]; then
-            mode="full"
-          fi
+          mode="$(python3 scripts/classify_deploy_mode.py --from-file "$changed_file_list" --mode-only)"
+          python3 scripts/classify_deploy_mode.py --from-file "$changed_file_list"
 
           {
             echo "deploy_mode=$mode"
@@ -91,8 +88,6 @@ jobs:
             echo "$changed_files"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-
-          echo "Selected deployment mode: $mode"
 
   quick_deploy:
     needs: detect_changes

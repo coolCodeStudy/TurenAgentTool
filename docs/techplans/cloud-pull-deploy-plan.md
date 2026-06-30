@@ -265,7 +265,7 @@ Pull-Based Atomic Ops Deploy V2 update:
 - The daily deploy mainline is `Codex/MCP -> independent ECS Ops API -> ECS local pull deploy`.
 - The Ops control plane lives in `/opt/investment-ops` with its own venv and systemd service; it no longer reads its running script from the mutable business app directory.
 - The business app root is `/opt/investment-knowledge`; releases are staged under `/opt/investment-knowledge/releases/<sha>` and activated by switching `/opt/investment-knowledge/current`.
-- Quick deploy copies code and recreates compose services without building an image. Full deploy is reserved for dependency/image-layer changes such as `Dockerfile`, `requirements.txt`, or compose image semantics.
+- Quick deploy copies code and recreates compose services without building an image. Full deploy is reserved for dependency/image-layer or production service-structure changes such as `Dockerfile`, `requirements.txt`, or `docker-compose.prod.yml`.
 - GitHub Actions remains a secondary/rescue path. The current hosted-runner-to-ECS `:22` failure (`ssh handshake reset by peer`) is documented but no longer blocks daily releases.
 - One-time bootstrap uses Alibaba Cloud ECS Cloud Assistant Run Command to install `/opt/investment-ops`, write `/etc/investment-knowledge/ops-api.env`, and start `investment-ops-api.service`.
 

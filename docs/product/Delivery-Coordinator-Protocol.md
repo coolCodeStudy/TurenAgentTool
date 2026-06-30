@@ -173,6 +173,8 @@ Deploy Intent:
 
 The deploy request is incomplete if the affected services, verification target, or watch owner is unknown.
 
+Manual `full` deploy also requires a concrete reason tied to Docker, dependency, Compose, image-layer, environment, or production service-structure risk. Documentation-only, tests-only, and ordinary Python application changes should use `quick` unless the coordinator records specific evidence that a rebuild is required. "Just in case" is not a valid full-deploy reason.
+
 GitHub Actions production deploys use the `production-deploy` concurrency group. If another deploy is already running or queued, do not launch a second deploy channel for the same ref. Wait, record the blocker, or let the shared deploy path serialize the request.
 
 The current Ops API already has an in-process mutex and file lock for `/ops/deploy`. P0 does not add a separate deploy queue; use `Delivery-Queue.md` to record deploy intent, deploy completion, or `blocked` state. Add a dedicated Deploy Queue only if Delivery Queue becomes too noisy.
