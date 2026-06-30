@@ -1287,6 +1287,25 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     confidence = context.confidence or 0.9
 
     needs_stock = any(field.get("type") == "stock" for field in action.required_fields)
+    if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
+        resolved_target = _candidate_with_stock_profile(target)
+        if resolved_target is None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=context.raw_input,
+                    action_id="bootstrap_stock_profile",
+                    fields={"stock": f"{target['market']}.{target['symbol']}"},
+                    selected_target=target,
+                    parse_source=context.parse_source,
+                    confidence=min(confidence, float(target.get("confidence") or confidence)),
+                    recovery_message=(
+                        f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
+                        "Initialize a minimal stock profile, then preview the decision command again."
+                    ),
+                )
+            )
+        target = resolved_target
+
     if needs_stock and target is None:
         stock_query = str(fields.get("stock") or "").strip()
         if not stock_query:
@@ -1385,6 +1404,7 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
         return []
 
     candidates: list[dict[str, Any]] = []
+    alias_candidates: list[dict[str, Any]] = []
     parsed = _parse_stock_target(cleaned)
     if parsed is not None:
         symbol, market = parsed
@@ -1393,7 +1413,9 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
     alias_key = cleaned.lower()
     if alias_key in ALIAS_STOCKS:
         for item in ALIAS_STOCKS[alias_key]:
-            candidates.append(_candidate(source="alias", **item))
+            candidate = _candidate(source="alias", **item)
+            candidates.append(candidate)
+            alias_candidates.append(candidate)
 
     try:
         for row in repository.resolve_stock_reference(cleaned):
@@ -1409,7 +1431,22 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
     except Exception:
         pass
 
+    if len(alias_candidates) > 1:
+        return _dedupe_candidates(_profile_or_preserve_alias_candidates(alias_candidates, candidates))
     return _filter_profiled_candidates(_dedupe_candidates(candidates))
+
+
+def _profile_or_preserve_alias_candidates(
+    alias_candidates: list[dict[str, Any]],
+    all_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for candidate in alias_candidates:
+        merged.append(_candidate_with_stock_profile(candidate) or candidate)
+    for candidate in all_candidates:
+        if candidate.get("source") == "stock_profile":
+            merged.append(candidate)
+    return merged
 
 
 def _symbol_candidate_from_query(query: str) -> dict[str, Any] | None:
