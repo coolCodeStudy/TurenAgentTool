@@ -253,6 +253,19 @@ def main() -> None:
             confidence=0.8,
             confirmed_by_user=True,
         )
+        valuation_knowledge = add_knowledge_item(
+            target_type="stock",
+            target_id=stock["id"],
+            knowledge_type="valuation_facts",
+            content=(
+                "P0 valuation fixture: revenue=1000, net income=120, operating cash flow=180, "
+                "capex=40, cash=300, debt=100, price=20, shares outstanding=100, EBITDA=200, "
+                "revenue growth=18%, TAM=5000. The stock has AI growth and cash flow valuation context."
+            ),
+            source_id=source["id"],
+            confidence=0.9,
+            confirmed_by_user=True,
+        )
         insight = add_user_insight(
             target_type="stock",
             target_id=stock["id"],
@@ -326,7 +339,23 @@ def main() -> None:
             assert decision_alias_result.ok
             assert "Smoke Test Stock" in decision_alias_result.message
 
+            valuation_result = handle_command(
+                f"valuation {SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                output_dir=Path(tmp_dir),
+            )
+            latest_valuation_result = handle_command(
+                f"查看估值 {SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                output_dir=Path(tmp_dir),
+            )
+            assert valuation_result.ok
+            assert latest_valuation_result.ok
+            assert "估值研究卡" in valuation_result.message
+            assert "Deterministic calculations" in valuation_result.message
+            assert (Path(tmp_dir) / "valuation").exists()
+
             workbench_decision = parse_workbench_command("决策 Smoke Test Stock", allow_llm=False)
+            workbench_valuation = parse_workbench_command("估值 Smoke Test Stock", allow_llm=False)
+            workbench_valuation_methods = parse_workbench_command("估值方法", allow_llm=False)
             workbench_intel = parse_workbench_command("决策 英特尔", allow_llm=False)
             workbench_alibaba = parse_workbench_command("决策 阿里", allow_llm=False)
             workbench_form = parse_workbench_command(
@@ -416,6 +445,7 @@ def main() -> None:
 
         assert repeated_source["id"] == source["id"]
         assert repeated_knowledge["id"] == knowledge["id"]
+        assert valuation_knowledge["knowledge_type"] == "valuation_facts"
         assert repeated_insight["id"] == insight["id"]
         assert sector_insight["target_type"] == "sector"
         assert portfolio_insight["target_type"] == "portfolio"
@@ -427,6 +457,10 @@ def main() -> None:
         assert resolve_stock_reference("Smoke Test Stock")[0]["id"] == stock["id"]
         assert workbench_decision["status"] == "parsed"
         assert workbench_decision["exact_command"] == f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert workbench_valuation["status"] == "parsed"
+        assert workbench_valuation["exact_command"] == f"valuation {SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert workbench_valuation_methods["status"] == "parsed"
+        assert workbench_valuation_methods["exact_command"] == "估值方法"
         assert workbench_intel["status"] == "parsed"
         assert workbench_intel["target"]["canonical"] == "US.INTC"
         assert workbench_alibaba["status"] == "ambiguous_entity"
@@ -485,6 +519,9 @@ def main() -> None:
         assert is_query_command("复盘 2020-01-06 2020-01-12")
         assert is_query_command("查看下周节奏")
         assert is_query_command(f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}")
+        assert is_query_command(f"valuation {SMOKE_MARKET}.{SMOKE_SYMBOL}")
+        assert is_query_command(f"查看估值 {SMOKE_MARKET}.{SMOKE_SYMBOL}")
+        assert is_query_command("估值方法")
         assert _extract_time_range_text("5月收益") == "5月"
         assert _extract_time_range_text("五月份收益") == "五月份"
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
