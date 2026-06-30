@@ -79,6 +79,7 @@ MARKET_CONFIGS: dict[str, MarketConfig] = {
 }
 
 CAPITAL_FLOW_DEGRADED_COPY = "配置的数据源未提供本市场/本交易日的明确资金流指标；本简报其余部分已基于可用行情数据生成。"
+INDEX_DEGRADED_COPY = "核心指数数据源本次未返回可用行情；简报已保留其他可用部分和数据缺口提示。"
 _SCHEDULER_STATE: dict[str, Any] = {
     "started": False,
     "interval_seconds": None,
@@ -162,12 +163,13 @@ def build_daily_market_brief_context(
         indexes: list[dict[str, Any]] = []
         activity = _empty_activity(config.code)
     else:
+        index_loader = market_bar_loader or (_fixture_market_bar_loader if use_fixture else get_yahoo_market_bars)
         indexes = _load_index_rows(
             config=config,
             market_date=resolved_date,
             source_status=source_status,
             warnings=warnings,
-            market_bar_loader=market_bar_loader or get_yahoo_market_bars,
+            market_bar_loader=index_loader,
         )
         provider = activity_provider or (_fixture_activity_provider if use_fixture else _empty_activity_provider)
         activity = provider(config.code, resolved_date)
@@ -348,12 +350,12 @@ def render_daily_market_brief_markdown(context: dict[str, Any]) -> str:
         lines.append(f"- {CAPITAL_FLOW_DEGRADED_COPY}")
     lines.extend(["", "## 数据状态"])
     for key, status in (context.get("source_status") or {}).items():
-        label = status.get("status", "unknown") if isinstance(status, dict) else str(status)
-        provider = status.get("provider") if isinstance(status, dict) else None
-        message = status.get("message") if isinstance(status, dict) else None
-        provider_text = f"，provider={provider}" if provider else ""
+        label = _status_text(status)
+        provider = _safe_provider_label(status.get("provider")) if isinstance(status, dict) else None
+        message = _status_message(status) if isinstance(status, dict) else None
+        provider_text = f"，来源：{provider}" if provider else ""
         message_text = f"：{message}" if message else ""
-        lines.append(f"- {key}: {label}{provider_text}{message_text}")
+        lines.append(f"- {_source_label(key)}：{label}{provider_text}{message_text}")
     lines.append("")
     lines.append("注：本简报只描述市场结构、流动性和数据缺口，不构成买卖建议。")
     return "\n".join(lines)
@@ -377,18 +379,20 @@ def _load_index_rows(
             "status": "provider_unavailable",
             "provider": "yahoo_chart",
             "count": 0,
-            "message": str(exc),
+            "message": INDEX_DEGRADED_COPY,
+            "detail_code": "provider_unavailable",
         }
-        warnings.append(f"index provider unavailable: {exc}")
+        warnings.append(INDEX_DEGRADED_COPY)
         return []
     except Exception as exc:
         source_status["indexes"] = {
             "status": "provider_unavailable",
             "provider": "yahoo_chart",
             "count": 0,
-            "message": str(exc),
+            "message": INDEX_DEGRADED_COPY,
+            "detail_code": type(exc).__name__,
         }
-        warnings.append(f"index provider failed: {exc}")
+        warnings.append(INDEX_DEGRADED_COPY)
         return []
 
     rows: list[dict[str, Any]] = []
@@ -565,6 +569,35 @@ def _fixture_activity_provider(market: str, market_date: date) -> dict[str, Any]
     }
 
 
+def _fixture_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+    end_date = date.fromisoformat(end)
+    bars_by_code: dict[str, list[dict[str, Any]]] = {}
+    for offset, code in enumerate(codes):
+        bars: list[dict[str, Any]] = []
+        current = date.fromisoformat(start)
+        close = 1000.0 + offset * 25
+        while current <= end_date:
+            if not _is_weekend(current):
+                close += 2.5 + offset
+                bars.append(
+                    {
+                        "date": current.isoformat(),
+                        "close": close,
+                        "volume": 1_000_000 + len(bars) * 25_000 + offset * 10_000,
+                        "raw": {"provider_symbol": f"fixture:{code}"},
+                    }
+                )
+            current += timedelta(days=1)
+        bars_by_code[code] = bars
+    return MarketBarSnapshot(
+        bars_by_code=bars_by_code,
+        fetched_at=datetime.combine(end_date, time(hour=8), tzinfo=SG_TZ),
+        start=start,
+        end=end,
+        source="fixture_bars",
+    )
+
+
 def _render_index_table(indexes: list[dict[str, Any]]) -> list[str]:
     if not indexes:
         return ["- 暂无可用核心指数数据。"]
@@ -678,6 +711,60 @@ def _fmt_number(value: Any) -> str:
     if abs(number) >= 10000:
         return f"{number / 10000:.2f}万"
     return f"{number:.2f}"
+
+
+def _source_label(key: str) -> str:
+    labels = {
+        "indexes": "核心指数",
+        "sectors": "行业/板块",
+        "gainers": "个股涨幅榜",
+        "capital_flow": "资金流",
+        "session": "交易日",
+    }
+    return labels.get(key, key)
+
+
+def _status_text(status: Any) -> str:
+    value = status.get("status", "unknown") if isinstance(status, dict) else str(status)
+    labels = {
+        "ok": "可用",
+        "partial": "部分可用",
+        "missing": "暂缺",
+        "provider_unavailable": "数据源暂不可用",
+        "not_available": "未提供",
+        "no_session": "无常规交易",
+        "unknown": "状态未知",
+    }
+    return labels.get(str(value), str(value))
+
+
+def _status_message(status: dict[str, Any]) -> str | None:
+    message = status.get("message")
+    if not message:
+        return None
+    return _sanitize_user_message(str(message))
+
+
+def _sanitize_user_message(message: str) -> str:
+    blocked_fragments = (
+        "CERTIFICATE_VERIFY_FAILED",
+        "Yahoo chart fallback",
+        "Traceback",
+        "psycopg",
+        "UniqueViolation",
+    )
+    if any(fragment.lower() in message.lower() for fragment in blocked_fragments):
+        return "数据源本次未返回可用结果；简报已保留其他可用部分和数据缺口提示。"
+    return message
+
+
+def _safe_provider_label(provider: Any) -> str | None:
+    if provider is None:
+        return None
+    text = str(provider)
+    if "CERTIFICATE_VERIFY_FAILED" in text or "Traceback" in text:
+        return "configured_provider"
+    return text
 
 
 def _setup_logging() -> logging.Logger:
