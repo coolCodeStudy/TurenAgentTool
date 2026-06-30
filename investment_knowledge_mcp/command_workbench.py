@@ -1306,6 +1306,22 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             )
         target = resolved_target
 
+    if action.id == "decision_card" and target is not None and _target_needs_research(target):
+        return _preview_from_action(
+            ParseContext(
+                raw_input=context.raw_input,
+                action_id="research_create_stock_job",
+                fields={"stock": f"{target['market']}.{target['symbol']}"},
+                selected_target=target,
+                parse_source=context.parse_source,
+                confidence=min(confidence, float(target.get("confidence") or confidence)),
+                recovery_message=(
+                    f'{target["market"]}.{target["symbol"]} has only a minimal stock profile. '
+                    "Create a research job first; run the decision card again after facts are imported."
+                ),
+            )
+        )
+
     if needs_stock and target is None:
         stock_query = str(fields.get("stock") or "").strip()
         if not stock_query:
@@ -1352,6 +1368,22 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             else:
                 status = "ambiguous_entity"
                 recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
+
+    if status == "parsed" and action.id == "decision_card" and target is not None and _target_needs_research(target):
+        return _preview_from_action(
+            ParseContext(
+                raw_input=context.raw_input,
+                action_id="research_create_stock_job",
+                fields={"stock": f"{target['market']}.{target['symbol']}"},
+                selected_target=target,
+                parse_source=context.parse_source,
+                confidence=min(confidence, float(target.get("confidence") or confidence)),
+                recovery_message=(
+                    f'{target["market"]}.{target["symbol"]} has only a minimal stock profile. '
+                    "Create a research job first; run the decision card again after facts are imported."
+                ),
+            )
+        )
 
     if action.id == "service_logs":
         service = _normalize_service(str(fields.get("service") or ""))
@@ -1494,6 +1526,36 @@ def _candidate_with_stock_profile(candidate: dict[str, Any]) -> dict[str, Any] |
                 source=str(candidate.get("source") or "stock_profile"),
             )
     return None
+
+
+def _target_needs_research(target: dict[str, Any]) -> bool:
+    symbol = str(target.get("symbol") or "").strip().upper()
+    market = str(target.get("market") or "").strip().upper()
+    if not symbol or not market:
+        return False
+    try:
+        context = repository.get_stock_context(symbol=symbol, market=market)
+    except Exception:
+        return False
+    return _stock_context_needs_research(context)
+
+
+def _stock_context_needs_research(context: dict[str, Any]) -> bool:
+    stock = context.get("stock") or {}
+    if not stock:
+        return False
+    knowledge_count = len(context.get("stock_knowledge") or context.get("knowledge_items") or [])
+    source_count = len(context.get("sources") or [])
+    marker_text = " ".join(
+        str(stock.get(field) or "")
+        for field in ("core_business", "stock_character", "notable_history")
+    ).lower()
+    minimal_marker = (
+        "minimal profile initialized from command workbench" in marker_text
+        or "needs research" in marker_text
+        or "missing-stock recovery" in marker_text
+    )
+    return minimal_marker and knowledge_count == 0 and source_count == 0
 
 
 def _parse_with_llm(raw_input: str) -> dict[str, Any] | None:

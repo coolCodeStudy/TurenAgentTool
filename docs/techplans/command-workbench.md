@@ -99,6 +99,7 @@ The parser follows this order:
    - Search a small code alias map for high-value aliases from the PRD: Intel, SK Hynix, Alibaba, and the South CSOP SK Hynix 2x product.
    - Search `repository.resolve_stock_reference(...)`.
    - If a syntactically valid symbol is not present in stock profiles, return a confirmed "Initialize stock profile" action instead of executing a stale or impossible decision command.
+   - If a stock resolves but only has the minimal bootstrap profile and no imported facts/sources, return a confirmed single-stock research-job action instead of a low-information decision card.
    - Merge duplicate candidates and sort by confidence.
    - Return:
      - `parsed` for one high-confidence candidate.
@@ -235,6 +236,7 @@ Acceptance checks:
 
 - `决策 英特尔` resolves to Intel / `US.INTC` and shows a decision preview.
 - `决策 MSTR` or `决策 US.LRCX` offers a confirmed minimal stock-profile initialization path when the symbol is absent, then supports re-previewing the decision command after the profile exists.
+- `决策 MSTR` or `决策 US.LRCX` must not show a successful empty decision card when only the minimal bootstrap profile exists; it should offer a confirmed stock research job and explain that the decision card becomes useful after facts are imported.
 - `决策 阿里` returns candidate targets.
 - `本周复盘` previews/runs the weekly review command.
 - `系统状态` previews/runs as read-only.
@@ -258,3 +260,4 @@ Acceptance checks:
 - Recent/pinned actions are browser-local in V1. Server-side history can be added later if multi-device recency becomes important.
 - LLM-assisted parsing depends on `OPENAI_API_KEY`; local verification should cover deterministic behavior and the LLM-disabled fallback.
 - Missing-stock bootstrap intentionally creates only a minimal stock profile. It solves the command-entry dead end for valid symbols; richer company metadata, source facts, and research drafts remain follow-up work through the research-job/import pipeline.
+- Low-information decision cards are not acceptable output. When the system can identify the stock but has only bootstrap placeholders, the workbench should route to the research-job/import pipeline before presenting a decision card as useful.

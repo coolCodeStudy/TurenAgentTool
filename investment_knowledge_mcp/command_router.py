@@ -839,6 +839,17 @@ def _handle_stock_decision_card(symbol: str, market: str) -> CommandResult:
     context = repository.get_stock_context(symbol=symbol, market=market)
     if not context.get("stock"):
         return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+    if _stock_context_needs_research(context):
+        normalized_symbol = symbol.strip().upper()
+        normalized_market = market.strip().upper()
+        return CommandResult(
+            ok=False,
+            message=(
+                f"{normalized_market}.{normalized_symbol} 目前只有最小股票档案，信息量不足，不能生成有价值的决策卡。\n"
+                f"请先运行：创建研究任务 {normalized_symbol} {normalized_market}\n"
+                "研究任务导入事实后，再运行决策命令。"
+            ),
+        )
     card = build_stock_decision_card(context, latest_research_job=_latest_research_job(symbol, market))
     return CommandResult(ok=True, message=render_stock_decision_card(card))
 
@@ -873,6 +884,24 @@ def _handle_bootstrap_stock_profile(symbol: str, market: str) -> CommandResult:
 def _latest_research_job(symbol: str, market: str) -> dict[str, Any] | None:
     jobs = list_research_jobs_for_stock(symbol=symbol, market=market, limit=1)
     return jobs[0] if jobs else None
+
+
+def _stock_context_needs_research(context: dict[str, Any]) -> bool:
+    stock = context.get("stock") or {}
+    if not stock:
+        return False
+    knowledge_count = len(context.get("stock_knowledge") or context.get("knowledge_items") or [])
+    source_count = len(context.get("sources") or [])
+    marker_text = " ".join(
+        str(stock.get(field) or "")
+        for field in ("core_business", "stock_character", "notable_history")
+    ).lower()
+    minimal_marker = (
+        "minimal profile initialized from command workbench" in marker_text
+        or "needs research" in marker_text
+        or "missing-stock recovery" in marker_text
+    )
+    return minimal_marker and knowledge_count == 0 and source_count == 0
 
 
 def _handle_research_draft(
