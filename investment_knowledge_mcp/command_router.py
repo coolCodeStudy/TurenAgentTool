@@ -17,6 +17,7 @@ from investment_knowledge_mcp.analysis_provider import (
     route_command_intent_with_openai,
 )
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
+from investment_knowledge_mcp.daily_market_brief import build_daily_market_brief, get_daily_market_brief_report
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_cash_flows,
@@ -564,6 +565,10 @@ def handle_command(
 
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
+
+    daily_market_brief_match = _match_daily_market_brief_command(cleaned)
+    if daily_market_brief_match is not None:
+        return _handle_daily_market_brief(daily_market_brief_match)
 
     weekly_review_match = _match_weekly_review_command(cleaned)
     if weekly_review_match is not None:
@@ -2187,6 +2192,80 @@ def _match_trade_backfill_command(command: str) -> str | None:
         if compact.startswith(prefix + " "):
             return compact[len(prefix) :].strip()
     return None
+
+
+def _match_daily_market_brief_command(command: str) -> dict[str, Any] | None:
+    compact = command.strip()
+    lower = compact.lower()
+    if "每日市场简报" not in compact and "daily market brief" not in lower:
+        return None
+
+    action = "show"
+    if re.search(r"(?:生成|刷新|重跑|重生成|generate|refresh|rerun)", compact, flags=re.IGNORECASE):
+        action = "generate"
+
+    market = _extract_daily_market_brief_market(compact)
+    date_match = re.search(r"\d{4}-\d{1,2}-\d{1,2}", compact)
+    market_date = None
+    if date_match:
+        try:
+            market_date = date.fromisoformat(date_match.group(0))
+        except ValueError:
+            market_date = None
+
+    use_fixture = bool(re.search(r"(?:fixture|测试夹具|夹具)", compact, flags=re.IGNORECASE))
+    return {
+        "action": action,
+        "market": market,
+        "market_date": market_date,
+        "use_fixture": use_fixture,
+    }
+
+
+def _extract_daily_market_brief_market(command: str) -> str | None:
+    patterns = [
+        (r"\bCN\b|A股|沪深|A\s*-?\s*shares?", "CN"),
+        (r"\bHK\b|港股|香港", "HK"),
+        (r"\bUS\b|美股|美国", "US"),
+    ]
+    for pattern, market in patterns:
+        if re.search(pattern, command, flags=re.IGNORECASE):
+            return market
+    return None
+
+
+def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
+    market = match.get("market")
+    if not market:
+        return CommandResult(ok=False, message="请指定市场：CN/A股、HK/港股、US/美股。例如：每日市场简报 CN。")
+
+    market_date = match.get("market_date")
+    if match.get("action") == "generate":
+        try:
+            result = build_daily_market_brief(
+                market=market,
+                market_date=market_date,
+                save=True,
+                use_fixture=bool(match.get("use_fixture")),
+            )
+        except Exception as exc:
+            return CommandResult(ok=False, message=f"生成每日市场简报失败：{exc}")
+        footer = ""
+        if result.saved_report is not None:
+            footer = f"\n\n已保存每日市场简报：review_reports #{result.saved_report.get('id')}"
+        return CommandResult(ok=True, message=result.markdown + footer)
+
+    try:
+        report = get_daily_market_brief_report(market=market, market_date=market_date)
+    except Exception as exc:
+        return CommandResult(ok=False, message=f"读取每日市场简报失败：{exc}")
+    if not report:
+        date_hint = f" {market_date.isoformat()}" if market_date else ""
+        return CommandResult(
+            ok=False,
+            message=f"没有找到 {market}{date_hint} 的每日市场简报。可先运行：生成每日市场简报 {market}{date_hint}。",
+        )
+    return CommandResult(ok=True, message=report.get("summary") or "该每日市场简报没有可渲染内容。")
 
 
 def _handle_weekly_review(time_range_text: str | None = None, next_week_only: bool = False) -> CommandResult:

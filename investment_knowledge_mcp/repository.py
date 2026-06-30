@@ -1035,6 +1035,102 @@ def get_review_report(
     return to_jsonable(row) if row else None
 
 
+def upsert_daily_market_brief_report(
+    *,
+    market: str,
+    market_date: str,
+    summary: str,
+    context: dict[str, Any],
+    source_status: dict[str, Any] | None = None,
+    story: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_market = market.strip().upper()
+    with transaction() as conn:
+        existing = _find_daily_market_brief_row(conn, market=normalized_market, market_date=market_date)
+        values = (
+            market_date,
+            Jsonb(context or {}),
+            summary,
+            "daily_market_brief",
+            market_date,
+            market_date,
+            Jsonb(source_status or {}),
+            Jsonb(story or {}),
+        )
+        if existing:
+            row = conn.execute(
+                """
+                UPDATE review_reports
+                SET
+                  report_date = %s,
+                  portfolio_snapshot = %s,
+                  summary = %s,
+                  report_type = %s,
+                  period_start = %s,
+                  period_end = %s,
+                  source_status = %s,
+                  story = %s,
+                  refreshed_at = now()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (*values, existing["id"]),
+            ).fetchone()
+            return to_jsonable(row)
+
+        row = conn.execute(
+            """
+            INSERT INTO review_reports (
+              report_date, portfolio_snapshot, summary, report_type, period_start,
+              period_end, source_status, story, generated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+            RETURNING *
+            """,
+            values,
+        ).fetchone()
+    return to_jsonable(row)
+
+
+def get_daily_market_brief_report(market: str, market_date: str) -> dict[str, Any] | None:
+    normalized_market = market.strip().upper()
+    with transaction() as conn:
+        row = _find_daily_market_brief_row(conn, market=normalized_market, market_date=market_date)
+    return to_jsonable(row) if row else None
+
+
+def get_latest_daily_market_brief_report(market: str) -> dict[str, Any] | None:
+    normalized_market = market.strip().upper()
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM review_reports
+            WHERE report_type = 'daily_market_brief'
+              AND portfolio_snapshot->'market'->>'code' = %s
+            ORDER BY report_date DESC, id DESC
+            LIMIT 1
+            """,
+            (normalized_market,),
+        ).fetchone()
+    return to_jsonable(row) if row else None
+
+
+def _find_daily_market_brief_row(conn: Connection, *, market: str, market_date: str) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT *
+        FROM review_reports
+        WHERE report_type = 'daily_market_brief'
+          AND report_date = %s
+          AND portfolio_snapshot->'market'->>'code' = %s
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (market_date, market),
+    ).fetchone()
+
+
 def _find_review_report_row(
     conn: Connection,
     *,
