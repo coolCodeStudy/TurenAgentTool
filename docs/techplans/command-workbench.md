@@ -261,3 +261,4 @@ Acceptance checks:
 - LLM-assisted parsing depends on `OPENAI_API_KEY`; local verification should cover deterministic behavior and the LLM-disabled fallback.
 - Missing-stock bootstrap intentionally creates only a minimal stock profile. It solves the command-entry dead end for valid symbols; richer company metadata, source facts, and research drafts remain follow-up work through the research-job/import pipeline.
 - Low-information decision cards are not acceptable output. When the system can identify the stock but has only bootstrap placeholders, the workbench should route to the research-job/import pipeline before presenting a decision card as useful.
+- The research pipeline must treat Command Workbench bootstrap profiles as incomplete, not as existing researched stocks. It should continue official-source draft generation/import for these profiles even when a stock row already exists.
