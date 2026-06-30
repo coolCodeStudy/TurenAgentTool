@@ -79,6 +79,23 @@ MARKET_CONFIGS: dict[str, MarketConfig] = {
 }
 
 CAPITAL_FLOW_DEGRADED_COPY = "配置的数据源未提供本市场/本交易日的明确资金流指标；本简报其余部分已基于可用行情数据生成。"
+INDEX_PROVIDER_DEGRADED_COPY = "核心指数数据源本次未返回可用行情；本简报已保留其他可用数据和数据缺口说明。"
+INDEX_PROVIDER_PARTIAL_COPY = "核心指数数据不完整；缺失指数已在数据状态中列出。"
+SOURCE_STATUS_LABELS = {
+    "indexes": "核心指数",
+    "sectors": "行业/板块",
+    "gainers": "个股涨幅榜",
+    "capital_flow": "资金流",
+    "session": "交易日状态",
+}
+SOURCE_STATE_LABELS = {
+    "ok": "可用",
+    "partial": "部分可用",
+    "missing": "暂不可用",
+    "provider_unavailable": "数据源暂不可用",
+    "not_available": "暂不提供",
+    "no_session": "休市",
+}
 _SCHEDULER_STATE: dict[str, Any] = {
     "started": False,
     "interval_seconds": None,
@@ -162,12 +179,15 @@ def build_daily_market_brief_context(
         indexes: list[dict[str, Any]] = []
         activity = _empty_activity(config.code)
     else:
+        index_loader = market_bar_loader
+        if index_loader is None:
+            index_loader = _fixture_market_bar_loader if use_fixture else get_yahoo_market_bars
         indexes = _load_index_rows(
             config=config,
             market_date=resolved_date,
             source_status=source_status,
             warnings=warnings,
-            market_bar_loader=market_bar_loader or get_yahoo_market_bars,
+            market_bar_loader=index_loader,
         )
         provider = activity_provider or (_fixture_activity_provider if use_fixture else _empty_activity_provider)
         activity = provider(config.code, resolved_date)
@@ -348,12 +368,14 @@ def render_daily_market_brief_markdown(context: dict[str, Any]) -> str:
         lines.append(f"- {CAPITAL_FLOW_DEGRADED_COPY}")
     lines.extend(["", "## 数据状态"])
     for key, status in (context.get("source_status") or {}).items():
-        label = status.get("status", "unknown") if isinstance(status, dict) else str(status)
+        raw_label = status.get("status", "unknown") if isinstance(status, dict) else str(status)
+        label = SOURCE_STATE_LABELS.get(raw_label, raw_label)
         provider = status.get("provider") if isinstance(status, dict) else None
         message = status.get("message") if isinstance(status, dict) else None
-        provider_text = f"，provider={provider}" if provider else ""
+        name = SOURCE_STATUS_LABELS.get(key, key)
+        provider_text = f"，来源：{provider}" if provider else ""
         message_text = f"：{message}" if message else ""
-        lines.append(f"- {key}: {label}{provider_text}{message_text}")
+        lines.append(f"- {name}：{label}{provider_text}{message_text}")
     lines.append("")
     lines.append("注：本简报只描述市场结构、流动性和数据缺口，不构成买卖建议。")
     return "\n".join(lines)
@@ -372,23 +394,23 @@ def _load_index_rows(
     end = market_date.isoformat()
     try:
         snapshot = market_bar_loader(codes, start, end)
-    except MarketDataProviderError as exc:
+    except MarketDataProviderError:
         source_status["indexes"] = {
             "status": "provider_unavailable",
             "provider": "yahoo_chart",
             "count": 0,
-            "message": str(exc),
+            "message": INDEX_PROVIDER_DEGRADED_COPY,
         }
-        warnings.append(f"index provider unavailable: {exc}")
+        warnings.append(INDEX_PROVIDER_DEGRADED_COPY)
         return []
-    except Exception as exc:
+    except Exception:
         source_status["indexes"] = {
             "status": "provider_unavailable",
             "provider": "yahoo_chart",
             "count": 0,
-            "message": str(exc),
+            "message": INDEX_PROVIDER_DEGRADED_COPY,
         }
-        warnings.append(f"index provider failed: {exc}")
+        warnings.append(INDEX_PROVIDER_DEGRADED_COPY)
         return []
 
     rows: list[dict[str, Any]] = []
@@ -397,13 +419,18 @@ def _load_index_rows(
         row = _index_row(index_config=index_config, bars=bars, market_date=market_date, metric_label=config.index_metric_label)
         if row is not None:
             rows.append(row)
+    index_status = "ok" if len(rows) == len(config.index_configs) else ("partial" if rows else "missing")
     source_status["indexes"] = {
-        "status": "ok" if len(rows) == len(config.index_configs) else ("partial" if rows else "missing"),
+        "status": index_status,
         "provider": snapshot.source,
         "count": len(rows),
         "fetched_at": snapshot.fetched_at.isoformat(),
         "missing": [item["code"] for item in config.index_configs if item["code"] not in {row["code"] for row in rows}],
     }
+    if index_status == "partial":
+        source_status["indexes"]["message"] = INDEX_PROVIDER_PARTIAL_COPY
+    elif index_status == "missing":
+        source_status["indexes"]["message"] = INDEX_PROVIDER_DEGRADED_COPY
     return rows
 
 
@@ -477,7 +504,8 @@ def _build_narrative(
         for key, status in source_status.items()
         if isinstance(status, dict) and status.get("status") in {"provider_unavailable", "not_available", "missing", "partial"}
     ]
-    gap_text = f"需要注意的数据缺口：{', '.join(gap_keys)}。" if gap_keys else "主要数据源状态正常。"
+    gap_labels = [SOURCE_STATUS_LABELS.get(key, key) for key in gap_keys]
+    gap_text = f"需要注意的数据缺口：{'、'.join(gap_labels)}。" if gap_labels else "主要数据源状态正常。"
     return " ".join([move_text, leadership, gainer_text, liquidity_text, flow_text, gap_text])
 
 
@@ -563,6 +591,36 @@ def _fixture_activity_provider(market: str, market_date: date) -> dict[str, Any]
             "capital_flow": flow_status,
         },
     }
+
+
+def _fixture_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+    end_date = date.fromisoformat(end)
+    start_date = date.fromisoformat(start)
+    bars_by_code: dict[str, list[dict[str, Any]]] = {}
+    for offset, code in enumerate(codes):
+        bars: list[dict[str, Any]] = []
+        current = start_date
+        close = 1000.0 + offset * 25.0
+        while current <= end_date:
+            if current.weekday() < 5:
+                close += 3.0 + offset
+                bars.append(
+                    {
+                        "date": current.isoformat(),
+                        "close": close,
+                        "volume": 1000000 + len(bars) * 15000 + offset * 5000,
+                        "raw": {"provider_symbol": f"fixture:{code}"},
+                    }
+                )
+            current += timedelta(days=1)
+        bars_by_code[code] = bars
+    return MarketBarSnapshot(
+        bars_by_code=bars_by_code,
+        fetched_at=datetime(2026, 6, 30, 8, 0, tzinfo=ZoneInfo("UTC")),
+        start=start,
+        end=end,
+        source="fixture_bars",
+    )
 
 
 def _render_index_table(indexes: list[dict[str, Any]]) -> list[str]:

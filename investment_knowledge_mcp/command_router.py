@@ -2248,8 +2248,8 @@ def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
                 save=True,
                 use_fixture=bool(match.get("use_fixture")),
             )
-        except Exception as exc:
-            return CommandResult(ok=False, message=f"生成每日市场简报失败：{exc}")
+        except Exception:
+            return CommandResult(ok=False, message="生成每日市场简报失败：本次生成遇到内部处理错误，请稍后重试或联系维护者查看日志。")
         footer = ""
         if result.saved_report is not None:
             footer = f"\n\n已保存每日市场简报：review_reports #{result.saved_report.get('id')}"
@@ -2257,8 +2257,8 @@ def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
 
     try:
         report = get_daily_market_brief_report(market=market, market_date=market_date)
-    except Exception as exc:
-        return CommandResult(ok=False, message=f"读取每日市场简报失败：{exc}")
+    except Exception:
+        return CommandResult(ok=False, message="读取每日市场简报失败：本次读取遇到内部处理错误，请稍后重试或联系维护者查看日志。")
     if not report:
         date_hint = f" {market_date.isoformat()}" if market_date else ""
         return CommandResult(

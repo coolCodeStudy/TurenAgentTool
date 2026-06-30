@@ -150,6 +150,12 @@ ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS story JSONB NOT NULL DEFAULT
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS token_usage JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS report_key TEXT;
+
+ALTER TABLE review_reports
+  DROP CONSTRAINT IF EXISTS review_reports_report_key_key;
+
+DROP INDEX IF EXISTS idx_review_reports_report_key;
 
 DO $$
 BEGIN
@@ -160,15 +166,32 @@ BEGIN
       AND column_name = 'report_key'
   ) THEN
     UPDATE review_reports
-    SET report_key = COALESCE(
-      report_key,
-      report_type || ':' || COALESCE(period_start::text, report_date::text) || ':' || COALESCE(period_end::text, report_date::text)
-    )
-    WHERE report_key IS NULL;
+    SET report_key = CASE
+      WHEN report_type = 'daily_market_brief' THEN
+        report_type || ':' ||
+        COALESCE(
+          NULLIF(portfolio_snapshot->'market'->>'code', ''),
+          NULLIF(portfolio_snapshot->>'market', ''),
+          'unknown-' || id::text
+        ) || ':' ||
+        COALESCE(period_start::text, report_date::text) || ':' ||
+        COALESCE(period_end::text, report_date::text)
+      ELSE
+        report_type || ':' || COALESCE(period_start::text, report_date::text) || ':' || COALESCE(period_end::text, report_date::text)
+      END
+    WHERE report_key IS NULL
+       OR (
+         report_type = 'daily_market_brief'
+         AND report_key NOT LIKE 'daily_market_brief:%:%:%'
+       );
 
     ALTER TABLE review_reports ALTER COLUMN report_key DROP NOT NULL;
   END IF;
 END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_report_key
+  ON review_reports (report_key)
+  WHERE report_key IS NOT NULL;
 
 ALTER TABLE review_reports
   DROP CONSTRAINT IF EXISTS review_reports_report_date_key;

@@ -6,7 +6,8 @@ from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp import daily_market_brief as dmb
-from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot
+from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
 
 
 class FakeDailyBriefRepository:
@@ -78,6 +79,13 @@ def fake_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarS
     )
 
 
+def failing_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+    raise MarketDataProviderError(
+        "Yahoo chart fallback returned no usable bars: "
+        "SH.000001: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed>"
+    )
+
+
 class DailyMarketBriefTests(unittest.TestCase):
     def setUp(self) -> None:
         self.original_repository = dmb.repository
@@ -126,6 +134,9 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(len(result.context["indexes"]), 4)
         self.assertEqual(result.context["source_status"]["capital_flow"]["status"], "not_available")
         self.assertIn(dmb.CAPITAL_FLOW_DEGRADED_COPY, result.markdown)
+        self.assertIn("需要注意的数据缺口：", result.markdown)
+        self.assertIn("资金流", result.markdown)
+        self.assertNotIn("capital_flow", result.markdown)
         self.assertEqual(result.context["provider_mode"], "live")
 
     def test_command_retrieves_specific_and_latest_saved_brief(self) -> None:
@@ -145,6 +156,41 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertTrue(latest.ok)
         self.assertEqual(specific.message, generated.markdown)
         self.assertIn("每日市场简报｜港股", latest.message)
+
+    def test_command_fixture_generation_uses_deterministic_index_bars(self) -> None:
+        result = command_router.handle_command("生成每日市场简报 CN 2026-06-30 fixture")
+
+        self.assertTrue(result.ok)
+        self.assertIn("Shanghai Composite", result.message)
+        self.assertIn("Shenzhen Component", result.message)
+        self.assertIn("CSI 300", result.message)
+        self.assertIn("ChiNext Index", result.message)
+        self.assertIn("STAR 50", result.message)
+        self.assertNotIn("暂无可用核心指数数据", result.message)
+        self.assertIn("核心指数：可用，来源：fixture_bars", result.message)
+
+    def test_provider_errors_are_sanitized_in_user_facing_status(self) -> None:
+        result = dmb.build_daily_market_brief(
+            market="CN",
+            market_date=date(2026, 6, 30),
+            save=False,
+            market_bar_loader=failing_market_bar_loader,
+            use_fixture=True,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertIn(dmb.INDEX_PROVIDER_DEGRADED_COPY, result.markdown)
+        self.assertNotIn("Yahoo chart fallback", result.markdown)
+        self.assertNotIn("CERTIFICATE_VERIFY_FAILED", result.markdown)
+        self.assertEqual(result.context["source_status"]["indexes"]["message"], dmb.INDEX_PROVIDER_DEGRADED_COPY)
+        self.assertNotIn("Yahoo chart fallback", " ".join(result.context["warnings"]))
+        self.assertNotIn("CERTIFICATE_VERIFY_FAILED", " ".join(result.context["warnings"]))
+
+    def test_daily_market_brief_report_key_is_market_aware(self) -> None:
+        self.assertEqual(
+            repository._daily_market_brief_report_key("HK", "2026-06-30"),
+            "daily_market_brief:HK:2026-06-30:2026-06-30",
+        )
 
     def test_scheduler_session_date_respects_market_close_timezone(self) -> None:
         before_us_close = datetime(2026, 6, 30, 12, 0, tzinfo=ZoneInfo("Asia/Singapore"))
