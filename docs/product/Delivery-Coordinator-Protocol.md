@@ -17,11 +17,14 @@ The coordinator is an orchestration role. It does not replace the specialized ro
 
 Feature-level Delivery Coordinators own one product feature flow. They are responsible for that feature's dispatches, child-role returns, Coordinator Return Gate, queue updates, and next-owner decisions.
 
-The Global Project Manager owns portfolio health across features. It should audit coordinator health, stuck flows, cross-feature conflicts, and user decisions, but it should not be the default watcher for every child thread of every feature.
+The Global Project Manager owns portfolio health across features. It should audit coordinator health, stuck flows, and cross-feature conflicts, but it should not be the default watcher for every child thread of every feature.
+
+Feature-level user decisions belong to the Feature Coordinator. If a Product, Development, or Acceptance Testing role needs a user decision about that feature's scope, acceptance bar, output surface, or trade-off, it must return that decision request to the Feature Coordinator. The Feature Coordinator asks the user and then continues the same feature flow.
 
 Escalate from a Feature Coordinator to the Global Project Manager only when:
 
-- a user decision, credential, budget, priority, or cross-feature conflict is needed;
+- a credential, budget, portfolio priority, merge/deploy permission, or cross-feature conflict is needed;
+- a user decision cannot be resolved inside the feature because it changes portfolio priority, shared platform policy, or another feature's scope;
 - the coordinator cannot create or maintain its own watch path;
 - the coordinator is blocked or stale and needs recovery;
 - a delivery-system rule or process defect needs to be changed.
