@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from statistics import mean, median
 import math
+import os
 import re
+import socket
 from typing import Any, Protocol
 
-from investment_knowledge_mcp.config import AppConfig, get_config
+from investment_knowledge_mcp.config import PROJECT_ROOT, AppConfig, get_config
 from investment_knowledge_mcp.serialization import to_jsonable
 
 
@@ -153,13 +156,17 @@ class FutuHistoricalBarProvider:
         adjust_type: str,
     ) -> KlineFetchResult:
         try:
+            _prepare_futu_sdk_log_home()
             import futu as ft
         except ImportError as exc:
             raise KlineProviderError("futu-api is not installed; cannot fetch historical Kline bars.") from exc
+        except Exception as exc:
+            raise KlineProviderError(f"futu-api could not initialize: {exc}") from exc
 
         provider_symbol = provider_symbol_for(symbol=symbol, market=market)
         requested_end = date.today()
         requested_start = requested_end - timedelta(days=max(1, years) * 366)
+        _ensure_opend_socket_reachable(self.config.futu_opend_host, self.config.futu_opend_port)
         quote_context = ft.OpenQuoteContext(host=self.config.futu_opend_host, port=self.config.futu_opend_port)
         rows: list[dict[str, Any]] = []
         page_req_key: Any = None
@@ -205,6 +212,33 @@ class FutuHistoricalBarProvider:
             normalized_bar_count=len(bars),
         )
         return KlineFetchResult(metadata=metadata, bars=bars, warnings=warnings)
+
+
+def _prepare_futu_sdk_log_home() -> None:
+    current_home = os.environ.get("HOME")
+    if not current_home:
+        return
+
+    current_log_dir = Path(current_home) / ".com.futunn.FutuOpenD" / "Log"
+    try:
+        current_log_dir.mkdir(parents=True, exist_ok=True)
+        probe = current_log_dir / ".codex_write_probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return
+    except OSError:
+        # The Futu SDK initializes its own log path during import; keep sandboxed runs inside the repo.
+        safe_home = PROJECT_ROOT / ".cache" / "futu-sdk-home"
+        safe_home.mkdir(parents=True, exist_ok=True)
+        os.environ["HOME"] = str(safe_home)
+
+
+def _ensure_opend_socket_reachable(host: str, port: int) -> None:
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return
+    except OSError as exc:
+        raise KlineProviderError(f"Futu OpenD is not reachable at {host}:{port}: {exc}") from exc
 
 
 def parse_kline_command(command: str) -> KlineRequest | None:
