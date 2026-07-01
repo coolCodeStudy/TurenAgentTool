@@ -4,7 +4,7 @@ Status: partially_implemented
 Owner: Development Agent
 Source PRD: `docs/product/PRD-Daily-Market-Brief.md`
 Feature Registry row: `Daily market brief`
-Acceptance Queue row: `AT-2026-06-30-002`
+Acceptance Queue rows: `AT-2026-06-30-002`, `AT-2026-07-01-001`
 Last updated: 2026-06-30
 
 ## Scope
@@ -97,11 +97,11 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 | Idempotent storage by report type, market, market date | verified | `repository.upsert_daily_market_brief_report`; `db/schema.sql`; DB smoke on `POSTGRES_PORT=55433` | Existing rows show market-aware keys: CN `#130`, HK `#131`, and US `#132` for `2026-06-30`; weekend CN `#133` also saved. |
 | Missing provider coverage visible in user language | verified | Renderer and degraded-state unit test; forced command-router provider failure | Source status is explicit for sectors/gainers/flow; raw provider/SSL/internal exception text is not rendered in user-facing Markdown. |
 | Command surface retrieves latest and specified market/date | verified | `command_router.py`; command retrieval unit test | HTTP command API is not required for local verification. |
-| Web surface lets the user review latest/specified market/date briefs | implemented | `weekly_review_web.py`; `tests.test_daily_market_brief` Web render/response tests | Cloud/browser acceptance and deployment still need to run before asking for final user acceptance. |
+| Web surface lets the user review latest/specified market/date briefs | verified | `weekly_review_web.py`; `tests.test_daily_market_brief` Web render/response tests; `AT-2026-07-01-001` | Independent local Web acceptance passed for `/daily-market-brief`, API read/generate, CN/HK/US tabs, fixture rendering, missing states, idempotency, and desktop/mobile usability. Cloud deployment still needs Coordinator/Ops handling before asking for final user acceptance on the deployed page. |
 | Stored report includes structured context and source status | verified | `repository.upsert_daily_market_brief_report`; DB smoke on `POSTGRES_PORT=55433` | Context is stored in `portfolio_snapshot`; status in `source_status`; saved rows were retrieved through the command surface. |
 | Narrative is understandable and has no buy/sell recommendations | verified | Markdown assertions in `tests/test_daily_market_brief.py` | Renderer describes market breadth/leadership/liquidity/data gaps only. |
 | Holiday/no-session runs produce explicit skipped/no-session state | verified | Weekend no-session unit test; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-27 fixture` | Weekend command saved `review_reports #133` with explicit no-session copy. Full holiday calendars remain a future provider enhancement. |
-| Independent acceptance testing before user acceptance | needs_retest | `AT-2026-06-30-002` passed for command surface; `AT-2026-07-01-001` tracks the new Web surface | Acceptance Testing should retest the Web page on the deployed or locally served Web surface; user acceptance remains pending. |
+| Independent acceptance testing before user acceptance | verified | `AT-2026-06-30-002` passed for command surface; `AT-2026-07-01-001` passed for the Web surface | User acceptance remains pending and must happen through the Web page, not CLI commands. |
 
 ## Risks And Blockers
 
