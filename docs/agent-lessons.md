@@ -49,6 +49,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - `COMMAND_API_TOKEN` is required only when running the HTTP command API.
 - Use strong tokens for command-api. Do not write temporary tokens, secrets, or credentials into docs, commits, logs, or summaries.
 - If HTTP auth or gateway integration is not part of the task, prefer CLI/MCP verification over command-api verification.
+- CLI verification can prove backend command behavior, but it is not a humane user-acceptance surface for a product feature. When the user is expected to accept a report/workbench feature, provide or route a Web/cloud page for acceptance instead of asking the user to run `scripts/ikg.py` commands.
 
 ## Git Trust Boundary
 

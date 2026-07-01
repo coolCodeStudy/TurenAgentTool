@@ -9,14 +9,15 @@ Last updated: 2026-06-30
 
 ## Scope
 
-Implement P0 as a command-retrievable, scheduler-ready daily close report for CN, HK, and US markets. The report persists as `review_reports.report_type = daily_market_brief`, is idempotent by market and market date, renders Simplified Chinese Markdown, and records source/degraded states for unavailable provider coverage.
+Implement P0 as a Web-reviewable, command-retrievable, scheduler-ready daily close report for CN, HK, and US markets. The report persists as `review_reports.report_type = daily_market_brief`, is idempotent by market and market date, renders Simplified Chinese Markdown, and records source/degraded states for unavailable provider coverage.
 
-Out of scope for this pass: DingTalk push, standalone Web page, Weekly Review Web integration, paid data providers, cross-market sector taxonomy normalization, cloud deployment, and user acceptance.
+Out of scope for this pass: DingTalk push, paid data providers, cross-market sector taxonomy normalization, cloud deployment, and user acceptance.
 
 ## Touched Modules
 
 - `investment_knowledge_mcp/daily_market_brief.py`: generation, rendering, persistence wrapper, scheduler-ready loop, fixture provider for deterministic verification.
 - `investment_knowledge_mcp/command_router.py`: command retrieval and manual generation/rerun entrypoints.
+- `investment_knowledge_mcp/weekly_review_web.py`: `/daily-market-brief` user-facing page plus read/generate APIs on the existing Web service.
 - `investment_knowledge_mcp/repository.py`: daily-brief-specific upsert and lookup helpers over `review_reports`.
 - `investment_knowledge_mcp/market_data_provider.py`: Yahoo symbol coverage for P0 index lists where supported.
 - `tests/test_daily_market_brief.py`: focused unit tests for generation, idempotency, degraded states, command retrieval, and scheduler date behavior.
@@ -56,6 +57,16 @@ Supported P0 command intents:
 
 The command path returns saved Markdown and does not start HTTP services.
 
+## Web Surface
+
+The existing weekly-review Web service also serves Daily Market Brief:
+
+- Page: `/daily-market-brief`
+- Read API: `GET /api/daily-market-brief?market=CN&date=2026-06-30`
+- Generate API: `POST /api/daily-market-brief/generate`
+
+The page exposes CN/HK/US tabs, market-date selection, read/generate/fixture-generate actions, summary cards, narrative, core-index table, sector/gainer/flow tables, source-status table, and Markdown original. It reuses the weekly-review Web token authorization path and renders missing/degraded states in product language. The command surface remains the underlying product path for scheduler, retrieval, and regression verification; the Web page is the user acceptance surface.
+
 ## Scheduler-Ready Entry Points
 
 `investment_knowledge_mcp.daily_market_brief` exposes:
@@ -73,6 +84,7 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 - `.venv/bin/python -m unittest tests.test_daily_market_brief`
 - `.venv/bin/python -m py_compile investment_knowledge_mcp/daily_market_brief.py investment_knowledge_mcp/command_router.py investment_knowledge_mcp/repository.py investment_knowledge_mcp/market_data_provider.py`
 - Local command smoke with `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py ...` covering CN/HK/US fixture generation, specific/latest retrieval, same-market rerun idempotency, cross-market same-date coexistence, weekend/no-session behavior, and forced degraded product-language output.
+- Web surface checks for `render_daily_market_brief_html`, `/daily-market-brief`, `/api/daily-market-brief`, and `/api/daily-market-brief/generate`.
 
 ## Implementation Traceability
 
@@ -85,10 +97,11 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 | Idempotent storage by report type, market, market date | verified | `repository.upsert_daily_market_brief_report`; `db/schema.sql`; DB smoke on `POSTGRES_PORT=55433` | Existing rows show market-aware keys: CN `#130`, HK `#131`, and US `#132` for `2026-06-30`; weekend CN `#133` also saved. |
 | Missing provider coverage visible in user language | verified | Renderer and degraded-state unit test; forced command-router provider failure | Source status is explicit for sectors/gainers/flow; raw provider/SSL/internal exception text is not rendered in user-facing Markdown. |
 | Command surface retrieves latest and specified market/date | verified | `command_router.py`; command retrieval unit test | HTTP command API is not required for local verification. |
+| Web surface lets the user review latest/specified market/date briefs | implemented | `weekly_review_web.py`; `tests.test_daily_market_brief` Web render/response tests | Cloud/browser acceptance and deployment still need to run before asking for final user acceptance. |
 | Stored report includes structured context and source status | verified | `repository.upsert_daily_market_brief_report`; DB smoke on `POSTGRES_PORT=55433` | Context is stored in `portfolio_snapshot`; status in `source_status`; saved rows were retrieved through the command surface. |
 | Narrative is understandable and has no buy/sell recommendations | verified | Markdown assertions in `tests/test_daily_market_brief.py` | Renderer describes market breadth/leadership/liquidity/data gaps only. |
 | Holiday/no-session runs produce explicit skipped/no-session state | verified | Weekend no-session unit test; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-27 fixture` | Weekend command saved `review_reports #133` with explicit no-session copy. Full holiday calendars remain a future provider enhancement. |
-| Independent acceptance testing before user acceptance | needs_retest | `AT-2026-06-30-002` moved to `needs_retest` after the acceptance-failure fix and local command verification | Acceptance Testing should rerun the command surface on this branch or after coordinator integration; user acceptance remains pending. |
+| Independent acceptance testing before user acceptance | needs_retest | `AT-2026-06-30-002` passed for command surface; `AT-2026-07-01-001` tracks the new Web surface | Acceptance Testing should retest the Web page on the deployed or locally served Web surface; user acceptance remains pending. |
 
 ## Risks And Blockers
 

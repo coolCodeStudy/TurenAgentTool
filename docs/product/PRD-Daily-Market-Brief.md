@@ -64,9 +64,10 @@ P0 output surface:
 
 - Persist each brief as a structured `review_reports` entry with report type `daily_market_brief`.
 - Add command retrieval for latest and specific market/date briefs. The exact command parser wording is an Engineering detail, but the user-facing intent must support "show latest daily market brief for CN/HK/US" and "show daily market brief for market/date".
+- Provide a Web review page so the user can inspect and accept the feature without running CLI commands. The page may extend the existing Weekly Review Web service as long as it has a direct `/daily-market-brief` route and read/generate controls for CN/HK/US.
 - Store structured context, source status, generated Markdown, market, market date, provider labels, and generation timestamp so the brief can be regenerated, inspected, and rendered consistently.
 
-P0 does not include DingTalk push, a new standalone Web page, or Weekly Review Web integration. Those remain P1 because they require channel, layout, and notification-timing decisions. Engineering may still keep the storage/API shape compatible with future Web or push surfaces.
+P0 does not include DingTalk push or a separate standalone Web app. Those remain P1 because they require channel, layout, and notification-timing decisions. Engineering should keep the storage/API shape compatible with future push surfaces.
 
 ## User Flow
 

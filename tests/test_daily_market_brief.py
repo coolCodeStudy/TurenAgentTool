@@ -7,6 +7,11 @@ from zoneinfo import ZoneInfo
 from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp import daily_market_brief as dmb
 from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
+from investment_knowledge_mcp.weekly_review_web import (
+    _daily_market_brief_response,
+    _resolve_daily_market,
+    render_daily_market_brief_html,
+)
 
 
 class FakeDailyBriefRepository:
@@ -214,6 +219,40 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertTrue(result.context["no_session"])
         self.assertEqual(result.context["source_status"]["session"]["status"], "no_session")
         self.assertIn("休市状态", result.markdown)
+
+    def test_daily_market_brief_web_page_exposes_user_acceptance_surface(self) -> None:
+        html = render_daily_market_brief_html()
+
+        self.assertIn("每日市场简报", html)
+        self.assertIn("/api/daily-market-brief", html)
+        self.assertIn("/api/daily-market-brief/generate", html)
+        self.assertIn('data-market="CN"', html)
+        self.assertIn('data-market="HK"', html)
+        self.assertIn('data-market="US"', html)
+        self.assertIn("核心指数", html)
+        self.assertIn("Markdown 原文", html)
+
+    def test_daily_market_brief_web_response_normalizes_saved_report(self) -> None:
+        result = dmb.build_daily_market_brief(
+            market="US",
+            market_date=date(2026, 6, 30),
+            save=True,
+            market_bar_loader=fake_market_bar_loader,
+            use_fixture=True,
+            now=datetime(2026, 6, 30, 17, 0, tzinfo=ZoneInfo("America/New_York")),
+        )
+
+        payload = _daily_market_brief_response(result.saved_report, status="existing")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["market"]["code"], "US")
+        self.assertEqual(payload["market_date"], "2026-06-30")
+        self.assertEqual(len(payload["context"]["indexes"]), 4)
+        self.assertIn("S&P 500", payload["markdown"])
+
+    def test_daily_market_brief_web_rejects_unknown_market(self) -> None:
+        with self.assertRaisesRegex(ValueError, "CN、HK、US"):
+            _resolve_daily_market({"market": "JP"})
 
 
 if __name__ == "__main__":
