@@ -132,6 +132,55 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=("stock profile", "knowledge base", "research jobs"),
         expected_output="Detailed stock context and a path to the generated context artifact.",
     ),
+    "stock_valuation": CommandAction(
+        id="stock_valuation",
+        action_family="Valuation",
+        label="Stock valuation",
+        description="Build a single-stock valuation research card and save a valuation packet artifact.",
+        aliases=("估值", "valuation", "value"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="valuation {market}.{symbol}",
+        safety_level="writes_artifact",
+        confirmation_required=False,
+        result_type="stock_valuation_card",
+        side_effects="Writes a local valuation artifact. Does not trade and does not write formal user insights.",
+        data_sources=("stock profile", "knowledge base", "source metadata", "valuation artifact"),
+        expected_output="Concise valuation card with selected frames, deterministic calculations, source coverage, and data gaps.",
+        pinned=True,
+    ),
+    "stock_valuation_latest": CommandAction(
+        id="stock_valuation_latest",
+        action_family="Valuation",
+        label="Latest valuation",
+        description="Read the latest saved valuation packet for one stock.",
+        aliases=("查看估值", "latest valuation"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="查看估值 {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="stock_valuation_card",
+        side_effects="Reads the latest local valuation artifact only.",
+        data_sources=("valuation artifact",),
+        expected_output="Latest saved valuation card or a recovery message if no artifact exists.",
+    ),
+    "valuation_methods": CommandAction(
+        id="valuation_methods",
+        action_family="Valuation",
+        label="Valuation methods",
+        description="List the five P0 internal valuation frames.",
+        aliases=("估值方法", "valuation methods"),
+        required_fields=(),
+        optional_fields=(),
+        template="估值方法",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="valuation_methods",
+        side_effects="Reads the static P0 valuation method library.",
+        data_sources=("valuation method library",),
+        expected_output="Five internal core valuation frames and their core questions.",
+    ),
     "decision_refresh": CommandAction(
         id="decision_refresh",
         action_family="Decision",
@@ -1276,6 +1325,47 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    valuation_latest_target = _match_first(
+        text,
+        [
+            r"^查看估值\s+(.+)$",
+            r"^最新估值\s+(.+)$",
+            r"^latest valuation\s+(.+)$",
+            r"^valuation latest\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation_latest",
+                "deterministic_alias",
+                0.96,
+                fields={"stock": valuation_latest_target},
+            )
+        )
+
+    valuation_target = _match_first(
+        text,
+        [
+            r"^估值\s*(.+)$",
+            r"^valuation\s+(.+)$",
+            r"^value\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation",
+                "deterministic_alias",
+                0.96,
+                fields={"stock": valuation_target},
+            )
+        )
+
     decision_target = _match_first(
         text,
         [
@@ -1317,6 +1407,42 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
                 confidence=1.0,
             )
         )
+
+    valuation_exact = _match_first(
+        text,
+        [r"^(?:估值|valuation|value)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_exact:
+        parsed = _parse_stock_target(valuation_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="stock_valuation",
+                    fields={"stock": valuation_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
+    valuation_latest_exact = _match_first(
+        text,
+        [r"^(?:查看估值|最新估值|latest valuation|valuation latest|value latest)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_exact:
+        parsed = _parse_stock_target(valuation_latest_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="stock_valuation_latest",
+                    fields={"stock": valuation_latest_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
 
     stock_exact = _match_first(
         text,
@@ -1420,6 +1546,10 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
         "status": "system_status",
         "最近错误": "recent_errors",
         "worker状态": "worker_status",
+        "估值方法": "valuation_methods",
+        "估值框架": "valuation_methods",
+        "valuation methods": "valuation_methods",
+        "value methods": "valuation_methods",
     }
     action_id = simple_exact.get(text) or simple_exact.get(text.lower())
     if action_id:
