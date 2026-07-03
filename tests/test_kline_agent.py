@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 import math
+import os
 import unittest
 from unittest.mock import patch
 
@@ -110,6 +111,16 @@ class KlineAgentTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.message, "patched kline report")
         self.assertEqual(mock_handler.call_args.args[0], KlineRequest(symbol="NVDA", market="US", years=5, adjust_type="forward_adjusted"))
+
+    def test_disabled_live_provider_is_local_acceptance_safe(self) -> None:
+        with patch.dict(os.environ, {"KLINE_PROVIDER": "disabled"}):
+            result = inspect_kline_behavior(KlineRequest(symbol="NVDA", market="US"))
+
+        report = render_kline_report(result)
+
+        self.assertIn("Provider: unavailable", report)
+        self.assertIn("Kline live provider is disabled", report)
+        self.assertNotIn("Futu OpenD is not reachable", report)
 
 
 def _fixture_bars(count: int) -> list[KlineBar]:

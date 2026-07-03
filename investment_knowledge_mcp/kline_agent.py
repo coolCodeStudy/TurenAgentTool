@@ -214,6 +214,21 @@ class FutuHistoricalBarProvider:
         return KlineFetchResult(metadata=metadata, bars=bars, warnings=warnings)
 
 
+class DisabledHistoricalBarProvider:
+    def fetch_daily_bars(
+        self,
+        *,
+        symbol: str,
+        market: str,
+        years: int,
+        adjust_type: str,
+    ) -> KlineFetchResult:
+        raise KlineProviderError(
+            "Kline live provider is disabled by KLINE_PROVIDER=disabled; "
+            "use fixture/degraded local review or configure a non-Futu provider."
+        )
+
+
 def _prepare_futu_sdk_log_home() -> None:
     current_home = os.environ.get("HOME")
     if not current_home:
@@ -285,7 +300,7 @@ def inspect_kline_behavior(
     request: KlineRequest,
     provider: HistoricalBarProvider | None = None,
 ) -> KlineInvestigation:
-    provider = provider or FutuHistoricalBarProvider()
+    provider = provider or _default_historical_bar_provider()
     try:
         fetched = provider.fetch_daily_bars(
             symbol=request.symbol,
@@ -333,6 +348,13 @@ def inspect_kline_behavior(
         data_warnings=data_warnings,
         timeframe_analyses=[daily, weekly, monthly],
     )
+
+
+def _default_historical_bar_provider() -> HistoricalBarProvider:
+    provider_name = os.getenv("KLINE_PROVIDER", "futu").strip().lower()
+    if provider_name in {"disabled", "none", "off"}:
+        return DisabledHistoricalBarProvider()
+    return FutuHistoricalBarProvider()
 
 
 def render_kline_report(result: KlineInvestigation) -> str:
