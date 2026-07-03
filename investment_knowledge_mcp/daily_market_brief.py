@@ -82,6 +82,9 @@ MARKET_CONFIGS: dict[str, MarketConfig] = {
 CAPITAL_FLOW_DEGRADED_COPY = "配置的数据源未提供本市场/本交易日的明确资金流指标；本简报其余部分已基于可用行情数据生成。"
 INDEX_DEGRADED_COPY = "核心指数数据源本次未返回可用行情；简报已保留其他可用部分和数据缺口提示。"
 AKSHARE_PROVIDER = "akshare_eastmoney"
+EASTMONEY_HTTP_PROVIDER = "eastmoney_http"
+PUBLIC_HTTP_FALLBACK_PROVIDER = "public_http_fallback"
+SINA_FINANCE_PROVIDER = "sina_finance"
 CN_MIN_TURNOVER = 50_000_000
 HK_MIN_TURNOVER = 20_000_000
 US_MIN_TURNOVER = 10_000_000
@@ -517,6 +520,8 @@ def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]
     try:
         ak = importlib.import_module("akshare")
     except Exception:
+        if market == "CN":
+            return _eastmoney_cn_activity(market_date)
         return _empty_activity(market, provider=AKSHARE_PROVIDER, status="provider_unavailable", message="AKShare 未安装或不可导入。")
 
     if market == "CN":
@@ -534,18 +539,24 @@ def _akshare_cn_activity(ak: Any, market_date: date) -> dict[str, Any]:
         status_key="sectors",
         fallback_message="AKShare 未返回可用的 A 股行业板块涨幅榜。",
         loader=lambda: _akshare_cn_sectors(ak.stock_board_industry_name_em()),
+        fallback_provider=EASTMONEY_HTTP_PROVIDER,
+        fallback_loader=_eastmoney_cn_sectors,
     )
     gainers, gainer_status = _akshare_call(
         provider=AKSHARE_PROVIDER,
         status_key="gainers",
         fallback_message="AKShare 未返回可用的 A 股个股涨幅榜。",
         loader=lambda: _akshare_stock_gainers(ak.stock_zh_a_spot_em(), market="CN", min_turnover=CN_MIN_TURNOVER),
+        fallback_provider=PUBLIC_HTTP_FALLBACK_PROVIDER,
+        fallback_loader=_cn_gainers_http_fallback,
     )
     flow, flow_status = _akshare_call(
         provider=AKSHARE_PROVIDER,
         status_key="capital_flow",
         fallback_message=CAPITAL_FLOW_DEGRADED_COPY,
         loader=lambda: _akshare_cn_capital_flow(ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")),
+        fallback_provider=EASTMONEY_HTTP_PROVIDER,
+        fallback_loader=_eastmoney_cn_capital_flow,
     )
     return {
         "sectors": sectors,
@@ -617,25 +628,222 @@ def _akshare_call(
     status_key: str,
     fallback_message: str,
     loader: Callable[[], list[dict[str, Any]]],
+    fallback_provider: str | None = None,
+    fallback_loader: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    detail_code = ""
     try:
         rows = loader()
     except Exception as exc:
-        return [], {
-            "status": "provider_unavailable",
-            "provider": provider,
-            "count": 0,
-            "message": fallback_message,
-            "detail_code": type(exc).__name__,
-        }
+        rows = []
+        detail_code = type(exc).__name__
+    if not rows and fallback_loader and fallback_provider:
+        try:
+            rows = fallback_loader()
+        except Exception as exc:
+            return [], {
+                "status": "provider_unavailable",
+                "provider": f"{provider},{fallback_provider}",
+                "count": 0,
+                "message": fallback_message,
+                "detail_code": ",".join(part for part in (detail_code, type(exc).__name__) if part),
+            }
+        if rows:
+            provider = fallback_provider
     status = "ok" if rows else "missing"
     message = None if rows else fallback_message
     result: dict[str, Any] = {"status": status, "provider": provider, "count": len(rows)}
     if status_key == "sectors":
         result["taxonomy"] = "provider_native"
+    if detail_code and provider != AKSHARE_PROVIDER:
+        result["fallback_from"] = AKSHARE_PROVIDER
+        result["fallback_reason"] = detail_code
     if message:
         result["message"] = message
     return rows, result
+
+
+def _eastmoney_cn_activity(market_date: date) -> dict[str, Any]:
+    sectors, sector_status = _akshare_call(
+        provider=EASTMONEY_HTTP_PROVIDER,
+        status_key="sectors",
+        fallback_message="Eastmoney 未返回可用的 A 股行业板块涨幅榜。",
+        loader=_eastmoney_cn_sectors,
+    )
+    gainers, gainer_status = _akshare_call(
+        provider=EASTMONEY_HTTP_PROVIDER,
+        status_key="gainers",
+        fallback_message="Eastmoney 未返回可用的 A 股个股涨幅榜。",
+        loader=_eastmoney_cn_gainers,
+    )
+    flow, flow_status = _akshare_call(
+        provider=EASTMONEY_HTTP_PROVIDER,
+        status_key="capital_flow",
+        fallback_message=CAPITAL_FLOW_DEGRADED_COPY,
+        loader=_eastmoney_cn_capital_flow,
+    )
+    return {
+        "sectors": sectors,
+        "gainers": gainers,
+        "capital_flow": flow,
+        "source_status": {
+            "sectors": sector_status,
+            "gainers": gainer_status,
+            "capital_flow": flow_status,
+        },
+    }
+
+
+def _eastmoney_cn_sectors() -> list[dict[str, Any]]:
+    rows = _eastmoney_clist(
+        {
+            "fid": "f3",
+            "po": "1",
+            "pz": "50",
+            "pn": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fs": "m:90+t:2",
+            "fields": "f12,f14,f3,f20,f8,f104,f105,f128,f136",
+        }
+    )
+    normalized = [
+        {
+            "排名": index + 1,
+            "板块代码": row.get("f12"),
+            "板块名称": row.get("f14"),
+            "涨跌幅": row.get("f3"),
+            "总市值": row.get("f20"),
+            "换手率": row.get("f8"),
+            "上涨家数": row.get("f104"),
+            "下跌家数": row.get("f105"),
+            "领涨股票": row.get("f128"),
+            "领涨股票-涨跌幅": row.get("f136"),
+        }
+        for index, row in enumerate(rows)
+    ]
+    return _akshare_cn_sectors(normalized)
+
+
+def _eastmoney_cn_gainers() -> list[dict[str, Any]]:
+    rows = _eastmoney_clist(
+        {
+            "fid": "f3",
+            "po": "1",
+            "pz": "200",
+            "pn": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+            "fields": "f12,f14,f3,f6",
+        }
+    )
+    normalized = [
+        {
+            "代码": row.get("f12"),
+            "名称": row.get("f14"),
+            "涨跌幅": row.get("f3"),
+            "成交额": row.get("f6"),
+        }
+        for row in rows
+    ]
+    return _akshare_stock_gainers(normalized, market="CN", min_turnover=CN_MIN_TURNOVER)
+
+
+def _cn_gainers_http_fallback() -> list[dict[str, Any]]:
+    try:
+        rows = _eastmoney_cn_gainers()
+    except Exception:
+        rows = []
+    return rows or _sina_cn_gainers()
+
+
+def _sina_cn_gainers() -> list[dict[str, Any]]:
+    import requests
+
+    response = requests.get(
+        "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData",
+        params={
+            "page": "1",
+            "num": "50",
+            "sort": "changepercent",
+            "asc": "0",
+            "node": "hs_a",
+            "symbol": "",
+            "_s_r_a": "page",
+        },
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=12,
+    )
+    response.raise_for_status()
+    rows = response.json()
+    normalized = [
+        {
+            "代码": row.get("code") or row.get("symbol"),
+            "名称": row.get("name"),
+            "涨跌幅": row.get("changepercent"),
+            "成交额": row.get("amount"),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    gainers = _akshare_stock_gainers(normalized, market="CN", min_turnover=CN_MIN_TURNOVER)
+    for row in gainers:
+        row["provider"] = SINA_FINANCE_PROVIDER
+        row["metric"] = f"sina_turnover_filtered_change_pct_min_{CN_MIN_TURNOVER}"
+    return gainers
+
+
+def _eastmoney_cn_capital_flow() -> list[dict[str, Any]]:
+    rows = _eastmoney_clist(
+        {
+            "fid": "f62",
+            "po": "1",
+            "pz": "50",
+            "pn": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fs": "m:90+t:2",
+            "fields": "f12,f14,f3,f62",
+        }
+    )
+    normalized = [
+        {
+            "名称": row.get("f14"),
+            "今日涨跌幅": row.get("f3"),
+            "今日主力净流入-净额": row.get("f62"),
+        }
+        for row in rows
+    ]
+    return _akshare_cn_capital_flow(normalized)
+
+
+def _eastmoney_clist(params: dict[str, str]) -> list[dict[str, Any]]:
+    import requests
+
+    base_params = {
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://quote.eastmoney.com/",
+    }
+    last_exc: Exception | None = None
+    for host in ("https://82.push2.eastmoney.com/api/qt/clist/get", "https://push2.eastmoney.com/api/qt/clist/get"):
+        try:
+            response = requests.get(host, params={**base_params, **params}, headers=headers, timeout=12)
+            response.raise_for_status()
+            payload = response.json()
+            rows = ((payload.get("data") or {}).get("diff") or [])
+            return [dict(row) for row in rows if isinstance(row, dict)]
+        except Exception as exc:
+            last_exc = exc
+    if last_exc:
+        raise last_exc
+    return []
 
 
 def _akshare_cn_sectors(frame: Any) -> list[dict[str, Any]]:

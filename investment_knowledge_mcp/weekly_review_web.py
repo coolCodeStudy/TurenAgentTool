@@ -92,28 +92,32 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 self._handle_workbench_execute(payload)
             return
 
-        if not self._authorized():
-            return
         if parsed.path == "/api/weekly-review/generate":
+            if not self._authorized(require_configured=True):
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
             self._handle_weekly_review_generate(payload, force=False)
             return
         if parsed.path == "/api/weekly-review/refresh":
+            if not self._authorized(require_configured=True):
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
             self._handle_weekly_review_generate(payload, force=True)
             return
         if parsed.path == "/api/weekly-review/save":
+            if not self._authorized(require_configured=True):
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
             self._handle_weekly_review_save(payload)
             return
         if parsed.path == "/api/daily-market-brief/generate":
-            if not self._authorized():
+            if not self._authorized(require_configured=True):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -123,6 +127,8 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
         candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
         if candidate_match:
+            if not self._authorized(require_configured=True):
+                return
             self._handle_candidate_decision(candidate_id=int(candidate_match.group(1)), action=candidate_match.group(2))
             return
 
@@ -418,18 +424,25 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         self._write_json(HTTPStatus.UNAUTHORIZED, command_workbench_auth_error_payload())
         return False
 
-    def _authorized(self) -> bool:
-        token = get_config().weekly_review_web_token
-        if not token:
+    def _authorized(self, *, require_configured: bool = False) -> bool:
+        config = get_config()
+        tokens = [token for token in (config.weekly_review_web_token, config.command_api_token) if token]
+        if not tokens:
+            if require_configured:
+                self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "web write token is not configured"})
+                return False
             return True
         authorization = self.headers.get("Authorization")
         web_token = self.headers.get("X-Weekly-Review-Token")
+        command_token = self.headers.get("X-Command-Token")
         supplied = ""
         if authorization and authorization.startswith("Bearer "):
             supplied = authorization.removeprefix("Bearer ").strip()
         elif web_token:
             supplied = web_token.strip()
-        if hmac.compare_digest(supplied, token):
+        elif command_token:
+            supplied = command_token.strip()
+        if supplied and any(hmac.compare_digest(supplied, token) for token in tokens):
             return True
         self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
         return False

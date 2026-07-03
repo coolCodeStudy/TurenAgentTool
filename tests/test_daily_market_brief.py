@@ -216,7 +216,16 @@ class DailyMarketBriefTests(unittest.TestCase):
 
     def test_akshare_missing_dependency_degrades_without_raw_error(self) -> None:
         sys.modules.pop("akshare", None)
-        with mock.patch.object(dmb.importlib, "import_module", side_effect=ImportError("missing akshare")):
+        empty_activity = dmb._empty_activity(
+            "CN",
+            provider=dmb.EASTMONEY_HTTP_PROVIDER,
+            status="provider_unavailable",
+            message="Eastmoney 未返回可用的 A 股市场榜单。",
+        )
+        with (
+            mock.patch.object(dmb.importlib, "import_module", side_effect=ImportError("missing akshare")),
+            mock.patch.object(dmb, "_eastmoney_cn_activity", return_value=empty_activity),
+        ):
             result = dmb.build_daily_market_brief(
                 market="CN",
                 market_date=date(2026, 6, 30),
@@ -226,7 +235,7 @@ class DailyMarketBriefTests(unittest.TestCase):
             )
 
         self.assertEqual(result.context["source_status"]["sectors"]["status"], "provider_unavailable")
-        self.assertIn("AKShare", result.context["source_status"]["sectors"]["message"])
+        self.assertIn("Eastmoney", result.context["source_status"]["sectors"]["message"])
         self.assertNotIn("Traceback", result.markdown)
 
     def test_command_retrieves_specific_and_latest_saved_brief(self) -> None:
