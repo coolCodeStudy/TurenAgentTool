@@ -462,6 +462,7 @@ jobs:
             COMPOSE_PROJECT_NAME=turenagenttool_prod
             COMPOSE_PROFILES=stream
             APP_IMAGE_TAG=prod
+            APP_RELEASE_SHA=${{ github.sha }}
             PIP_INDEX_URL=${{ vars.PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple/' }}
 
             POSTGRES_USER=postgres

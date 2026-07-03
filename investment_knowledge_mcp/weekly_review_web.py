@@ -5,6 +5,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import os
 import re
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -45,7 +46,14 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._write_html(HTTPStatus.OK, render_daily_market_brief_html())
             return
         if parsed.path == "/health":
-            self._write_json(HTTPStatus.OK, {"ok": True})
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "app_release_sha": os.getenv("APP_RELEASE_SHA") or "",
+                    "daily_market_brief_route": True,
+                },
+            )
             return
         if parsed.path == "/command":
             self._write_html(HTTPStatus.OK, render_command_workbench_html())
