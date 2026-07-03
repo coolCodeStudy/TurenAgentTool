@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
+import subprocess
+import tempfile
+from pathlib import Path
 import unittest
 
 from investment_knowledge_mcp.command_workbench import (
     execution_blocker,
     list_workbench_actions,
     parse_workbench_command,
+    render_command_workbench_html,
 )
 
 
@@ -26,6 +31,23 @@ class CommandWorkbenchKlineTests(unittest.TestCase):
         self.assertIn("kline_investigation", actions)
         self.assertEqual(actions["kline_investigation"]["action_family"], "Market Behavior")
         self.assertIn("K线调查", actions["kline_investigation"]["aliases"])
+
+    def test_rendered_command_workbench_script_is_valid_javascript(self) -> None:
+        html = render_command_workbench_html()
+        match = re.search(r"<script>(.*?)</script>", html, re.DOTALL)
+        self.assertIsNotNone(match)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            script_path = Path(tmp_dir) / "command-workbench.js"
+            script_path.write_text(match.group(1), encoding="utf-8")
+            result = subprocess.run(
+                ["node", "--check", str(script_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
