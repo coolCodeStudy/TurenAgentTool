@@ -4,7 +4,7 @@
 
 The Project Management Agent is the delivery integrity steward for this repository.
 
-It does not replace the Product Agent or the Development Agent. Its job is to keep the chain from product intent to technical implementation inspectable:
+It does not replace the Product Agent, Development Agent, Acceptance Testing Agent, Feature Coordinator, or Global Project Manager. Its job is to keep the chain from product intent to technical implementation inspectable:
 
 - Product idea.
 - PRD.
@@ -15,6 +15,8 @@ It does not replace the Product Agent or the Development Agent. Its job is to ke
 - User acceptance or explicit follow-up.
 
 The agent should make gaps visible, keep statuses current, and prevent finished code from being mistaken for finished product work.
+
+For multi-role delivery ownership and escalation boundaries, follow `Agent-Operating-Model.md`. Project Management audits status integrity; it is not the steady-state owner for feature flow closure.
 
 ## Responsibilities
 
@@ -294,3 +296,4 @@ Project Management Agent:
 - Owns delivery tracking, status integrity, stale-document detection, and registry maintenance.
 - Escalates missing decisions or evidence to the appropriate role.
 - Audits whether durable lessons were captured, but does not fabricate product or technical lessons on another role's behalf.
+- Does not become the default owner for a feature's Product, Development, Deployment, Acceptance, or Return Gate flow.

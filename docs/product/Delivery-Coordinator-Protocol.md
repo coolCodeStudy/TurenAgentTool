@@ -4,6 +4,8 @@
 
 The Delivery Coordinator is the single front door for product-feature delivery in this repository.
 
+This protocol implements `Agent-Operating-Model.md` for feature-level coordination. If this protocol and the Agent Operating Model appear to disagree, follow the Agent Operating Model and update this protocol.
+
 The user should be able to ask about a product feature once, and the coordinator should route the work across Product, Engineering, Acceptance Testing, and Project Management without making the user repeat context in several sessions.
 
 The coordinator is an orchestration role. It does not replace the specialized roles:
@@ -81,6 +83,7 @@ Every substantial routed task must include this packet. Keep it short, but do no
 ## Delivery Handoff
 
 - Task:
+- Operating model source:
 - Coordinator:
 - Current owner:
 - Source PRD:
@@ -97,6 +100,11 @@ Every substantial routed task must include this packet. Keep it short, but do no
 - User decisions needed:
 - Next owner:
 - Expected handoff result:
+- Completion gate:
+- Deploy needed:
+- Deploy decision:
+- Return target:
+- Escalation target:
 ```
 
 Use `not_applicable` only with a reason. Use `needs_review` when evidence is unclear.
@@ -177,6 +185,19 @@ GitHub Actions production deploys use the `production-deploy` concurrency group.
 
 The current Ops API already has an in-process mutex and file lock for `/ops/deploy`. P0 does not add a separate deploy queue; use `Delivery-Queue.md` to record deploy intent, deploy completion, or `blocked` state. Add a dedicated Deploy Queue only if Delivery Queue becomes too noisy.
 
+## Deploy Decision Gate
+
+Every coordinator return involving a cloud-served or browser-tested feature must make a concrete deploy decision before the coordinator stops.
+
+Allowed deploy decisions:
+
+- `self_deploy`: the feature coordinator has the required permission, no active deploy conflict is known, Deploy Intent is complete, and it will trigger the shared deploy path itself.
+- `dispatch_deploy_owner`: deployment needs another role/session; the coordinator dispatches a named owner with the exact ref or commit, deploy path, affected service or URL, verification target, and watch path.
+- `blocked`: deployment cannot proceed; the coordinator records the exact blocker, such as missing credentials, active deploy conflict, merge conflict, unpushed ref, unknown service, or user pause.
+- `not_required`: no cloud deploy is needed; the coordinator records why, such as docs-only change, local-only fixture, rejected branch, or acceptance not tied to the cloud surface.
+
+The deploy decision is not valid if it uses a vague owner such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`. If the coordinator itself is the right owner, say `self_deploy` and continue through the shared deploy path. If another owner is required, name the role or thread and dispatch it when tools are available.
+
 ## Coordinator Return Gate
 
 Dispatch is not closed when another role/thread/session is created. A dispatched role's final response or pushed branch means the work has returned to the coordinator for review.
@@ -196,6 +217,16 @@ When a dispatched role returns, the coordinator must:
 
 The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
 
+For cloud-served or browser-tested features, a Development Agent return that says "code fixed and pushed" is not enough to close the coordinator loop. If the returned fix is not yet merged, deployed, and retested on the real cloud entrypoint, the coordinator must immediately create or dispatch the next owner for that gap:
+
+- `Development Agent` when the returned branch still needs merge conflict resolution, release prep, or deployment implementation work.
+- `Release/Deploy owner` when the branch is ready but the cloud service has not been updated.
+- `Acceptance Testing Agent` only after the relevant cloud service has been deployed or the coordinator has recorded why cloud deployment is not required.
+
+The coordinator's next action must name the exact branch or commit to deploy, the intended deploy path, the affected service or URL, and the retest owner. It must not stop at "after deploy, retest" without either executing the dispatch or recording `Dispatch not executed` with the smallest required user/project-manager action.
+
+Before stopping, the coordinator must pass the Deploy Decision Gate above. A response that says "next step is Coordinator/Ops deploy" has not passed the gate because it does not assign a concrete owner or action.
+
 Every returned role should make the coordinator's next step obvious by ending with:
 
 ```markdown
@@ -208,6 +239,8 @@ Return to Coordinator:
 - Remaining gaps:
 - Recommended next owner:
 - Recommended next handoff:
+- Deploy needed: yes/no/not_applicable, with affected service or URL when yes
+- Deploy decision: self_deploy/dispatch_deploy_owner/blocked/not_required, with reason
 ```
 
 ## Routing Rules
