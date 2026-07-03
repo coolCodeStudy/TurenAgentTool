@@ -42,8 +42,8 @@ Acceptance-fix update: databases that still have the legacy `review_reports.repo
 P0 does not add a paid provider dependency.
 
 - Core indexes: use existing Yahoo chart fallback through `market_data_provider.get_yahoo_market_bars` for supported P0 index symbols.
-- Sectors/industries and top gainers: no reliable full-market common-equity universe exists in the current repo. Default live generation records these as `provider_unavailable` degraded states instead of inventing rankings.
-- Capital flow: no configured no-paid provider currently exposes explicit market/stock/sector flow metrics for all three markets. Default live generation records explicit degraded states; fixtures may provide CN/HK flow-like rows only for deterministic tests.
+- Sectors/industries and top gainers: live generation now uses AKShare/Eastmoney where coverage is reliable enough for a daily brief. CN uses AKShare industry-board rankings and liquidity-filtered A-share gainers; HK uses AKShare Hong Kong main-board gainers; US uses AKShare US stock gainers with warrant/right-like rows filtered out. HK/US sector rankings remain explicit degraded states until an equally reliable provider is added.
+- Capital flow: CN uses AKShare/Eastmoney industry fund-flow ranking (`stock_sector_fund_flow_rank`) for top inflow segments. HK/US remain explicit degraded states because AKShare does not provide comparable no-paid, same-semantics flow coverage for those markets in this implementation.
 - Verification fixtures: deterministic in-process fixture data can be injected by tests and by the scheduler/generator code path when explicitly requested. Fixture output is labeled `fixture` and is not presented as real market data.
 
 ## Command Surface
@@ -90,9 +90,9 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 
 | PRD scope / acceptance criterion | Status | Evidence | Notes |
 |---|---|---|---|
-| CN brief includes required P0 indexes, sectors/industries, gainers, flow/degraded state, volume baselines, source labels, date, timestamp | verified | `tests.test_daily_market_brief`; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-30 fixture` | CN command fixture now uses deterministic index bars and renders all five P0 indexes; same-market rerun reused `review_reports #130`. Live sectors/gainers/flow degrade until a configured full-market provider exists. |
-| HK brief includes required P0 indexes, sectors/industries when supported, gainers, flow/degraded state, turnover baselines | verified | `tests.test_daily_market_brief`; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 HK 2026-06-30 fixture` | HK command fixture renders all three P0 indexes and saved beside CN as `review_reports #131`. Same provider limitation as CN for live sectors/gainers. |
-| US brief includes required P0 indexes, sectors/industries when supported, common-stock gainers, explicit flow degraded state, volume baselines | verified | `tests.test_daily_market_brief`; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 US 2026-06-30 fixture` | US command fixture renders all four P0 indexes and saved beside CN/HK as `review_reports #132`; US flow remains explicit degraded state per PRD. |
+| CN brief includes required P0 indexes, sectors/industries, gainers, flow/degraded state, volume baselines, source labels, date, timestamp | verified | `tests.test_daily_market_brief`; fake-AKShare unit coverage; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-30 fixture` | CN command fixture still uses deterministic index bars. Live mode now attempts AKShare/Eastmoney industry-board rankings, liquidity-filtered A-share gainers, and industry fund-flow ranking before degrading. |
+| HK brief includes required P0 indexes, sectors/industries when supported, gainers, flow/degraded state, turnover baselines | verified | `tests.test_daily_market_brief`; fake-AKShare unit coverage; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 HK 2026-06-30 fixture` | HK command fixture renders all three P0 indexes. Live mode now attempts AKShare Hong Kong main-board gainers; HK sector and fund-flow rows remain explicit degraded states. |
+| US brief includes required P0 indexes, sectors/industries when supported, common-stock gainers, explicit flow degraded state, volume baselines | verified | `tests.test_daily_market_brief`; fake-AKShare unit coverage; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 US 2026-06-30 fixture` | US command fixture renders all four P0 indexes. Live mode now attempts AKShare US gainers after filtering warrant/right-like rows; US sector and fund-flow rows remain explicit degraded states. |
 | Independent market scheduler and rerun semantics | verified | `run_daily_market_brief_scheduler_forever`, `run_daily_market_brief_once`; scheduler timezone unit test | Scheduler is ready as a module entrypoint; cloud service wiring is out of P0. |
 | Idempotent storage by report type, market, market date | verified | `repository.upsert_daily_market_brief_report`; `db/schema.sql`; DB smoke on `POSTGRES_PORT=55433` | Existing rows show market-aware keys: CN `#130`, HK `#131`, and US `#132` for `2026-06-30`; weekend CN `#133` also saved. |
 | Missing provider coverage visible in user language | verified | Renderer and degraded-state unit test; forced command-router provider failure | Source status is explicit for sectors/gainers/flow; raw provider/SSL/internal exception text is not rendered in user-facing Markdown. |
@@ -105,6 +105,6 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 
 ## Risks And Blockers
 
-- Current repo has no full-market sector/industry and common-equity ranking provider. P0 will not invent this data in live mode; it records degraded state and uses fixtures for deterministic verification.
+- AKShare/Eastmoney data can be source-limited or temporarily unavailable. Live generation must degrade in product language and keep indexes/other available sections rather than exposing raw provider exceptions.
 - Full exchange holiday detection is unavailable locally. Weekend no-session is implemented; exchange-holiday calendars are a future provider/data-source task.
 - Cloud deployment is out of this handoff unless the coordinator explicitly approves it.

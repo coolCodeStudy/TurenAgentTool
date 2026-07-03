@@ -82,6 +82,8 @@ P0 does not include DingTalk push or a separate standalone Web app. Those remain
 
 P0 must use configured providers already available to the project or a no-paid-dependency provider that Engineering explicitly documents in the technical plan. Futu is the preferred configured provider for CN/HK coverage when available. The existing market data provider or Yahoo-style chart source is acceptable for US indexes/equities when it supplies the required semantics. P0 must not introduce a paid data dependency.
 
+2026-07-04 provider refinement: AKShare is approved as a no-paid provider for improving live brief usefulness where its Eastmoney-backed interfaces provide the required semantics. Use AKShare for A-share industry-board rankings, liquidity-filtered A-share gainers, A-share industry money-flow ranking, Hong Kong main-board gainers, and U.S. stock gainers when available. Continue to show explicit degraded states for HK/US sectors or capital flow when AKShare does not provide comparable, named flow/taxonomy semantics.
+
 P0 provider behavior must be explicit:
 
 - Core indexes: use the most reliable configured source per market; fall back only when the fallback can supply the same metric semantics.

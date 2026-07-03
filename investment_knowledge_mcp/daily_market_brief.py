@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+import importlib
 import logging
 from threading import Event
 from typing import Any, Callable
@@ -80,6 +81,10 @@ MARKET_CONFIGS: dict[str, MarketConfig] = {
 
 CAPITAL_FLOW_DEGRADED_COPY = "配置的数据源未提供本市场/本交易日的明确资金流指标；本简报其余部分已基于可用行情数据生成。"
 INDEX_DEGRADED_COPY = "核心指数数据源本次未返回可用行情；简报已保留其他可用部分和数据缺口提示。"
+AKSHARE_PROVIDER = "akshare_eastmoney"
+CN_MIN_TURNOVER = 50_000_000
+HK_MIN_TURNOVER = 20_000_000
+US_MIN_TURNOVER = 10_000_000
 _SCHEDULER_STATE: dict[str, Any] = {
     "started": False,
     "interval_seconds": None,
@@ -171,7 +176,7 @@ def build_daily_market_brief_context(
             warnings=warnings,
             market_bar_loader=index_loader,
         )
-        provider = activity_provider or (_fixture_activity_provider if use_fixture else _empty_activity_provider)
+        provider = activity_provider or (_fixture_activity_provider if use_fixture else _akshare_activity_provider)
         activity = provider(config.code, resolved_date)
         _merge_activity_status(source_status, activity)
 
@@ -507,28 +512,267 @@ def _empty_activity_provider(market: str, market_date: date) -> dict[str, Any]:
     return _empty_activity(market)
 
 
-def _empty_activity(market: str) -> dict[str, Any]:
+def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]:
+    market = _market_config(market).code
+    try:
+        ak = importlib.import_module("akshare")
+    except Exception:
+        return _empty_activity(market, provider=AKSHARE_PROVIDER, status="provider_unavailable", message="AKShare 未安装或不可导入。")
+
+    if market == "CN":
+        return _akshare_cn_activity(ak, market_date)
+    if market == "HK":
+        return _akshare_hk_activity(ak, market_date)
+    if market == "US":
+        return _akshare_us_activity(ak, market_date)
+    return _empty_activity(market)
+
+
+def _akshare_cn_activity(ak: Any, market_date: date) -> dict[str, Any]:
+    sectors, sector_status = _akshare_call(
+        provider=AKSHARE_PROVIDER,
+        status_key="sectors",
+        fallback_message="AKShare 未返回可用的 A 股行业板块涨幅榜。",
+        loader=lambda: _akshare_cn_sectors(ak.stock_board_industry_name_em()),
+    )
+    gainers, gainer_status = _akshare_call(
+        provider=AKSHARE_PROVIDER,
+        status_key="gainers",
+        fallback_message="AKShare 未返回可用的 A 股个股涨幅榜。",
+        loader=lambda: _akshare_stock_gainers(ak.stock_zh_a_spot_em(), market="CN", min_turnover=CN_MIN_TURNOVER),
+    )
+    flow, flow_status = _akshare_call(
+        provider=AKSHARE_PROVIDER,
+        status_key="capital_flow",
+        fallback_message=CAPITAL_FLOW_DEGRADED_COPY,
+        loader=lambda: _akshare_cn_capital_flow(ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")),
+    )
+    return {
+        "sectors": sectors,
+        "gainers": gainers,
+        "capital_flow": flow,
+        "source_status": {
+            "sectors": sector_status,
+            "gainers": gainer_status,
+            "capital_flow": flow_status,
+        },
+    }
+
+
+def _akshare_hk_activity(ak: Any, market_date: date) -> dict[str, Any]:
+    gainers, gainer_status = _akshare_call(
+        provider=AKSHARE_PROVIDER,
+        status_key="gainers",
+        fallback_message="AKShare 未返回可用的港股主板涨幅榜。",
+        loader=lambda: _akshare_stock_gainers(ak.stock_hk_main_board_spot_em(), market="HK", min_turnover=HK_MIN_TURNOVER),
+    )
+    activity = _empty_activity(market="HK", provider=AKSHARE_PROVIDER, status="not_available")
+    activity["gainers"] = gainers
+    activity["source_status"]["gainers"] = gainer_status
+    activity["source_status"]["sectors"] = {
+        "status": "not_available",
+        "provider": AKSHARE_PROVIDER,
+        "taxonomy": "provider_native",
+        "count": 0,
+        "message": "AKShare 当前未提供可直接用于港股全市场的行业/板块涨幅榜；本简报保留个股榜和数据缺口提示。",
+    }
+    activity["source_status"]["capital_flow"] = {
+        "status": "not_available",
+        "provider": AKSHARE_PROVIDER,
+        "count": 0,
+        "message": CAPITAL_FLOW_DEGRADED_COPY,
+    }
+    return activity
+
+
+def _akshare_us_activity(ak: Any, market_date: date) -> dict[str, Any]:
+    gainers, gainer_status = _akshare_call(
+        provider=AKSHARE_PROVIDER,
+        status_key="gainers",
+        fallback_message="AKShare 未返回可用的美股涨幅榜。",
+        loader=lambda: _akshare_stock_gainers(ak.stock_us_spot_em(), market="US", min_turnover=US_MIN_TURNOVER),
+    )
+    activity = _empty_activity(market="US", provider=AKSHARE_PROVIDER, status="not_available")
+    activity["gainers"] = gainers
+    activity["source_status"]["gainers"] = gainer_status
+    activity["source_status"]["sectors"] = {
+        "status": "not_available",
+        "provider": AKSHARE_PROVIDER,
+        "taxonomy": "provider_native",
+        "count": 0,
+        "message": "AKShare 当前未提供可直接用于美股全市场的行业/板块涨幅榜；本简报保留个股榜和数据缺口提示。",
+    }
+    activity["source_status"]["capital_flow"] = {
+        "status": "not_available",
+        "provider": AKSHARE_PROVIDER,
+        "count": 0,
+        "message": CAPITAL_FLOW_DEGRADED_COPY,
+    }
+    return activity
+
+
+def _akshare_call(
+    *,
+    provider: str,
+    status_key: str,
+    fallback_message: str,
+    loader: Callable[[], list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    try:
+        rows = loader()
+    except Exception:
+        return [], {
+            "status": "provider_unavailable",
+            "provider": provider,
+            "count": 0,
+            "message": fallback_message,
+            "detail_code": "provider_unavailable",
+        }
+    status = "ok" if rows else "missing"
+    message = None if rows else fallback_message
+    result: dict[str, Any] = {"status": status, "provider": provider, "count": len(rows)}
+    if status_key == "sectors":
+        result["taxonomy"] = "provider_native"
+    if message:
+        result["message"] = message
+    return rows, result
+
+
+def _akshare_cn_sectors(frame: Any) -> list[dict[str, Any]]:
+    rows = _frame_records(frame)
+    cleaned: list[dict[str, Any]] = []
+    for row in rows:
+        name = _first_value(row, "板块名称", "名称")
+        if not name:
+            continue
+        cleaned.append(
+            {
+                "rank": _number(_first_value(row, "排名", "序号")) or len(cleaned) + 1,
+                "code": _text(_first_value(row, "板块代码", "代码")),
+                "name": _text(name),
+                "change_pct": _number(_first_value(row, "涨跌幅", "今日涨跌幅")),
+                "turnover": _number(_first_value(row, "成交额", "总市值")),
+                "provider": AKSHARE_PROVIDER,
+                "taxonomy": "eastmoney_industry_board",
+                "metric": "industry_change_pct",
+            }
+        )
+    cleaned = [item for item in cleaned if item.get("change_pct") is not None]
+    return _ranked_top(sorted(cleaned, key=lambda item: item["change_pct"], reverse=True)[:5])
+
+
+def _akshare_stock_gainers(frame: Any, *, market: str, min_turnover: float) -> list[dict[str, Any]]:
+    rows = _frame_records(frame)
+    cleaned: list[dict[str, Any]] = []
+    for row in rows:
+        code = _text(_first_value(row, "代码", "symbol"))
+        name = _text(_first_value(row, "名称", "股票简称"))
+        change_pct = _number(_first_value(row, "涨跌幅", "涨幅"))
+        turnover = _number(_first_value(row, "成交额", "金额"))
+        if not code or not name or change_pct is None:
+            continue
+        if turnover is not None and turnover < min_turnover:
+            continue
+        if market == "CN" and ("ST" in name.upper() or "退" in name):
+            continue
+        if market == "US" and _looks_like_us_warrant(code, name):
+            continue
+        cleaned.append(
+            {
+                "rank": len(cleaned) + 1,
+                "code": code,
+                "name": name,
+                "change_pct": change_pct,
+                "turnover": turnover,
+                "provider": AKSHARE_PROVIDER,
+                "metric": f"turnover_filtered_change_pct_min_{int(min_turnover)}",
+            }
+        )
+    return _ranked_top(sorted(cleaned, key=lambda item: item["change_pct"], reverse=True)[:5])
+
+
+def _akshare_cn_capital_flow(frame: Any) -> list[dict[str, Any]]:
+    rows = _frame_records(frame)
+    cleaned: list[dict[str, Any]] = []
+    for row in rows:
+        name = _text(_first_value(row, "名称", "板块名称"))
+        flow_value = _number(_first_value(row, "今日主力净流入-净额", "主力净流入-净额"))
+        if not name or flow_value is None:
+            continue
+        cleaned.append(
+            {
+                "rank": len(cleaned) + 1,
+                "name": name,
+                "flow_value": flow_value,
+                "change_pct": _number(_first_value(row, "今日涨跌幅", "涨跌幅")),
+                "provider": AKSHARE_PROVIDER,
+                "metric": "main_net_inflow",
+            }
+        )
+    return _ranked_top(sorted(cleaned, key=lambda item: item["flow_value"], reverse=True)[:5])
+
+
+def _ranked_top(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    for rank, row in enumerate(rows, start=1):
+        item = dict(row)
+        item["rank"] = rank
+        ranked.append(item)
+    return ranked
+
+
+def _frame_records(frame: Any) -> list[dict[str, Any]]:
+    if frame is None:
+        return []
+    if hasattr(frame, "to_dict"):
+        records = frame.to_dict(orient="records")
+        return [dict(item) for item in records if isinstance(item, dict)]
+    if isinstance(frame, list):
+        return [dict(item) for item in frame if isinstance(item, dict)]
+    return []
+
+
+def _first_value(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row and row[key] not in (None, ""):
+            return row[key]
+    return None
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _looks_like_us_warrant(code: str, name: str) -> bool:
+    symbol = code.split(".")[-1].upper()
+    upper_name = name.upper()
+    return symbol.endswith(("W", "WS", "WT")) or any(word in upper_name for word in (" WARRANT", " WT", " RIGHT"))
+
+
+def _empty_activity(market: str, *, provider: str = "not_configured", status: str = "provider_unavailable", message: str | None = None) -> dict[str, Any]:
     return {
         "sectors": [],
         "gainers": [],
         "capital_flow": [],
         "source_status": {
             "sectors": {
-                "status": "provider_unavailable",
-                "provider": "not_configured",
+                "status": status,
+                "provider": provider,
                 "taxonomy": "provider_native",
                 "count": 0,
-                "message": "当前仓库没有配置可覆盖全市场行业/板块涨幅排行的数据源。",
+                "message": message or "当前配置的数据源没有返回可覆盖全市场行业/板块涨幅排行的数据。",
             },
             "gainers": {
-                "status": "provider_unavailable",
-                "provider": "not_configured",
+                "status": status,
+                "provider": provider,
                 "count": 0,
-                "message": "当前仓库没有配置可覆盖全市场普通股流动性筛选和涨幅排行的数据源。",
+                "message": message or "当前配置的数据源没有返回可覆盖全市场普通股流动性筛选和涨幅排行的数据。",
             },
             "capital_flow": {
                 "status": "not_available",
-                "provider": "not_configured",
+                "provider": provider,
                 "count": 0,
                 "message": CAPITAL_FLOW_DEGRADED_COPY,
             },

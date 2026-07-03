@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import sys
+import types
 import unittest
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import command_router
@@ -83,6 +86,59 @@ def fake_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarS
     )
 
 
+class FakeFrame:
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+
+    def to_dict(self, orient: str) -> list[dict]:
+        self.assert_orient(orient)
+        return self.rows
+
+    @staticmethod
+    def assert_orient(orient: str) -> None:
+        if orient != "records":
+            raise AssertionError(f"unexpected orient: {orient}")
+
+
+class FakeAkshareModule(types.SimpleNamespace):
+    def stock_board_industry_name_em(self) -> FakeFrame:
+        return FakeFrame(
+            [
+                {"序号": 1, "板块代码": "BK1001", "板块名称": "机器人", "涨跌幅": 4.2, "成交额": 21_000_000_000},
+                {"序号": 2, "板块代码": "BK1002", "板块名称": "半导体", "涨跌幅": 5.1, "成交额": 19_000_000_000},
+                {"序号": 3, "板块代码": "BK1003", "板块名称": "银行", "涨跌幅": 1.2, "成交额": 15_000_000_000},
+                {"序号": 4, "板块代码": "BK1004", "板块名称": "传媒", "涨跌幅": 2.2, "成交额": 11_000_000_000},
+                {"序号": 5, "板块代码": "BK1005", "板块名称": "电力设备", "涨跌幅": 3.0, "成交额": 12_000_000_000},
+                {"序号": 6, "板块代码": "BK1006", "板块名称": "煤炭", "涨跌幅": 0.3, "成交额": 8_000_000_000},
+            ]
+        )
+
+    def stock_zh_a_spot_em(self) -> FakeFrame:
+        return FakeFrame(
+            [
+                {"代码": "300001", "名称": "样本科技", "涨跌幅": 12.4, "成交额": 180_000_000},
+                {"代码": "600001", "名称": "样本制造", "涨跌幅": 10.2, "成交额": 95_000_000},
+                {"代码": "000001", "名称": "样本银行", "涨跌幅": 7.1, "成交额": 80_000_000},
+                {"代码": "002001", "名称": "样本消费", "涨跌幅": 6.8, "成交额": 70_000_000},
+                {"代码": "688001", "名称": "样本芯片", "涨跌幅": 6.1, "成交额": 60_000_000},
+                {"代码": "000002", "名称": "ST样本", "涨跌幅": 20.0, "成交额": 100_000_000},
+                {"代码": "000003", "名称": "低流动性", "涨跌幅": 19.0, "成交额": 1_000_000},
+            ]
+        )
+
+    def stock_sector_fund_flow_rank(self, *, indicator: str, sector_type: str) -> FakeFrame:
+        self.last_flow_args = {"indicator": indicator, "sector_type": sector_type}
+        return FakeFrame(
+            [
+                {"序号": 1, "名称": "半导体", "今日涨跌幅": 5.1, "今日主力净流入-净额": 3_200_000_000},
+                {"序号": 2, "名称": "机器人", "今日涨跌幅": 4.2, "今日主力净流入-净额": 2_700_000_000},
+                {"序号": 3, "名称": "电力设备", "今日涨跌幅": 3.0, "今日主力净流入-净额": 2_100_000_000},
+                {"序号": 4, "名称": "传媒", "今日涨跌幅": 2.2, "今日主力净流入-净额": 1_100_000_000},
+                {"序号": 5, "名称": "银行", "今日涨跌幅": 1.2, "今日主力净流入-净额": 700_000_000},
+            ]
+        )
+
+
 class DailyMarketBriefTests(unittest.TestCase):
     def setUp(self) -> None:
         self.original_repository = dmb.repository
@@ -91,6 +147,7 @@ class DailyMarketBriefTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         dmb.repository = self.original_repository
+        sys.modules.pop("akshare", None)
 
     def test_fixture_generation_has_required_cn_shape_and_idempotent_storage(self) -> None:
         first = dmb.build_daily_market_brief(
@@ -132,6 +189,45 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(result.context["source_status"]["capital_flow"]["status"], "not_available")
         self.assertIn(dmb.CAPITAL_FLOW_DEGRADED_COPY, result.markdown)
         self.assertEqual(result.context["provider_mode"], "live")
+
+    def test_akshare_cn_activity_populates_live_leadership_and_flow(self) -> None:
+        fake_ak = FakeAkshareModule()
+        sys.modules["akshare"] = fake_ak
+
+        result = dmb.build_daily_market_brief(
+            market="CN",
+            market_date=date(2026, 6, 30),
+            save=False,
+            market_bar_loader=fake_market_bar_loader,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertEqual(result.context["provider_mode"], "live")
+        self.assertEqual(len(result.context["sectors"]), 5)
+        self.assertEqual(result.context["sectors"][0]["name"], "半导体")
+        self.assertEqual(len(result.context["gainers"]), 5)
+        self.assertEqual(result.context["gainers"][0]["name"], "样本科技")
+        self.assertNotIn("ST样本", {item["name"] for item in result.context["gainers"]})
+        self.assertEqual(len(result.context["capital_flow"]), 5)
+        self.assertEqual(result.context["capital_flow"][0]["name"], "半导体")
+        self.assertEqual(result.context["source_status"]["sectors"]["provider"], dmb.AKSHARE_PROVIDER)
+        self.assertEqual(result.context["source_status"]["capital_flow"]["status"], "ok")
+        self.assertEqual(fake_ak.last_flow_args, {"indicator": "今日", "sector_type": "行业资金流"})
+
+    def test_akshare_missing_dependency_degrades_without_raw_error(self) -> None:
+        sys.modules.pop("akshare", None)
+        with mock.patch.object(dmb.importlib, "import_module", side_effect=ImportError("missing akshare")):
+            result = dmb.build_daily_market_brief(
+                market="CN",
+                market_date=date(2026, 6, 30),
+                save=False,
+                market_bar_loader=fake_market_bar_loader,
+                now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+
+        self.assertEqual(result.context["source_status"]["sectors"]["status"], "provider_unavailable")
+        self.assertIn("AKShare", result.context["source_status"]["sectors"]["message"])
+        self.assertNotIn("Traceback", result.markdown)
 
     def test_command_retrieves_specific_and_latest_saved_brief(self) -> None:
         generated = dmb.build_daily_market_brief(
