@@ -620,13 +620,13 @@ def _akshare_call(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     try:
         rows = loader()
-    except Exception:
+    except Exception as exc:
         return [], {
             "status": "provider_unavailable",
             "provider": provider,
             "count": 0,
             "message": fallback_message,
-            "detail_code": "provider_unavailable",
+            "detail_code": type(exc).__name__,
         }
     status = "ok" if rows else "missing"
     message = None if rows else fallback_message

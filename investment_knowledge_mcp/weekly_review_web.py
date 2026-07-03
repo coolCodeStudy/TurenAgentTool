@@ -105,6 +105,8 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._handle_weekly_review_save(payload)
             return
         if parsed.path == "/api/daily-market-brief/generate":
+            if not self._authorized():
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
