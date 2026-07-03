@@ -48,4 +48,5 @@ This file is not a daily log. Add a row only when work is actively dispatched, r
 - Use this queue for lightweight deploy request, deploy completed, or blocked-by-active-deploy states. Do not create a separate Deploy Queue until Delivery Queue becomes too noisy for coordination.
 - When a role returns a branch or final result, update the existing row through the Coordinator Return Gate before creating or dispatching the next row.
 - For cloud-served or browser-tested features, do not close a development row only because a fix branch was pushed. If the fix is not merged, deployed, and cloud-retested, mark the row `needs_deploy`, `returned`, or create the next deploy/retest row with the exact branch or commit, deploy path, affected service or URL, and retest owner.
+- Deploy-related `Next Action` values must pass the Deploy Decision Gate: `self_deploy`, `dispatch_deploy_owner`, `blocked`, or `not_required`. Do not use vague owners such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`.
 - Do not use this queue for routine status notes. Long-lived delivery truth remains in `Feature-Registry.md` and `Acceptance-Queue.md`.

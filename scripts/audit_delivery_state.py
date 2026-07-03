@@ -467,6 +467,7 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- Do not create routine daily logs.",
         "- Do not mark user acceptance as accepted.",
         "- Update Feature Registry, Acceptance Queue, Delivery Queue, or technical-plan traceability when your work changes delivery state.",
+        "- For cloud-served or browser-tested work, make a concrete deploy decision before handoff: `self_deploy`, `dispatch_deploy_owner`, `blocked`, or `not_required`; do not use vague owners such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`.",
         "- Run narrow verification and document any verification limit.",
         "- Check `docs/lesson-capture-protocol.md` before handoff; record only durable lessons that pass the quality bar, otherwise state `Lessons: none`.",
         "- Commit and push after completing the work unless explicitly told to keep it local.",
@@ -476,7 +477,7 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- The expected handoff result below is satisfied or a precise blocker is recorded.",
         "- The worktree is clean or every dirty file is explained.",
         "- The final response states branch, commit SHA, verification, registry/queue updates, remaining gaps, `Lessons recorded: ...` or `Lessons: none; ...`, push result, and worktree cleanliness.",
-        "- The final response includes a `Return to Coordinator` block naming the recommended next owner and next handoff.",
+        "- The final response includes a `Return to Coordinator` block naming the recommended next owner, next handoff, deploy needed yes/no/not_applicable, and deploy decision.",
         "",
         "## Delivery Handoff",
         "",
@@ -534,7 +535,7 @@ def infer_expected_handoff(
     if next_owner == "Development Agent" and row.technical_status == "missing":
         return "Technical plan is created and Feature Registry is updated."
     if next_owner == "Development Agent":
-        return "Implementation or fix is committed, verified, registry is updated, and acceptance row is moved to needs_retest when applicable."
+        return "Implementation or fix is committed, verified, registry is updated, acceptance row is moved to needs_retest when applicable, and deploy decision is explicit."
     if next_owner == "Acceptance Testing Agent":
         status = acceptance_row.status if acceptance_row else "pending"
         return f"Acceptance Queue moves from {status} to passed, failed, or blocked with evidence."
