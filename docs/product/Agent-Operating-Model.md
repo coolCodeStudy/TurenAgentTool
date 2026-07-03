@@ -11,12 +11,14 @@ This model is the top-level operating contract for multi-role work. Role-specifi
 ## Organization
 
 - Owner: sets product intent, priority, key tradeoffs, credentials or permission approvals, and final user acceptance.
-- Global Project Manager: owns portfolio health, stale-flow recovery, cross-feature conflicts, global deploy conflicts, operating-model defects, and escalation hygiene.
+- Global Project Manager: the single portfolio-level steward and project chief of staff. It owns portfolio health, stale-flow recovery, cross-feature conflicts, global deploy conflicts, operating-model defects, and escalation hygiene.
 - Feature Coordinator: owns one feature flow from request to done. This is the steady-state owner for feature routing, child-role returns, queue updates, deploy decisions, acceptance routing, and user-acceptance readiness.
 - Product Agent: owns product judgment, PRDs, scope, non-goals, user flows, product decisions, and acceptance criteria.
 - Development Agent: owns technical planning, implementation, developer verification, deployment work, technical evidence, and code-level handoff.
 - Acceptance Testing Agent: owns independent user-facing testing from the real user surface and returns results to the Feature Coordinator.
 - Project Management Agent: owns audits, status integrity, stale-document detection, registry consistency, and missing-evidence discovery. It is not the default feature-flow owner.
+
+There may be many Feature Coordinators running in parallel, but there is only one Global Project Manager role for the portfolio. The Global Project Manager does not replace Feature Coordinators, Product, Development, or Testing. It is accountable for whether the agent organization itself works: whether coordinators close loops, whether handoffs are valid, whether deploy and acceptance gates are respected, and whether repeated failures become better rules, scripts, or queues.
 
 ## Standard Delivery Flow
 

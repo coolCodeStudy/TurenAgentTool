@@ -29,6 +29,7 @@ Read it before changing code, running services, or touching deployment commands.
 ## Project Management Discipline
 
 - Use `docs/product/Agent-Operating-Model.md` as the top-level contract for multi-role, multi-session delivery. It defines Owner, Global Project Manager, Feature Coordinator, role-agent boundaries, escalation rules, and completion gates.
+- Treat the Global Project Manager as the single portfolio-level steward. It does not replace Feature Coordinators, but it is accountable for whether the agent organization works: coordinator health, stale-flow recovery, cross-feature conflicts, valid handoffs, deploy/acceptance gates, and operating-model improvements.
 - Use `docs/product/Delivery-Coordinator-Protocol.md` as the default single-front-door protocol when the user asks about product-feature status, next actions, role routing, handoffs, or acceptance readiness.
 - Use `docs/product/Project-Management-Agent-Protocol.md` as the detailed operating protocol for project delivery tracking.
 - Use `docs/product/Acceptance-Testing-Agent-Protocol.md` as the detailed operating protocol for user-facing acceptance testing.
