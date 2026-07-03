@@ -12,6 +12,7 @@ This file is not a daily log. Add a row only when work is actively dispatched, r
 - `dispatched`: Work was sent to a role/thread/session.
 - `in_progress`: The receiving role has started work.
 - `returned`: The receiving role returned output for coordinator review; the coordinator must still integrate, reject, close, block, or dispatch the next owner.
+- `needs_deploy`: The returned work is accepted by the coordinator but cannot be acceptance-tested from the cloud surface until a named branch or commit is deployed.
 - `blocked`: Dispatch or execution is blocked.
 - `closed`: The coordinator reviewed the returned work and no further dispatch is needed for this queue item.
 
@@ -46,4 +47,5 @@ This file is not a daily log. Add a row only when work is actively dispatched, r
 - For deploy-related rows, include Deploy Intent in `Source`, `Expected Result`, or `Next Action`: feature, ref or commit, mode, affected services, reason, verification target, and watch owner/path.
 - Use this queue for lightweight deploy request, deploy completed, or blocked-by-active-deploy states. Do not create a separate Deploy Queue until Delivery Queue becomes too noisy for coordination.
 - When a role returns a branch or final result, update the existing row through the Coordinator Return Gate before creating or dispatching the next row.
+- For cloud-served or browser-tested features, do not close a development row only because a fix branch was pushed. If the fix is not merged, deployed, and cloud-retested, mark the row `needs_deploy`, `returned`, or create the next deploy/retest row with the exact branch or commit, deploy path, affected service or URL, and retest owner.
 - Do not use this queue for routine status notes. Long-lived delivery truth remains in `Feature-Registry.md` and `Acceptance-Queue.md`.

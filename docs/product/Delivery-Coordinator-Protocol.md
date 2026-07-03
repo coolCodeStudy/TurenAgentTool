@@ -196,6 +196,14 @@ When a dispatched role returns, the coordinator must:
 
 The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
 
+For cloud-served or browser-tested features, a Development Agent return that says "code fixed and pushed" is not enough to close the coordinator loop. If the returned fix is not yet merged, deployed, and retested on the real cloud entrypoint, the coordinator must immediately create or dispatch the next owner for that gap:
+
+- `Development Agent` when the returned branch still needs merge conflict resolution, release prep, or deployment implementation work.
+- `Release/Deploy owner` when the branch is ready but the cloud service has not been updated.
+- `Acceptance Testing Agent` only after the relevant cloud service has been deployed or the coordinator has recorded why cloud deployment is not required.
+
+The coordinator's next action must name the exact branch or commit to deploy, the intended deploy path, the affected service or URL, and the retest owner. It must not stop at "after deploy, retest" without either executing the dispatch or recording `Dispatch not executed` with the smallest required user/project-manager action.
+
 Every returned role should make the coordinator's next step obvious by ending with:
 
 ```markdown
@@ -208,6 +216,7 @@ Return to Coordinator:
 - Remaining gaps:
 - Recommended next owner:
 - Recommended next handoff:
+- Deploy needed: yes/no/not_applicable, with affected service or URL when yes
 ```
 
 ## Routing Rules
