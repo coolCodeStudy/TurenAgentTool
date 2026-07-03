@@ -16,6 +16,7 @@ from investment_knowledge_mcp.command_router import (
     WEEKLY_REVIEW_COMMANDS,
     WORKER_STATUS_COMMANDS,
 )
+from investment_knowledge_mcp.kline_agent import parse_kline_command
 
 COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
     "Enter the private Command Workbench access token and preview again. "
@@ -213,6 +214,22 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=("Futu OpenD", "knowledge base"),
         expected_output="Portfolio structure, risks, and follow-up analysis.",
         pinned=True,
+    ),
+    "kline_investigation": CommandAction(
+        id="kline_investigation",
+        action_family="Market Behavior",
+        label="Kline investigation",
+        description="Investigate daily, weekly, and monthly Kline behavior for one stock.",
+        aliases=("K线", "K线调查", "Kline", "kline"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="K线调查 {target} 5年 前复权",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="kline_investigation",
+        side_effects="No trade and no durable write. Reads configured Kline provider data when available.",
+        data_sources=("Kline provider", "deterministic pattern library"),
+        expected_output="Read-only Kline report with source metadata, sample statistics, warnings, and evidence limits.",
     ),
     "weekly_current": CommandAction(
         id="weekly_current",
@@ -1148,6 +1165,17 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
+    if parse_kline_command(text) is not None:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="kline_investigation",
+                fields={"exact_command": text},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
     stock_exact = _match_first(
         text,
         [
@@ -1287,6 +1315,9 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     confidence = context.confidence or 0.9
 
     needs_stock = any(field.get("type") == "stock" for field in action.required_fields)
+    has_exact_kline_command = action.id == "kline_investigation" and bool(str(fields.get("exact_command") or "").strip())
+    if has_exact_kline_command:
+        needs_stock = False
     if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
         resolved_target = _candidate_with_stock_profile(target)
         if resolved_target is None:
@@ -1638,6 +1669,8 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _build_exact_command(action: CommandAction, *, target: dict[str, Any] | None, fields: dict[str, Any]) -> str:
+    if action.id == "kline_investigation" and fields.get("exact_command"):
+        return str(fields["exact_command"]).strip()
     if target:
         values = {
             "symbol": str(target.get("symbol") or "").upper(),

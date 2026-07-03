@@ -122,6 +122,16 @@ class KlineAgentTests(unittest.TestCase):
         self.assertIn("Kline live provider is disabled", report)
         self.assertNotIn("Futu OpenD is not reachable", report)
 
+    def test_command_router_can_disable_live_provider_for_web_acceptance(self) -> None:
+        from investment_knowledge_mcp.command_router import handle_command
+
+        result = handle_command("K线调查 US.NVDA 5年 前复权", disable_kline_live_provider=True)
+
+        self.assertTrue(result.ok)
+        self.assertIn("Provider: unavailable", result.message)
+        self.assertIn("Kline live provider is disabled", result.message)
+        self.assertNotIn("Futu OpenD is not reachable", result.message)
+
 
 def _fixture_bars(count: int) -> list[KlineBar]:
     bars: list[KlineBar] = []

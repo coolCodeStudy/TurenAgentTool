@@ -137,6 +137,7 @@ Run:
 
 - `python3 -m unittest tests.test_kline_agent`
 - A narrow command-router invocation with a monkeypatched provider through tests.
+- Command Workbench browser preview coverage for exact Kline commands is verified by `tests.test_command_workbench_kline`.
 
 If live Futu/OpenD is unavailable locally, document that limitation and rely on fixture verification. As of 2026-07-03, local acceptance must not use FutuD/OpenD; run local degraded-provider checks with `KLINE_PROVIDER=disabled`. Full live-data acceptance needs a non-Futu provider path or an approved remote provider environment.
 

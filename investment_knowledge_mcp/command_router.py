@@ -31,7 +31,7 @@ from investment_knowledge_mcp.futu_opend_control import (
     request_phone_verify_code,
     submit_phone_verify_code,
 )
-from investment_knowledge_mcp.kline_agent import investigate_kline_behavior, parse_kline_command
+from investment_knowledge_mcp.kline_agent import DisabledHistoricalBarProvider, investigate_kline_behavior, parse_kline_command
 from investment_knowledge_mcp.ops_client import (
     render_cloud_service_control,
     render_cloud_coding_status,
@@ -349,6 +349,7 @@ def handle_command(
     command: str,
     output_dir: Path | None = None,
     include_artifact_path: bool = True,
+    disable_kline_live_provider: bool = False,
 ) -> CommandResult:
     cleaned = command.strip()
     if not cleaned:
@@ -362,6 +363,7 @@ def handle_command(
             normalized,
             output_dir=output_dir,
             include_artifact_path=include_artifact_path,
+            disable_kline_live_provider=disable_kline_live_provider,
         )
 
     ambiguous_match = re.fullmatch(r"__AMBIGUOUS_STOCK__\s+(.+)", cleaned)
@@ -370,7 +372,8 @@ def handle_command(
 
     kline_request = parse_kline_command(cleaned)
     if kline_request is not None:
-        return CommandResult(ok=True, message=investigate_kline_behavior(kline_request))
+        provider = DisabledHistoricalBarProvider() if disable_kline_live_provider else None
+        return CommandResult(ok=True, message=investigate_kline_behavior(kline_request, provider=provider))
 
     stock_detail_match = re.fullmatch(
         r"(?:分析详情|查看详情|股票详情|inspect detail|analyze detail)\s+(\S+)\s+(\S+)",
