@@ -28,6 +28,7 @@ Read it before changing code, running services, or touching deployment commands.
 
 ## Project Management Discipline
 
+- Use `docs/product/Agent-Operating-Model.md` as the top-level contract for multi-role, multi-session delivery. It defines Owner, Global Project Manager, Feature Coordinator, role-agent boundaries, escalation rules, and completion gates.
 - Use `docs/product/Delivery-Coordinator-Protocol.md` as the default single-front-door protocol when the user asks about product-feature status, next actions, role routing, handoffs, or acceptance readiness.
 - Use `docs/product/Project-Management-Agent-Protocol.md` as the detailed operating protocol for project delivery tracking.
 - Use `docs/product/Acceptance-Testing-Agent-Protocol.md` as the detailed operating protocol for user-facing acceptance testing.
@@ -127,6 +128,7 @@ Read it before changing code, running services, or touching deployment commands.
 ## Learning Mechanism
 
 - `AGENTS.md` contains operating rules.
+- `docs/product/Agent-Operating-Model.md` defines the multi-role delivery organization and escalation model.
 - `docs/lesson-capture-protocol.md` defines when to capture a lesson, where it belongs, and what the handoff must say.
 - `docs/agent-lessons.md` contains cross-task agent/process lessons learned from mistakes or repeated workflow corrections.
 - Product, technical, project-management, current-state, and milestone lessons should be recorded in their relevant durable docs instead of being forced into one ledger.

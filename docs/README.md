@@ -14,6 +14,7 @@ The documentation is intentionally split by decision type:
 | Topic | Current document |
 |---|---|
 | Agent operating rules | [`../AGENTS.md`](../AGENTS.md) |
+| Agent operating model | [`product/Agent-Operating-Model.md`](product/Agent-Operating-Model.md) |
 | Product strategy | [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md) |
 | Delivery-coordinator protocol | [`product/Delivery-Coordinator-Protocol.md`](product/Delivery-Coordinator-Protocol.md) |
 | Product-agent protocol | [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md) |
@@ -37,6 +38,7 @@ Product docs should be used before technical planning. They answer what the prod
 Active product references:
 
 - [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md)
+- [`product/Agent-Operating-Model.md`](product/Agent-Operating-Model.md)
 - [`product/Delivery-Coordinator-Protocol.md`](product/Delivery-Coordinator-Protocol.md)
 - [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md)
 - [`product/Project-Management-Agent-Protocol.md`](product/Project-Management-Agent-Protocol.md)

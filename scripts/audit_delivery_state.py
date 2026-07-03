@@ -432,6 +432,7 @@ def build_handoff_packet(
 
     return {
         "Task": f"Advance {row.feature} to the next delivery state.",
+        "Operating model source": "docs/product/Agent-Operating-Model.md",
         "Coordinator": "Delivery Coordinator",
         "Current owner": next_owner,
         "Source PRD": row.product_doc,
@@ -448,6 +449,11 @@ def build_handoff_packet(
         "User decisions needed": infer_user_decisions(row, findings),
         "Next owner": next_owner,
         "Expected handoff result": infer_expected_handoff(row, acceptance_row, next_owner),
+        "Completion gate": infer_completion_gate(row, acceptance_row),
+        "Deploy needed": infer_deploy_needed(row, acceptance_row),
+        "Deploy decision": infer_deploy_decision(row, acceptance_row, findings),
+        "Return target": "Feature Coordinator",
+        "Escalation target": infer_escalation_target(row, findings),
     }
 
 
@@ -461,6 +467,7 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "",
         "Mandatory repo workflow:",
         "- Run `.venv/bin/python scripts/agent_preflight.py` first unless this is a tiny factual check.",
+        "- Read `docs/product/Agent-Operating-Model.md` for role boundaries, escalation rules, and completion gates.",
         "- Check `git status --short --branch` before edits.",
         "- Use a dedicated task worktree for non-trivial code, deployment, or broad documentation edits.",
         "- Read the linked PRD, technical plan, Feature Registry row, and Acceptance Queue row when applicable.",
@@ -468,6 +475,7 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- Do not mark user acceptance as accepted.",
         "- Update Feature Registry, Acceptance Queue, Delivery Queue, or technical-plan traceability when your work changes delivery state.",
         "- For cloud-served or browser-tested work, make a concrete deploy decision before handoff: `self_deploy`, `dispatch_deploy_owner`, `blocked`, or `not_required`; do not use vague owners such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`.",
+        "- Return to the Feature Coordinator by default. Escalate to the Global Project Manager only for stale coordinator recovery, cross-feature conflict, global deploy conflict, or operating-model defects.",
         "- Run narrow verification and document any verification limit.",
         "- Check `docs/lesson-capture-protocol.md` before handoff; record only durable lessons that pass the quality bar, otherwise state `Lessons: none`.",
         "- Commit and push after completing the work unless explicitly told to keep it local.",
@@ -477,7 +485,7 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- The expected handoff result below is satisfied or a precise blocker is recorded.",
         "- The worktree is clean or every dirty file is explained.",
         "- The final response states branch, commit SHA, verification, registry/queue updates, remaining gaps, `Lessons recorded: ...` or `Lessons: none; ...`, push result, and worktree cleanliness.",
-        "- The final response includes a `Return to Coordinator` block naming the recommended next owner, next handoff, deploy needed yes/no/not_applicable, and deploy decision.",
+        "- The final response includes a `Return to Coordinator` block naming the recommended next owner, next handoff, deploy needed yes/no/not_applicable, deploy decision, return target, escalation target, and role learning.",
         "",
         "## Delivery Handoff",
         "",
@@ -523,6 +531,62 @@ def infer_user_decisions(row: RegistryRow, findings: Iterable[Finding]) -> str:
     if row.user_acceptance in {"pending", "needs_reacceptance"}:
         return "User acceptance is required only after implementation, verification, and acceptance testing pass."
     return "none registered"
+
+
+def infer_completion_gate(row: RegistryRow, acceptance_row: AcceptanceRow | None) -> str:
+    if acceptance_row and acceptance_row.status in {"failed", "blocked", "needs_retest"}:
+        return "acceptance-passed before user acceptance; product-done is blocked."
+    if row.implementation == "deployed" and row.evidence in {"deploy_verified", "test_passed"}:
+        if row.user_acceptance in {"pending", "needs_reacceptance"}:
+            return "user-accepted after Coordinator Return Gate confirms acceptance status."
+        return "product-done only if user acceptance and learning gates are satisfied or not_required."
+    if row.implementation in {"local_verified", "deployed"}:
+        return "deploy-done and acceptance-passed when the feature is user-facing or cloud-served."
+    if row.technical_status == "missing":
+        return "technical-plan-ready before implementation."
+    return "code-done with evidence, then deploy/acceptance gates when applicable."
+
+
+def infer_deploy_needed(row: RegistryRow, acceptance_row: AcceptanceRow | None) -> str:
+    if row.implementation == "deployed":
+        return "not_applicable; implementation is already registered as deployed, but verify evidence if behavior changed."
+    if acceptance_row and acceptance_row.status in {"failed", "blocked", "needs_retest"}:
+        return "yes if the fix changes cloud-served or browser-tested behavior; name the affected service or URL."
+    if needs_acceptance_queue(row):
+        return "yes before Acceptance Testing if the feature is cloud-served or browser-tested; otherwise record not_required with reason."
+    return "not_applicable unless the technical plan changes a cloud/user surface."
+
+
+def infer_deploy_decision(
+    row: RegistryRow,
+    acceptance_row: AcceptanceRow | None,
+    findings: Iterable[Finding],
+) -> str:
+    categories = {finding.category for finding in findings}
+    if row.prd_status in {"draft", "needs_review", "missing"} or "needs_product_decision" in categories:
+        return "not_required; product decision comes before deploy."
+    if row.technical_status == "missing":
+        return "not_required; technical plan comes before deploy."
+    if row.implementation == "deployed":
+        return "not_required unless the returned work changes the deployed surface."
+    if acceptance_row and acceptance_row.status in {"failed", "blocked", "needs_retest"}:
+        return "blocked until a fix branch or commit exists; after fix use self_deploy or dispatch_deploy_owner."
+    return "not_required unless implementation changes a cloud-served or browser-tested surface."
+
+
+def infer_escalation_target(row: RegistryRow, findings: Iterable[Finding]) -> str:
+    categories = {finding.category for finding in findings}
+    if row.prd_status in {"draft", "needs_review", "missing"} or "needs_product_decision" in categories:
+        return "Owner or Product Agent for product decision; do not escalate routine routing to Global Project Manager."
+    if any(finding.category == "blocker" for finding in findings):
+        return "Feature Coordinator first; Global Project Manager only for cross-feature conflict, stale coordinator, credentials, or operating-model defect."
+    if (
+        row.user_acceptance in {"pending", "needs_reacceptance"}
+        and row.implementation == "deployed"
+        and row.evidence in {"deploy_verified", "test_passed"}
+    ):
+        return "Owner only after Feature Coordinator confirms acceptance-passed and known gaps are disclosed."
+    return "Feature Coordinator; Global Project Manager not required."
 
 
 def infer_expected_handoff(

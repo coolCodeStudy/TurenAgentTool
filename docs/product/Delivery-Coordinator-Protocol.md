@@ -4,6 +4,8 @@
 
 The Delivery Coordinator is the single front door for product-feature delivery in this repository.
 
+This protocol implements `Agent-Operating-Model.md` for feature-level coordination. If this protocol and the Agent Operating Model appear to disagree, follow the Agent Operating Model and update this protocol.
+
 The user should be able to ask about a product feature once, and the coordinator should route the work across Product, Engineering, Acceptance Testing, and Project Management without making the user repeat context in several sessions.
 
 The coordinator is an orchestration role. It does not replace the specialized roles:
@@ -81,6 +83,7 @@ Every substantial routed task must include this packet. Keep it short, but do no
 ## Delivery Handoff
 
 - Task:
+- Operating model source:
 - Coordinator:
 - Current owner:
 - Source PRD:
@@ -97,6 +100,11 @@ Every substantial routed task must include this packet. Keep it short, but do no
 - User decisions needed:
 - Next owner:
 - Expected handoff result:
+- Completion gate:
+- Deploy needed:
+- Deploy decision:
+- Return target:
+- Escalation target:
 ```
 
 Use `not_applicable` only with a reason. Use `needs_review` when evidence is unclear.
