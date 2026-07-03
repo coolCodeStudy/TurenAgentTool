@@ -28,6 +28,8 @@ Read it before changing code, running services, or touching deployment commands.
 
 ## Project Management Discipline
 
+- Use `docs/product/Agent-Operating-Model.md` as the top-level contract for multi-role, multi-session delivery. It defines Owner, Global Project Manager, Feature Coordinator, role-agent boundaries, escalation rules, and completion gates.
+- Treat the Global Project Manager as the single portfolio-level steward. It does not replace Feature Coordinators, but it is accountable for whether the agent organization works: coordinator health, stale-flow recovery, cross-feature conflicts, valid handoffs, deploy/acceptance gates, and operating-model improvements.
 - Use `docs/product/Delivery-Coordinator-Protocol.md` as the default single-front-door protocol when the user asks about product-feature status, next actions, role routing, handoffs, or acceptance readiness.
 - Use `docs/product/Project-Management-Agent-Protocol.md` as the detailed operating protocol for project delivery tracking.
 - Use `docs/product/Acceptance-Testing-Agent-Protocol.md` as the detailed operating protocol for user-facing acceptance testing.
@@ -40,6 +42,7 @@ Read it before changing code, running services, or touching deployment commands.
 - A Delivery Coordinator that dispatches another role/session must establish an active watch path owned by that feature coordinator. Use a feature-scoped heartbeat/monitor, keep checking the child thread, or record `Monitoring not active` with the exact resume action; passive "I will wait" is not enough.
 - Do not make the Global Project Manager the default watcher for feature-level child threads. The Global PM should audit portfolio health, stale coordinators, missing watch paths, cross-feature conflicts, and user decisions; it should only recover a feature flow when the feature coordinator is idle, blocked, or missing its watch path.
 - After a dispatched role/session returns, apply the Coordinator Return Gate from `docs/product/Delivery-Coordinator-Protocol.md`: inspect the returned branch/result, integrate or reject it, update `Delivery-Queue.md`, and dispatch the next owner or record the blocker. A pushed child branch is not delivery closure by itself.
+- For cloud-served or browser-tested features, a returned "code fixed and pushed" result must become an explicit deploy/retest next step. The coordinator must name or dispatch the deploy owner before routing to Acceptance Testing, and must not stop at "after deploy, retest" without an owner, branch or commit, deploy path, affected URL/service, and watch path.
 - A substantial product feature should not enter implementation unless its PRD is ready, or the exception is explicitly recorded with the reason.
 - A substantial product feature should not be considered ready for implementation unless there is a linked technical plan, or the exception is explicitly recorded with the reason.
 - Do not equate code completion with product completion. Product completion requires acceptance criteria, implementation evidence, verification evidence, and any required deployment or user acceptance state.
@@ -80,6 +83,7 @@ Read it before changing code, running services, or touching deployment commands.
 ## Deployment And Service Boundaries
 
 - For bugs observed on a cloud-served product surface, local verification is not the end of the task. After tests pass, proactively move to the release step: state the exact git push/deploy action needed, ask for approval when remote credentials or cloud services are involved, and continue through approved deployment/verification instead of stopping at a local summary.
+- Deployment is a delivery state, not a vague future condition. When a feature branch fixes a browser/cloud blocker but is not yet on the relevant cloud service, record `needs_deploy` or dispatch the deploy owner; after deployment, route the same acceptance item back to testing instead of asking the user to manually remember the retest.
 - When the user asks for a browser link to test or accept a product feature, assume they mean the cloud-served product URL. Do not offer `localhost`, `127.0.0.1`, or file URLs as the acceptance link unless the user explicitly asks for a local-only check. Local pages are for agent self-verification only; user-facing acceptance should use the deployed cloud surface or clearly state that the feature is not deployed yet.
 - After a GitHub push is explicitly requested or approved, treat remote deployment through the standard Ops API path as pre-approved for that pushed ref unless the user says to pause. State the exact ref, deploy mode, and verification URL, then continue through deploy status checks and cloud verification.
 - Do not treat "verify the change" as permission to start the whole prod-style stack.
@@ -95,6 +99,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Daily cloud releases should use the pull-based `/ops/deploy quick` path through the independent ECS Ops API. Use full deploy only for `Dockerfile`, `requirements.txt`, compose/image-layer, or dependency changes.
 - Production deploy/restart is a shared global resource. Feature Coordinators and Development Agents may request deploy, but they must use the shared deploy workflow or Ops API path and must not bypass the deploy lock with ad hoc SSH, direct `docker compose up`, or service restarts unless the user explicitly asks for an urgent manual recovery.
 - Before requesting or triggering production deploy, record or report Deploy Intent: feature, ref or commit, deploy mode (`quick`/`full`/restart-only), affected services, reason, verification URL or command, and watch owner/path.
+- Before stopping on any cloud-served or browser-tested feature return, make a concrete deploy decision: `self_deploy`, `dispatch_deploy_owner`, `blocked`, or `not_required`. Vague next owners such as `Coordinator/Ops`, `someone`, `later`, or `after deploy` are not valid handoff closure.
 - Before escalating from quick deploy to full deploy because a product URL or service is missing, first confirm the service is included in the deploy script's explicit `docker compose up` list, the required Compose profile is active, the container is running on ECS, host-local curl works, and the public port/security group is open. Do not use full deploy as a diagnostic substitute for service/ingress checks.
 - Avoid overlapping deploy channels for the same ref. After pushing `main`, check whether the automatic GitHub Actions deploy is running before also starting Ops API deploy or manual workflow dispatch; let one deployment finish or explicitly cancel/skip the duplicate path.
 - GitHub Actions production deploys are serialized by the `production-deploy` concurrency group. If a deploy is already running, wait for that run or record the blocker instead of launching a second deploy path.
@@ -124,6 +129,7 @@ Read it before changing code, running services, or touching deployment commands.
 ## Learning Mechanism
 
 - `AGENTS.md` contains operating rules.
+- `docs/product/Agent-Operating-Model.md` defines the multi-role delivery organization and escalation model.
 - `docs/lesson-capture-protocol.md` defines when to capture a lesson, where it belongs, and what the handoff must say.
 - `docs/agent-lessons.md` contains cross-task agent/process lessons learned from mistakes or repeated workflow corrections.
 - Product, technical, project-management, current-state, and milestone lessons should be recorded in their relevant durable docs instead of being forced into one ledger.

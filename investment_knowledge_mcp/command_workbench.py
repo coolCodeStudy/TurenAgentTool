@@ -746,6 +746,52 @@ def render_command_workbench_html() -> str:
     }
     .ok { color: var(--good); }
     .bad { color: var(--bad); }
+    .result-summary {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .result-card {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .result-head {
+      display: grid;
+      gap: 3px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    .result-head strong {
+      font-size: 16px;
+    }
+    .result-section {
+      display: grid;
+      gap: 6px;
+    }
+    .result-section h3 {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .result-section p {
+      margin: 0;
+      line-height: 1.5;
+    }
+    .result-section ul {
+      margin: 0;
+      padding-left: 18px;
+      line-height: 1.5;
+    }
+    .raw-output {
+      margin-top: 12px;
+    }
+    .raw-output summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
     @media (max-width: 980px) {
       .shell { display: block; }
       aside { border-left: 0; border-top: 1px solid var(--line); }
@@ -776,7 +822,7 @@ def render_command_workbench_html() -> str:
         <div id="form" class="form-grid"></div>
       </section>
       <section>
-        <h2>Execution Result</h2>
+        <h2>Execution Result / 执行结果</h2>
         <div id="result"><span class="label">No command has run in this session.</span></div>
       </section>
     </main>
@@ -973,15 +1019,111 @@ def render_command_workbench_html() -> str:
     };
 
     function showResult(data) {
-      const status = data.ok ? `<span class="ok">success</span>` : `<span class="bad">failed</span>`;
-      const event = data.event_id ? `Event #${data.event_id}` : "No event id";
+      const status = data.ok ? `<span class="ok">success / 成功</span>` : `<span class="bad">failed / 失败</span>`;
+      const event = data.event_id ? `Event / 事件 #${data.event_id}` : "No event id / 无事件 ID";
       const exact = data.executed_command || (data.preview && data.preview.exact_command) || "";
       const message = data.message || data.error || "";
       $("#result").innerHTML = `
-        <div><span class="label">Status</span>${status} · ${escapeHtml(event)}</div>
-        <div><span class="label">Executed command</span><code>${escapeHtml(exact)}</code></div>
-        <pre class="result">${escapeHtml(message)}</pre>
+        <div class="result-summary">
+          <div><span class="label">Status / 状态</span>${status} · ${escapeHtml(event)}</div>
+          <div><span class="label">Executed command / 已执行命令</span><code>${escapeHtml(exact || "None")}</code></div>
+        </div>
+        ${formatResultMessage(message)}
       `;
+    }
+
+    function formatResultMessage(message) {
+      if (!message) {
+        return `<div class="notice">No result body returned. / 没有返回结果正文。</div>`;
+      }
+      const decisionCard = parseDecisionCard(message);
+      if (decisionCard) return renderDecisionResult(decisionCard, message);
+      return `
+        <div class="result-card">
+          <div class="result-head">
+            <span class="label">Raw result / 原始结果</span>
+          </div>
+          <pre class="result">${escapeHtml(message)}</pre>
+        </div>
+      `;
+    }
+
+    function parseDecisionCard(message) {
+      const lines = String(message || "").split(/\r?\n/).map((line) => line.trimEnd());
+      const title = (lines[0] || "").trim();
+      const thesisIndex = lines.findIndex((line) => line.startsWith("Thesis:"));
+      const driversIndex = lines.findIndex((line) => line === "Drivers:");
+      const risksIndex = lines.findIndex((line) => line === "Risks:");
+      const watchIndex = lines.findIndex((line) => line === "Watch:");
+      const freshnessIndex = lines.findIndex((line) => line.startsWith("Freshness:"));
+      const evidenceIndex = lines.findIndex((line) => line.startsWith("Evidence:"));
+      if (!title || thesisIndex < 0 || driversIndex < 0 || risksIndex < 0 || watchIndex < 0 || freshnessIndex < 0 || evidenceIndex < 0) {
+        return null;
+      }
+      return {
+        title,
+        thesis: lines[thesisIndex].replace(/^Thesis:\s*/, "").trim(),
+        drivers: parseBullets(lines.slice(driversIndex + 1, risksIndex)),
+        risks: parseBullets(lines.slice(risksIndex + 1, watchIndex)),
+        watch: parseBullets(lines.slice(watchIndex + 1, freshnessIndex)),
+        freshness: lines[freshnessIndex].replace(/^Freshness:\s*/, "").trim(),
+        evidence: lines[evidenceIndex].replace(/^Evidence:\s*/, "").trim()
+      };
+    }
+
+    function parseBullets(lines) {
+      return lines
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.replace(/^-\s*/, ""));
+    }
+
+    function renderDecisionResult(card, rawMessage) {
+      return `
+        <div class="result-card">
+          <div class="result-head">
+            <span class="label">Decision card / 决策卡</span>
+            <strong>${escapeHtml(card.title)}</strong>
+          </div>
+          ${resultSection("Thesis / 投资结论", card.thesis)}
+          ${resultListSection("Drivers / 驱动因素", card.drivers)}
+          ${resultListSection("Risks / 风险", card.risks)}
+          ${resultListSection("Watch / 跟踪项", card.watch)}
+          ${resultSection("Freshness / 数据新鲜度", card.freshness)}
+          ${resultSection("Evidence / 证据", translateEvidence(card.evidence))}
+        </div>
+        <details class="raw-output">
+          <summary>Raw output / 原始输出</summary>
+          <pre class="result">${escapeHtml(rawMessage)}</pre>
+        </details>
+      `;
+    }
+
+    function resultSection(title, value) {
+      return `
+        <div class="result-section">
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(value || "None / 暂无")}</p>
+        </div>
+      `;
+    }
+
+    function resultListSection(title, values) {
+      const items = values && values.length ? values : ["None / 暂无"];
+      return `
+        <div class="result-section">
+          <h3>${escapeHtml(title)}</h3>
+          <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+        </div>
+      `;
+    }
+
+    function translateEvidence(value) {
+      const match = String(value || "").match(/^(\d+)\s+sources,\s+(\d+)\s+facts,\s+audit\s+(.+)$/i);
+      if (!match) return value || "unknown / 未知";
+      const audit = match[3].trim();
+      const auditZh = audit === "pass" ? "通过" : audit === "unknown" ? "未知" : audit;
+      return `${match[1]} sources / ${match[1]} 个来源, ${match[2]} facts / ${match[2]} 条事实, audit ${audit} / 审计${auditZh}`;
     }
 
     function addRecent(data) {
