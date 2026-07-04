@@ -160,6 +160,8 @@ The handoff is incomplete if the coordinator only says "I will wait" without a c
 
 Do not use a Global Project Manager heartbeat as the normal watch path for a feature dispatch. A Global Project Manager monitor is allowed only as an escalation or portfolio audit mechanism, such as detecting stale coordinators, missing watch paths, or returned child work that the feature coordinator failed to process.
 
+Global Project Manager portfolio audits should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. The audit may mark `context_required: yes` for missing Return Gates, contradictory status, repeated escalation, or unclear blockers. If it does not, prefer repo-native state and returned summaries over reading full conversations.
+
 When a child role returns and the feature coordinator is idle, the Global Project Manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate. That is a recovery path, not the designed steady state.
 
 ## Deploy Intent And Serialization
