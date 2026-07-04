@@ -706,12 +706,29 @@ def _degraded_reasons(
     provider_snapshot: dict[str, Any] | None = None,
 ) -> list[str]:
     reasons = list(gaps)
-    reasons.extend(f"provider data gap: {error}" for error in (provider_snapshot or {}).get("errors") or [])
+    reasons.extend(_provider_gap_reasons(coverage=coverage, provider_snapshot=provider_snapshot))
     if coverage.get("official_source_count", 0) == 0:
         reasons.append("official financial source coverage is missing")
     if _stock_context_needs_research(context):
         reasons.append("stock profile appears minimal and needs research import")
     return sorted(dict.fromkeys(reasons))
+
+
+def _provider_gap_reasons(*, coverage: dict[str, Any], provider_snapshot: dict[str, Any] | None = None) -> list[str]:
+    if not ((provider_snapshot or {}).get("errors") or []):
+        return []
+    provider_statuses = coverage.get("provider_statuses") or {}
+    reasons: list[str] = []
+    for key, label in (("financial_facts", "official financial provider"), ("market_snapshot", "market snapshot provider")):
+        status = provider_statuses.get(key) or {}
+        status_value = status.get("status")
+        if status_value == "partial_provider_gap":
+            reasons.append(f"provider data gap: {label} is partially unavailable; usable fields are shown when available")
+        elif status_value == "complete_missing":
+            reasons.append(f"provider data gap: {label} is unavailable")
+        elif status_value == "stale_or_unknown_freshness":
+            reasons.append(f"provider data gap: {label} freshness is stale or unknown")
+    return reasons or ["provider data gap: provider snapshot is unavailable or incomplete"]
 
 
 def _assumptions(context: dict[str, Any], *, provider_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -881,12 +898,12 @@ def _provider_status(*, has_data: bool, errors: list[str], present_copy: str, mi
     if has_data and errors:
         return {
             "status": "partial_provider_gap",
-            "explanation": f"{present_copy}, but another provider call or field failed; raw diagnostics are preserved in the artifact.",
+            "explanation": f"{present_copy}, but another provider call or field failed; usable fields are shown and raw diagnostics stay out of the card.",
         }
     if has_data:
         return {"status": "available", "explanation": f"{present_copy}."}
     if errors:
-        return {"status": "complete_missing", "explanation": f"{missing_copy}; provider diagnostics are preserved in the artifact."}
+        return {"status": "complete_missing", "explanation": f"{missing_copy}; raw diagnostics stay out of the card."}
     return {"status": "complete_missing", "explanation": f"{missing_copy}."}
 
 

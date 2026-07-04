@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented and deployed through superseding combined cloud release `801136fa9b3ed023d300effb3fd9fa3770693059`, but independent P0.2 retest `AT-2026-07-04-002` failed major on 2026-07-04 SGT because the fresh valuation card still exposes raw provider error text in user-facing degraded-state copy. Artifact evidence read-back itself passed raw/display/meaningfulness/provider/bridge/frame-fit checks. User acceptance remains pending.
+Status: implemented and deployed through superseding combined cloud release `801136fa9b3ed023d300effb3fd9fa3770693059`, but independent P0.2 retest `AT-2026-07-04-002` failed major on 2026-07-04 SGT because the fresh valuation card exposed raw provider error text in user-facing degraded-state copy. The Development copy fix is local-verified on branch `codex/stock-valuation-coordinator-dispatch` and needs a combined Kline plus Stock valuation release ref, cloud deploy, and independent retest before user acceptance. Artifact evidence read-back itself passed raw/display/meaningfulness/provider/bridge/frame-fit checks. User acceptance remains pending.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -14,12 +14,13 @@ P0.1 addresses user acceptance feedback from 2026-07-04: a cloud valuation resul
 
 P0.2 addresses the accepted P0.1 follow-up: the command card must render readable investment values, avoid treating negative ratios as normal valuation multiples, classify provider gaps without contradicting available data, and bridge current market cap or enterprise value to the assumptions each selected frame would need.
 
-P0.2 artifact evidence addresses the 2026-07-04 independent acceptance blocker: visible Workbench behavior passed, but black-box Acceptance Testing could not verify saved artifact raw-value preservation from the allowed cloud surface. The implementation adds a bounded latest-artifact evidence command for a stock target rather than exposing direct filesystem reads.
+P0.2 artifact evidence addresses the 2026-07-04 independent acceptance blocker: visible Workbench behavior passed, but black-box Acceptance Testing could not verify saved artifact raw-value preservation from the allowed cloud surface. The implementation adds a bounded latest-artifact evidence command for a stock target rather than exposing direct filesystem reads. A later P0.2 copy fix keeps card-facing provider gaps on taxonomy copy such as `Market snapshot: partial provider gap` and sanitized degraded-state summaries while preserving raw provider errors only in saved artifact internals when needed for debugging.
 
 ## Touched Modules
 
 - `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, display formatting, provider-gap taxonomy, market-implied bridge, frame-fit ranking, artifact writing, latest-artifact loading, and card rendering.
 - `investment_knowledge_mcp/stock_valuation.py`: P0.2 artifact evidence projection for black-box read-back of raw numeric values, display values, calculation meaningfulness, and frame-fit fields without exposing local paths or raw provider errors.
+- `investment_knowledge_mcp/stock_valuation.py`: P0.2 provider-gap copy fix so card degraded-state lines summarize provider taxonomy and never render raw HTTP/provider diagnostics.
 - `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, returning structured facts, sources, and provider errors without raising through the command path.
 - `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`.
 - `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands.
@@ -64,7 +65,7 @@ Artifact packet fields:
 - Existing `scripts/ikg.py` and MCP/HTTP command wrappers can use these because they call `command_router.handle_command(...)`.
 - Command Workbench can preview/execute the same exact commands through the registry actions `stock_valuation`, `stock_valuation_latest`, `stock_valuation_artifact_evidence`, and `valuation_methods`.
 
-The artifact evidence command is intentionally not a file browser. It accepts only a parsed stock target, resolves the latest artifact through the existing `<output_dir>/valuation/<SYMBOL>_<MARKET>_valuation_latest.json` convention, and has no path or filename field. Its JSON omits the local artifact path, raw provider errors, auth headers, token configuration, stack traces, and arbitrary file contents. It exposes only the P0.2 acceptance fields needed for black-box verification: facts, deterministic calculations, source coverage provider statuses, market-implied bridge lines, frame-fit ranking fields, and safety flags.
+The artifact evidence command is intentionally not a file browser. It accepts only a parsed stock target, resolves the latest artifact through the existing `<output_dir>/valuation/<SYMBOL>_<MARKET>_valuation_latest.json` convention, and has no path or filename field. Its JSON omits the local artifact path, raw provider errors, auth headers, token configuration, stack traces, and arbitrary file contents. It exposes only the P0.2 acceptance fields needed for black-box verification: facts, deterministic calculations, source coverage provider statuses, market-implied bridge lines, frame-fit ranking fields, and safety flags. Saved valuation artifacts may retain raw `source_coverage.provider_errors` for debugging, but rendered cards and bounded evidence read-back must not expose HTTP diagnostics, exception class fragments, URLs, auth-ish text, or local paths.
 
 ## Deterministic Calculations
 
@@ -75,7 +76,7 @@ P0.1 also fetches a provider snapshot for US stocks:
 - SEC EDGAR companyfacts for revenue, net income, operating cash flow, capex, cash, debt, and shares outstanding when available.
 - Yahoo quote for latest price, market cap, shares outstanding, currency, and quote timestamp.
 - Each provider fact carries source ID, source type, confidence, timestamp, period end when known, and provider name.
-- Provider errors are preserved as degraded reasons rather than surfaced as stack traces.
+- Provider errors are preserved in saved artifact internals when needed for debugging, while card-facing degraded reasons use sanitized provider taxonomy rather than raw HTTP errors, exception fragments, URLs, local paths, or auth-ish text.
 
 P0 computes:
 
@@ -145,7 +146,7 @@ The command remains usable without provider credentials, fresh market data, peer
 - missing official financial source coverage;
 - missing user-confirmed valuation case;
 - minimal stock profile needing research import.
-- partial provider gap when Yahoo price, market cap, or shares are available but another Yahoo quote/detail field fails;
+- partial provider gap when Yahoo price, market cap, or shares are available but another Yahoo quote/detail field fails, without exposing the raw provider diagnostic in the card;
 - complete missing provider data when no usable category data exists;
 - stale or unknown freshness when a market snapshot exists without timestamp/freshness evidence.
 
@@ -153,7 +154,7 @@ When degraded, the output presents frame research scaffolding rather than target
 
 ## Deployment Impact
 
-No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 requires cloud deploy of the integrated release ref and independent cloud-IP retest using the private token route. The artifact evidence path passed after Ops deploy event `#48`, but superseding release `801136fa9b3ed023d300effb3fd9fa3770693059` / Ops event `#49` failed independent retest because the fresh valuation card still surfaces raw provider error text in degraded-state copy.
+No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 requires cloud deploy of the integrated release ref and independent cloud-IP retest using the private token route. The artifact evidence path passed after Ops deploy event `#48`, but superseding release `801136fa9b3ed023d300effb3fd9fa3770693059` / Ops event `#49` failed independent retest because the fresh valuation card surfaced raw provider error text in degraded-state copy. Direct deploy of only the Stock valuation branch may clobber Kline live-provider behavior, so the copy fix should be included in a combined Kline plus Stock valuation release ref before cloud deploy.
 
 ## Verification Plan
 
@@ -206,9 +207,10 @@ P0 originally did not verify provider-backed market or financial statement fetch
 | P0.1 US provider-backed valuation packet | accepted | `valuation_data_provider.py`, `stock_valuation.py`, `tests/test_stock_valuation.py`, cloud evidence in Acceptance Queue | SEC EDGAR fixture facts and Yahoo quote fixture facts merge into the artifact and enable deterministic PE/FCF calculations. P0.1 cloud acceptance passed and user accepted it on 2026-07-04. |
 | P0.2 readable number formatting | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Card uses compact currency, percent, per-share, and multiple displays; artifact preserves raw numeric values plus display metadata. |
 | P0.2 provider-gap taxonomy | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Market snapshot status can report `partial_provider_gap` when Yahoo price/market-cap facts exist but another Yahoo call fails. |
+| P0.2 user-facing provider-gap copy sanitization | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Card degraded-state lines now use provider taxonomy summaries and regression coverage verifies raw HTTP diagnostics, exception fragments, URLs, and auth-ish text stay out of rendered cards and bounded evidence read-back while saved artifact internals may retain raw provider errors. Needs combined release deploy and Acceptance retest. |
 | P0.2 negative/meaningless ratio handling | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Negative PE, FCF yield, and EV/FCF render as `not meaningful` with reasons while raw values remain in artifact diagnostics. |
 | P0.2 market-implied bridge | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Includes P/S and EV/sales anchors, required future FCF margin lines for negative FCF, cycle-normalized earnings placeholder for negative earnings, and no target-price precision. |
 | P0.2 frame fit ranking | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Selected frames are ranked by `fit_to_current_market_value` with assumptions, must-become-true items, gaps, and confidence. |
-| P0.2 black-box-safe artifact evidence path | needs_review | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py`, cloud evidence in `AT-2026-07-04-002` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact and passed the raw/display/meaningfulness/provider/bridge/frame-fit checks on superseding release `801136fa9b3ed023d300effb3fd9fa3770693059`; however, the same retest failed because the fresh valuation card still exposes raw provider error text. Fix user-facing provider-gap copy before user acceptance. |
+| P0.2 black-box-safe artifact evidence path | needs_retest_after_deploy | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py`, cloud evidence in `AT-2026-07-04-002` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact and passed the raw/display/meaningfulness/provider/bridge/frame-fit checks on superseding release `801136fa9b3ed023d300effb3fd9fa3770693059`; the same retest failed because the fresh valuation card exposed raw provider error text. The user-facing provider-gap copy fix is local-verified and needs combined release deploy plus Acceptance retest before user acceptance. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |

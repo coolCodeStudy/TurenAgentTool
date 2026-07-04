@@ -11,6 +11,7 @@ from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.command_workbench import parse_workbench_command
 from investment_knowledge_mcp.stock_valuation import (
     build_valuation_artifact,
+    build_valuation_artifact_evidence,
     load_latest_valuation_artifact,
     render_valuation_card,
     render_valuation_methods,
@@ -348,6 +349,67 @@ class StockValuationTests(unittest.TestCase):
         self.assertIn("Market-implied bridge:", card)
         self.assertNotIn("601100000000", card)
         self.assertNotIn("-0.093156", card)
+
+    def test_user_facing_card_sanitizes_provider_http_diagnostics(self) -> None:
+        context = {
+            "stock": {
+                "id": 11,
+                "symbol": "INTC",
+                "market": "US",
+                "name": "Intel Corporation",
+                "core_business": "Semiconductor manufacturing turnaround.",
+                "stock_character": "Cyclical semiconductor recovery.",
+            },
+            "stock_knowledge": [],
+            "stock_insights": [],
+            "sources": [],
+            "sectors": [],
+        }
+        provider_snapshot = {
+            "facts": [
+                {"metric": "revenue", "value": 52600000000, "source_id": "sec:INTC:Revenues", "source_type": "sec_companyfacts"},
+                {"metric": "net_income", "value": -18000000000, "source_id": "sec:INTC:NetIncomeLoss", "source_type": "sec_companyfacts"},
+                {"metric": "operating_cash_flow", "value": 900000000, "source_id": "sec:INTC:OCF", "source_type": "sec_companyfacts"},
+                {"metric": "capex", "value": 5800000000, "source_id": "sec:INTC:Capex", "source_type": "sec_companyfacts"},
+                {"metric": "market_cap", "value": 601100000000, "source_id": "yahoo:INTC:market_cap", "source_type": "yahoo_quote", "timestamp": "2026-07-04T00:00:00+00:00", "currency": "USD"},
+                {"metric": "price", "value": 136.61, "source_id": "yahoo:INTC:price", "source_type": "yahoo_quote", "timestamp": "2026-07-04T00:00:00+00:00", "currency": "USD"},
+            ],
+            "sources": [
+                {"id": "sec:INTC:companyfacts", "source_type": "sec_companyfacts", "title": "SEC companyfacts INTC"},
+                {"id": "yahoo:INTC:quote", "source_type": "yahoo_quote", "title": "Yahoo quote INTC"},
+            ],
+            "errors": [
+                "Yahoo quote unavailable: HTTP Error 401: Unauthorized",
+                "Yahoo chart unavailable: <HTTPError url=https://query1.finance.yahoo.com/v8/finance/chart/INTC>",
+            ],
+            "market_snapshot_status": "present",
+            "financial_fact_status": "present",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            packet, _ = build_valuation_artifact(
+                context,
+                symbol="INTC",
+                market="US",
+                output_dir=Path(tmp),
+                command="valuation US.INTC",
+                now=datetime(2026, 7, 4, tzinfo=timezone.utc),
+                provider_snapshot=provider_snapshot,
+            )
+
+        self.assertIn("HTTP Error 401: Unauthorized", packet["source_coverage"]["provider_errors"][0])
+        evidence_serialized = json.dumps(build_valuation_artifact_evidence(packet), sort_keys=True)
+        self.assertNotIn("HTTP Error", evidence_serialized)
+        self.assertNotIn("Unauthorized", evidence_serialized)
+        self.assertNotIn("query1.finance.yahoo.com", evidence_serialized)
+
+        card = render_valuation_card(packet)
+        self.assertIn("Market snapshot: partial provider gap", card)
+        self.assertIn("provider data gap: market snapshot provider is partially unavailable", card)
+        self.assertNotIn("HTTP Error", card)
+        self.assertNotIn("Unauthorized", card)
+        self.assertNotIn("HTTPError", card)
+        self.assertNotIn("query1.finance.yahoo.com", card)
+        self.assertNotIn("https://", card)
 
     def test_renders_method_library(self) -> None:
         text = render_valuation_methods()
