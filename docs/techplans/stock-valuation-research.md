@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented for local command/MCP verification on branch `codex/stock-valuation-engineering`.
+Status: implemented; P0.1 provider-backed US valuation packet is in progress on branch `codex/stock-valuation-coordinator-dispatch`.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -8,11 +8,14 @@ Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stoc
 
 P0 implements a single-stock valuation research command flow. It does not implement portfolio valuation, batch refresh, provider crawling, dedicated valuation database tables, cloud/web UI, target-price automation, or formal user-insight writes.
 
-The implementation is intentionally artifact-backed before schema expansion. Each command run builds a deterministic valuation packet from existing stock context, local knowledge/source metadata, and parseable valuation facts, then saves a JSON artifact under the command output directory.
+The implementation is intentionally artifact-backed before schema expansion. Each command run builds a deterministic valuation packet from existing stock context, local knowledge/source metadata, parseable valuation facts, and P0.1 provider snapshots when available, then saves a JSON artifact under the command output directory.
+
+P0.1 addresses user acceptance feedback from 2026-07-04: a cloud valuation result that only says local financial and market facts are missing is not enough for real valuation review. For US stocks, the command now attempts a provider-backed packet using SEC EDGAR company facts for official financial metrics and Yahoo quote data for a low-cost market snapshot before rendering the final valuation card.
 
 ## Touched Modules
 
 - `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, frame scoring, artifact writing, latest-artifact loading, and card rendering.
+- `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, returning structured facts, sources, and provider errors without raising through the command path.
 - `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`.
 - `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands.
 - `scripts/smoke_test.py`: end-to-end command smoke path using local fixture data.
@@ -55,6 +58,13 @@ Artifact packet fields:
 ## Deterministic Calculations
 
 P0 extracts parseable values from existing stock knowledge text using conservative metric labels such as `revenue=`, `net income=`, `operating cash flow=`, `capex=`, `price=`, `shares outstanding=`, `market cap=`, `EBITDA=`, and Chinese equivalents where practical.
+
+P0.1 also fetches a provider snapshot for US stocks:
+
+- SEC EDGAR companyfacts for revenue, net income, operating cash flow, capex, cash, debt, and shares outstanding when available.
+- Yahoo quote for latest price, market cap, shares outstanding, currency, and quote timestamp.
+- Each provider fact carries source ID, source type, confidence, timestamp, period end when known, and provider name.
+- Provider errors are preserved as degraded reasons rather than surfaced as stack traces.
 
 P0 computes:
 
@@ -119,12 +129,12 @@ Current verification on 2026-07-01 SGT:
 - Passed `git diff --check`.
 - Blocked `.venv/bin/python scripts/smoke_test.py` and `.venv/bin/python scripts/ikg.py 估值方法` because the configured local database target `127.0.0.1:55432` refused connections. The DB check was retried outside the sandbox and still failed with connection refused, so this is an environment limitation rather than a code-path failure.
 
-P0 intentionally does not verify provider-backed market or financial statement fetches.
+P0 originally did not verify provider-backed market or financial statement fetches. P0.1 adds fixture-backed provider tests and still requires cloud-IP retest before user acceptance.
 
 ## Risks And Follow-Ups
 
 - Regex extraction from knowledge text is a bridge until dedicated financial-fact tables exist.
-- Market snapshots, peer multiples, analyst estimates, official filing extraction, and valuation-case confirmation need later provider/schema work.
+- Peer multiples, analyst estimates, dedicated normalized financial-fact tables, async refresh, and valuation-case confirmation need later provider/schema work.
 - Workbench execution writes an artifact; the action is safe but not purely read-only.
 - P0 artifact paths are local to the command runtime unless a future cloud artifact storage path is added.
 - Independent acceptance testing is still required before asking for user acceptance.
@@ -142,5 +152,6 @@ P0 intentionally does not verify provider-backed market or financial statement f
 | Deterministic calculations and frame scoring work without LLM/model calls | verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | No model provider is imported or called. |
 | Separate facts, assumptions, deterministic calculations, interpretation, and watch items | verified | `render_valuation_card()` | Card has separate sections. |
 | Missing facts, market data, stale peer data, missing model, no user-confirmed case degrade explicitly | verified | `tests/test_stock_valuation.py` | Missing model is not a blocker because no model call is used; peer data is explicitly missing in source coverage. |
+| P0.1 US provider-backed valuation packet | local_verified | `valuation_data_provider.py`, `stock_valuation.py`, `tests/test_stock_valuation.py` | SEC EDGAR fixture facts and Yahoo quote fixture facts merge into the artifact and enable deterministic PE/FCF calculations. Live cloud acceptance is still required. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |

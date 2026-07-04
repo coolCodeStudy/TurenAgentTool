@@ -525,6 +525,14 @@ Implementation guidance:
 - Use FRED for interest-rate and macro inputs when valuation frames need discount-rate context.
 - Cache every fetched payload or normalized source fact that affects valuation output.
 
+P0.1 user-acceptance correction:
+
+- User acceptance on 2026-07-04 showed that a valuation card that only reports missing local facts is not sufficient for real review, even if the degraded behavior is technically correct.
+- For US stocks, the command flow should attempt a provider-backed valuation packet before returning the final card: SEC EDGAR company facts for official financial metrics, plus a low-cost Yahoo quote snapshot for current price, market cap, shares outstanding, currency, and timestamp.
+- Provider facts must be labeled by source and timestamp, merged into deterministic calculations, and preserved in the saved artifact.
+- If SEC or Yahoo data is unavailable, the output should remain safe and degraded, but it must name the provider gap instead of implying that no better data source exists.
+- Cloud-IP acceptance must be rerun after this correction before asking for final user acceptance.
+
 #### Use Database First
 
 Use the database for:
