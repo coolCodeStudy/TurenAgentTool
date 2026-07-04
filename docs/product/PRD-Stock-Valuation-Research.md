@@ -1,6 +1,6 @@
 # PRD: Stock Valuation Research
 
-Status: ready for technical planning.
+Status: ready for technical planning. P0 and P0.1 are accepted; P0.2 product addendum is ready for technical planning.
 
 ## Background
 
@@ -532,6 +532,145 @@ P0.1 user-acceptance correction:
 - Provider facts must be labeled by source and timestamp, merged into deterministic calculations, and preserved in the saved artifact.
 - If SEC or Yahoo data is unavailable, the output should remain safe and degraded, but it must name the provider gap instead of implying that no better data source exists.
 - Cloud-IP acceptance must be rerun after this correction before asking for final user acceptance.
+
+## P0.2 Addendum: Market-Implied Bridge And Readable Output
+
+Status: ready for technical planning.
+
+P0.1 user acceptance remains accepted. P0.2 is a product-quality refinement for the same command-surface valuation card and saved artifact. It should make the valuation output easier to read, make provider-gap copy stable, and answer the user's deeper valuation question: which frame can plausibly bridge current market cap or enterprise value to the assumptions the market appears to be trading?
+
+### P0.2 User Journey
+
+The user runs an existing valuation command such as `valuation US.INTC`, `value US.INTC`, or `估值 US.INTC`.
+
+The output should first show a compact, readable valuation snapshot:
+
+```text
+Market cap: $601.1B
+Enterprise value: $595.0B
+Revenue: $52.6B
+FCF margin: -9.4%
+P/S: 11.4x
+EV/FCF: not meaningful (negative FCF)
+Data status: official financials available; market snapshot partial provider gap
+```
+
+Then the output should show a market-implied bridge:
+
+- What the current market cap or EV implies using available data.
+- Which valuation frame best fits the current market value.
+- Which frames do not fit without aggressive or unavailable assumptions.
+- What must become true for the best-fitting frame to remain plausible.
+
+For example, if current earnings and FCF are negative or weak but market cap is high, the product should not normalize raw negative multiples as if they were ordinary valuation ratios. It should explain whether the current value is better understood through revenue multiple, margin recovery, cycle-normalized earnings, future FCF margin, or a growth/scenario frame. If the required bridge cannot be computed because key inputs are missing, the output should name the missing input and keep the bridge qualitative.
+
+### Readable Number Formatting
+
+P0.2 output should format numbers for investment readability:
+
+- Currency and large absolute values: `$601.1B`, `$52.6B`, `$1.2M`, with currency shown when known.
+- Percentages: `-9.4%`, `18.2%`.
+- Multiples and ratios: `11.4x`, `0.8x`.
+- Per-share values, if shown: `$12.34/share`.
+- Raw full-precision floats should not appear in the user-facing card.
+- Saved artifacts may preserve raw numeric values, but they should also include display values or enough metadata for deterministic formatting.
+
+Formatting should not create false precision. Use one decimal place for large headline values and percentages by default; use two decimals only when the unit or magnitude requires it. If currency, unit, or scale is unknown, label the value as unknown rather than guessing.
+
+### Provider-Gap Taxonomy
+
+P0.2 should use a stable provider-gap taxonomy so partial data does not read like total failure.
+
+Use these labels:
+
+- `complete_missing`: no usable data was available for that provider category.
+- `partial_provider_gap`: some provider fields were usable, but another provider call, endpoint, or field failed.
+- `fallback_used`: a lower-priority provider or cached/snapshot value was used because the preferred path was unavailable.
+- `stale_or_unknown_freshness`: data exists, but timestamp or freshness is stale or unknown.
+
+Product copy rules:
+
+- Do not say "market data missing" when price, market cap, or shares are present but a quote-detail call failed.
+- Do not hide a provider error if it affects confidence or available fields.
+- Do not show raw HTTP/provider errors as the main user-facing message. Translate them into the taxonomy and keep raw details in artifact diagnostics.
+- Each provider category should have one status and a short explanation, for example: `Market snapshot: partial provider gap. Yahoo market-cap and price fields are available, but Yahoo quote detail returned unauthorized, so quote freshness is lower confidence.`
+- Provider status should distinguish official financial facts from low-cost market snapshots and from model interpretation.
+
+### Negative Or Meaningless Ratio Handling
+
+P0.2 should avoid presenting negative valuation multiples as normal ratios.
+
+Rules:
+
+- If earnings are negative, show PE as `not meaningful (negative earnings)`.
+- If free cash flow is negative, show EV/FCF and FCF yield as `not meaningful (negative FCF)`, while still showing FCF amount and FCF margin as operating facts.
+- If EBITDA is negative, show EV/EBITDA as `not meaningful (negative EBITDA)`.
+- If denominator data is missing or zero, show `not available` with the missing input.
+- Negative margins are meaningful operating metrics and may be shown as percentages. Negative valuation multiples are not meaningful as ordinary valuation ratios.
+- Artifacts may preserve raw calculated values for audit, but the user-facing card should use the meaningfulness label.
+
+### Current Market Cap / EV Bridge
+
+P0.2 should add a deterministic or semi-deterministic bridge from current market value to implied assumptions when the required inputs exist.
+
+The bridge should prefer the simplest useful implication for the available data:
+
+- Revenue available and market cap/EV available: show implied price-to-sales or EV-to-sales, and the revenue scale or multiple required for the current value to make sense.
+- FCF available and market cap/EV available: show FCF yield when FCF is positive; when FCF is negative, show the FCF margin or future FCF level required for a selected yield assumption only if the assumption is explicitly labeled.
+- Revenue plus negative FCF available: show required future FCF margin for illustrative yields such as 3%, 5%, and 7%, clearly labeled as bridge math, not a target price.
+- Net income negative or depressed: do not show PE as meaningful; consider cycle-normalized earnings or margin recovery only when there is a current-cycle, sector, or profile signal.
+- Cyclical stocks: if current earnings look depressed or peak-like, explain whether the current value requires mid-cycle earnings recovery, upcycle duration, or cycle-normalized margins.
+- Growth/scenario stocks: if current profit cannot support the market value, explain the revenue growth, TAM penetration, margin maturity, or milestone probability needed for the scenario frame.
+- SOTP/asset-heavy stocks: if segment or asset data is missing, mark the SOTP bridge as unsupported instead of inventing segment values.
+
+The bridge should not require peer-set sourcing, analyst estimates, or a full normalized multi-year financial table in P0.2. If those would materially improve the answer, list them as follow-up validation inputs.
+
+### Frame Fit Ranking
+
+P0.2 should rank frames by fit to current market value, not only by generic relevance.
+
+Each selected frame should include:
+
+```text
+frame
+fit_to_current_market_value: fits / partial_fit / does_not_fit / insufficient_data
+why_it_fits_or_not
+implied_assumptions
+assumptions_that_must_become_true
+main_data_gaps
+confidence
+```
+
+Product interpretation rules:
+
+- "Best fit" means the frame most plausibly explains the current market cap or EV with available evidence, not the frame that is most attractive.
+- A frame may be relevant to the business but fail to bridge current market value.
+- If all frames are weak, say so and identify the least-bad explanatory frame.
+- For stocks like INTC where one visible method may dominate current calculations but the market may be trading expectations, the card should explicitly say which expectation-based bridge is needed, such as margin recovery, foundry/AI optionality, cycle-normalized earnings, or revenue multiple support.
+
+### Safety And Memory Boundaries
+
+P0.2 remains a research-aid feature:
+
+- Do not provide direct buy, sell, hold, or position-sizing advice.
+- Do not present precise target prices unless they are sourced, confirmed, and secondary to assumptions.
+- Do not write formal user insights, valuation cases, or memory records without explicit user confirmation.
+- Candidate valuation interpretation may be saved in the valuation artifact, but it must remain candidate research until confirmed.
+
+### P0.2 Acceptance Criteria
+
+1. User-facing valuation output uses readable number formatting for currency, percentages, multiples, and per-share values; raw long floats do not appear in the command card.
+2. Negative earnings, negative FCF, and negative EBITDA do not produce ordinary negative PE, EV/FCF, FCF-yield, or EV/EBITDA ratios; the card shows `not meaningful` with the reason.
+3. Provider status uses the P0.2 taxonomy and distinguishes complete missing data from partial provider gaps, fallback data, and stale or unknown freshness.
+4. A partial provider gap does not contradict available data. If market cap or price is present while a quote-detail call fails, the card says market snapshot is partially available and names the failed part.
+5. The saved artifact preserves provider diagnostics, raw numeric inputs, display-ready values or formatting metadata, calculation meaningfulness, and frame-fit bridge fields.
+6. When market cap or EV and at least one operating anchor are available, the output includes a market-implied bridge such as current sales multiple, required FCF margin, implied FCF yield, required margin recovery, cycle-normalized earnings need, or scenario-growth assumption.
+7. When bridge inputs are missing, the output names the missing inputs and avoids target-price precision.
+8. Selected frames include a fit ranking against current market value: best fit, partial fit, does not fit, or insufficient data.
+9. The output explains which assumptions must become true for the best-fitting frame to support the current market value.
+10. The output identifies relevant frames that do not fit current market value and explains why without dismissive or advisory language.
+11. The feature continues to show source coverage, stale fields, confidence, no-advice wording, and no formal user-insight-write behavior.
+12. Peer set sourcing, analyst estimates, normalized multi-year financial tables, async refresh, and user-confirmed valuation-case workflow are not required for P0.2 acceptance unless Engineering finds one is strictly necessary to satisfy the market-implied bridge.
 
 #### Use Database First
 
