@@ -21,6 +21,8 @@ class CommandWorkbenchKlineTests(unittest.TestCase):
         self.assertEqual(preview["status"], "parsed")
         self.assertEqual(preview["action_id"], "kline_investigation")
         self.assertEqual(preview["exact_command"], "K线调查 US.NVDA 5年 前复权")
+        self.assertIsNotNone(preview["target"])
+        self.assertEqual(preview["target"]["canonical"], "US.NVDA")
         self.assertEqual(preview["safety_level"], "read_only")
         self.assertFalse(preview["confirmation_required"])
         self.assertIsNone(execution_blocker(preview, confirmed=False))

@@ -1307,12 +1307,21 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
-    if parse_kline_command(text) is not None:
+    kline_request = parse_kline_command(text)
+    if kline_request is not None:
+        canonical = f"{kline_request.market}.{kline_request.symbol}"
         return _preview_from_action(
             ParseContext(
                 raw_input=text,
                 action_id="kline_investigation",
                 fields={"exact_command": text},
+                selected_target=_candidate(
+                    symbol=kline_request.symbol,
+                    market=kline_request.market,
+                    name=canonical,
+                    confidence=1.0,
+                    source="symbol",
+                ),
                 parse_source="exact_command",
                 confidence=1.0,
             )
