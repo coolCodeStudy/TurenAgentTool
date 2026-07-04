@@ -135,11 +135,21 @@ def build_valuation_artifact(
     created_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0).isoformat()
     stock = context.get("stock") or {}
     facts = _extract_facts(context, provider_snapshot=provider_snapshot)
+    currency = _infer_currency(facts=facts, market=market)
+    _attach_fact_display_values(facts, currency=currency)
     fact_values = {fact["metric"]: fact["value"] for fact in facts if fact.get("value") is not None}
-    calculations = _calculate_metrics(fact_values)
+    calculations = _calculate_metrics(fact_values, currency=currency)
     gaps = _data_gaps(fact_values, calculations, context, provider_snapshot=provider_snapshot)
     scores = _score_frames(context=context, fact_values=fact_values, calculations=calculations, gaps=gaps)
-    selected_frames = _select_frames(scores)
+    bridge = _market_implied_bridge(
+        context=context,
+        fact_values=fact_values,
+        calculations=calculations,
+        frame_scores=scores,
+        gaps=gaps,
+        currency=currency,
+    )
+    selected_frames = _select_frames(bridge["frame_fit_ranking"])
     coverage = _source_coverage(context=context, facts=facts, provider_snapshot=provider_snapshot)
     degraded_reasons = _degraded_reasons(gaps=gaps, coverage=coverage, context=context, provider_snapshot=provider_snapshot)
     packet = {
@@ -160,6 +170,7 @@ def build_valuation_artifact(
         "deterministic_calculations": calculations,
         "internal_frame_scores": scores,
         "selected_frames": selected_frames,
+        "market_implied_bridge": bridge,
         "interpretation": _interpretation(selected_frames, calculations, gaps),
         "watch_items": _watch_items(selected_frames),
         "source_coverage": coverage,
@@ -201,17 +212,58 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
         lines.extend(f"- {reason}" for reason in degraded["reasons"])
     lines.append("")
 
+    calculations = packet.get("deterministic_calculations") or []
+    calc_by_metric = {item.get("metric"): item for item in calculations}
+    facts_by_metric = {item.get("metric"): item for item in packet.get("facts") or []}
+    snapshot_rows = (
+        ("Market cap", calc_by_metric.get("market_cap") or facts_by_metric.get("market_cap")),
+        ("Enterprise value", calc_by_metric.get("enterprise_value") or facts_by_metric.get("enterprise_value")),
+        ("Revenue", facts_by_metric.get("revenue")),
+        ("Free cash flow", calc_by_metric.get("free_cash_flow") or facts_by_metric.get("free_cash_flow")),
+        ("FCF margin", calc_by_metric.get("fcf_margin")),
+        ("P/S", calc_by_metric.get("ps")),
+        ("PE", calc_by_metric.get("pe")),
+        ("EV/FCF", calc_by_metric.get("ev_fcf")),
+    )
+    if any(item for _, item in snapshot_rows):
+        lines.append("Valuation snapshot:")
+        for label, item in snapshot_rows:
+            if item:
+                lines.append(f"- {label}: {_item_display(item)}")
+        lines.append("")
+
+    coverage = packet.get("source_coverage") or {}
+    provider_statuses = coverage.get("provider_statuses") or {}
+    if provider_statuses:
+        lines.append("Data status:")
+        for label, key in (("Official financials", "financial_facts"), ("Market snapshot", "market_snapshot")):
+            status = provider_statuses.get(key) or {}
+            if status:
+                status_label = str(status.get("status") or "").replace("_", " ")
+                lines.append(f"- {label}: {status_label}. {status.get('explanation')}")
+        lines.append("")
+
     lines.append("Relevant frames:")
     for frame in packet.get("selected_frames") or []:
-        lines.append(f"- {frame['name']} (score {frame['score']:.2f}): {frame['reason']}")
+        fit = frame.get("fit_to_current_market_value")
+        fit_copy = f", fit={fit}" if fit else ""
+        lines.append(f"- {frame['name']} (score {frame['score']:.2f}{fit_copy}): {frame['reason']}")
     lines.append("")
+
+    bridge = packet.get("market_implied_bridge") or {}
+    bridge_lines = bridge.get("bridge_lines") or []
+    if bridge_lines:
+        lines.append("Market-implied bridge:")
+        for item in bridge_lines:
+            lines.append(f"- {item.get('display')}")
+        lines.append("")
 
     lines.append("Facts:")
     facts = packet.get("facts") or []
     if facts:
         for fact in facts[:8]:
             source = f" source_id={fact['source_id']}" if fact.get("source_id") is not None else " source_id=missing"
-            lines.append(f"- {fact['metric']}: {fact['value']}{source}")
+            lines.append(f"- {fact['metric']}: {_item_display(fact)}{source}")
     else:
         lines.append("- No reusable financial or market facts were found in the local stock context.")
     lines.append("")
@@ -223,10 +275,9 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
     lines.append("")
 
     lines.append("Deterministic calculations:")
-    calculations = packet.get("deterministic_calculations") or []
     if calculations:
         for calculation in calculations:
-            lines.append(f"- {calculation['metric']}: {calculation['value']} ({calculation['formula']})")
+            lines.append(f"- {calculation['metric']}: {_item_display(calculation)} ({calculation['formula']})")
     else:
         lines.append("- No deterministic valuation ratios could be calculated from available inputs.")
     lines.append("")
@@ -241,7 +292,6 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
         lines.append(f"- {item}")
     lines.append("")
 
-    coverage = packet.get("source_coverage") or {}
     lines.append(
         "Source coverage: "
         f"facts={coverage.get('fact_count', 0)}, "
@@ -319,46 +369,84 @@ def _dedupe_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [latest[key] for key in sorted(latest)]
 
 
-def _calculate_metrics(values: dict[str, float]) -> list[dict[str, Any]]:
+def _calculate_metrics(values: dict[str, float], *, currency: str | None = None) -> list[dict[str, Any]]:
     calculations: list[dict[str, Any]] = []
 
     fcf = values.get("free_cash_flow")
     if fcf is None and values.get("operating_cash_flow") is not None and values.get("capex") is not None:
         fcf = values["operating_cash_flow"] - abs(values["capex"])
-        calculations.append(_calc("free_cash_flow", fcf, "operating_cash_flow - abs(capex)", ["operating_cash_flow", "capex"]))
+        calculations.append(_calc("free_cash_flow", fcf, "operating_cash_flow - abs(capex)", ["operating_cash_flow", "capex"], kind="currency", currency=currency))
 
     net_debt = values.get("net_debt")
     if net_debt is None and values.get("debt") is not None and values.get("cash") is not None:
         net_debt = values["debt"] - values["cash"]
-        calculations.append(_calc("net_debt", net_debt, "debt - cash", ["debt", "cash"]))
+        calculations.append(_calc("net_debt", net_debt, "debt - cash", ["debt", "cash"], kind="currency", currency=currency))
 
     market_cap = values.get("market_cap")
     if market_cap is None and values.get("price") is not None and values.get("shares_outstanding") is not None:
         market_cap = values["price"] * values["shares_outstanding"]
-        calculations.append(_calc("market_cap", market_cap, "price * shares_outstanding", ["price", "shares_outstanding"]))
+        calculations.append(_calc("market_cap", market_cap, "price * shares_outstanding", ["price", "shares_outstanding"], kind="currency", currency=currency))
 
     ev = values.get("enterprise_value")
     if ev is None and market_cap is not None and net_debt is not None:
         ev = market_cap + net_debt
-        calculations.append(_calc("enterprise_value", ev, "market_cap + net_debt", ["market_cap", "net_debt"]))
+        calculations.append(_calc("enterprise_value", ev, "market_cap + net_debt", ["market_cap", "net_debt"], kind="currency", currency=currency))
 
     ratio_specs = (
-        ("fcf_margin", fcf, values.get("revenue"), "free_cash_flow / revenue", ["free_cash_flow", "revenue"]),
-        ("fcf_yield", fcf, market_cap, "free_cash_flow / market_cap", ["free_cash_flow", "market_cap"]),
-        ("pe", market_cap, values.get("net_income"), "market_cap / net_income", ["market_cap", "net_income"]),
-        ("ps", market_cap, values.get("revenue"), "market_cap / revenue", ["market_cap", "revenue"]),
-        ("ev_ebitda", ev, values.get("ebitda"), "enterprise_value / ebitda", ["enterprise_value", "ebitda"]),
-        ("ev_fcf", ev, fcf, "enterprise_value / free_cash_flow", ["enterprise_value", "free_cash_flow"]),
+        ("fcf_margin", fcf, values.get("revenue"), "free_cash_flow / revenue", ["free_cash_flow", "revenue"], "percent", None),
+        ("fcf_yield", fcf, market_cap, "free_cash_flow / market_cap", ["free_cash_flow", "market_cap"], "percent", "negative FCF"),
+        ("pe", market_cap, values.get("net_income"), "market_cap / net_income", ["market_cap", "net_income"], "multiple", "negative earnings"),
+        ("ps", market_cap, values.get("revenue"), "market_cap / revenue", ["market_cap", "revenue"], "multiple", None),
+        ("ev_ebitda", ev, values.get("ebitda"), "enterprise_value / ebitda", ["enterprise_value", "ebitda"], "multiple", "negative EBITDA"),
+        ("ev_fcf", ev, fcf, "enterprise_value / free_cash_flow", ["enterprise_value", "free_cash_flow"], "multiple", "negative FCF"),
     )
-    for metric, numerator, denominator, formula, inputs in ratio_specs:
+    for metric, numerator, denominator, formula, inputs, kind, negative_reason in ratio_specs:
         if numerator is not None and denominator not in (None, 0):
-            calculations.append(_calc(metric, numerator / denominator, formula, inputs))
+            invalid_negative = negative_reason if denominator < 0 or (metric == "fcf_yield" and numerator < 0) else None
+            calculations.append(
+                _calc(
+                    metric,
+                    numerator / denominator,
+                    formula,
+                    inputs,
+                    kind=kind,
+                    negative_reason=invalid_negative,
+                )
+            )
 
     return calculations
 
 
-def _calc(metric: str, value: float, formula: str, inputs: list[str]) -> dict[str, Any]:
-    return {"metric": metric, "value": round(value, 6), "formula": formula, "inputs": inputs}
+def _calc(
+    metric: str,
+    value: float,
+    formula: str,
+    inputs: list[str],
+    *,
+    kind: str,
+    currency: str | None = None,
+    negative_reason: str | None = None,
+) -> dict[str, Any]:
+    raw_value = round(value, 6)
+    item: dict[str, Any] = {
+        "metric": metric,
+        "value": raw_value,
+        "formula": formula,
+        "inputs": inputs,
+        "display_kind": kind,
+        "meaningful": True,
+    }
+    if currency:
+        item["currency"] = currency
+    if negative_reason:
+        item["raw_value"] = raw_value
+        item["value"] = None
+        item["meaningful"] = False
+        item["meaningfulness_reason"] = negative_reason
+        item["display_value"] = f"not meaningful ({negative_reason})"
+    else:
+        item["display_value"] = _format_value(raw_value, kind=kind, currency=currency)
+    return item
 
 
 def _data_gaps(
@@ -451,8 +539,10 @@ def _score_frames(
 
 
 def _select_frames(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    selected = [score for score in scores if score["score"] >= 0.2][:3]
-    return selected or scores[:1]
+    fit_order = {"fits": 0, "partial_fit": 1, "insufficient_data": 2, "does_not_fit": 3}
+    ranked = sorted(scores, key=lambda item: (fit_order.get(str(item.get("fit_to_current_market_value")), 4), -float(item.get("score") or 0)))
+    selected = [score for score in ranked if score["score"] >= 0.2][:3]
+    return selected or ranked[:1]
 
 
 def _gap_affects_frame(gap: str, frame_id: str) -> bool:
@@ -488,6 +578,7 @@ def _source_coverage(
         "financial_fact_status": "present" if facts else "missing",
         "user_confirmed_valuation_case": _has_user_confirmed_valuation_case(context),
         "provider_errors": list((provider_snapshot or {}).get("errors") or []),
+        "provider_statuses": _provider_statuses(facts=facts, provider_snapshot=provider_snapshot),
     }
 
 
@@ -527,9 +618,9 @@ def _interpretation(selected_frames: list[dict[str, Any]], calculations: list[di
     calc_by_metric = {item["metric"]: item for item in calculations}
     for frame in selected_frames:
         if frame["id"] == "fcf" and "fcf_yield" in calc_by_metric:
-            items.append(f"FCF frame can inspect current FCF yield of {calc_by_metric['fcf_yield']['value']}.")
+            items.append(f"FCF frame can inspect current FCF yield of {_item_display(calc_by_metric['fcf_yield'])}.")
         elif frame["id"] == "comparable_multiples":
-            available = [metric for metric in ("pe", "ps", "ev_ebitda") if metric in calc_by_metric]
+            available = [metric for metric in ("pe", "ps", "ev_ebitda") if metric in calc_by_metric and calc_by_metric[metric].get("meaningful") is not False]
             if available:
                 items.append(f"Comparable frame has deterministic multiples: {', '.join(available)}.")
             else:
@@ -553,6 +644,290 @@ def _watch_items(selected_frames: list[dict[str, Any]]) -> list[str]:
         items.append(f"{frame['name']} triggers: {', '.join(frame['triggers'][:2])}.")
         items.append(f"{frame['name']} failure checks: {', '.join(frame['failure_conditions'][:2])}.")
     return items
+
+
+def _attach_fact_display_values(facts: list[dict[str, Any]], *, currency: str | None) -> None:
+    for fact in facts:
+        metric = str(fact.get("metric") or "")
+        fact_currency = fact.get("currency") or currency
+        if metric in {"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capex", "free_cash_flow", "cash", "debt", "net_debt", "market_cap", "enterprise_value", "ebitda", "book_value"}:
+            kind = "currency"
+        elif metric in {"gross_margin", "operating_margin", "fcf_margin", "fcf_yield", "revenue_growth"}:
+            kind = "percent"
+        elif metric == "price":
+            kind = "currency_per_share"
+        else:
+            kind = "number"
+        fact["display_kind"] = kind
+        if fact_currency and kind in {"currency", "currency_per_share"}:
+            fact["currency"] = fact_currency
+        fact["display_value"] = _format_value(fact.get("value"), kind=kind, currency=fact_currency)
+
+
+def _item_display(item: dict[str, Any]) -> str:
+    return str(item.get("display_value") or item.get("value") or "unknown")
+
+
+def _infer_currency(*, facts: list[dict[str, Any]], market: str) -> str | None:
+    for fact in facts:
+        currency = fact.get("currency")
+        if currency:
+            return str(currency).upper()
+    if market.strip().upper() == "US":
+        return "USD"
+    return None
+
+
+def _format_value(value: Any, *, kind: str, currency: str | None = None) -> str:
+    if value in (None, ""):
+        return "unknown"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    if kind == "percent":
+        return f"{number * 100:.1f}%"
+    if kind == "multiple":
+        return f"{number:.1f}x"
+    if kind == "currency_per_share":
+        prefix = _currency_prefix(currency)
+        if not prefix:
+            return "unknown currency"
+        return f"{prefix}{number:.2f}/share"
+    if kind == "currency":
+        prefix = _currency_prefix(currency)
+        if not prefix:
+            return "unknown currency"
+        sign = "-" if number < 0 else ""
+        scaled, suffix = _scale_abs_number(abs(number))
+        return f"{sign}{prefix}{scaled:.1f}{suffix}"
+    if kind == "number":
+        scaled, suffix = _scale_abs_number(abs(number))
+        sign = "-" if number < 0 else ""
+        if suffix:
+            return f"{sign}{scaled:.1f}{suffix}"
+        return f"{number:.2f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def _currency_prefix(currency: str | None) -> str | None:
+    if not currency:
+        return None
+    normalized = currency.upper()
+    if normalized == "USD":
+        return "$"
+    if normalized == "HKD":
+        return "HK$"
+    if normalized == "CNY":
+        return "RMB "
+    return f"{normalized} "
+
+
+def _scale_abs_number(number: float) -> tuple[float, str]:
+    if number >= 1_000_000_000:
+        return number / 1_000_000_000, "B"
+    if number >= 1_000_000:
+        return number / 1_000_000, "M"
+    if number >= 1_000:
+        return number / 1_000, "K"
+    return number, ""
+
+
+def _provider_statuses(*, facts: list[dict[str, Any]], provider_snapshot: dict[str, Any] | None) -> dict[str, dict[str, str]]:
+    errors = [str(error) for error in (provider_snapshot or {}).get("errors") or []]
+    has_financial = any(str(fact.get("source_type") or "").lower() in {"sec_companyfacts", "official_filing"} for fact in facts)
+    has_market = any(fact.get("metric") in {"price", "market_cap", "shares_outstanding"} for fact in facts)
+    yahoo_errors = [error for error in errors if "yahoo" in error.lower()]
+    sec_errors = [error for error in errors if "sec" in error.lower()]
+    statuses = {
+        "financial_facts": _provider_status(
+            has_data=has_financial,
+            errors=sec_errors,
+            present_copy="official financial facts are available",
+            missing_copy="official financial facts are unavailable",
+        ),
+        "market_snapshot": _provider_status(
+            has_data=has_market,
+            errors=yahoo_errors,
+            present_copy="market-cap and price fields are available",
+            missing_copy="market snapshot fields are unavailable",
+        ),
+    }
+    if any(fact.get("timestamp") in (None, "") for fact in facts if fact.get("metric") in {"price", "market_cap"}):
+        statuses["market_snapshot"] = {
+            "status": "stale_or_unknown_freshness",
+            "explanation": "market snapshot data exists, but timestamp or freshness is stale or unknown.",
+        }
+    return statuses
+
+
+def _provider_status(*, has_data: bool, errors: list[str], present_copy: str, missing_copy: str) -> dict[str, str]:
+    if has_data and errors:
+        return {
+            "status": "partial_provider_gap",
+            "explanation": f"{present_copy}, but another provider call or field failed; raw diagnostics are preserved in the artifact.",
+        }
+    if has_data:
+        return {"status": "available", "explanation": f"{present_copy}."}
+    if errors:
+        return {"status": "complete_missing", "explanation": f"{missing_copy}; provider diagnostics are preserved in the artifact."}
+    return {"status": "complete_missing", "explanation": f"{missing_copy}."}
+
+
+def _market_implied_bridge(
+    *,
+    context: dict[str, Any],
+    fact_values: dict[str, float],
+    calculations: list[dict[str, Any]],
+    frame_scores: list[dict[str, Any]],
+    gaps: list[str],
+    currency: str | None,
+) -> dict[str, Any]:
+    calc_by_metric = {item["metric"]: item for item in calculations}
+    market_cap = fact_values.get("market_cap") or _calc_numeric(calc_by_metric.get("market_cap"))
+    ev = fact_values.get("enterprise_value") or _calc_numeric(calc_by_metric.get("enterprise_value"))
+    revenue = fact_values.get("revenue")
+    fcf = fact_values.get("free_cash_flow") or _calc_numeric(calc_by_metric.get("free_cash_flow"))
+    net_income = fact_values.get("net_income")
+    bridge_lines: list[dict[str, str]] = []
+
+    if market_cap is not None and revenue not in (None, 0):
+        ps = market_cap / revenue
+        bridge_lines.append(
+            {
+                "type": "sales_anchor",
+                "display": f"P/S: {_format_value(ps, kind='multiple')} on {_format_value(revenue, kind='currency', currency=currency)} revenue explains the current {_format_value(market_cap, kind='currency', currency=currency)} market cap as a sales-multiple bridge.",
+            }
+        )
+    elif market_cap is not None:
+        bridge_lines.append({"type": "sales_anchor_missing", "display": "P/S bridge is unavailable because revenue is missing."})
+
+    if ev is not None and revenue not in (None, 0):
+        bridge_lines.append(
+            {
+                "type": "ev_sales_anchor",
+                "display": f"EV/Sales: {_format_value(ev / revenue, kind='multiple')} using {_format_value(ev, kind='currency', currency=currency)} enterprise value.",
+            }
+        )
+
+    if fcf is not None and market_cap not in (None, 0):
+        if fcf > 0:
+            bridge_lines.append(
+                {
+                    "type": "fcf_yield",
+                    "display": f"FCF yield: {_format_value(fcf / market_cap, kind='percent')} from current FCF of {_format_value(fcf, kind='currency', currency=currency)}.",
+                }
+            )
+        else:
+            bridge_lines.append({"type": "ev_fcf_not_meaningful", "display": "EV/FCF is not meaningful because current FCF is negative; the bridge must rely on future FCF recovery rather than current FCF multiple."})
+            if revenue not in (None, 0):
+                required = []
+                for yield_assumption in (0.03, 0.05, 0.07):
+                    required_fcf = market_cap * yield_assumption
+                    required_margin = required_fcf / revenue
+                    required.append(f"{int(yield_assumption * 100)}% market-cap yield needs {_format_value(required_margin, kind='percent')} future FCF margin")
+                bridge_lines.append({"type": "required_fcf_margin", "display": "; ".join(required) + " (illustrative bridge math, not a target price)."})
+
+    if net_income is not None and net_income <= 0:
+        bridge_lines.append({"type": "cycle_normalized_earnings", "display": "PE is not meaningful because current earnings are negative; a cycle-normalized earnings or margin-recovery placeholder is needed before earnings can explain current market value."})
+
+    frame_fit_ranking = _frame_fit_ranking(
+        frame_scores=frame_scores,
+        fact_values=fact_values,
+        calc_by_metric=calc_by_metric,
+        bridge_lines=bridge_lines,
+        gaps=gaps,
+        context_text=_context_text(context),
+    )
+    return {"bridge_lines": bridge_lines, "frame_fit_ranking": frame_fit_ranking}
+
+
+def _calc_numeric(item: dict[str, Any] | None) -> float | None:
+    if not item:
+        return None
+    value = item.get("value")
+    if value is None:
+        value = item.get("raw_value")
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _frame_fit_ranking(
+    *,
+    frame_scores: list[dict[str, Any]],
+    fact_values: dict[str, float],
+    calc_by_metric: dict[str, dict[str, Any]],
+    bridge_lines: list[dict[str, str]],
+    gaps: list[str],
+    context_text: str,
+) -> list[dict[str, Any]]:
+    ranking: list[dict[str, Any]] = []
+    has_sales_bridge = any(item.get("type") == "sales_anchor" for item in bridge_lines)
+    has_negative_fcf = (fact_values.get("free_cash_flow") or _calc_numeric(calc_by_metric.get("free_cash_flow")) or 0) < 0
+    has_negative_earnings = (fact_values.get("net_income") or 0) < 0
+    for frame in frame_scores:
+        fit = "insufficient_data"
+        why = "Available facts do not yet bridge this frame to current market value."
+        assumptions = []
+        must_become_true = []
+        main_gaps = list(frame.get("degraded_by") or [])
+        if frame["id"] == "comparable_multiples":
+            if has_sales_bridge:
+                fit = "fits" if not has_negative_earnings else "partial_fit"
+                why = "Current market value can be expressed through a deterministic sales multiple, while earnings-based multiples need normalization if earnings are negative."
+                assumptions.append("Market accepts revenue or sales multiple as the near-term anchor.")
+                must_become_true.append("Revenue durability and future margin conversion must support the visible sales multiple.")
+            else:
+                main_gaps.append("revenue or market cap is missing")
+        elif frame["id"] == "fcf":
+            if has_negative_fcf:
+                fit = "does_not_fit"
+                why = "Current negative FCF cannot explain market value through ordinary EV/FCF or FCF yield."
+                assumptions.append("Future FCF margin recovery is required before this frame can support current value.")
+                must_become_true.append("FCF must turn positive and reach the required illustrative margin bridge.")
+            elif "fcf_yield" in calc_by_metric:
+                fit = "fits"
+                why = "Positive FCF yield directly bridges current market value to cash generation."
+                assumptions.append("Current FCF is durable rather than one-time working-capital release.")
+                must_become_true.append("Cash conversion remains durable.")
+        elif frame["id"] == "cyclical":
+            if has_negative_earnings and any(token in context_text for token in ("cycle", "cyclical", "semiconductor", "memory", "capacity", "inventory", "周期", "半导体")):
+                fit = "partial_fit"
+                why = "Current earnings do not explain market value, but the stock context supports a cycle-normalized earnings bridge."
+                assumptions.append("Market is looking through depressed current earnings toward mid-cycle recovery.")
+                must_become_true.append("Cycle-normalized margins or earnings must recover enough to support the current value.")
+            elif has_negative_earnings:
+                fit = "insufficient_data"
+                main_gaps.append("cycle-normalized earnings input is missing")
+        elif frame["id"] == "growth_scenario":
+            if has_negative_earnings or has_negative_fcf:
+                fit = "partial_fit"
+                why = "Current profit or FCF cannot support market value, so an expectation-based growth/scenario bridge is needed."
+                assumptions.append("Market assigns value to future revenue growth, margin maturity, TAM, or milestone probability.")
+                must_become_true.append("Growth and margin milestones must become observable enough to justify the current value.")
+            elif has_sales_bridge:
+                fit = "partial_fit"
+                why = "Sales anchor exists, but scenario assumptions need TAM, growth, and mature margin evidence."
+                assumptions.append("Future scale or optionality exceeds current financial statement evidence.")
+                must_become_true.append("Forward growth or milestone evidence must validate the scenario.")
+        elif frame["id"] == "sotp_asset_value":
+            fit = "insufficient_data"
+            why = "SOTP cannot explain current market value without segment, asset, holding, or NAV inputs."
+            main_gaps.append("segment or asset value data is missing")
+        ranking.append(
+            {
+                **frame,
+                "fit_to_current_market_value": fit,
+                "why_it_fits_or_not": why,
+                "implied_assumptions": assumptions or ["No deterministic market-implied assumption available from current inputs."],
+                "assumptions_that_must_become_true": must_become_true or ["Additional source-backed inputs must validate this frame."],
+                "main_data_gaps": sorted(dict.fromkeys(main_gaps or gaps)),
+                "confidence": "medium" if fit in {"fits", "partial_fit"} and not main_gaps else "low",
+            }
+        )
+    fit_order = {"fits": 0, "partial_fit": 1, "insufficient_data": 2, "does_not_fit": 3}
+    return sorted(ranking, key=lambda item: (fit_order.get(item["fit_to_current_market_value"], 4), -float(item.get("score") or 0)))
 
 
 def _context_text(context: dict[str, Any]) -> str:

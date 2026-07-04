@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented; P0.1 provider-backed US valuation packet is in progress on branch `codex/stock-valuation-coordinator-dispatch`.
+Status: implemented through P0.2 local verification on branch `codex/stock-valuation-coordinator-dispatch`; cloud deploy and independent P0.2 acceptance retest are pending.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -12,9 +12,11 @@ The implementation is intentionally artifact-backed before schema expansion. Eac
 
 P0.1 addresses user acceptance feedback from 2026-07-04: a cloud valuation result that only says local financial and market facts are missing is not enough for real valuation review. For US stocks, the command now attempts a provider-backed packet using SEC EDGAR company facts for official financial metrics and Yahoo quote data for a low-cost market snapshot before rendering the final valuation card.
 
+P0.2 addresses the accepted P0.1 follow-up: the command card must render readable investment values, avoid treating negative ratios as normal valuation multiples, classify provider gaps without contradicting available data, and bridge current market cap or enterprise value to the assumptions each selected frame would need.
+
 ## Touched Modules
 
-- `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, frame scoring, artifact writing, latest-artifact loading, and card rendering.
+- `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, display formatting, provider-gap taxonomy, market-implied bridge, frame-fit ranking, artifact writing, latest-artifact loading, and card rendering.
 - `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, returning structured facts, sources, and provider errors without raising through the command path.
 - `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`.
 - `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands.
@@ -44,6 +46,9 @@ Artifact packet fields:
 - `interpretation`: non-advisory frame interpretation.
 - `watch_items`: triggers and failure checks per selected frame.
 - `source_coverage`: fact count, source count, official-source count, market-snapshot status, peer-data status, and user-confirmed-case state.
+- `source_coverage.provider_statuses`: P0.2 provider taxonomy for official financial facts and low-cost market snapshots: `complete_missing`, `partial_provider_gap`, `fallback_used`, or `stale_or_unknown_freshness` where applicable, plus human-readable explanation.
+- `market_implied_bridge`: deterministic bridge lines such as sales anchor, EV/sales anchor, FCF yield or required future FCF margin, and cycle-normalized earnings placeholder when current earnings are negative.
+- `selected_frames[].fit_to_current_market_value`: P0.2 fit ranking fields: fit status, why the frame fits or not, implied assumptions, assumptions that must become true, main data gaps, and confidence.
 - `degraded_state`: explicit degraded reasons and data gaps.
 - `safety`: no direct investment advice and no formal user-insight writes.
 
@@ -79,6 +84,36 @@ P0 computes:
 - `ev_ebitda = enterprise_value / ebitda`
 - `ev_fcf = enterprise_value / free_cash_flow`
 
+P0.2 rendering and meaningfulness rules:
+
+- Facts and calculations keep raw numeric values in the artifact and add deterministic `display_value`, `display_kind`, and currency metadata when known.
+- Headline currency values render as compact investment values such as `$601.1B`, `$52.6B`, and `-$4.9B`.
+- Percentages render as one-decimal values such as `-9.4%`.
+- Multiples render as one-decimal values such as `11.4x`.
+- Negative operating facts and margins remain visible.
+- Negative PE, FCF yield, EV/FCF, and EV/EBITDA are marked `not meaningful` with the reason, while `raw_value` remains available for audit.
+
+## P0.2 Market-Implied Bridge
+
+The bridge is deterministic and intentionally bounded. It does not create target prices, peer-set estimates, or analyst-style forecasts.
+
+When inputs exist, the card and artifact include:
+
+- Market cap / revenue as current P/S sales anchor.
+- Enterprise value / revenue as EV/sales anchor.
+- FCF yield when FCF is positive.
+- Required future FCF margin for illustrative 3%, 5%, and 7% market-cap yield assumptions when current FCF is negative.
+- A cycle-normalized earnings placeholder when net income is negative.
+
+Frame fit is ranked against current market value, not only generic relevance:
+
+- `fits`: current facts directly bridge market value to the frame.
+- `partial_fit`: the frame can explain current value only with visible expectation or normalization assumptions.
+- `does_not_fit`: current facts contradict the frame as a direct market-value explanation, such as negative FCF for current EV/FCF.
+- `insufficient_data`: core inputs for the frame are missing.
+
+The selected 1-3 frames come from this fit-ranked list, so a frame may be relevant to the stock but rank lower if it cannot explain current market value with available facts.
+
 LLM/model calls are not used for calculations or frame scoring.
 
 ## Frame Scoring
@@ -95,7 +130,7 @@ Scoring combines available deterministic inputs with keyword evidence from the s
 
 ## Degraded Behavior
 
-The command remains usable without provider credentials, fresh market data, peer data, model access, or user-confirmed valuation cases. It explicitly reports degraded reasons, including:
+The command remains usable without provider credentials, fresh market data, peer data, model access, or user-confirmed valuation cases. It explicitly reports degraded reasons and P0.2 provider status, including:
 
 - missing latest price or market cap;
 - missing enterprise value inputs;
@@ -104,12 +139,15 @@ The command remains usable without provider credentials, fresh market data, peer
 - missing official financial source coverage;
 - missing user-confirmed valuation case;
 - minimal stock profile needing research import.
+- partial provider gap when Yahoo price, market cap, or shares are available but another Yahoo quote/detail field fails;
+- complete missing provider data when no usable category data exists;
+- stale or unknown freshness when a market snapshot exists without timestamp/freshness evidence.
 
 When degraded, the output presents frame research scaffolding rather than target-price precision.
 
 ## Deployment Impact
 
-No service startup, database migration, external credential, provider integration, or cloud deployment is required for P0 local command verification. If the Coordinator integrates this branch into a cloud-served command surface later, the standard deploy path should be used and acceptance should test the real deployed command surface.
+No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 still needs a standard cloud deploy of the returned branch or integrated release ref, then independent cloud-IP retest using the private token route.
 
 ## Verification Plan
 
@@ -117,7 +155,13 @@ No service startup, database migration, external credential, provider integratio
 - `python3 scripts/smoke_test.py`
 - `python3 scripts/ikg.py valuation TEST.SMOKE001` or an equivalent local fixture command after smoke data exists.
 - `python3 scripts/audit_delivery_state.py --feature "Stock valuation research"`
+- `python3 scripts/audit_agent_flow_health.py --feature "Stock valuation research"`
 - `git diff --check`
+
+Current P0.2 verification on 2026-07-04 SGT:
+
+- Passed `python3 -m unittest tests.test_stock_valuation`, including regression coverage for readable values, negative-multiple meaningfulness, provider partial-gap taxonomy, market-implied bridge lines, frame-fit fields, and raw numeric preservation.
+- `.venv/bin/python` was unavailable in this isolated workspace, so tests and audits used system `python3` where dependencies permitted.
 
 Current verification on 2026-07-01 SGT:
 
@@ -152,6 +196,11 @@ P0 originally did not verify provider-backed market or financial statement fetch
 | Deterministic calculations and frame scoring work without LLM/model calls | verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | No model provider is imported or called. |
 | Separate facts, assumptions, deterministic calculations, interpretation, and watch items | verified | `render_valuation_card()` | Card has separate sections. |
 | Missing facts, market data, stale peer data, missing model, no user-confirmed case degrade explicitly | verified | `tests/test_stock_valuation.py` | Missing model is not a blocker because no model call is used; peer data is explicitly missing in source coverage. |
-| P0.1 US provider-backed valuation packet | local_verified | `valuation_data_provider.py`, `stock_valuation.py`, `tests/test_stock_valuation.py` | SEC EDGAR fixture facts and Yahoo quote fixture facts merge into the artifact and enable deterministic PE/FCF calculations. Live cloud acceptance is still required. |
+| P0.1 US provider-backed valuation packet | accepted | `valuation_data_provider.py`, `stock_valuation.py`, `tests/test_stock_valuation.py`, cloud evidence in Acceptance Queue | SEC EDGAR fixture facts and Yahoo quote fixture facts merge into the artifact and enable deterministic PE/FCF calculations. P0.1 cloud acceptance passed and user accepted it on 2026-07-04. |
+| P0.2 readable number formatting | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Card uses compact currency, percent, per-share, and multiple displays; artifact preserves raw numeric values plus display metadata. |
+| P0.2 provider-gap taxonomy | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Market snapshot status can report `partial_provider_gap` when Yahoo price/market-cap facts exist but another Yahoo call fails. |
+| P0.2 negative/meaningless ratio handling | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Negative PE, FCF yield, and EV/FCF render as `not meaningful` with reasons while raw values remain in artifact diagnostics. |
+| P0.2 market-implied bridge | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Includes P/S and EV/sales anchors, required future FCF margin lines for negative FCF, cycle-normalized earnings placeholder for negative earnings, and no target-price precision. |
+| P0.2 frame fit ranking | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Selected frames are ranked by `fit_to_current_market_value` with assumptions, must-become-true items, gaps, and confidence. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |

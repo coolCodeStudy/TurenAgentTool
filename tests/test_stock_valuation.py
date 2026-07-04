@@ -270,6 +270,82 @@ class StockValuationTests(unittest.TestCase):
         self.assertNotIn("source metadata is missing", packet["degraded_state"]["reasons"])
         self.assertFalse(any("P0 uses existing local stock context" in item for item in packet["assumptions"]["items"]))
 
+    def test_p0_2_formats_output_and_labels_negative_multiples(self) -> None:
+        context = {
+            "stock": {
+                "id": 10,
+                "symbol": "LOSS",
+                "market": "US",
+                "name": "Loss Making Semis",
+                "core_business": "Semiconductor platform with AI growth and manufacturing cycle exposure.",
+                "stock_character": "Cyclical growth turnaround.",
+            },
+            "stock_knowledge": [],
+            "stock_insights": [],
+            "sources": [],
+            "sectors": [],
+        }
+        provider_snapshot = {
+            "facts": [
+                {"metric": "revenue", "value": 52600000000, "source_id": "sec:LOSS:Revenues", "source_type": "sec_companyfacts"},
+                {"metric": "net_income", "value": -18000000000, "source_id": "sec:LOSS:NetIncomeLoss", "source_type": "sec_companyfacts"},
+                {"metric": "operating_cash_flow", "value": 900000000, "source_id": "sec:LOSS:OCF", "source_type": "sec_companyfacts"},
+                {"metric": "capex", "value": 5800000000, "source_id": "sec:LOSS:Capex", "source_type": "sec_companyfacts"},
+                {"metric": "cash", "value": 19000000000, "source_id": "sec:LOSS:Cash", "source_type": "sec_companyfacts"},
+                {"metric": "debt", "value": 13000000000, "source_id": "sec:LOSS:Debt", "source_type": "sec_companyfacts"},
+                {"metric": "market_cap", "value": 601100000000, "source_id": "yahoo:LOSS:market_cap", "source_type": "yahoo_quote", "timestamp": "2026-07-04T00:00:00+00:00", "currency": "USD"},
+                {"metric": "price", "value": 136.61, "source_id": "yahoo:LOSS:price", "source_type": "yahoo_quote", "timestamp": "2026-07-04T00:00:00+00:00", "currency": "USD"},
+            ],
+            "sources": [
+                {"id": "sec:LOSS:companyfacts", "source_type": "sec_companyfacts", "title": "SEC companyfacts LOSS"},
+                {"id": "yahoo:LOSS:quote", "source_type": "yahoo_quote", "title": "Yahoo quote LOSS"},
+            ],
+            "errors": ["Yahoo quote detail unavailable: unauthorized"],
+            "market_snapshot_status": "present",
+            "financial_fact_status": "present",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            packet, _ = build_valuation_artifact(
+                context,
+                symbol="LOSS",
+                market="US",
+                output_dir=Path(tmp),
+                command="valuation US.LOSS",
+                now=datetime(2026, 7, 4, tzinfo=timezone.utc),
+                provider_snapshot=provider_snapshot,
+            )
+
+        calculations = {item["metric"]: item for item in packet["deterministic_calculations"]}
+        self.assertEqual(calculations["free_cash_flow"]["display_value"], "-$4.9B")
+        self.assertEqual(calculations["fcf_margin"]["display_value"], "-9.3%")
+        self.assertEqual(calculations["ps"]["display_value"], "11.4x")
+        self.assertFalse(calculations["pe"]["meaningful"])
+        self.assertEqual(calculations["pe"]["display_value"], "not meaningful (negative earnings)")
+        self.assertFalse(calculations["ev_fcf"]["meaningful"])
+        self.assertEqual(calculations["ev_fcf"]["display_value"], "not meaningful (negative FCF)")
+        self.assertIn("raw_value", calculations["ev_fcf"])
+
+        status = packet["source_coverage"]["provider_statuses"]["market_snapshot"]
+        self.assertEqual(status["status"], "partial_provider_gap")
+        self.assertIn("market-cap and price fields are available", status["explanation"])
+
+        bridge = packet["market_implied_bridge"]
+        self.assertTrue(any("P/S: 11.4x" in line["display"] for line in bridge["bridge_lines"]))
+        self.assertTrue(any("5% market-cap yield" in line["display"] for line in bridge["bridge_lines"]))
+        self.assertIn(bridge["frame_fit_ranking"][0]["fit_to_current_market_value"], {"fits", "partial_fit"})
+        self.assertIn("assumptions_that_must_become_true", bridge["frame_fit_ranking"][0])
+
+        card = render_valuation_card(packet)
+        self.assertIn("Market cap: $601.1B", card)
+        self.assertIn("Enterprise value: $595.1B", card)
+        self.assertIn("FCF margin: -9.3%", card)
+        self.assertIn("PE: not meaningful (negative earnings)", card)
+        self.assertIn("EV/FCF: not meaningful (negative FCF)", card)
+        self.assertIn("Market snapshot: partial provider gap", card)
+        self.assertIn("Market-implied bridge:", card)
+        self.assertNotIn("601100000000", card)
+        self.assertNotIn("-0.093156", card)
+
     def test_renders_method_library(self) -> None:
         text = render_valuation_methods()
         self.assertIn("Free Cash Flow", text)
