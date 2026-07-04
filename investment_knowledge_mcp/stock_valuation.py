@@ -130,17 +130,18 @@ def build_valuation_artifact(
     output_dir: Path,
     command: str,
     now: datetime | None = None,
+    provider_snapshot: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Path]:
     created_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0).isoformat()
     stock = context.get("stock") or {}
-    facts = _extract_facts(context)
+    facts = _extract_facts(context, provider_snapshot=provider_snapshot)
     fact_values = {fact["metric"]: fact["value"] for fact in facts if fact.get("value") is not None}
     calculations = _calculate_metrics(fact_values)
-    gaps = _data_gaps(fact_values, calculations, context)
+    gaps = _data_gaps(fact_values, calculations, context, provider_snapshot=provider_snapshot)
     scores = _score_frames(context=context, fact_values=fact_values, calculations=calculations, gaps=gaps)
     selected_frames = _select_frames(scores)
-    coverage = _source_coverage(context=context, facts=facts)
-    degraded_reasons = _degraded_reasons(gaps=gaps, coverage=coverage, context=context)
+    coverage = _source_coverage(context=context, facts=facts, provider_snapshot=provider_snapshot)
+    degraded_reasons = _degraded_reasons(gaps=gaps, coverage=coverage, context=context, provider_snapshot=provider_snapshot)
     packet = {
         "feature": "stock_valuation_research",
         "version": 1,
@@ -155,7 +156,7 @@ def build_valuation_artifact(
             "stock_character": stock.get("stock_character"),
         },
         "facts": facts,
-        "assumptions": _assumptions(context),
+        "assumptions": _assumptions(context, provider_snapshot=provider_snapshot),
         "deterministic_calculations": calculations,
         "internal_frame_scores": scores,
         "selected_frames": selected_frames,
@@ -255,7 +256,7 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
     return "\n".join(lines)
 
 
-def _extract_facts(context: dict[str, Any]) -> list[dict[str, Any]]:
+def _extract_facts(context: dict[str, Any], *, provider_snapshot: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
     for item in context.get("stock_knowledge") or []:
         content = str(item.get("content") or "")
@@ -275,6 +276,24 @@ def _extract_facts(context: dict[str, Any]) -> list[dict[str, Any]]:
                     "input_text": content[:240],
                 }
             )
+    for provider_fact in (provider_snapshot or {}).get("facts") or []:
+        if provider_fact.get("value") is None:
+            continue
+        facts.append(
+            {
+                "metric": provider_fact.get("metric"),
+                "value": provider_fact.get("value"),
+                "source_id": provider_fact.get("source_id"),
+                "source_type": provider_fact.get("source_type"),
+                "knowledge_id": provider_fact.get("knowledge_id"),
+                "confidence": provider_fact.get("confidence"),
+                "confirmed_by_user": bool(provider_fact.get("confirmed_by_user")),
+                "timestamp": provider_fact.get("timestamp"),
+                "period_end": provider_fact.get("period_end"),
+                "input_text": str(provider_fact.get("input_text") or "")[:240],
+                "provider": provider_fact.get("provider"),
+            }
+        )
     return _dedupe_facts(facts)
 
 
@@ -342,7 +361,13 @@ def _calc(metric: str, value: float, formula: str, inputs: list[str]) -> dict[st
     return {"metric": metric, "value": round(value, 6), "formula": formula, "inputs": inputs}
 
 
-def _data_gaps(values: dict[str, float], calculations: list[dict[str, Any]], context: dict[str, Any]) -> list[str]:
+def _data_gaps(
+    values: dict[str, float],
+    calculations: list[dict[str, Any]],
+    context: dict[str, Any],
+    *,
+    provider_snapshot: dict[str, Any] | None = None,
+) -> list[str]:
     calc_metrics = {item["metric"] for item in calculations}
     gaps: list[str] = []
     if "price" not in values and "market_cap" not in values:
@@ -355,7 +380,7 @@ def _data_gaps(values: dict[str, float], calculations: list[dict[str, Any]], con
         gaps.append("free cash flow is missing")
     if "net_income" not in values:
         gaps.append("net income is missing")
-    if not (context.get("sources") or []):
+    if not (context.get("sources") or (provider_snapshot or {}).get("sources") or []):
         gaps.append("source metadata is missing")
     if not _has_user_confirmed_valuation_case(context):
         gaps.append("no user-confirmed valuation case")
@@ -440,8 +465,13 @@ def _gap_affects_frame(gap: str, frame_id: str) -> bool:
     return False
 
 
-def _source_coverage(context: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]:
-    sources = context.get("sources") or []
+def _source_coverage(
+    context: dict[str, Any],
+    facts: list[dict[str, Any]],
+    *,
+    provider_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sources = [*(context.get("sources") or []), *((provider_snapshot or {}).get("sources") or [])]
     source_types = [str(source.get("source_type") or "").lower() for source in sources]
     official_count = sum(
         1
@@ -457,11 +487,19 @@ def _source_coverage(context: dict[str, Any], facts: list[dict[str, Any]]) -> di
         "peer_data_status": "missing",
         "financial_fact_status": "present" if facts else "missing",
         "user_confirmed_valuation_case": _has_user_confirmed_valuation_case(context),
+        "provider_errors": list((provider_snapshot or {}).get("errors") or []),
     }
 
 
-def _degraded_reasons(*, gaps: list[str], coverage: dict[str, Any], context: dict[str, Any]) -> list[str]:
+def _degraded_reasons(
+    *,
+    gaps: list[str],
+    coverage: dict[str, Any],
+    context: dict[str, Any],
+    provider_snapshot: dict[str, Any] | None = None,
+) -> list[str]:
     reasons = list(gaps)
+    reasons.extend(f"provider data gap: {error}" for error in (provider_snapshot or {}).get("errors") or [])
     if coverage.get("official_source_count", 0) == 0:
         reasons.append("official financial source coverage is missing")
     if _stock_context_needs_research(context):
@@ -469,14 +507,17 @@ def _degraded_reasons(*, gaps: list[str], coverage: dict[str, Any], context: dic
     return sorted(dict.fromkeys(reasons))
 
 
-def _assumptions(context: dict[str, Any]) -> dict[str, Any]:
+def _assumptions(context: dict[str, Any], *, provider_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     confirmed = _has_user_confirmed_valuation_case(context)
     items = []
     if confirmed:
         items.append("A user-confirmed valuation case exists in local stock insights or knowledge.")
     else:
         items.append("No user-confirmed valuation case exists; frame ranking is a system candidate only.")
-    items.append("P0 uses existing local stock context and deterministic calculations; it does not fetch fresh provider data.")
+    if provider_snapshot is not None:
+        items.append("P0.1 uses provider snapshots when available and labels provider gaps instead of inventing missing facts.")
+    else:
+        items.append("P0 uses existing local stock context and deterministic calculations when no provider snapshot is available.")
     items.append("Peer sets, analyst estimates, and target-price precision are intentionally omitted unless sourced.")
     return {"user_confirmed_valuation_case": confirmed, "items": items}
 

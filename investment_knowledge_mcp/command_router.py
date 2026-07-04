@@ -71,6 +71,7 @@ from investment_knowledge_mcp.stock_valuation import (
     render_valuation_card,
     render_valuation_methods,
 )
+from investment_knowledge_mcp.valuation_data_provider import fetch_provider_snapshot
 from investment_knowledge_mcp.weekly_review import build_weekly_review
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
@@ -927,12 +928,14 @@ def _handle_stock_valuation(
     context = repository.get_stock_context(symbol=symbol, market=market)
     if not context.get("stock"):
         return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+    provider_snapshot = fetch_provider_snapshot(symbol, market)
     packet, _ = build_valuation_artifact(
         context,
         symbol=symbol,
         market=market,
         output_dir=output_dir,
         command=command,
+        provider_snapshot=provider_snapshot,
     )
     return CommandResult(ok=True, message=render_valuation_card(packet, include_artifact_path=include_artifact_path))
 
