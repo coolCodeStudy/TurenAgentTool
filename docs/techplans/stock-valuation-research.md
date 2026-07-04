@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented through P0.2 local verification, deployed cloud release `880b741393adc567f613e14d6ce4f363bd12acc8`, and independent P0.2 artifact-preservation retest passed for `AT-2026-07-04-002` on 2026-07-04 SGT. User acceptance remains pending.
+Status: implemented and deployed through superseding combined cloud release `801136fa9b3ed023d300effb3fd9fa3770693059`, but independent P0.2 retest `AT-2026-07-04-002` failed major on 2026-07-04 SGT because the fresh valuation card still exposes raw provider error text in user-facing degraded-state copy. Artifact evidence read-back itself passed raw/display/meaningfulness/provider/bridge/frame-fit checks. User acceptance remains pending.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -153,7 +153,7 @@ When degraded, the output presents frame research scaffolding rather than target
 
 ## Deployment Impact
 
-No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 required a standard cloud deploy of the integrated release ref and independent cloud-IP retest using the private token route. That retest passed for `AT-2026-07-04-002` after Ops deploy event `#48`.
+No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 requires cloud deploy of the integrated release ref and independent cloud-IP retest using the private token route. The artifact evidence path passed after Ops deploy event `#48`, but superseding release `801136fa9b3ed023d300effb3fd9fa3770693059` / Ops event `#49` failed independent retest because the fresh valuation card still surfaces raw provider error text in degraded-state copy.
 
 ## Verification Plan
 
@@ -209,6 +209,6 @@ P0 originally did not verify provider-backed market or financial statement fetch
 | P0.2 negative/meaningless ratio handling | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Negative PE, FCF yield, and EV/FCF render as `not meaningful` with reasons while raw values remain in artifact diagnostics. |
 | P0.2 market-implied bridge | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Includes P/S and EV/sales anchors, required future FCF margin lines for negative FCF, cycle-normalized earnings placeholder for negative earnings, and no target-price precision. |
 | P0.2 frame fit ranking | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Selected frames are ranked by `fit_to_current_market_value` with assumptions, must-become-true items, gaps, and confidence. |
-| P0.2 black-box-safe artifact evidence path | accepted | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py`, cloud evidence in `AT-2026-07-04-002` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact, preserving raw numeric values plus display/meaningfulness/frame-fit fields while omitting local paths, raw provider errors, auth headers, token config, stack traces, and arbitrary file reads. Independent cloud-IP retest passed after release `880b741393adc567f613e14d6ce4f363bd12acc8` / Ops event `#48`; user acceptance remains pending. |
+| P0.2 black-box-safe artifact evidence path | needs_review | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py`, cloud evidence in `AT-2026-07-04-002` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact and passed the raw/display/meaningfulness/provider/bridge/frame-fit checks on superseding release `801136fa9b3ed023d300effb3fd9fa3770693059`; however, the same retest failed because the fresh valuation card still exposes raw provider error text. Fix user-facing provider-gap copy before user acceptance. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |
