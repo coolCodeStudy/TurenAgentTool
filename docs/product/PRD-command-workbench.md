@@ -549,6 +549,7 @@ Side effect: saves a traceable decision ticket; does not trade.
 - Maintenance actions must show affected service and environment.
 - Deployment actions are out of scope for the public command workbench unless protected by a separate admin flow.
 - Access tokens must not appear in recent history, logs, or result cards.
+- Owner access should optimize for speed: local tooling should provision, sync, and inject the access token automatically. Manual token lookup or copy/paste is only a fallback path.
 - Parser confidence must be visible when a command was inferred from natural text.
 
 ## 16. Metrics
