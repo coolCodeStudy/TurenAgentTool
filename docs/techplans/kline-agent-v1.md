@@ -7,7 +7,7 @@ Implement bounded V1 single-stock Kline investigation for command/CLI use. V1 is
 V1 covers:
 
 - One explicit stock target per request.
-- Daily bars fetched from Futu OpenD when available.
+- Daily bars fetched through the historical-bar provider abstraction: approved remote/cloud Futu when explicitly configured, and a no-credential Yahoo chart path for common U.S. stocks such as `US.NVDA`.
 - Weekly and monthly bars derived from validated daily bars.
 - Fixed daily/weekly/monthly rule library covering new highs, failed breakouts, moving average state, volume-price behavior, gaps, streaks, and drawdown/recovery.
 - Source metadata, data quality warnings, deterministic observations, sample statistics, interpretation, watch items, and evidence limits in separate report sections.
@@ -21,6 +21,7 @@ Out of scope for this branch:
 - Database schema/cache for bars, runs, or observations.
 - LLM-generated chart pattern discovery.
 - AkShare fallback dependency. V1 keeps a provider abstraction so fallback can be added later without changing the report contract.
+- Local FutuD/OpenD setup or login. Local Futu remains forbidden; approved remote/cloud Futu is allowed when the deployed environment already provides it.
 
 ## Entry Points
 
@@ -39,7 +40,7 @@ Define a narrow historical OHLCV provider interface:
 - Input: `symbol`, `market`, `years`, `adjust_type`.
 - Output: normalized daily bars plus provider metadata and warnings.
 
-Primary provider:
+Provider routing:
 
 - `FutuHistoricalBarProvider` uses `futu.OpenQuoteContext.request_history_kline`.
 - Provider symbols use Futu-style market prefixes: `US.NVDA`, `HK.00700`, `KR.000660`, `SH.600000`, or `SZ.000001`.
@@ -48,6 +49,9 @@ Primary provider:
   - forward-adjusted: provider `AuType.QFQ` when available.
   - backward-adjusted: provider `AuType.HFQ` when available.
 - Provider unavailability, missing `futu-api`, OpenD connection errors, permission errors, and unsupported API versions return clear provider limitations instead of fabricated analysis.
+- `YahooChartHistoricalBarProvider` is the no-credential U.S. daily OHLCV path. It maps `US.NVDA` to Yahoo symbol `NVDA`, fetches daily chart bars, applies adjusted-close ratio to OHLC for provider-equivalent adjusted output when requested, and emits a visible warning because Yahoo does not expose separate forward/backward OHLC adjustment series.
+- `_default_historical_bar_provider()` uses `KLINE_PROVIDER=auto` by default. `auto` routes U.S. symbols to Yahoo chart so common U.S. stocks can produce useful V1 reports without local FutuD/OpenD. `KLINE_PROVIDER=futu` remains an explicit approved remote/cloud Futu path; `KLINE_PROVIDER=disabled` remains available for fixture/degraded local review.
+- Command Workbench execution must call the normal command router for Kline commands. It must not force `disable_kline_live_provider=True` on the deployed `/command` surface, because that prevents approved live providers from producing real bars.
 
 V1 derives weekly/monthly bars from daily bars. This keeps all timeframe statistics reproducible from one visible source and avoids cross-provider aggregation drift in the first version.
 
@@ -139,7 +143,7 @@ Run:
 - A narrow command-router invocation with a monkeypatched provider through tests.
 - Command Workbench browser preview coverage for exact Kline commands is verified by `tests.test_command_workbench_kline`.
 
-If live Futu/OpenD is unavailable locally, document that limitation and rely on fixture verification. As of 2026-07-03, local acceptance must not use FutuD/OpenD; run local degraded-provider checks with `KLINE_PROVIDER=disabled`. Full live-data acceptance needs a non-Futu provider path or an approved remote provider environment.
+If live Futu/OpenD is unavailable locally, document that limitation and rely on fixture verification. As of 2026-07-03, local acceptance must not use local FutuD/OpenD; run local degraded-provider checks with `KLINE_PROVIDER=disabled`. As of 2026-07-04, cloud Futu is explicitly allowed as an approved remote provider path; the blocker is local/cloud double login, not Futu itself. Full live-data acceptance needs an approved remote/cloud provider path such as cloud Futu, or another provider, that can produce real historical bars on the deployed surface.
 
 ## Delivery Tracking
 
