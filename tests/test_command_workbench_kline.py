@@ -5,13 +5,16 @@ import subprocess
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
+from investment_knowledge_mcp.command_router import CommandResult
 from investment_knowledge_mcp.command_workbench import (
     execution_blocker,
     list_workbench_actions,
     parse_workbench_command,
     render_command_workbench_html,
 )
+from investment_knowledge_mcp.weekly_review_web import WeeklyReviewWebHandler
 
 
 class CommandWorkbenchKlineTests(unittest.TestCase):
@@ -50,6 +53,33 @@ class CommandWorkbenchKlineTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_weekly_review_web_executes_kline_without_forcing_degraded_provider(self) -> None:
+        captured: dict[str, object] = {}
+        handler = object.__new__(WeeklyReviewWebHandler)
+
+        def write_json(status: object, payload: dict[str, object]) -> None:
+            captured["status"] = status
+            captured["payload"] = payload
+
+        handler._write_json = write_json  # type: ignore[attr-defined]
+
+        with (
+            patch("investment_knowledge_mcp.weekly_review_web.run_schema"),
+            patch(
+                "investment_knowledge_mcp.weekly_review_web.handle_command",
+                return_value=CommandResult(ok=True, message="kline report"),
+            ) as mock_handle,
+            patch(
+                "investment_knowledge_mcp.weekly_review_web.record_command_event",
+                return_value={"id": 123},
+            ),
+        ):
+            handler._handle_workbench_execute({"text": "K线调查 US.NVDA 5年 前复权"})
+
+        self.assertEqual(captured["payload"]["message"], "kline report")
+        self.assertEqual(mock_handle.call_args.args[0], "K线调查 US.NVDA 5年 前复权")
+        self.assertNotIn("disable_kline_live_provider", mock_handle.call_args.kwargs)
 
 
 if __name__ == "__main__":

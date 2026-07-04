@@ -142,10 +142,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         exact_command = str(preview.get("exact_command") or "").strip()
         try:
             run_schema()
-            result = handle_command(
-                exact_command,
-                disable_kline_live_provider=preview.get("action_id") == "kline_investigation",
-            )
+            result = handle_command(exact_command)
             event = record_command_event(
                 command=exact_command,
                 ok=result.ok,

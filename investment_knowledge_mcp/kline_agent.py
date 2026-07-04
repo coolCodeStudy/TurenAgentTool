@@ -4,11 +4,16 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean, median
+import json
 import math
 import os
 import re
 import socket
-from typing import Any, Protocol
+import ssl
+from typing import Any, Callable, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from investment_knowledge_mcp.config import PROJECT_ROOT, AppConfig, get_config
 from investment_knowledge_mcp.serialization import to_jsonable
@@ -214,6 +219,95 @@ class FutuHistoricalBarProvider:
         return KlineFetchResult(metadata=metadata, bars=bars, warnings=warnings)
 
 
+class YahooChartHistoricalBarProvider:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 8.0,
+        fetch_json: Callable[[str, float], dict[str, Any]] | None = None,
+    ) -> None:
+        self.timeout_seconds = timeout_seconds
+        self._fetch_json = fetch_json or _fetch_json_url
+
+    def fetch_daily_bars(
+        self,
+        *,
+        symbol: str,
+        market: str,
+        years: int,
+        adjust_type: str,
+    ) -> KlineFetchResult:
+        provider_symbol = _yahoo_chart_symbol_for(symbol=symbol, market=market)
+        if provider_symbol is None:
+            raise KlineProviderError(
+                f"Yahoo chart Kline provider does not support market {market}; "
+                "configure another provider or set KLINE_PROVIDER=futu explicitly for an approved remote/cloud Futu OpenD."
+            )
+
+        requested_end = date.today()
+        requested_start = requested_end - timedelta(days=max(1, years) * 366)
+        url = _yahoo_chart_url(symbol=provider_symbol, start=requested_start, end=requested_end)
+        try:
+            payload = self._fetch_json(url, self.timeout_seconds)
+        except KlineProviderError:
+            raise
+        except Exception as exc:
+            raise KlineProviderError(f"Yahoo chart historical Kline query failed: {exc}") from exc
+
+        rows, provider_meta, warnings = _rows_from_yahoo_chart_payload(payload, requested_adjust_type=adjust_type)
+        bars, normalize_warnings = normalize_bars(rows)
+        warnings.extend(normalize_warnings)
+        normalized_market = normalize_market(market)
+        metadata = KlineMetadata(
+            provider="yahoo_chart",
+            provider_symbol=provider_symbol,
+            symbol=symbol.upper(),
+            market=normalized_market,
+            currency=str(provider_meta.get("currency") or CURRENCY_BY_MARKET.get(normalized_market, "UNKNOWN")),
+            timezone=str(
+                provider_meta.get("exchangeTimezoneName")
+                or provider_meta.get("timezone")
+                or TIMEZONE_BY_MARKET.get(normalized_market, "UNKNOWN")
+            ),
+            requested_start=requested_start,
+            requested_end=requested_end,
+            actual_start=bars[0].bar_date if bars else None,
+            actual_end=bars[-1].bar_date if bars else None,
+            adjustment_type=normalize_adjust_type(adjust_type),
+            fetched_at=datetime.now(timezone.utc),
+            raw_bar_count=len(rows),
+            normalized_bar_count=len(bars),
+        )
+        if not bars:
+            warnings.append("Yahoo chart returned no normalized daily bars for the requested range.")
+        return KlineFetchResult(metadata=metadata, bars=bars, warnings=warnings)
+
+
+class AutoHistoricalBarProvider:
+    def __init__(self, yahoo_provider: HistoricalBarProvider | None = None) -> None:
+        self.yahoo_provider = yahoo_provider or YahooChartHistoricalBarProvider()
+
+    def fetch_daily_bars(
+        self,
+        *,
+        symbol: str,
+        market: str,
+        years: int,
+        adjust_type: str,
+    ) -> KlineFetchResult:
+        if normalize_market(market) == "US":
+            return self.yahoo_provider.fetch_daily_bars(
+                symbol=symbol,
+                market=market,
+                years=years,
+                adjust_type=adjust_type,
+            )
+        raise KlineProviderError(
+            f"No default historical Kline provider is configured for market {market}; "
+            "US symbols use yahoo_chart, and approved remote/cloud Futu OpenD is available when KLINE_PROVIDER=futu is set explicitly."
+        )
+
+
 class DisabledHistoricalBarProvider:
     def fetch_daily_bars(
         self,
@@ -225,7 +319,7 @@ class DisabledHistoricalBarProvider:
     ) -> KlineFetchResult:
         raise KlineProviderError(
             "Kline live provider is disabled by KLINE_PROVIDER=disabled; "
-            "use fixture/degraded local review or configure a non-Futu provider."
+            "use fixture/degraded local review or configure KLINE_PROVIDER=auto, yahoo_chart, or an approved remote/cloud Futu provider."
         )
 
 
@@ -351,9 +445,15 @@ def inspect_kline_behavior(
 
 
 def _default_historical_bar_provider() -> HistoricalBarProvider:
-    provider_name = os.getenv("KLINE_PROVIDER", "futu").strip().lower()
+    provider_name = os.getenv("KLINE_PROVIDER", "auto").strip().lower()
     if provider_name in {"disabled", "none", "off"}:
         return DisabledHistoricalBarProvider()
+    if provider_name in {"auto", "default", ""}:
+        return AutoHistoricalBarProvider()
+    if provider_name in {"yahoo", "yahoo_chart", "yahoo-chart"}:
+        return YahooChartHistoricalBarProvider()
+    if provider_name in {"futu", "opend", "futu_opend", "futu-opend"}:
+        return FutuHistoricalBarProvider()
     return FutuHistoricalBarProvider()
 
 
@@ -540,6 +640,139 @@ def aggregate_bars(bars: list[KlineBar], period: str) -> list[KlineBar]:
             )
         )
     return aggregated
+
+
+def _fetch_json_url(url: str, timeout_seconds: float) -> dict[str, Any]:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; InvestmentKnowledgeBot/0.1)",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds, context=_ssl_context()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise KlineProviderError(f"Yahoo chart historical Kline query failed: HTTP {exc.code}") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise KlineProviderError(f"Yahoo chart historical Kline query failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise KlineProviderError("Yahoo chart historical Kline query failed: non-object JSON response.")
+    return payload
+
+
+def _yahoo_chart_url(*, symbol: str, start: date, end: date) -> str:
+    params = urlencode(
+        {
+            "period1": _unix_seconds(start),
+            "period2": _unix_seconds(end + timedelta(days=1)),
+            "interval": "1d",
+            "includePrePost": "false",
+            "events": "history|div|split",
+        }
+    )
+    return f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?{params}"
+
+
+def _yahoo_chart_symbol_for(*, symbol: str, market: str) -> str | None:
+    normalized_market = normalize_market(market)
+    cleaned_symbol = symbol.upper()
+    if "." in cleaned_symbol:
+        left, right = cleaned_symbol.split(".", 1)
+        if left == "US":
+            return right
+        return None
+    if normalized_market == "US":
+        return cleaned_symbol.replace("-", "-")
+    return None
+
+
+def _rows_from_yahoo_chart_payload(
+    payload: dict[str, Any],
+    *,
+    requested_adjust_type: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    result = ((payload.get("chart") or {}).get("result") or [None])[0]
+    if not isinstance(result, dict):
+        error = (payload.get("chart") or {}).get("error")
+        raise KlineProviderError(f"Yahoo chart historical Kline query failed: {error or 'missing chart result'}")
+
+    timestamps = result.get("timestamp") or []
+    indicators = result.get("indicators") or {}
+    quote = (indicators.get("quote") or [None])[0] or {}
+    adjclose = ((indicators.get("adjclose") or [None])[0] or {}).get("adjclose") or []
+    opens = quote.get("open") or []
+    closes = quote.get("close") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    volumes = quote.get("volume") or []
+    warnings: list[str] = []
+    use_adjusted = normalize_adjust_type(requested_adjust_type) != "raw"
+    if use_adjusted and not adjclose:
+        warnings.append("Yahoo chart did not return adjusted close; using raw OHLC values.")
+    elif use_adjusted:
+        warnings.append(
+            "Yahoo chart does not expose separate forward/backward OHLC adjustments; "
+            "applied adjusted-close ratio to OHLC as the provider-equivalent adjustment."
+        )
+
+    rows: list[dict[str, Any]] = []
+    for index, timestamp in enumerate(timestamps):
+        close = _list_get(closes, index)
+        open_price = _list_get(opens, index)
+        high = _list_get(highs, index)
+        low = _list_get(lows, index)
+        if close is None or open_price is None or high is None or low is None:
+            continue
+        if use_adjusted:
+            adjusted_close = _list_get(adjclose, index)
+            ratio = _adjustment_ratio(close=close, adjusted_close=adjusted_close)
+            if ratio is not None:
+                close = float(close) * ratio
+                open_price = float(open_price) * ratio
+                high = float(high) * ratio
+                low = float(low) * ratio
+        rows.append(
+            {
+                "date": datetime.fromtimestamp(int(timestamp), tz=timezone.utc).date().isoformat(),
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": _list_get(volumes, index),
+            }
+        )
+    return rows, result.get("meta") or {}, warnings
+
+
+def _adjustment_ratio(*, close: Any, adjusted_close: Any) -> float | None:
+    try:
+        close_value = float(close)
+        adjusted_value = float(adjusted_close)
+    except (TypeError, ValueError):
+        return None
+    if close_value <= 0 or adjusted_value <= 0:
+        return None
+    return adjusted_value / close_value
+
+
+def _unix_seconds(value: date) -> int:
+    return int(datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+
+
+def _list_get(values: list[Any], index: int) -> Any:
+    if index >= len(values):
+        return None
+    return values[index]
+
+
+def _ssl_context() -> ssl.SSLContext | None:
+    try:
+        import certifi
+    except Exception:
+        return None
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 def provider_symbol_for(*, symbol: str, market: str) -> str:
