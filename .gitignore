@@ -81,6 +81,9 @@ drafts/*_source_discovery_notes.md
 drafts/portfolio_research_import_summary.json
 drafts/research_jobs/
 
+# Deprecated routine daily logs
+docs/每日工作记录/
+
 # Runtime data
 pids
 *.pid

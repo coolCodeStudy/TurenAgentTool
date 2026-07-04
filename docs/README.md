@@ -111,4 +111,5 @@ These files are useful for context, but current implementation decisions should 
 - Role/thread dispatch state should be tracked in `docs/project-management/Delivery-Queue.md` when work is actually dispatched or returned.
 - Broad delivery-state, readiness, handoff, and acceptance gaps should be checked with `python3 scripts/audit_delivery_state.py`.
 - Feature-specific coordination should use `python3 scripts/audit_delivery_state.py --feature "<feature>"` and `python3 scripts/audit_delivery_state.py --handoff-packet "<feature>"`.
+- Global Project Manager portfolio-health checks should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. Add `--include-history` only when investigating repeated historical patterns.
 - Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.

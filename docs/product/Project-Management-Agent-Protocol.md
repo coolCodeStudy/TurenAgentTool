@@ -23,6 +23,7 @@ For multi-role delivery ownership and escalation boundaries, follow `Agent-Opera
 The Project Management Agent maintains:
 
 - Delivery Coordinator handoff consistency when user requests cross Product, Engineering, Acceptance Testing, and Project Management.
+- Multi-agent flow health signals from `scripts/audit_agent_flow_health.py`, including stale coordinators, returned work not integrated, missing watch paths, suspected wrong owners, Global PM overuse, repeated blockers, deploy conflicts, and cases where conversation context is required.
 - PRD completeness status.
 - PRD-to-tech-plan links.
 - Tech-plan implementation status.
@@ -45,6 +46,7 @@ It should periodically answer:
 - Which deployed or user-facing features have failed, blocked, pending, or stale acceptance tests?
 - Which completed tasks produced durable lessons that were not recorded?
 - Which documents conflict, are stale, or have been superseded?
+- Which coordinator or child-agent conversations actually need inspection because repo-native delivery state is insufficient or contradictory?
 
 ## Boundaries
 

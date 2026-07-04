@@ -160,6 +160,8 @@ The handoff is incomplete if the coordinator only says "I will wait" without a c
 
 Do not use a Global Project Manager heartbeat as the normal watch path for a feature dispatch. A Global Project Manager monitor is allowed only as an escalation or portfolio audit mechanism, such as detecting stale coordinators, missing watch paths, or returned child work that the feature coordinator failed to process.
 
+Global Project Manager portfolio audits should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. The audit may mark `context_required: yes` for missing Return Gates, contradictory status, repeated escalation, or unclear blockers. If it does not, prefer repo-native state and returned summaries over reading full conversations.
+
 When a child role returns and the feature coordinator is idle, the Global Project Manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate. That is a recovery path, not the designed steady state.
 
 ## Deploy Intent And Serialization
@@ -213,7 +215,8 @@ When a dispatched role returns, the coordinator must:
    - create a new row for the next role when more work is required.
 5. Update `Feature-Registry.md`, `Acceptance-Queue.md`, PRD, or technical plan state when the returned work changes durable delivery truth.
 6. Run the relevant delivery audit and narrow verification.
-7. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
+7. Commit and push the coordinator's verified integration or state update to the relevant delivery/release branch when the target is clear; do not ask the Owner whether to push normal coordinator work.
+8. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
 
 The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
 

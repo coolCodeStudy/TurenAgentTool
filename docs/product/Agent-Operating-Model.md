@@ -20,6 +20,8 @@ This model is the top-level operating contract for multi-role work. Role-specifi
 
 There may be many Feature Coordinators running in parallel, but there is only one Global Project Manager role for the portfolio. The Global Project Manager does not replace Feature Coordinators, Product, Development, or Testing. It is accountable for whether the agent organization itself works: whether coordinators close loops, whether handoffs are valid, whether deploy and acceptance gates are respected, and whether repeated failures become better rules, scripts, or queues.
 
+The Global Project Manager should use `python3 scripts/audit_agent_flow_health.py` as the default portfolio-health check before opening individual coordinator or child-agent conversation context. Conversation context is second-line evidence, not the primary operating record. Read it when the health audit reports `context_required: yes`, or when Delivery Queue, Acceptance Queue, Feature Registry, commits, and returned summaries contradict each other.
+
 ## Standard Delivery Flow
 
 Use this flow for substantial product-feature work:
@@ -61,6 +63,7 @@ Escalate to the Global Project Manager only for:
 - Stale, idle, missing, or broken Feature Coordinator watch path.
 - Conflicting source-of-truth documents or delivery state.
 - Operating-model, protocol, or audit-script defect.
+- Repeated blocker patterns that suggest a protocol, lesson, or script improvement is needed.
 
 Do not escalate normal next-owner routing, developer follow-up, deploy retest, or acceptance retest to the Owner or Global Project Manager when the Feature Coordinator can continue.
 
@@ -73,6 +76,8 @@ Do not escalate normal next-owner routing, developer follow-up, deploy retest, o
 - Product-done: PRD, technical plan, implementation, verification, deployment, acceptance testing, user acceptance, delivery state, and learning gates are all satisfied or explicitly marked not required.
 
 Code-done, deploy-done, and acceptance-passed are not product-done by themselves.
+
+Feature Coordinators and the Global Project Manager should self-push verified commits on their own delivery, state, and release branches. They should not ask the Owner whether to push a completed, verified commit when the target branch/ref is clear. Escalate only for direct `main` pushes that may trigger production automation without prior approval, force-pushes, credential or permission blockers, unresolved merge or deploy conflicts, or an explicit user pause.
 
 ## Multi-Agent Use
 
