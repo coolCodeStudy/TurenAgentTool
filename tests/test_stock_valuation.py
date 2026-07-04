@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from investment_knowledge_mcp.command_router import handle_command
+from investment_knowledge_mcp.command_workbench import parse_workbench_command
 from investment_knowledge_mcp.stock_valuation import (
     build_valuation_artifact,
     load_latest_valuation_artifact,
@@ -351,6 +354,92 @@ class StockValuationTests(unittest.TestCase):
         self.assertIn("Free Cash Flow", text)
         self.assertIn("Comparable Multiples", text)
         self.assertIn("Growth / Scenario", text)
+
+    def test_artifact_evidence_command_returns_raw_and_display_fields(self) -> None:
+        context = {
+            "stock": {
+                "id": 10,
+                "symbol": "INTC",
+                "market": "US",
+                "name": "Intel Corporation",
+                "core_business": "Semiconductor manufacturing turnaround.",
+                "stock_character": "Cyclical semiconductor recovery.",
+            },
+            "stock_knowledge": [],
+            "stock_insights": [],
+            "sources": [],
+            "sectors": [],
+        }
+        provider_snapshot = {
+            "facts": [
+                {"metric": "revenue", "value": 52600000000, "source_id": "sec:INTC:Revenues", "source_type": "sec_companyfacts"},
+                {"metric": "net_income", "value": -18000000000, "source_id": "sec:INTC:NetIncomeLoss", "source_type": "sec_companyfacts"},
+                {"metric": "operating_cash_flow", "value": 900000000, "source_id": "sec:INTC:OCF", "source_type": "sec_companyfacts"},
+                {"metric": "capex", "value": 5800000000, "source_id": "sec:INTC:Capex", "source_type": "sec_companyfacts"},
+                {"metric": "cash", "value": 19000000000, "source_id": "sec:INTC:Cash", "source_type": "sec_companyfacts"},
+                {"metric": "debt", "value": 13000000000, "source_id": "sec:INTC:Debt", "source_type": "sec_companyfacts"},
+                {"metric": "market_cap", "value": 601100000000, "source_id": "yahoo:INTC:market_cap", "source_type": "yahoo_quote", "timestamp": "2026-07-04T00:00:00+00:00", "currency": "USD"},
+                {"metric": "price", "value": 136.61, "source_id": "yahoo:INTC:price", "source_type": "yahoo_quote", "timestamp": "2026-07-04T00:00:00+00:00", "currency": "USD"},
+            ],
+            "sources": [
+                {"id": "sec:INTC:companyfacts", "source_type": "sec_companyfacts", "title": "SEC companyfacts INTC"},
+                {"id": "yahoo:INTC:quote", "source_type": "yahoo_quote", "title": "Yahoo quote INTC"},
+            ],
+            "errors": ["Yahoo quote detail unavailable: unauthorized"],
+            "market_snapshot_status": "present",
+            "financial_fact_status": "present",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            build_valuation_artifact(
+                context,
+                symbol="INTC",
+                market="US",
+                output_dir=Path(tmp),
+                command="valuation US.INTC",
+                now=datetime(2026, 7, 4, tzinfo=timezone.utc),
+                provider_snapshot=provider_snapshot,
+            )
+
+            result = handle_command("valuation artifact evidence US.INTC", output_dir=Path(tmp))
+
+        self.assertTrue(result.ok)
+        evidence = json.loads(result.message)
+        self.assertEqual(evidence["artifact"]["symbol"], "INTC")
+        facts = {item["metric"]: item for item in evidence["facts"]}
+        self.assertEqual(facts["market_cap"]["value"], 601100000000)
+        self.assertEqual(facts["market_cap"]["display_value"], "$601.1B")
+        calculations = {item["metric"]: item for item in evidence["deterministic_calculations"]}
+        self.assertFalse(calculations["pe"]["meaningful"])
+        self.assertEqual(calculations["pe"]["raw_value"], -33.394444)
+        self.assertEqual(calculations["pe"]["display_value"], "not meaningful (negative earnings)")
+        self.assertTrue(evidence["market_implied_bridge"]["bridge_lines"])
+        self.assertIn("fit_to_current_market_value", evidence["market_implied_bridge"]["frame_fit_ranking"][0])
+        serialized = result.message.lower()
+        self.assertNotIn("command_api_token", serialized)
+        self.assertNotIn("authorization", serialized)
+        self.assertNotIn("traceback", serialized)
+        self.assertNotIn("unauthorized", serialized)
+
+    def test_artifact_evidence_command_rejects_path_like_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = handle_command("valuation artifact evidence ../../etc/passwd", output_dir=Path(tmp))
+
+        self.assertFalse(result.ok)
+        self.assertIn("需要股票标的", result.message)
+        self.assertNotIn("/etc/passwd", result.message)
+
+    def test_workbench_parses_artifact_evidence_without_file_path_field(self) -> None:
+        with patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[{"symbol": "INTC", "market": "US", "name": "Intel Corporation"}],
+        ):
+            preview = parse_workbench_command("valuation artifact evidence US.INTC")
+
+        self.assertEqual(preview["status"], "parsed")
+        self.assertEqual(preview["action_id"], "stock_valuation_artifact_evidence")
+        self.assertEqual(preview["exact_command"], "valuation artifact evidence US.INTC")
+        self.assertEqual(preview["safety_level"], "read_only")
+        self.assertNotIn("path", {field["id"] for field in preview["action"]["required_fields"]})
 
 
 if __name__ == "__main__":

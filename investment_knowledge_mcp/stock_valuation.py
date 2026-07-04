@@ -200,6 +200,34 @@ def load_latest_valuation_artifact(*, symbol: str, market: str, output_dir: Path
     return json.loads(path.read_text(encoding="utf-8")), path
 
 
+def build_valuation_artifact_evidence(packet: dict[str, Any], *, artifact_kind: str = "latest") -> dict[str, Any]:
+    stock = packet.get("stock") if isinstance(packet.get("stock"), dict) else {}
+    input_fields = packet.get("input") if isinstance(packet.get("input"), dict) else {}
+    return {
+        "feature": "stock_valuation_research",
+        "evidence_type": "valuation_artifact_readback",
+        "artifact": {
+            "kind": artifact_kind,
+            "symbol": str(input_fields.get("symbol") or stock.get("symbol") or "").upper(),
+            "market": str(input_fields.get("market") or stock.get("market") or "").upper(),
+            "created_at": packet.get("created_at"),
+            "version": packet.get("version"),
+        },
+        "facts": [_evidence_fact(item) for item in packet.get("facts") or [] if isinstance(item, dict)],
+        "deterministic_calculations": [
+            _evidence_calculation(item) for item in packet.get("deterministic_calculations") or [] if isinstance(item, dict)
+        ],
+        "source_coverage": _evidence_source_coverage(packet.get("source_coverage") if isinstance(packet.get("source_coverage"), dict) else {}),
+        "market_implied_bridge": _evidence_bridge(packet.get("market_implied_bridge") if isinstance(packet.get("market_implied_bridge"), dict) else {}),
+        "safety": {
+            "direct_investment_advice": bool((packet.get("safety") or {}).get("direct_investment_advice")),
+            "writes_formal_user_insight": bool((packet.get("safety") or {}).get("writes_formal_user_insight")),
+            "omits_local_artifact_path": True,
+            "provider_error_detail_omitted": True,
+        },
+    }
+
+
 def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool = True) -> str:
     stock = packet.get("stock") or {}
     title = f"估值研究卡：{stock.get('market')}.{stock.get('symbol')}"
@@ -304,6 +332,94 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
     if include_artifact_path and packet.get("artifact_path"):
         lines.append(f"Artifact: {packet['artifact_path']}")
     return "\n".join(lines)
+
+
+def _evidence_fact(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item.get(key)
+        for key in (
+            "metric",
+            "value",
+            "display_value",
+            "display_kind",
+            "currency",
+            "source_id",
+            "source_type",
+            "timestamp",
+            "period_end",
+            "provider",
+        )
+        if item.get(key) is not None
+    }
+
+
+def _evidence_calculation(item: dict[str, Any]) -> dict[str, Any]:
+    evidence = {
+        key: item.get(key)
+        for key in (
+            "metric",
+            "value",
+            "raw_value",
+            "display_value",
+            "display_kind",
+            "currency",
+            "meaningful",
+            "meaningfulness_reason",
+            "formula",
+            "inputs",
+        )
+        if item.get(key) is not None
+    }
+    if "meaningful" not in evidence:
+        evidence["meaningful"] = True
+    return evidence
+
+
+def _evidence_source_coverage(coverage: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "fact_count": coverage.get("fact_count", 0),
+        "fact_source_id_count": coverage.get("fact_source_id_count", 0),
+        "source_count": coverage.get("source_count", 0),
+        "official_source_count": coverage.get("official_source_count", 0),
+        "market_snapshot_status": coverage.get("market_snapshot_status", "missing"),
+        "financial_fact_status": coverage.get("financial_fact_status", "missing"),
+        "peer_data_status": coverage.get("peer_data_status", "missing"),
+        "user_confirmed_valuation_case": bool(coverage.get("user_confirmed_valuation_case")),
+        "provider_statuses": coverage.get("provider_statuses") or {},
+    }
+
+
+def _evidence_bridge(bridge: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bridge_lines": [
+            {"type": item.get("type"), "display": item.get("display")}
+            for item in bridge.get("bridge_lines") or []
+            if isinstance(item, dict)
+        ],
+        "frame_fit_ranking": [
+            _evidence_frame_fit(item)
+            for item in bridge.get("frame_fit_ranking") or []
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _evidence_frame_fit(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item.get(key)
+        for key in (
+            "id",
+            "name",
+            "score",
+            "fit_to_current_market_value",
+            "why_it_fits_or_not",
+            "implied_assumptions",
+            "assumptions_that_must_become_true",
+            "main_data_gaps",
+            "confidence",
+        )
+        if item.get(key) is not None
+    }
 
 
 def _extract_facts(context: dict[str, Any], *, provider_snapshot: dict[str, Any] | None = None) -> list[dict[str, Any]]:

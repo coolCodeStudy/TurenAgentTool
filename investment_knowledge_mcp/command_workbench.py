@@ -164,6 +164,22 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=("valuation artifact",),
         expected_output="Latest saved valuation card or a recovery message if no artifact exists.",
     ),
+    "stock_valuation_artifact_evidence": CommandAction(
+        id="stock_valuation_artifact_evidence",
+        action_family="Valuation",
+        label="Valuation artifact evidence",
+        description="Read a bounded evidence summary from the latest saved valuation artifact for one stock.",
+        aliases=("valuation evidence", "valuation artifact evidence", "估值证据"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="valuation artifact evidence {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="stock_valuation_artifact_evidence",
+        side_effects="Reads only the latest valuation artifact for the selected stock and omits local paths and raw provider errors.",
+        data_sources=("valuation artifact",),
+        expected_output="JSON evidence summary with raw numeric valuation fields, display values, meaningfulness, and frame-fit bridge fields.",
+    ),
     "valuation_methods": CommandAction(
         id="valuation_methods",
         action_family="Valuation",
@@ -1329,6 +1345,27 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    valuation_evidence_target = _match_first(
+        text,
+        [
+            r"^valuation artifact evidence\s+(.+)$",
+            r"^valuation evidence\s+(.+)$",
+            r"^估值artifact证据\s+(.+)$",
+            r"^估值证据\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation_artifact_evidence",
+                "deterministic_alias",
+                0.98,
+                fields={"stock": valuation_evidence_target},
+            )
+        )
+
     valuation_target = _match_first(
         text,
         [
@@ -1380,6 +1417,24 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
+    valuation_evidence_exact = _match_first(
+        text,
+        [r"^(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_exact:
+        parsed = _parse_stock_target(valuation_evidence_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="stock_valuation_artifact_evidence",
+                    fields={"stock": valuation_evidence_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
     valuation_exact = _match_first(
         text,
         [r"^(?:估值|valuation|value)\s+(.+)$"],
