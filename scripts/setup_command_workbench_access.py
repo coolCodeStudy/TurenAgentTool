@@ -132,8 +132,8 @@ def build_github_env(token_file: Path | None) -> dict[str, str]:
 
 def set_github_secret(*, repo: str, token: str, env: dict[str, str]) -> None:
     run(
-        ["gh", "secret", "set", "COMMAND_API_TOKEN", "--repo", repo, "--body-file", "-"],
-        input_text=token,
+        ["gh", "secret", "set", "COMMAND_API_TOKEN", "--repo", repo],
+        input_text=f"{token}\n",
         env=env,
         secret_safe_error="failed to set GitHub secret COMMAND_API_TOKEN",
     )
