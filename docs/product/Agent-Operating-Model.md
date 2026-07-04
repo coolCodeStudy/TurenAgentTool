@@ -77,6 +77,8 @@ Do not escalate normal next-owner routing, developer follow-up, deploy retest, o
 
 Code-done, deploy-done, and acceptance-passed are not product-done by themselves.
 
+Feature Coordinators and the Global Project Manager should self-push verified commits on their own delivery, state, and release branches. They should not ask the Owner whether to push a completed, verified commit when the target branch/ref is clear. Escalate only for direct `main` pushes that may trigger production automation without prior approval, force-pushes, credential or permission blockers, unresolved merge or deploy conflicts, or an explicit user pause.
+
 ## Multi-Agent Use
 
 Use parallel agents only when work can proceed independently:

@@ -79,6 +79,7 @@ Read it before changing code, running services, or touching deployment commands.
 - Before handoff, report the branch, commit SHA, verification performed, registry updates, remaining gaps, and whether the worktree is clean.
 - A task worktree should be clean at handoff. If dirty files remain, list each file and explain whether it is intentional WIP, generated output, blocked work, or unrelated session state.
 - Push the task branch or target branch immediately after committing unless the user explicitly asks to keep the work local. Do not wait for the user to ask whether a completed commit was pushed. If it remains local-only, record the reason in the final summary.
+- Global Project Manager and Feature Coordinator roles must self-push verified commits for their own delivery branches, release branches, and approved target branches. Do not escalate "should I push?" to the user when the branch/ref, verification, and target are already clear. Escalate only for direct `main` pushes that may trigger production automation without prior approval, force-pushes, credential/permission blockers, unresolved merge or deploy conflicts, or an explicit user pause.
 - Do not leave untracked experiments, generated files, or partial edits in a shared workspace as the normal result of development. Commit them, move them into the appropriate task worktree, document them as blocked/WIP, or remove only files you created and no longer need.
 
 ## Deployment And Service Boundaries

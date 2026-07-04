@@ -215,7 +215,8 @@ When a dispatched role returns, the coordinator must:
    - create a new row for the next role when more work is required.
 5. Update `Feature-Registry.md`, `Acceptance-Queue.md`, PRD, or technical plan state when the returned work changes durable delivery truth.
 6. Run the relevant delivery audit and narrow verification.
-7. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
+7. Commit and push the coordinator's verified integration or state update to the relevant delivery/release branch when the target is clear; do not ask the Owner whether to push normal coordinator work.
+8. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
 
 The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
 
