@@ -11,6 +11,7 @@ from investment_knowledge_mcp.kline_agent import (
     KlineFetchResult,
     KlineMetadata,
     KlineRequest,
+    YahooChartHistoricalBarProvider,
     inspect_kline_behavior,
     parse_kline_command,
     render_kline_report,
@@ -131,6 +132,48 @@ class KlineAgentTests(unittest.TestCase):
         self.assertIn("Provider: unavailable", result.message)
         self.assertIn("Kline live provider is disabled", result.message)
         self.assertNotIn("Futu OpenD is not reachable", result.message)
+
+    def test_yahoo_chart_provider_normalizes_mocked_us_daily_bars(self) -> None:
+        payload = {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {
+                            "symbol": "NVDA",
+                            "currency": "USD",
+                            "exchangeTimezoneName": "America/New_York",
+                        },
+                        "timestamp": [1609459200, 1609545600, 1609632000],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [10.0, 11.0, 12.0],
+                                    "high": [11.0, 12.0, 13.0],
+                                    "low": [9.5, 10.5, 11.5],
+                                    "close": [10.5, 11.5, 12.5],
+                                    "volume": [1000, 1100, 1200],
+                                }
+                            ],
+                            "adjclose": [{"adjclose": [10.25, 11.25, 12.25]}],
+                        },
+                    }
+                ],
+                "error": None,
+            }
+        }
+
+        provider = YahooChartHistoricalBarProvider(fetch_json=lambda _url, _timeout: payload)
+        result = provider.fetch_daily_bars(symbol="NVDA", market="US", years=5, adjust_type="forward_adjusted")
+
+        self.assertEqual(result.metadata.provider, "yahoo_chart")
+        self.assertEqual(result.metadata.provider_symbol, "NVDA")
+        self.assertEqual(result.metadata.market, "US")
+        self.assertEqual(result.metadata.currency, "USD")
+        self.assertEqual(result.metadata.timezone, "America/New_York")
+        self.assertEqual(result.metadata.normalized_bar_count, 3)
+        self.assertEqual(result.bars[0].bar_date, date(2021, 1, 1))
+        self.assertEqual(result.bars[0].close, 10.25)
+        self.assertEqual(result.bars[-1].close, 12.25)
 
 
 def _fixture_bars(count: int) -> list[KlineBar]:

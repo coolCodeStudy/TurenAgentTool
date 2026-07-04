@@ -136,6 +136,8 @@ Add focused unit tests with fixture bars:
 - Deterministic rules produce observations and statistics on synthetic data.
 - Weak history produces insufficient-evidence output.
 - Command parsing/router reaches Kline handling for supported syntaxes.
+- Yahoo chart provider normalizes mocked U.S. daily bars with metadata, adjusted close mapping, and bar counts.
+- Command Workbench Kline execution does not force the degraded provider on the weekly-review-hosted `/command` surface.
 
 Run:
 
@@ -143,7 +145,7 @@ Run:
 - A narrow command-router invocation with a monkeypatched provider through tests.
 - Command Workbench browser preview coverage for exact Kline commands is verified by `tests.test_command_workbench_kline`.
 
-If live Futu/OpenD is unavailable locally, document that limitation and rely on fixture verification. As of 2026-07-03, local acceptance must not use local FutuD/OpenD; run local degraded-provider checks with `KLINE_PROVIDER=disabled`. As of 2026-07-04, cloud Futu is explicitly allowed as an approved remote provider path; the blocker is local/cloud double login, not Futu itself. Full live-data acceptance needs an approved remote/cloud provider path such as cloud Futu, or another provider, that can produce real historical bars on the deployed surface.
+If live Futu/OpenD is unavailable locally, document that limitation and rely on fixture or mocked-provider verification. As of 2026-07-03, local acceptance must not use local FutuD/OpenD; run local degraded-provider checks with `KLINE_PROVIDER=disabled` when needed. As of 2026-07-04, cloud Futu is explicitly allowed as an approved remote provider path; the blocker is local/cloud double login, not Futu itself. Full live-data acceptance can use an approved remote/cloud Futu environment or the no-credential Yahoo chart path, then must be deployed and retested from `/command`.
 
 ## Delivery Tracking
 
