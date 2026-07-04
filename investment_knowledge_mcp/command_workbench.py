@@ -715,6 +715,7 @@ def render_command_workbench_html() -> str:
       token: "command_workbench_token"
     };
 
+    bootstrapTokenFromFragment();
     $("#api-token").value = localStorage.getItem(storage.token) || "";
     $("#parse").addEventListener("click", () => parseSmartInput());
     $("#smart-input").addEventListener("keydown", (event) => {
@@ -934,6 +935,20 @@ def render_command_workbench_html() -> str:
     function persistToken() {
       const token = $("#api-token").value.trim();
       if (token) localStorage.setItem(storage.token, token);
+    }
+    function bootstrapTokenFromFragment() {
+      const rawHash = window.location.hash || "";
+      if (!rawHash || rawHash.length <= 1) return;
+      const params = new URLSearchParams(rawHash.slice(1));
+      const token = params.get("access_token") || params.get("token") || params.get("command_workbench_token");
+      if (!token) return;
+      localStorage.setItem(storage.token, token);
+      params.delete("access_token");
+      params.delete("token");
+      params.delete("command_workbench_token");
+      const cleanHash = params.toString();
+      const cleanUrl = `${window.location.pathname}${window.location.search}${cleanHash ? `#${cleanHash}` : ""}`;
+      window.history.replaceState(null, "", cleanUrl);
     }
     function setBusy(busy) {
       $("#parse").disabled = busy;

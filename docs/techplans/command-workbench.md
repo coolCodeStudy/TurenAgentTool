@@ -248,6 +248,7 @@ Acceptance checks:
 - `command-api` should be included in `scripts/deploy_from_local_checkout.sh` so quick and full deploys actually start the service.
 - Cloud user acceptance should use `http://47.84.190.191:8010/command` unless port `8001` is explicitly opened for `command-api`.
 - The public `weekly-review-web` service must receive `COMMAND_API_TOKEN` so Command Workbench parse/execute endpoints are configured even when `WEEKLY_REVIEW_WEB_TOKEN` is intentionally unset for the weekly-review APIs.
+- Local owner access should use `scripts/setup_command_workbench_access.py`: generate or reuse a local token at `~/.config/turen-agent/command_workbench_token`, sync it to GitHub secret `COMMAND_API_TOKEN`, trigger the deploy workflow, verify cloud parse, and optionally open `/command` with a URL-fragment bootstrap that stores the token in browser localStorage without sending it to the server.
 
 ## Risks And Follow-Ups
 
