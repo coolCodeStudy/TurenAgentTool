@@ -67,6 +67,7 @@ from investment_knowledge_mcp.system_status import render_ipo_reminder_status, r
 from investment_knowledge_mcp.system_overview import render_system_overview
 from investment_knowledge_mcp.stock_valuation import (
     build_valuation_artifact,
+    build_valuation_artifact_evidence,
     load_latest_valuation_artifact,
     render_valuation_card,
     render_valuation_methods,
@@ -426,6 +427,22 @@ def handle_command(
     if cleaned.lower() in {"valuation methods", "value methods", "估值方法", "估值框架"}:
         return CommandResult(ok=True, message=render_valuation_methods())
 
+    valuation_evidence_match = re.fullmatch(
+        r"(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_match:
+        target = _parse_safe_stock_target(valuation_evidence_match.group(1))
+        if target is None:
+            return CommandResult(ok=False, message="估值 artifact 证据需要股票标的，例如：valuation artifact evidence US.INTC")
+        symbol, market = target
+        return _handle_stock_valuation_artifact_evidence(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+        )
+
     valuation_latest_match = re.fullmatch(
         r"(?:latest valuation|valuation latest|value latest|查看估值|最新估值)\s+(.+)",
         cleaned,
@@ -722,6 +739,11 @@ def is_query_command(command: str) -> bool:
             flags=re.IGNORECASE,
         )
         or re.fullmatch(
+            r"(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\s+[A-Za-z]{1,5})",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
             r"(?:latest valuation|valuation latest|value latest|查看估值|最新估值)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|\S+\s+\S+)",
             normalized,
             flags=re.IGNORECASE,
@@ -955,6 +977,18 @@ def _handle_stock_valuation_latest(
     packet, path = result
     packet["artifact_path"] = packet.get("artifact_path") or str(path)
     return CommandResult(ok=True, message=render_valuation_card(packet, include_artifact_path=include_artifact_path))
+
+
+def _handle_stock_valuation_artifact_evidence(symbol: str, market: str, output_dir: Path) -> CommandResult:
+    result = load_latest_valuation_artifact(symbol=symbol, market=market, output_dir=output_dir)
+    if result is None:
+        return CommandResult(
+            ok=False,
+            message=f"未找到已保存的估值 artifact：{market.strip().upper()}.{symbol.strip().upper()}。请先运行：valuation {market.strip().upper()}.{symbol.strip().upper()}",
+        )
+    packet, _ = result
+    evidence = build_valuation_artifact_evidence(packet, artifact_kind="latest")
+    return CommandResult(ok=True, message=json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def _handle_bootstrap_stock_profile(symbol: str, market: str) -> CommandResult:
@@ -2139,6 +2173,18 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None
+
+
+def _parse_safe_stock_target(value: str) -> tuple[str, str] | None:
+    parsed = _parse_stock_target(value)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", symbol):
+        return None
+    if not re.fullmatch(r"[A-Za-z]{1,5}", market):
+        return None
+    return symbol.upper(), market.upper()
 
 
 def _strip_trailing_punctuation(value: str) -> str:

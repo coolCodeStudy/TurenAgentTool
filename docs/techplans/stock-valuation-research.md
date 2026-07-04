@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented through P0.2 local verification on branch `codex/stock-valuation-coordinator-dispatch`; cloud deploy and independent P0.2 acceptance retest are pending.
+Status: implemented through P0.2 local verification plus local verification of the P0.2 artifact evidence path; cloud deploy and independent P0.2 artifact-preservation retest are pending.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -14,9 +14,12 @@ P0.1 addresses user acceptance feedback from 2026-07-04: a cloud valuation resul
 
 P0.2 addresses the accepted P0.1 follow-up: the command card must render readable investment values, avoid treating negative ratios as normal valuation multiples, classify provider gaps without contradicting available data, and bridge current market cap or enterprise value to the assumptions each selected frame would need.
 
+P0.2 artifact evidence addresses the 2026-07-04 independent acceptance blocker: visible Workbench behavior passed, but black-box Acceptance Testing could not verify saved artifact raw-value preservation from the allowed cloud surface. The implementation adds a bounded latest-artifact evidence command for a stock target rather than exposing direct filesystem reads.
+
 ## Touched Modules
 
 - `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, display formatting, provider-gap taxonomy, market-implied bridge, frame-fit ranking, artifact writing, latest-artifact loading, and card rendering.
+- `investment_knowledge_mcp/stock_valuation.py`: P0.2 artifact evidence projection for black-box read-back of raw numeric values, display values, calculation meaningfulness, and frame-fit fields without exposing local paths or raw provider errors.
 - `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, returning structured facts, sources, and provider errors without raising through the command path.
 - `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`.
 - `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands.
@@ -56,9 +59,12 @@ Artifact packet fields:
 
 - `valuation US.INTC`, `value US.INTC`, `估值 US.INTC`: create and save a new valuation artifact, then return a concise valuation card.
 - `查看估值 US.INTC`, `latest valuation US.INTC`: read the latest saved valuation artifact for the stock.
+- `valuation artifact evidence US.INTC`, `valuation evidence US.INTC`, `估值证据 US.INTC`: read a bounded JSON evidence summary from the latest saved valuation artifact for the stock.
 - `估值方法`, `valuation methods`: list the five P0 internal core frames.
 - Existing `scripts/ikg.py` and MCP/HTTP command wrappers can use these because they call `command_router.handle_command(...)`.
-- Command Workbench can preview/execute the same exact commands through the registry action `stock_valuation`.
+- Command Workbench can preview/execute the same exact commands through the registry actions `stock_valuation`, `stock_valuation_latest`, `stock_valuation_artifact_evidence`, and `valuation_methods`.
+
+The artifact evidence command is intentionally not a file browser. It accepts only a parsed stock target, resolves the latest artifact through the existing `<output_dir>/valuation/<SYMBOL>_<MARKET>_valuation_latest.json` convention, and has no path or filename field. Its JSON omits the local artifact path, raw provider errors, auth headers, token configuration, stack traces, and arbitrary file contents. It exposes only the P0.2 acceptance fields needed for black-box verification: facts, deterministic calculations, source coverage provider statuses, market-implied bridge lines, frame-fit ranking fields, and safety flags.
 
 ## Deterministic Calculations
 
@@ -160,8 +166,9 @@ No service startup, database migration, external credential, or new provider int
 
 Current P0.2 verification on 2026-07-04 SGT:
 
+- Passed `.venv/bin/python -m unittest tests.test_stock_valuation`, including regression coverage for the new `valuation artifact evidence US.INTC` read-back path, raw/display/meaningfulness/frame-fit evidence fields, Workbench parsing, and path-like input rejection.
 - Passed `python3 -m unittest tests.test_stock_valuation`, including regression coverage for readable values, negative-multiple meaningfulness, provider partial-gap taxonomy, market-implied bridge lines, frame-fit fields, and raw numeric preservation.
-- `.venv/bin/python` was unavailable in this isolated workspace, so tests and audits used system `python3` where dependencies permitted.
+- The isolated worktree initially had no `.venv`; it was created with `python3 -m venv .venv` and dependencies were installed from `requirements.txt` before the focused verification run.
 
 Current verification on 2026-07-01 SGT:
 
@@ -202,5 +209,6 @@ P0 originally did not verify provider-backed market or financial statement fetch
 | P0.2 negative/meaningless ratio handling | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Negative PE, FCF yield, and EV/FCF render as `not meaningful` with reasons while raw values remain in artifact diagnostics. |
 | P0.2 market-implied bridge | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Includes P/S and EV/sales anchors, required future FCF margin lines for negative FCF, cycle-normalized earnings placeholder for negative earnings, and no target-price precision. |
 | P0.2 frame fit ranking | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Selected frames are ranked by `fit_to_current_market_value` with assumptions, must-become-true items, gaps, and confidence. |
+| P0.2 black-box-safe artifact evidence path | local_verified | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact, preserving raw numeric values plus display/meaningfulness/frame-fit fields while omitting local paths, raw provider errors, auth headers, token config, stack traces, and arbitrary file reads. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |
