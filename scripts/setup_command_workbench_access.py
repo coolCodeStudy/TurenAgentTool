@@ -36,6 +36,12 @@ def main() -> int:
     parser.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub repo, default: {DEFAULT_REPO}")
     parser.add_argument("--workflow", default=DEFAULT_WORKFLOW, help=f"Deploy workflow file, default: {DEFAULT_WORKFLOW}")
     parser.add_argument("--ref", default=DEFAULT_REF, help=f"Git ref to deploy, default: {DEFAULT_REF}")
+    parser.add_argument(
+        "--deploy-mode",
+        choices=("quick", "full"),
+        default="full",
+        help="Deployment mode. Default is full because GitHub secret rotation must refresh the cloud .env file.",
+    )
     parser.add_argument("--cloud-base-url", default=DEFAULT_CLOUD_BASE_URL, help=f"Cloud base URL, default: {DEFAULT_CLOUD_BASE_URL}")
     parser.add_argument(
         "--token-file",
@@ -67,8 +73,8 @@ def main() -> int:
 
     run_id: int | None = None
     if not args.skip_deploy:
-        run_id = trigger_deploy(repo=args.repo, workflow=args.workflow, ref=args.ref, env=github_env)
-        print(f"deploy: triggered {args.workflow} on {args.ref}")
+        run_id = trigger_deploy(repo=args.repo, workflow=args.workflow, ref=args.ref, deploy_mode=args.deploy_mode, env=github_env)
+        print(f"deploy: triggered {args.workflow} on {args.ref} ({args.deploy_mode})")
         if not args.no_wait:
             run = wait_for_run(repo=args.repo, run_id=run_id, env=github_env)
             print(f"deploy: {run.get('conclusion') or run.get('status')} ({run.get('url') or 'no url'})")
@@ -139,9 +145,9 @@ def set_github_secret(*, repo: str, token: str, env: dict[str, str]) -> None:
     )
 
 
-def trigger_deploy(*, repo: str, workflow: str, ref: str, env: dict[str, str]) -> int | None:
+def trigger_deploy(*, repo: str, workflow: str, ref: str, deploy_mode: str, env: dict[str, str]) -> int | None:
     started_at = time.time()
-    run(["gh", "workflow", "run", workflow, "--repo", repo, "--ref", ref, "-f", "deploy_mode=quick"], env=env)
+    run(["gh", "workflow", "run", workflow, "--repo", repo, "--ref", ref, "-f", f"deploy_mode={deploy_mode}"], env=env)
     time.sleep(5)
     runs = gh_json(
         [
