@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented through P0.2 local verification plus local verification of the P0.2 artifact evidence path; cloud deploy and independent P0.2 artifact-preservation retest are pending.
+Status: implemented through P0.2 local verification, local verification of the P0.2 artifact evidence path, and local verification of the provider-gap copy fix; combined release deploy and independent P0.2 copy-fix retest are pending.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -14,12 +14,13 @@ P0.1 addresses user acceptance feedback from 2026-07-04: a cloud valuation resul
 
 P0.2 addresses the accepted P0.1 follow-up: the command card must render readable investment values, avoid treating negative ratios as normal valuation multiples, classify provider gaps without contradicting available data, and bridge current market cap or enterprise value to the assumptions each selected frame would need.
 
-P0.2 artifact evidence addresses the 2026-07-04 independent acceptance blocker: visible Workbench behavior passed, but black-box Acceptance Testing could not verify saved artifact raw-value preservation from the allowed cloud surface. The implementation adds a bounded latest-artifact evidence command for a stock target rather than exposing direct filesystem reads.
+P0.2 artifact evidence addresses the 2026-07-04 independent acceptance blocker: visible Workbench behavior passed, but black-box Acceptance Testing could not verify saved artifact raw-value preservation from the allowed cloud surface. The implementation adds a bounded latest-artifact evidence command for a stock target rather than exposing direct filesystem reads. A later P0.2 copy fix keeps card-facing provider gaps on taxonomy copy rather than raw provider diagnostics such as HTTP exceptions or provider URLs.
 
 ## Touched Modules
 
 - `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, display formatting, provider-gap taxonomy, market-implied bridge, frame-fit ranking, artifact writing, latest-artifact loading, and card rendering.
 - `investment_knowledge_mcp/stock_valuation.py`: P0.2 artifact evidence projection for black-box read-back of raw numeric values, display values, calculation meaningfulness, and frame-fit fields without exposing local paths or raw provider errors.
+- `investment_knowledge_mcp/stock_valuation.py`: P0.2 provider-gap copy sanitization so rendered cards summarize official financial and market snapshot gaps without surfacing raw HTTP diagnostics, exception fragments, provider URLs, auth-ish text, or stack traces.
 - `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, returning structured facts, sources, and provider errors without raising through the command path.
 - `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`.
 - `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands.
@@ -64,7 +65,7 @@ Artifact packet fields:
 - Existing `scripts/ikg.py` and MCP/HTTP command wrappers can use these because they call `command_router.handle_command(...)`.
 - Command Workbench can preview/execute the same exact commands through the registry actions `stock_valuation`, `stock_valuation_latest`, `stock_valuation_artifact_evidence`, and `valuation_methods`.
 
-The artifact evidence command is intentionally not a file browser. It accepts only a parsed stock target, resolves the latest artifact through the existing `<output_dir>/valuation/<SYMBOL>_<MARKET>_valuation_latest.json` convention, and has no path or filename field. Its JSON omits the local artifact path, raw provider errors, auth headers, token configuration, stack traces, and arbitrary file contents. It exposes only the P0.2 acceptance fields needed for black-box verification: facts, deterministic calculations, source coverage provider statuses, market-implied bridge lines, frame-fit ranking fields, and safety flags.
+The artifact evidence command is intentionally not a file browser. It accepts only a parsed stock target, resolves the latest artifact through the existing `<output_dir>/valuation/<SYMBOL>_<MARKET>_valuation_latest.json` convention, and has no path or filename field. Its JSON omits the local artifact path, raw provider errors, auth headers, token configuration, stack traces, and arbitrary file contents. It exposes only the P0.2 acceptance fields needed for black-box verification: facts, deterministic calculations, source coverage provider statuses, market-implied bridge lines, frame-fit ranking fields, and safety flags. Saved artifacts may retain raw provider errors for internal debugging, but rendered cards and black-box evidence read-back must not expose raw HTTP diagnostics, exception fragments, provider URLs, auth-ish text, local paths, or stack traces.
 
 ## Deterministic Calculations
 
@@ -75,7 +76,7 @@ P0.1 also fetches a provider snapshot for US stocks:
 - SEC EDGAR companyfacts for revenue, net income, operating cash flow, capex, cash, debt, and shares outstanding when available.
 - Yahoo quote for latest price, market cap, shares outstanding, currency, and quote timestamp.
 - Each provider fact carries source ID, source type, confidence, timestamp, period end when known, and provider name.
-- Provider errors are preserved as degraded reasons rather than surfaced as stack traces.
+- Provider errors are preserved in structured artifacts for diagnostics; card-facing degraded reasons use sanitized provider-gap taxonomy rather than raw HTTP/provider exception text.
 
 P0 computes:
 
@@ -149,11 +150,11 @@ The command remains usable without provider credentials, fresh market data, peer
 - complete missing provider data when no usable category data exists;
 - stale or unknown freshness when a market snapshot exists without timestamp/freshness evidence.
 
-When degraded, the output presents frame research scaffolding rather than target-price precision.
+When degraded, the output presents frame research scaffolding rather than target-price precision. Partial provider gaps must identify the affected provider category and whether usable fields are still shown; they must not expose raw diagnostics in the card.
 
 ## Deployment Impact
 
-No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 still needs a standard cloud deploy of the returned branch or integrated release ref, then independent cloud-IP retest using the private token route.
+No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 still needs a standard cloud deploy of the returned branch or integrated release ref, then independent cloud-IP retest using the private token route. Direct deploy of the Stock valuation coordinator branch can clobber Kline live-provider behavior, so the copy fix must ship through a combined Kline + Stock release ref.
 
 ## Verification Plan
 
@@ -209,6 +210,7 @@ P0 originally did not verify provider-backed market or financial statement fetch
 | P0.2 negative/meaningless ratio handling | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Negative PE, FCF yield, and EV/FCF render as `not meaningful` with reasons while raw values remain in artifact diagnostics. |
 | P0.2 market-implied bridge | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Includes P/S and EV/sales anchors, required future FCF margin lines for negative FCF, cycle-normalized earnings placeholder for negative earnings, and no target-price precision. |
 | P0.2 frame fit ranking | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Selected frames are ranked by `fit_to_current_market_value` with assumptions, must-become-true items, gaps, and confidence. |
-| P0.2 black-box-safe artifact evidence path | local_verified | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact, preserving raw numeric values plus display/meaningfulness/frame-fit fields while omitting local paths, raw provider errors, auth headers, token config, stack traces, and arbitrary file reads. |
+| P0.2 black-box-safe artifact evidence path | needs_retest_after_deploy | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact, preserving raw numeric values plus display/meaningfulness/frame-fit fields while omitting local paths, raw provider errors, auth headers, token config, stack traces, and arbitrary file reads. Local verification passed; combined release deploy and independent cloud retest are pending. |
+| P0.2 user-facing provider-gap copy sanitization | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Card degraded-state lines now use provider taxonomy summaries and keep raw HTTP diagnostics out of the rendered card/evidence read-back while preserving internal artifact diagnostics. Combined release deploy and independent copy-fix retest are pending. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |
