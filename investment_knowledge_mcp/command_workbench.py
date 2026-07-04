@@ -1648,6 +1648,10 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _looks_path_like_query(value: str) -> bool:
+    return "/" in value or "\\" in value or ".." in value
+
+
 def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     action = ACTIONS.get(context.action_id or "")
     if action is None:
@@ -1740,10 +1744,16 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
                         )
                     )
                 status = "needs_entity"
-                recovery_message = (
-                    f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
-                    "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
-                )
+                if _looks_path_like_query(stock_query):
+                    recovery_message = (
+                        f"I recognized {action.label}, but the target does not look like a stock symbol. "
+                        "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                    )
+                else:
+                    recovery_message = (
+                        f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
+                        "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                    )
             elif len(candidates) == 1:
                 target = candidates[0]
                 confidence = min(confidence, float(target.get("confidence") or confidence))

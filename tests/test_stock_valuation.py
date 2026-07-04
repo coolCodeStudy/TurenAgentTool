@@ -441,6 +441,16 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(preview["safety_level"], "read_only")
         self.assertNotIn("path", {field["id"] for field in preview["action"]["required_fields"]})
 
+    def test_workbench_artifact_evidence_rejects_path_like_input_without_echo(self) -> None:
+        with patch("investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference", return_value=[]):
+            preview = parse_workbench_command("valuation artifact evidence ../../etc/passwd")
+
+        self.assertEqual(preview["status"], "needs_entity")
+        message = preview["recovery_message"]
+        self.assertIn("does not look like a stock symbol", message)
+        self.assertNotIn("/etc/passwd", message)
+        self.assertNotIn("..", message)
+
 
 if __name__ == "__main__":
     unittest.main()
