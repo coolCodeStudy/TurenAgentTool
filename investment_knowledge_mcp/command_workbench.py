@@ -16,6 +16,7 @@ from investment_knowledge_mcp.command_router import (
     WEEKLY_REVIEW_COMMANDS,
     WORKER_STATUS_COMMANDS,
 )
+from investment_knowledge_mcp.frontend_shell import ShellPage, render_app_shell
 from investment_knowledge_mcp.kline_agent import parse_kline_command
 from investment_knowledge_mcp.valuation_data_provider import normalize_provider_target, provider_target_resolution
 
@@ -561,48 +562,25 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
 
 
 def render_command_workbench_html() -> str:
-    return """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Command Workbench</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f7f8fa;
-      --panel: #ffffff;
-      --ink: #1f252d;
-      --muted: #637083;
-      --line: #d8e0e8;
-      --accent: #146c74;
-      --accent-soft: #e7f4f3;
-      --warn: #8a5a00;
-      --warn-bg: #fff7df;
-      --bad: #a33b35;
-      --good: #176b43;
-      --chip: #edf2f6;
+    page_css = """
+    .command-page {
+      --bg: var(--app-bg);
+      --panel: var(--app-surface);
+      --ink: var(--app-ink);
+      --muted: var(--app-muted);
+      --line: var(--app-line);
+      --accent: var(--app-accent);
+      --accent-soft: var(--app-accent-soft);
+      --warn: var(--app-warn);
+      --warn-bg: var(--app-warn-bg);
+      --bad: var(--app-bad);
+      --good: var(--app-good);
+      --chip: var(--app-surface-muted);
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--ink);
-    }
-    .shell {
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 340px;
-    }
-    main {
+    .command-page {
       min-width: 0;
-      padding: 24px;
     }
-    aside {
-      border-left: 1px solid var(--line);
-      background: #fff;
-      padding: 24px 18px;
+    .command-side {
       min-width: 0;
     }
     h1 {
@@ -827,48 +805,43 @@ def render_command_workbench_html() -> str:
       margin-bottom: 8px;
     }
     @media (max-width: 980px) {
-      .shell { display: block; }
-      aside { border-left: 0; border-top: 1px solid var(--line); }
+      .command-side { border-top: 1px solid var(--line); }
     }
     @media (max-width: 680px) {
-      main, aside { padding: 16px; }
       .input-row { grid-template-columns: 1fr; }
       .preview-grid { grid-template-columns: 1fr; }
     }
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <main>
-      <h1>Command Workbench</h1>
-      <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
+    """
+    main_html = """
       <div class="input-row">
         <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
         <input id="api-token" type="password" autocomplete="off" placeholder="Access token">
-        <button id="parse" class="primary">Preview</button>
+        <button id="parse" class="app-button primary">Preview</button>
       </div>
-      <section id="preview-section">
+      <section id="preview-section" class="app-panel">
         <h2>Parsed Preview</h2>
-        <div id="preview"><div class="notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
+        <div id="preview" class="app-status-region" aria-live="polite"><div class="app-notice notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
       </section>
-      <section id="form-section" hidden>
+      <section id="form-section" class="app-panel" hidden>
         <h2 id="form-title">Action</h2>
         <div id="form" class="form-grid"></div>
       </section>
-      <section>
+      <section class="app-panel">
         <h2>Execution Result / 执行结果</h2>
-        <div id="result"><span class="label">No command has run in this session.</span></div>
+        <div id="result" class="app-status-region" aria-live="polite"><span class="label">No command has run in this session.</span></div>
       </section>
-    </main>
-    <aside>
+    """
+    aside_html = """
+      <div class="app-panel command-side">
       <h2>Action Catalog</h2>
       <div id="catalog" class="actions"></div>
       <h3>Pinned</h3>
       <div id="pinned" class="history"></div>
       <h3>Recent</h3>
       <div id="recent" class="history"></div>
-    </aside>
-  </div>
+      </div>
+    """
+    page_js = """
   <script>
     const $ = (selector) => document.querySelector(selector);
     const state = { actions: [], preview: null, activeAction: null, selectedTarget: null };
@@ -1025,7 +998,7 @@ def render_command_workbench_html() -> str:
         </div>` : "";
       const runButton = runnable ? `<button class="primary" onclick="runPreview()">${preview.confirmation_required ? "Confirm and Run" : "Run"}</button>` : "";
       $("#preview").innerHTML = `
-        ${preview.recovery_message ? `<div class="notice">${escapeHtml(preview.recovery_message)}</div>` : ""}
+        ${preview.recovery_message ? `<div class="app-notice notice">${escapeHtml(preview.recovery_message)}</div>` : ""}
         <div class="preview-grid">
           <div class="item"><span class="label">Action</span><strong>${escapeHtml(actionLine)}</strong></div>
           <div class="item"><span class="label">Target</span>${escapeHtml(targetText)}</div>
@@ -1069,7 +1042,7 @@ def render_command_workbench_html() -> str:
 
     function formatResultMessage(message) {
       if (!message) {
-        return `<div class="notice">No result body returned. / 没有返回结果正文。</div>`;
+        return `<div class="app-notice notice">No result body returned. / 没有返回结果正文。</div>`;
       }
       const decisionCard = parseDecisionCard(message);
       if (decisionCard) return renderDecisionResult(decisionCard, message);
@@ -1228,8 +1201,24 @@ def render_command_workbench_html() -> str:
       return escapeHtml(value).replace(/`/g, "&#96;");
     }
   </script>
-</body>
-</html>"""
+"""
+    return render_app_shell(
+        ShellPage(
+            title="Command Workbench",
+            lang="en",
+            active_nav="command",
+            page_class="command-page",
+            heading="Command Workbench",
+            subtitle=(
+                "Type a stock name, symbol, or supported command. The workbench resolves "
+                "the target and shows the exact command before running it."
+            ),
+            main_html=main_html,
+            aside_html=aside_html,
+            page_css=page_css,
+            page_js=page_js,
+        )
+    )
 
 
 def _parse_deterministic(context: ParseContext) -> dict[str, Any]:

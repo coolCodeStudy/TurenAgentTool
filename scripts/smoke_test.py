@@ -372,6 +372,26 @@ def main() -> None:
             workbench_bootstrap = parse_workbench_command("创建股票档案 TSTZZ US", allow_llm=False)
             workbench_unknown = parse_workbench_command("乱买英特尔", allow_llm=False)
             workbench_html = render_command_workbench_html()
+            assert "Command Workbench" in workbench_html
+            assert "/api/command-workbench/actions" in workbench_html
+            assert "/api/command-workbench/parse" in workbench_html
+            assert "/api/command-workbench/execute" in workbench_html
+            assert "command_workbench_token" in workbench_html
+            assert "command_workbench_recent" in workbench_html
+            assert "command_workbench_pinned" in workbench_html
+            assert 'id="main-content"' in workbench_html
+            assert 'class="skip-link"' in workbench_html
+            assert 'aria-label="Primary"' in workbench_html
+            assert 'href="/weekly-review"' in workbench_html
+            assert 'href="/command"' in workbench_html
+            assert 'aria-current="page"' in workbench_html
+            assert "Daily Market Brief" not in workbench_html
+            assert "Thesis:" in workbench_html
+            assert "Drivers:" in workbench_html
+            assert "Risks:" in workbench_html
+            assert "Watch:" in workbench_html
+            assert "Freshness:" in workbench_html
+            assert "Evidence:" in workbench_html
 
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
@@ -767,6 +787,15 @@ def main() -> None:
         assert "/api/weekly-review/save" in weekly_web_html
         assert "/api/weekly-review/generate" in weekly_web_html
         assert "/api/weekly-review/refresh" in weekly_web_html
+        assert "/api/candidate-insights?status=pending" in weekly_web_html
+        assert "weekly_review_web_token" in weekly_web_html
+        assert 'id="main-content"' in weekly_web_html
+        assert 'class="skip-link"' in weekly_web_html
+        assert 'aria-label="Primary"' in weekly_web_html
+        assert 'href="/weekly-review"' in weekly_web_html
+        assert 'href="/command"' in weekly_web_html
+        assert 'aria-current="page"' in weekly_web_html
+        assert "Daily Market Brief" not in weekly_web_html
         assert "week-date" in weekly_web_html
         assert "id=\"start\"" not in weekly_web_html
         assert "id=\"end\"" not in weekly_web_html
