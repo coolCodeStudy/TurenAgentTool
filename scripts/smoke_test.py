@@ -1,6 +1,9 @@
 from pathlib import Path
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -86,6 +89,59 @@ SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy c
 SMOKE_ROUTER_NATURAL_MEMORY = "我觉得 Smoke Test 的组合管理成本需要被系统识别并沉淀。"
 SMOKE_JOB_SYMBOL = "SMOKEJOB"
 SMOKE_JOB_MARKET = "TEST"
+
+
+class _RenderedAssetParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._current_tag: str | None = None
+        self.scripts: list[str] = []
+        self.styles: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "script":
+            self._current_tag = tag
+            self.scripts.append("")
+        elif tag == "style":
+            self._current_tag = tag
+            self.styles.append("")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self._current_tag:
+            self._current_tag = None
+
+    def handle_data(self, data: str) -> None:
+        if self._current_tag == "script":
+            self.scripts[-1] += data
+        elif self._current_tag == "style":
+            self.styles[-1] += data
+
+
+def _rendered_assets(html: str) -> _RenderedAssetParser:
+    parser = _RenderedAssetParser()
+    parser.feed(html)
+    return parser
+
+
+def assert_rendered_js_parses(html: str, *, page_name: str) -> None:
+    node = shutil.which("node")
+    assert node is not None, "node is required for rendered JavaScript parser smoke checks"
+    scripts = _rendered_assets(html).scripts
+    assert scripts, f"{page_name} rendered no script blocks"
+    with tempfile.TemporaryDirectory(prefix=f"{page_name}-js-") as tmp_dir:
+        for index, script in enumerate(scripts):
+            script_path = Path(tmp_dir) / f"script-{index}.js"
+            script_path.write_text(script, encoding="utf-8")
+            result = subprocess.run([node, "--check", str(script_path)], text=True, capture_output=True)
+            assert result.returncode == 0, f"{page_name} script {index} failed parser check: {result.stderr}"
+
+
+def assert_rendered_css_has_no_doubled_braces(html: str, *, page_name: str) -> None:
+    styles = _rendered_assets(html).styles
+    assert styles, f"{page_name} rendered no style blocks"
+    for index, style in enumerate(styles):
+        assert "{{" not in style, f"{page_name} style {index} contains literal doubled opening braces"
+        assert "}}" not in style, f"{page_name} style {index} contains literal doubled closing braces"
 
 
 def cleanup_smoke_data() -> None:
@@ -363,6 +419,7 @@ def main() -> None:
             assert "Watch:" in workbench_html
             assert "Freshness:" in workbench_html
             assert "Evidence:" in workbench_html
+            assert_rendered_js_parses(workbench_html, page_name="command-workbench")
 
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
@@ -765,6 +822,8 @@ def main() -> None:
         assert "index provider not configured" not in weekly_web_html
         assert "external event provider not implemented" not in weekly_web_html
         assert "data-slot=\"holdings\"" in weekly_web_html
+        assert_rendered_js_parses(weekly_web_html, page_name="weekly-review")
+        assert_rendered_css_has_no_doubled_braces(weekly_web_html, page_name="weekly-review")
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end
