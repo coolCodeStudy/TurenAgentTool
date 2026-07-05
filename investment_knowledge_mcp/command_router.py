@@ -72,7 +72,11 @@ from investment_knowledge_mcp.stock_valuation import (
     render_valuation_card,
     render_valuation_methods,
 )
-from investment_knowledge_mcp.valuation_data_provider import fetch_provider_snapshot
+from investment_knowledge_mcp.valuation_data_provider import (
+    fetch_provider_snapshot,
+    normalize_provider_target,
+    provider_target_resolution,
+)
 from investment_knowledge_mcp.weekly_review import build_weekly_review
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
@@ -949,7 +953,10 @@ def _handle_stock_valuation(
 ) -> CommandResult:
     context = repository.get_stock_context(symbol=symbol, market=market)
     if not context.get("stock"):
-        return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+        target_resolution = provider_target_resolution(symbol, market, input_target=command)
+        if not target_resolution:
+            return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+        context = _p0_3_minimal_valuation_context(target_resolution)
     provider_snapshot = fetch_provider_snapshot(symbol, market)
     packet, _ = build_valuation_artifact(
         context,
@@ -960,6 +967,35 @@ def _handle_stock_valuation(
         provider_snapshot=provider_snapshot,
     )
     return CommandResult(ok=True, message=render_valuation_card(packet, include_artifact_path=include_artifact_path))
+
+
+def _p0_3_minimal_valuation_context(target_resolution: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(target_resolution.get("normalized_symbol") or "")
+    market = str(target_resolution.get("normalized_market") or "")
+    company_name = str(target_resolution.get("company_name") or f"{market}.{symbol}")
+    if market == "KR":
+        core_business = "Memory semiconductor company with HBM and memory-cycle valuation exposure."
+        stock_character = "Cyclical AI infrastructure memory beta; profile initialized from P0.3 fixture mapping."
+    elif market == "HK":
+        core_business = "Copper clad laminate and PCB material supplier with cyclical electronics supply-chain exposure."
+        stock_character = "Cyclical materials and PCB supply-chain company; profile initialized from P0.3 fixture mapping."
+    else:
+        core_business = "Supported P0.3 valuation fixture."
+        stock_character = "Needs full research import."
+    return {
+        "stock": {
+            "id": None,
+            "symbol": symbol,
+            "market": market,
+            "name": company_name,
+            "core_business": core_business,
+            "stock_character": stock_character,
+        },
+        "stock_knowledge": [],
+        "stock_insights": [],
+        "sources": [],
+        "sectors": [],
+    }
 
 
 def _handle_stock_valuation_latest(
@@ -2165,11 +2201,11 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     market_symbol_match = re.fullmatch(r"([A-Za-z]{1,5})\.([A-Za-z0-9._-]+)", cleaned)
     if market_symbol_match:
         market, symbol = market_symbol_match.groups()
-        return symbol.upper(), market.upper()
+        return normalize_provider_target(symbol, market)
     symbol_market_match = re.fullmatch(r"(\S+)\s+(\S+)", cleaned)
     if symbol_market_match:
         symbol, market = symbol_market_match.groups()
-        return symbol.upper(), market.upper()
+        return normalize_provider_target(symbol, market)
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None

@@ -152,11 +152,13 @@ def build_valuation_artifact(
     selected_frames = _select_frames(bridge["frame_fit_ranking"])
     coverage = _source_coverage(context=context, facts=facts, provider_snapshot=provider_snapshot)
     degraded_reasons = _degraded_reasons(gaps=gaps, coverage=coverage, context=context, provider_snapshot=provider_snapshot)
+    target_resolution = _target_resolution(symbol=symbol, market=market, command=command, provider_snapshot=provider_snapshot)
     packet = {
         "feature": "stock_valuation_research",
         "version": 1,
         "created_at": created_at,
         "input": {"symbol": symbol.strip().upper(), "market": market.strip().upper(), "command": command},
+        "target_resolution": target_resolution,
         "stock": {
             "id": stock.get("id"),
             "symbol": stock.get("symbol") or symbol.strip().upper(),
@@ -213,6 +215,7 @@ def build_valuation_artifact_evidence(packet: dict[str, Any], *, artifact_kind: 
             "created_at": packet.get("created_at"),
             "version": packet.get("version"),
         },
+        "target_resolution": _evidence_target_resolution(packet.get("target_resolution") if isinstance(packet.get("target_resolution"), dict) else {}),
         "facts": [_evidence_fact(item) for item in packet.get("facts") or [] if isinstance(item, dict)],
         "deterministic_calculations": [
             _evidence_calculation(item) for item in packet.get("deterministic_calculations") or [] if isinstance(item, dict)
@@ -240,6 +243,17 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
         lines.extend(f"- {reason}" for reason in degraded["reasons"])
     lines.append("")
 
+    target_resolution = packet.get("target_resolution") or {}
+    if target_resolution:
+        lines.append("Target resolution:")
+        lines.append(
+            "- Input: "
+            f"{target_resolution.get('input_target')} -> resolved: "
+            f"{target_resolution.get('normalized_target')} {target_resolution.get('company_name')} -> "
+            f"market snapshot ticker: {target_resolution.get('provider_market_ticker')}"
+        )
+        lines.append("")
+
     calculations = packet.get("deterministic_calculations") or []
     calc_by_metric = {item.get("metric"): item for item in calculations}
     facts_by_metric = {item.get("metric"): item for item in packet.get("facts") or []}
@@ -264,11 +278,23 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
     provider_statuses = coverage.get("provider_statuses") or {}
     if provider_statuses:
         lines.append("Data status:")
-        for label, key in (("Official financials", "financial_facts"), ("Market snapshot", "market_snapshot")):
+        for label, key in (
+            ("Official financials", "financial_facts"),
+            ("Official/company financials", "official_financials"),
+            ("Fallback fundamentals", "fallback_fundamentals"),
+            ("Market snapshot", "market_snapshot"),
+            ("Provider mapping", "provider_mapping"),
+        ):
             status = provider_statuses.get(key) or {}
             if status:
                 status_label = str(status.get("status") or "").replace("_", " ")
                 lines.append(f"- {label}: {status_label}. {status.get('explanation')}")
+        source_attempts = coverage.get("source_attempts") or {}
+        for key, attempt in source_attempts.items():
+            family = attempt.get("family")
+            status_value = attempt.get("status")
+            if family and status_value:
+                lines.append(f"- Source attempt {key}: {family} ({str(status_value).replace('_', ' ')})")
         lines.append("")
 
     lines.append("Relevant frames:")
@@ -386,6 +412,26 @@ def _evidence_source_coverage(coverage: dict[str, Any]) -> dict[str, Any]:
         "peer_data_status": coverage.get("peer_data_status", "missing"),
         "user_confirmed_valuation_case": bool(coverage.get("user_confirmed_valuation_case")),
         "provider_statuses": coverage.get("provider_statuses") or {},
+        "source_attempts": coverage.get("source_attempts") or {},
+    }
+
+
+def _evidence_target_resolution(target_resolution: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: target_resolution.get(key)
+        for key in (
+            "input_target",
+            "normalized_target",
+            "normalized_symbol",
+            "normalized_market",
+            "company_name",
+            "provider_market_ticker",
+            "provider",
+            "currency",
+            "mapping_confidence",
+            "mapping_source",
+        )
+        if target_resolution.get(key) is not None
     }
 
 
@@ -458,6 +504,7 @@ def _extract_facts(context: dict[str, Any], *, provider_snapshot: dict[str, Any]
                 "period_end": provider_fact.get("period_end"),
                 "input_text": str(provider_fact.get("input_text") or "")[:240],
                 "provider": provider_fact.get("provider"),
+                "currency": provider_fact.get("currency"),
             }
         )
     return _dedupe_facts(facts)
@@ -684,6 +731,12 @@ def _source_coverage(
         for source_type in source_types
         if any(token in source_type for token in ("official", "filing", "sec", "hkex", "exchange", "annual_report"))
     )
+    if provider_snapshot and provider_snapshot.get("financial_fact_status"):
+        financial_fact_status = str(provider_snapshot.get("financial_fact_status"))
+    elif any(fact.get("metric") in {"revenue", "net_income", "operating_cash_flow", "capex", "free_cash_flow", "cash", "debt", "ebitda"} for fact in facts):
+        financial_fact_status = "present"
+    else:
+        financial_fact_status = "missing"
     return {
         "fact_count": len(facts),
         "fact_source_id_count": len({fact.get("source_id") for fact in facts if fact.get("source_id") is not None}),
@@ -691,10 +744,12 @@ def _source_coverage(
         "official_source_count": official_count,
         "market_snapshot_status": "present" if any(fact["metric"] in {"price", "market_cap"} for fact in facts) else "missing",
         "peer_data_status": "missing",
-        "financial_fact_status": "present" if facts else "missing",
+        "financial_fact_status": financial_fact_status,
         "user_confirmed_valuation_case": _has_user_confirmed_valuation_case(context),
         "provider_errors": list((provider_snapshot or {}).get("errors") or []),
         "provider_statuses": _provider_statuses(facts=facts, provider_snapshot=provider_snapshot),
+        "source_attempts": (provider_snapshot or {}).get("source_attempts") or {},
+        "target_resolution": (provider_snapshot or {}).get("target_resolution") or {},
     }
 
 
@@ -739,7 +794,10 @@ def _assumptions(context: dict[str, Any], *, provider_snapshot: dict[str, Any] |
     else:
         items.append("No user-confirmed valuation case exists; frame ranking is a system candidate only.")
     if provider_snapshot is not None:
-        items.append("P0.1 uses provider snapshots when available and labels provider gaps instead of inventing missing facts.")
+        if (provider_snapshot.get("target_resolution") or {}).get("normalized_market") in {"KR", "HK"}:
+            items.append("P0.3 uses mapped non-US market snapshots and labels vendor fallback fundamentals separately from official/company financial facts.")
+        else:
+            items.append("P0.1 uses provider snapshots when available and labels provider gaps instead of inventing missing facts.")
     else:
         items.append("P0 uses existing local stock context and deterministic calculations when no provider snapshot is available.")
     items.append("Peer sets, analyst estimates, and target-price precision are intentionally omitted unless sourced.")
@@ -808,6 +866,10 @@ def _infer_currency(*, facts: list[dict[str, Any]], market: str) -> str | None:
             return str(currency).upper()
     if market.strip().upper() == "US":
         return "USD"
+    if market.strip().upper() == "HK":
+        return "HKD"
+    if market.strip().upper() == "KR":
+        return "KRW"
     return None
 
 
@@ -869,6 +931,8 @@ def _scale_abs_number(number: float) -> tuple[float, str]:
 def _provider_statuses(*, facts: list[dict[str, Any]], provider_snapshot: dict[str, Any] | None) -> dict[str, dict[str, str]]:
     errors = [str(error) for error in (provider_snapshot or {}).get("errors") or []]
     has_financial = any(str(fact.get("source_type") or "").lower() in {"sec_companyfacts", "official_filing"} for fact in facts)
+    has_official_non_us = any(str(fact.get("source_type") or "").lower() in {"hkexnews", "dart_fss", "company_ir", "company_report"} for fact in facts)
+    has_fallback = any(str(fact.get("source_type") or "").lower() == "yahoo_fallback_fundamentals" for fact in facts)
     has_market = any(fact.get("metric") in {"price", "market_cap", "shares_outstanding"} for fact in facts)
     yahoo_errors = [error for error in errors if "yahoo" in error.lower()]
     sec_errors = [error for error in errors if "sec" in error.lower()]
@@ -886,12 +950,49 @@ def _provider_statuses(*, facts: list[dict[str, Any]], provider_snapshot: dict[s
             missing_copy="market snapshot fields are unavailable",
         ),
     }
+    source_attempts = (provider_snapshot or {}).get("source_attempts") or {}
+    if source_attempts:
+        official_family = ((source_attempts.get("official_financials") or {}).get("family") or "official/company financial sources")
+        statuses["provider_mapping"] = {
+            "status": "available" if (provider_snapshot or {}).get("target_resolution") else "complete_missing",
+            "explanation": "provider ticker/entity mapping is available." if (provider_snapshot or {}).get("target_resolution") else "provider ticker/entity mapping is unavailable.",
+        }
+        statuses["official_financials"] = _provider_status(
+            has_data=has_official_non_us,
+            errors=[error for error in errors if any(token in error.lower() for token in ("hkex", "dart", "fss", "company ir", "official"))],
+            present_copy=f"{official_family} facts are available",
+            missing_copy=f"{official_family} structured facts are unavailable in this P0.3 slice",
+        )
+        if has_fallback:
+            statuses["fallback_fundamentals"] = {
+                "status": "fallback_used",
+                "explanation": "Yahoo/yfinance vendor-labeled fallback operating anchors are used; they are not official/regulator facts.",
+            }
+        else:
+            statuses["fallback_fundamentals"] = {
+                "status": "complete_missing",
+                "explanation": "vendor-labeled fallback fundamentals are unavailable.",
+            }
     if any(fact.get("timestamp") in (None, "") for fact in facts if fact.get("metric") in {"price", "market_cap"}):
         statuses["market_snapshot"] = {
             "status": "stale_or_unknown_freshness",
             "explanation": "market snapshot data exists, but timestamp or freshness is stale or unknown.",
         }
     return statuses
+
+
+def _target_resolution(
+    *,
+    symbol: str,
+    market: str,
+    command: str,
+    provider_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    resolution = dict((provider_snapshot or {}).get("target_resolution") or {})
+    if not resolution:
+        return {}
+    resolution["input_target"] = command
+    return resolution
 
 
 def _provider_status(*, has_data: bool, errors: list[str], present_copy: str, missing_copy: str) -> dict[str, str]:
