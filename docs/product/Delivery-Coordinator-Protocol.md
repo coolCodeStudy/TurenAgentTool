@@ -28,6 +28,8 @@ Escalate from a Feature Coordinator to the Global Project Manager only when:
 - the coordinator is blocked or stale and needs recovery;
 - a delivery-system rule or process defect needs to be changed.
 
+Do not report every routine role transition upward. A healthy Feature Coordinator should continue through Product, Development, deploy, Acceptance Testing, and Return Gates autonomously. Report to the Global Project Manager or Owner only for milestone summaries, true blockers, user/global decisions, cross-feature conflicts, credentials/permissions, operating-model defects, or readiness for user acceptance.
+
 ## Responsibilities
 
 The Delivery Coordinator must:
@@ -147,6 +149,25 @@ Handoff-only mode is allowed only when:
 
 Handoff-only is not enough when the user asked the coordinator to reduce manual coordination and continue the work.
 
+## Internal Subagent Versus Visible Thread
+
+Use an internal subagent when:
+
+- the work is short-lived analysis, review, or comparison for the current coordinator;
+- no independent branch, commit, or durable repo edit is expected;
+- the output is advisory and the current coordinator will immediately integrate the result;
+- the user does not need to track the worker as a sidebar-visible role.
+
+Use a visible Codex thread or worktree-backed session when:
+
+- the role owns a durable deliverable such as PRD, technical plan, implementation, deployment verification, or acceptance test;
+- the work may take more than one coordinator turn;
+- the worker needs its own branch, commit, push, or worktree;
+- the user may need to inspect the role's conversation;
+- the coordinator needs a Return Gate with branch, commit, verification, and queue updates.
+
+A visible thread creates a stronger delivery contract but also creates a stronger watch obligation. Do not create one without a Watch Contract and runtime watcher.
+
 ## Active Watch Rule
 
 A coordinator that dispatches work to another role/thread/session must not rely on passive waiting as the only continuation mechanism.
@@ -160,6 +181,8 @@ Immediately after dispatch, the coordinator must do one of:
 - explicitly record `Monitoring not active` with the reason and the smallest user or project-manager action required to resume the flow.
 
 The handoff is incomplete if the coordinator only says "I will wait" without a concrete wake-up path.
+
+For visible Codex threads, a watch contract in `Delivery-Queue.md` is necessary but not sufficient. The owning coordinator must also create or reuse a runtime watcher that can wake the coordinator thread, or state `Monitoring not active`. This prevents the common failure mode where a child thread returns successfully but no coordinator turn runs to apply the Return Gate.
 
 Every active watch must include a watch contract:
 
