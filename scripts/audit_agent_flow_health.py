@@ -32,7 +32,44 @@ GLOBAL_PM_ALLOWED_WORDS = (
     "release ref",
     "deploy/ref",
 )
-WATCH_WORDS = ("watch owner", "watch path", "monitoring not active", "heartbeat", "monitor", "this coordinator")
+WATCH_WORDS = (
+    "watch owner",
+    "watch path",
+    "watch contract",
+    "watched item",
+    "wake event",
+    "wake cadence",
+    "runtime watcher",
+    "monitoring not active",
+    "heartbeat",
+    "monitor",
+    "this coordinator",
+)
+WATCH_CONTRACT_ITEM_WORDS = ("watch contract", "watched item", "watch owner/path", "watch owner", "watch path")
+WATCH_CONTRACT_WAKE_WORDS = ("wake event", "wake cadence", "next check event", "check cadence", "returned final message")
+WATCH_CONTRACT_ARTIFACT_WORDS = ("expected artifact", "expected return", "branch", "commit", "verification", "acceptance result", "blocker")
+WATCH_CONTRACT_ACTION_WORDS = (
+    "coordinator action",
+    "action on wake",
+    "return gate",
+    "integrate",
+    "reject",
+    "dispatch",
+    "close",
+    "deploy decision",
+)
+PASSIVE_WATCH_PHRASES = ("i will wait", "watch active", "will wait", "wait for")
+DEPLOY_DECISION_WORDS = ("self_deploy", "dispatch_deploy_owner", "blocked", "not_required", "deploy decision")
+VAGUE_CLOSURE_WORDS = (
+    "after deploy",
+    "coordinator/ops",
+    "someone",
+    "later",
+    "ready for testing",
+    "branch pushed",
+    "code fixed",
+)
+ROUTINE_GLOBAL_PM_RETURN_PHRASES = ("return to global pm", "return to global project manager")
 
 
 @dataclass(frozen=True)
@@ -245,6 +282,19 @@ def audit_owner_routing(rows: Iterable[DeliveryRow]) -> list[FlowFinding]:
                     "no",
                 )
             )
+        if row.status in ACTIVE_DISPATCH_STATUSES and contains_any(text, ROUTINE_GLOBAL_PM_RETURN_PHRASES):
+            if not contains_any(text, GLOBAL_PM_ALLOWED_WORDS):
+                findings.append(
+                    FlowFinding(
+                        "global_pm_overuse",
+                        "major",
+                        row.item_id,
+                        f"{row.feature} uses `Return to Global PM` without a visible global escalation trigger.",
+                        "Keep feature-local routing with the Feature Coordinator unless there is cross-feature conflict, stale recovery, credential/permission, priority, or operating-model defect.",
+                        "yes",
+                        "possible unnecessary escalation",
+                    )
+                )
     return findings
 
 
@@ -511,6 +561,36 @@ def row_text(row: DeliveryRow) -> str:
 def contains_any(text: str, needles: Iterable[str]) -> bool:
     lower = text.lower()
     return any(needle.lower() in lower for needle in needles)
+
+
+def has_watch_contract(text: str) -> bool:
+    lower = text.lower()
+    return (
+        contains_any(lower, WATCH_CONTRACT_ITEM_WORDS)
+        and contains_any(lower, WATCH_CONTRACT_WAKE_WORDS)
+        and contains_any(lower, WATCH_CONTRACT_ARTIFACT_WORDS)
+        and contains_any(lower, WATCH_CONTRACT_ACTION_WORDS)
+    )
+
+
+def has_passive_watch_language(text: str) -> bool:
+    lower = text.lower()
+    if "monitoring not active" in lower:
+        return False
+    return contains_any(lower, WATCH_WORDS + PASSIVE_WATCH_PHRASES) and not has_watch_contract(lower)
+
+
+def deploy_needed_without_decision(row: DeliveryRow) -> bool:
+    text = row_text(row)
+    lower = text.lower()
+    if row.status == "needs_deploy":
+        return not contains_any(lower, DEPLOY_DECISION_WORDS)
+    if contains_any(lower, DEPLOY_WORDS) and contains_any(
+        lower,
+        ("needs_deploy", "after deploy", "deploy owner", "release ref"),
+    ):
+        return not contains_any(lower, DEPLOY_DECISION_WORDS)
+    return False
 
 
 def group_by_normalized_feature(rows: Iterable[AcceptanceRow | DeliveryRow]) -> dict[str, list]:

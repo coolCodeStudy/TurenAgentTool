@@ -452,7 +452,7 @@ def build_handoff_packet(
         "Completion gate": infer_completion_gate(row, acceptance_row),
         "Deploy needed": infer_deploy_needed(row, acceptance_row),
         "Deploy decision": infer_deploy_decision(row, acceptance_row, findings),
-        "Return target": "Feature Coordinator",
+        "Return target": "Same Feature Coordinator that dispatched this work; do not return routine next-owner routing to Global Project Manager.",
         "Escalation target": infer_escalation_target(row, findings),
     }
 
@@ -476,6 +476,10 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- Update Feature Registry, Acceptance Queue, Delivery Queue, or technical-plan traceability when your work changes delivery state.",
         "- For cloud-served or browser-tested work, make a concrete deploy decision before handoff: `self_deploy`, `dispatch_deploy_owner`, `blocked`, or `not_required`; do not use vague owners such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`.",
         "- Return to the Feature Coordinator by default. Escalate to the Global Project Manager only for stale coordinator recovery, cross-feature conflict, global deploy conflict, or operating-model defects.",
+        "- Treat the Feature Coordinator as the feature DRI: Product -> Development -> Review -> Deploy -> Acceptance -> Retest routing stays inside the coordinator loop unless a real global escalation trigger exists.",
+        "- Do not write `Return to Global PM` for routine next steps. If you think escalation is needed, name the exact trigger: cross-feature release conflict, stale coordinator recovery, credentials/permissions, priority/budget decision, or operating-model defect.",
+        "- Pass the anti-rationalization gate before handoff: do not stop at `branch pushed`, `code fixed`, `after deploy`, `later`, `I will wait`, `Coordinator/Ops`, `someone`, `ready for testing`, or `watch active` without concrete owner/ref/deploy/watch/blocker state.",
+        "- If you dispatch or recommend another role, include a Watch Contract: watched item, wake event or cadence, expected artifact, and coordinator action on wake.",
         "- Run narrow verification and document any verification limit.",
         "- Check `docs/lesson-capture-protocol.md` before handoff; record only durable lessons that pass the quality bar, otherwise state `Lessons: none`.",
         "- Commit and push after completing the work unless explicitly told to keep it local.",
@@ -486,6 +490,8 @@ def build_dispatch_prompt(packet: dict[str, str]) -> str:
         "- The worktree is clean or every dirty file is explained.",
         "- The final response states branch, commit SHA, verification, registry/queue updates, remaining gaps, `Lessons recorded: ...` or `Lessons: none; ...`, push result, and worktree cleanliness.",
         "- The final response includes a `Return to Coordinator` block naming the recommended next owner, next handoff, deploy needed yes/no/not_applicable, deploy decision, return target, escalation target, and role learning.",
+        "- The `Return to Coordinator` block must say whether this is routine feature-local routing or a true escalation. Routine routing returns to the same Feature Coordinator.",
+        "- If a next owner remains, the final response includes a watch contract or states `Monitoring not active` with the smallest resume action.",
         "",
         "## Delivery Handoff",
         "",
