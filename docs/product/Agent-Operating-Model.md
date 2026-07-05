@@ -41,6 +41,8 @@ Owner intent
 
 The Feature Coordinator must keep the flow moving when the next action is known. It should dispatch the next role, record a blocker, or ask the Owner only for a real Owner decision.
 
+For substantial new work, the Feature Coordinator should use a lightweight change package under `docs/changes/<change-id>/` when the feature needs a resumable proposal, requirements, design, tasks, and handoff. Change packages are working artifacts; they do not replace PRDs, technical plans, Feature Registry, Acceptance Queue, or Delivery Queue.
+
 ## Escalation Rules
 
 Ask the Owner only for:
@@ -96,6 +98,8 @@ Prefer a single session or strict sequence when:
 
 Every non-trivial concurrent implementation task should use a dedicated worktree and return to its Feature Coordinator.
 
+Use reviewer gates only at risk points. Release Reviewer, Frontend Experience Reviewer, Acceptance Reviewer, and Security/Access Reviewer are checks that may be performed by the coordinator or dispatched to a role/session; they are not permanent extra roles for every task.
+
 ## Required Return Shape
 
 Substantial role work must return enough evidence for the coordinator to decide the next step:
@@ -113,6 +117,7 @@ Return to Coordinator:
 - Deploy needed: yes/no/not_applicable, with affected service or URL when yes
 - Deploy decision: self_deploy/dispatch_deploy_owner/blocked/not_required, with reason
 - Escalation target: Feature Coordinator/Global Project Manager/Owner/not_required, with reason
+- Watch contract: watched item, wake event or cadence, expected artifact, and coordinator action on wake
 - Role learning: recorded/none, with reason
 ```
 

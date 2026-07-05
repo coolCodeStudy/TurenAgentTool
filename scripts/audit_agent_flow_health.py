@@ -33,6 +33,18 @@ GLOBAL_PM_ALLOWED_WORDS = (
     "deploy/ref",
 )
 WATCH_WORDS = ("watch owner", "watch path", "monitoring not active", "heartbeat", "monitor", "this coordinator")
+WATCH_CONTRACT_WORDS = ("watch contract", "watched item", "wake event", "wake cadence", "next check event")
+PASSIVE_WATCH_PHRASES = ("i will wait", "watch active", "will wait", "wait for")
+DEPLOY_DECISION_WORDS = ("self_deploy", "dispatch_deploy_owner", "blocked", "not_required", "deploy decision")
+VAGUE_CLOSURE_WORDS = (
+    "after deploy",
+    "coordinator/ops",
+    "someone",
+    "later",
+    "ready for testing",
+    "branch pushed",
+    "code fixed",
+)
 
 
 @dataclass(frozen=True)
@@ -187,6 +199,29 @@ def audit_active_dispatches(
                     "no",
                 )
             )
+        if row.status in ACTIVE_DISPATCH_STATUSES and has_passive_watch_language(text):
+            findings.append(
+                FlowFinding(
+                    "passive_watch_path",
+                    "major",
+                    row.item_id,
+                    f"{row.feature} uses watch/wait language without a complete watch contract.",
+                    "Add watched item, wake event or cadence, expected artifact, and coordinator action on wake.",
+                    "no",
+                )
+            )
+        if row.status in ACTIVE_DISPATCH_STATUSES and deploy_needed_without_decision(row):
+            findings.append(
+                FlowFinding(
+                    "deploy_needed_no_decision",
+                    "major",
+                    row.item_id,
+                    f"{row.feature} mentions deploy/release/cloud work but no concrete deploy decision is visible.",
+                    "Record `self_deploy`, `dispatch_deploy_owner`, `blocked`, or `not_required` with ref, deploy path, affected service/URL, and watch contract.",
+                    "yes",
+                    "deploy ownership may require coordinator judgment",
+                )
+            )
         if row_date and row.status in ACTIVE_DISPATCH_STATUSES:
             age_days = (today - row_date).days
             if age_days > stale_days:
@@ -234,7 +269,7 @@ def audit_owner_routing(rows: Iterable[DeliveryRow]) -> list[FlowFinding]:
                     "possible unnecessary escalation",
                 )
             )
-        if row.status in ACTIVE_DISPATCH_STATUSES and contains_any(text, ("someone", "later", "after deploy", "coordinator/ops")):
+        if row.status in ACTIVE_DISPATCH_STATUSES and contains_any(text, VAGUE_CLOSURE_WORDS):
             findings.append(
                 FlowFinding(
                     "wrong_owner_suspected",
@@ -245,6 +280,19 @@ def audit_owner_routing(rows: Iterable[DeliveryRow]) -> list[FlowFinding]:
                     "no",
                 )
             )
+        if row.status in ACTIVE_DISPATCH_STATUSES and "return to global pm" in text.lower():
+            if not contains_any(text, GLOBAL_PM_ALLOWED_WORDS):
+                findings.append(
+                    FlowFinding(
+                        "global_pm_overuse",
+                        "major",
+                        row.item_id,
+                        f"{row.feature} uses `Return to Global PM` without a visible global escalation trigger.",
+                        "Keep feature-local routing with the Feature Coordinator unless there is cross-feature conflict, stale recovery, credential/permission, priority, or operating-model defect.",
+                        "yes",
+                        "possible unnecessary escalation",
+                    )
+                )
     return findings
 
 
@@ -380,11 +428,34 @@ def audit_deploy_conflicts(
                 "cross-feature deploy conflict requires context",
             )
         )
+        for row in delivery_rows:
+            if row.status not in ACTIVE_DISPATCH_STATUSES:
+                continue
+            text = row_text(row)
+            lower = text.lower()
+            if (
+                contains_any(lower, ("combined release", "release ref", "deploy/ref", "clobber", "overwrite"))
+                and not contains_any(lower, ("preserve", "preserves", "preserved", "required action", "required smoke"))
+            ):
+                findings.append(
+                    FlowFinding(
+                        "release_compatibility_missing",
+                        "major",
+                        row.item_id,
+                        f"{row.feature} appears to need release/ref coordination but does not list preserved behaviors or smoke checks.",
+                        "Run the Release Reviewer gate: exact ref, preserved actions/services, focused smokes, deploy decision, and rollback note.",
+                        "yes",
+                        "combined release compatibility needs coordinator judgment",
+                    )
+                )
 
     active_deploy_rows = [
         row
         for row in delivery_rows
-        if row.status in ACTIVE_DISPATCH_STATUSES and contains_any(row_text(row), DEPLOY_WORDS)
+        if row.status in ACTIVE_DISPATCH_STATUSES
+        and contains_any(row_text(row), DEPLOY_WORDS)
+        and "`not_required`" not in row_text(row).lower()
+        and "not_required" not in row_text(row).lower()
     ]
     feature_counts = Counter(normalize(row.feature) for row in active_deploy_rows)
     if len(active_deploy_rows) >= 2 and len(feature_counts) >= 2:
@@ -513,6 +584,37 @@ def contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(needle.lower() in lower for needle in needles)
 
 
+def has_watch_contract(text: str) -> bool:
+    lower = text.lower()
+    if contains_any(lower, WATCH_CONTRACT_WORDS):
+        return True
+    return (
+        contains_any(lower, ("watch owner/path", "watch owner", "watch path"))
+        and contains_any(lower, ("next check event", "wake event", "until", "after returned", "after deployment"))
+        and contains_any(lower, ("return gate", "dispatch", "close", "blocker", "deploy decision", "completion gate"))
+    )
+
+
+def has_passive_watch_language(text: str) -> bool:
+    lower = text.lower()
+    if "monitoring not active" in lower:
+        return False
+    return contains_any(lower, WATCH_WORDS + PASSIVE_WATCH_PHRASES) and not has_watch_contract(lower)
+
+
+def deploy_needed_without_decision(row: DeliveryRow) -> bool:
+    text = row_text(row)
+    lower = text.lower()
+    if row.status == "needs_deploy":
+        return not contains_any(lower, DEPLOY_DECISION_WORDS)
+    if contains_any(lower, DEPLOY_WORDS) and contains_any(
+        lower,
+        ("needs_deploy", "after deploy", "deploy owner", "release ref"),
+    ):
+        return not contains_any(lower, DEPLOY_DECISION_WORDS)
+    return False
+
+
 def group_by_normalized_feature(rows: Iterable[AcceptanceRow | DeliveryRow]) -> dict[str, list]:
     grouped: dict[str, list] = defaultdict(list)
     for row in rows:
@@ -536,9 +638,12 @@ def matches_finding(finding: FlowFinding, query: str) -> bool:
 def group_findings(findings: Iterable[FlowFinding]) -> dict[str, list[FlowFinding]]:
     order = [
         "deploy_conflict",
+        "release_compatibility_missing",
         "returned_not_integrated",
         "stale_coordinator",
         "missing_watch_path",
+        "passive_watch_path",
+        "deploy_needed_no_decision",
         "wrong_owner_suspected",
         "global_pm_overuse",
         "repeated_blocker",

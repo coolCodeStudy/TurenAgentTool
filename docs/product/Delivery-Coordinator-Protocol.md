@@ -52,6 +52,8 @@ The Delivery Coordinator must not:
 - Stop at "next owner is X" when the user asked the coordinator to follow through and dispatch tools are available.
 - Hide unresolved role handoffs inside chat history.
 - Treat a child role's pushed branch, final message, or pending worktree id as delivery closure before the return has been reviewed and the next action is recorded.
+- Claim a watch path is active without a watch contract that names the watched item, wake event or cadence, expected return artifact, and coordinator action on return.
+- Use rationalizing closure phrases such as `branch pushed`, `after deploy`, `later`, `I will wait`, `Coordinator/Ops`, `someone`, or `Return to Global PM` without a concrete owner, ref, deploy decision, watch trigger, or blocker.
 
 ## Default User Flow
 
@@ -105,6 +107,7 @@ Every substantial routed task must include this packet. Keep it short, but do no
 - Deploy decision:
 - Return target:
 - Escalation target:
+- Watch contract:
 ```
 
 Use `not_applicable` only with a reason. Use `needs_review` when evidence is unclear.
@@ -158,6 +161,18 @@ Immediately after dispatch, the coordinator must do one of:
 
 The handoff is incomplete if the coordinator only says "I will wait" without a concrete wake-up path.
 
+Every active watch must include a watch contract:
+
+```markdown
+Watch Contract:
+- Watched item: child thread/session, pending worktree id, queue item, or deploy event.
+- Wake event or cadence: returned final message, branch push, deploy completion, acceptance result, or explicit check interval.
+- Expected artifact: branch, commit, verification, delivery-state update, acceptance result, or blocker.
+- Coordinator action on wake: apply Return Gate, integrate/reject, dispatch deploy owner, dispatch Acceptance Testing, close queue row, or escalate.
+```
+
+The watch contract is invalid if it only says `I will wait`, `watch active`, `monitoring`, or `heartbeat` without the fields above.
+
 Do not use a Global Project Manager heartbeat as the normal watch path for a feature dispatch. A Global Project Manager monitor is allowed only as an escalation or portfolio audit mechanism, such as detecting stale coordinators, missing watch paths, or returned child work that the feature coordinator failed to process.
 
 Global Project Manager portfolio audits should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. The audit may mark `context_required: yes` for missing Return Gates, contradictory status, repeated escalation, or unclear blockers. If it does not, prefer repo-native state and returned summaries over reading full conversations.
@@ -200,6 +215,34 @@ Allowed deploy decisions:
 
 The deploy decision is not valid if it uses a vague owner such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`. If the coordinator itself is the right owner, say `self_deploy` and continue through the shared deploy path. If another owner is required, name the role or thread and dispatch it when tools are available.
 
+## Anti-Rationalization Gate
+
+Before a Delivery Coordinator stops work on a substantial flow, it must scan its own handoff/final state for closure phrases that sound useful but hide missing ownership.
+
+Blocked closure phrases:
+
+- `branch pushed`
+- `code fixed`
+- `after deploy`
+- `later`
+- `I will wait`
+- `Coordinator/Ops`
+- `someone`
+- `Return to Global PM`
+- `ready for testing`
+- `watch active`
+
+These phrases are allowed only when paired with concrete delivery state:
+
+- `branch pushed` must be followed by Return Gate result and next owner.
+- `code fixed` must be followed by integration, deploy, and retest decision.
+- `after deploy` must name deploy owner, ref or commit, deploy path, affected service or URL, and watch contract.
+- `I will wait` or `watch active` must include a valid Watch Contract.
+- `Coordinator/Ops` or `someone` must be replaced by `self_deploy`, `dispatch_deploy_owner`, `blocked`, `not_required`, or a named role/thread.
+- `Return to Global PM` is allowed only for cross-feature conflict, stale/coordinator recovery, credential/permission, priority/budget, or operating-model defect.
+
+If the phrase cannot be grounded in concrete delivery state, the coordinator must keep working, dispatch the next owner, or record a precise blocker.
+
 ## Coordinator Return Gate
 
 Dispatch is not closed when another role/thread/session is created. A dispatched role's final response or pushed branch means the work has returned to the coordinator for review.
@@ -229,6 +272,8 @@ For cloud-served or browser-tested features, a Development Agent return that say
 The coordinator's next action must name the exact branch or commit to deploy, the intended deploy path, the affected service or URL, and the retest owner. It must not stop at "after deploy, retest" without either executing the dispatch or recording `Dispatch not executed` with the smallest required user/project-manager action.
 
 Before stopping, the coordinator must pass the Deploy Decision Gate above. A response that says "next step is Coordinator/Ops deploy" has not passed the gate because it does not assign a concrete owner or action.
+
+Before stopping, the coordinator must also pass the Anti-Rationalization Gate above. This is especially important after child Development returns, because a pushed branch is only an input to the Return Gate.
 
 Every returned role should make the coordinator's next step obvious by ending with:
 
@@ -272,6 +317,75 @@ Route to Project Management Agent when:
 - A delivery audit is needed.
 - Old documents may be superseded or misleading.
 - Completed work may have missed lesson capture.
+
+## Reviewer Gates
+
+Reviewer gates are risk-based checks, not permanent extra roles. A coordinator may run the check itself, dispatch a reviewer session, or request the named role when the trigger is present.
+
+### Release Reviewer
+
+Trigger when:
+
+- a branch or ref may affect multiple active cloud surfaces;
+- a feature branch is missing another active feature's action, route, service, or command;
+- a deploy/ref conflict, overwrite, or clobber risk appears;
+- a combined release ref is requested.
+
+Expected output:
+
+- exact release ref and commit;
+- preserved features, actions, routes, and services;
+- focused smoke checks;
+- deploy decision;
+- rollback or recovery note.
+
+### Frontend Experience Reviewer
+
+Trigger when:
+
+- a user-facing page, navigation entry, Command Workbench surface, or shared layout is added or changed;
+- multiple pages expose inconsistent navigation, spacing, typography, loading, or error states;
+- the user explicitly raises visual consistency or interaction quality concerns.
+
+Expected output:
+
+- surfaces reviewed;
+- consistency issues;
+- responsive and accessibility risks;
+- recommended first implementation slice;
+- acceptance criteria for the frontend change.
+
+### Acceptance Reviewer
+
+Trigger when:
+
+- user-facing acceptance is passed with major caveats;
+- a test result focuses on mechanics but may miss product usefulness;
+- a failed acceptance item is being reopened, split, or downgraded.
+
+Expected output:
+
+- accepted scope;
+- rejected gaps;
+- whether user acceptance may be requested;
+- retest scope and real entrypoint.
+
+### Security/Access Reviewer
+
+Trigger when:
+
+- token, private route, authentication, authorization, cookie, local secret, or credential behavior changes;
+- a test or deploy flow uses private tokens;
+- a user-facing surface could expose provider errors, stack traces, auth headers, or token configuration.
+
+Expected output:
+
+- secret-handling assessment;
+- leakage scan;
+- allowed storage/access path;
+- user-facing error-copy check.
+
+Small docs/status edits do not need reviewer gates unless they change operating rules, credentials, deployment behavior, or user-facing acceptance state.
 
 ## Completion Gates
 
