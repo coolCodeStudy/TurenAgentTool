@@ -406,6 +406,8 @@ class StockValuationTests(unittest.TestCase):
         card = render_valuation_card(packet)
         self.assertIn("Input: valuation 建滔积层板 HK -> resolved: HK.01888 Kingboard Laminates Holdings Limited -> market snapshot ticker: 1888.HK", card)
         self.assertIn("Market cap: HK$25.4B", card)
+        self.assertIn("Market cap: HK$25.4B (HKD)", card)
+        self.assertIn("currency: HKD", card)
         self.assertIn("HKEXnews and official company reports", card)
         self.assertNotIn("unknown currency", card)
 
@@ -443,15 +445,39 @@ class StockValuationTests(unittest.TestCase):
             },
         ):
             with tempfile.TemporaryDirectory() as tmp:
-                result = handle_command("valuation 建滔积层板 HK", output_dir=Path(tmp))
+                results = [
+                    handle_command(command, output_dir=Path(tmp))
+                    for command in (
+                        "valuation 建滔积层板 HK",
+                        "valuation 建滔積層板 HK",
+                        "valuation Kingboard Laminates HK",
+                    )
+                ]
 
-        self.assertTrue(result.ok)
-        get_context.assert_called_once_with(symbol="01888", market="HK")
-        self.assertIn("resolved: HK.01888 Kingboard Laminates Holdings Limited", result.message)
+        for result in results:
+            self.assertTrue(result.ok)
+            self.assertIn("resolved: HK.01888 Kingboard Laminates Holdings Limited", result.message)
+        self.assertEqual(get_context.call_count, 3)
+        get_context.assert_called_with(symbol="01888", market="HK")
 
-        self.assertEqual(parse_workbench_command("valuation 1888 HK")["exact_command"], "valuation HK.01888")
-        self.assertEqual(parse_workbench_command("valuation HK.01888")["exact_command"], "valuation HK.01888")
-        self.assertEqual(parse_workbench_command("valuation 000660 KR")["exact_command"], "valuation KR.000660")
+        with patch("investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference", return_value=[]):
+            for command in (
+                "valuation 建滔积层板 HK",
+                "valuation 建滔積層板 HK",
+                "valuation Kingboard Laminates HK",
+                "valuation 1888 HK",
+                "valuation HK.01888",
+                "valuation 000660 KR",
+            ):
+                preview = parse_workbench_command(command)
+                self.assertEqual(preview["action_id"], "stock_valuation", command)
+                self.assertNotEqual(preview["action_id"], "bootstrap_stock_profile", command)
+            self.assertEqual(parse_workbench_command("valuation 建滔积层板 HK")["exact_command"], "valuation HK.01888")
+            self.assertEqual(parse_workbench_command("valuation 建滔積層板 HK")["exact_command"], "valuation HK.01888")
+            self.assertEqual(parse_workbench_command("valuation Kingboard Laminates HK")["exact_command"], "valuation HK.01888")
+            self.assertEqual(parse_workbench_command("valuation 1888 HK")["exact_command"], "valuation HK.01888")
+            self.assertEqual(parse_workbench_command("valuation HK.01888")["exact_command"], "valuation HK.01888")
+            self.assertEqual(parse_workbench_command("valuation 000660 KR")["exact_command"], "valuation KR.000660")
 
     def test_p0_3_supported_fixture_runs_with_minimal_context_when_profile_missing(self) -> None:
         with patch(

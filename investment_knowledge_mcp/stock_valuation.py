@@ -251,6 +251,7 @@ def render_valuation_card(packet: dict[str, Any], *, include_artifact_path: bool
             f"{target_resolution.get('input_target')} -> resolved: "
             f"{target_resolution.get('normalized_target')} {target_resolution.get('company_name')} -> "
             f"market snapshot ticker: {target_resolution.get('provider_market_ticker')}"
+            f"{_target_resolution_currency_label(target_resolution)}"
         )
         lines.append("")
 
@@ -856,7 +857,18 @@ def _attach_fact_display_values(facts: list[dict[str, Any]], *, currency: str | 
 
 
 def _item_display(item: dict[str, Any]) -> str:
-    return str(item.get("display_value") or item.get("value") or "unknown")
+    display = str(item.get("display_value") or item.get("value") or "unknown")
+    currency = str(item.get("currency") or "").upper()
+    if currency == "HKD" and display.startswith("HK$") and "(HKD)" not in display:
+        return f"{display} (HKD)"
+    return display
+
+
+def _target_resolution_currency_label(target_resolution: dict[str, Any]) -> str:
+    currency = str(target_resolution.get("currency") or "").upper()
+    if currency == "HKD":
+        return " (currency: HKD)"
+    return ""
 
 
 def _infer_currency(*, facts: list[dict[str, Any]], market: str) -> str | None:

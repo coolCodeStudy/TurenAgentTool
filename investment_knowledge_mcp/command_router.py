@@ -2206,6 +2206,12 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     if symbol_market_match:
         symbol, market = symbol_market_match.groups()
         return normalize_provider_target(symbol, market)
+    multi_word_symbol_market = re.fullmatch(r"(.+)\s+([A-Za-z]{1,5})", cleaned)
+    if multi_word_symbol_market:
+        symbol, market = multi_word_symbol_market.groups()
+        normalized = normalize_provider_target(symbol, market)
+        if provider_target_resolution(*normalized):
+            return normalized
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None

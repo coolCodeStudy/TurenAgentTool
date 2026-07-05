@@ -17,7 +17,7 @@ from investment_knowledge_mcp.command_router import (
     WORKER_STATUS_COMMANDS,
 )
 from investment_knowledge_mcp.kline_agent import parse_kline_command
-from investment_knowledge_mcp.valuation_data_provider import normalize_provider_target
+from investment_knowledge_mcp.valuation_data_provider import normalize_provider_target, provider_target_resolution
 
 COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
     "Enter the private Command Workbench access token and preview again. "
@@ -1674,24 +1674,33 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     has_exact_kline_command = action.id == "kline_investigation" and bool(str(fields.get("exact_command") or "").strip())
     if has_exact_kline_command:
         needs_stock = False
+    valuation_allows_fixture_target = action.id in {
+        "stock_valuation",
+        "stock_valuation_latest",
+        "stock_valuation_artifact_evidence",
+    }
     if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
-        resolved_target = _candidate_with_stock_profile(target)
-        if resolved_target is None:
-            return _preview_from_action(
-                ParseContext(
-                    raw_input=context.raw_input,
-                    action_id="bootstrap_stock_profile",
-                    fields={"stock": f"{target['market']}.{target['symbol']}"},
-                    selected_target=target,
-                    parse_source=context.parse_source,
-                    confidence=min(confidence, float(target.get("confidence") or confidence)),
-                    recovery_message=(
-                        f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
-                        "Initialize a minimal stock profile, then preview the decision command again."
-                    ),
+        fixture_target = _provider_fixture_candidate(target) if valuation_allows_fixture_target else None
+        if fixture_target is not None:
+            target = fixture_target
+        else:
+            resolved_target = _candidate_with_stock_profile(target)
+            if resolved_target is None:
+                return _preview_from_action(
+                    ParseContext(
+                        raw_input=context.raw_input,
+                        action_id="bootstrap_stock_profile",
+                        fields={"stock": f"{target['market']}.{target['symbol']}"},
+                        selected_target=target,
+                        parse_source=context.parse_source,
+                        confidence=min(confidence, float(target.get("confidence") or confidence)),
+                        recovery_message=(
+                            f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
+                            "Initialize a minimal stock profile, then preview the decision command again."
+                        ),
+                    )
                 )
-            )
-        target = resolved_target
+            target = resolved_target
 
     if action.id == "decision_card" and target is not None and _target_needs_research(target):
         return _preview_from_action(
@@ -1725,42 +1734,47 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             else:
                 confidence = min(confidence, float(target.get("confidence") or confidence))
         else:
-            candidates = resolve_stock_candidates(stock_query)
-            if not candidates:
-                bootstrap_target = _symbol_candidate_from_query(stock_query)
-                if bootstrap_target is not None:
-                    return _preview_from_action(
-                        ParseContext(
-                            raw_input=context.raw_input,
-                            action_id="bootstrap_stock_profile",
-                            fields={"stock": f"{bootstrap_target['market']}.{bootstrap_target['symbol']}"},
-                            selected_target=bootstrap_target,
-                            parse_source=context.parse_source,
-                            confidence=min(confidence, float(bootstrap_target.get("confidence") or confidence)),
-                            recovery_message=(
-                                f'I recognized {action.label}, but {bootstrap_target["market"]}.'
-                                f'{bootstrap_target["symbol"]} is not in the stock profile database yet. '
-                                "Initialize a minimal stock profile, then preview the decision command again."
-                            ),
-                        )
-                    )
-                status = "needs_entity"
-                if _looks_path_like_query(stock_query):
-                    recovery_message = (
-                        f"I recognized {action.label}, but the target does not look like a stock symbol. "
-                        "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
-                    )
-                else:
-                    recovery_message = (
-                        f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
-                        "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
-                    )
-            elif len(candidates) == 1:
-                target = candidates[0]
+            fixture_target = _provider_fixture_candidate_from_query(stock_query) if valuation_allows_fixture_target else None
+            if fixture_target is not None:
+                target = fixture_target
                 confidence = min(confidence, float(target.get("confidence") or confidence))
             else:
-                status = "ambiguous_entity"
-                recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
+                candidates = resolve_stock_candidates(stock_query)
+                if not candidates:
+                    bootstrap_target = _symbol_candidate_from_query(stock_query)
+                    if bootstrap_target is not None:
+                        return _preview_from_action(
+                            ParseContext(
+                                raw_input=context.raw_input,
+                                action_id="bootstrap_stock_profile",
+                                fields={"stock": f"{bootstrap_target['market']}.{bootstrap_target['symbol']}"},
+                                selected_target=bootstrap_target,
+                                parse_source=context.parse_source,
+                                confidence=min(confidence, float(bootstrap_target.get("confidence") or confidence)),
+                                recovery_message=(
+                                    f'I recognized {action.label}, but {bootstrap_target["market"]}.'
+                                    f'{bootstrap_target["symbol"]} is not in the stock profile database yet. '
+                                    "Initialize a minimal stock profile, then preview the decision command again."
+                                ),
+                            )
+                        )
+                    status = "needs_entity"
+                    if _looks_path_like_query(stock_query):
+                        recovery_message = (
+                            f"I recognized {action.label}, but the target does not look like a stock symbol. "
+                            "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                        )
+                    else:
+                        recovery_message = (
+                            f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
+                            "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                        )
+                elif len(candidates) == 1:
+                    target = candidates[0]
+                    confidence = min(confidence, float(target.get("confidence") or confidence))
+                else:
+                    status = "ambiguous_entity"
+                    recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
 
     if status == "parsed" and action.id == "decision_card" and target is not None and _target_needs_research(target):
         return _preview_from_action(
@@ -1885,6 +1899,27 @@ def _symbol_candidate_from_query(query: str) -> dict[str, Any] | None:
         name=f"{market.upper()}.{symbol.upper()}",
         confidence=1.0,
         source="symbol",
+    )
+
+
+def _provider_fixture_candidate_from_query(query: str) -> dict[str, Any] | None:
+    parsed = _parse_stock_target(query)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    return _provider_fixture_candidate(_candidate(symbol=symbol, market=market, name="", confidence=1.0, source="provider_fixture"))
+
+
+def _provider_fixture_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    resolution = provider_target_resolution(str(candidate.get("symbol") or ""), str(candidate.get("market") or ""))
+    if not resolution:
+        return None
+    return _candidate(
+        symbol=str(resolution.get("normalized_symbol") or ""),
+        market=str(resolution.get("normalized_market") or ""),
+        name=str(resolution.get("company_name") or ""),
+        confidence=float(candidate.get("confidence") or 1.0),
+        source="provider_fixture",
     )
 
 
@@ -2060,6 +2095,12 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
         symbol, market = symbol_market_match.groups()
         if re.fullmatch(r"[A-Za-z]{1,5}", market):
             return normalize_provider_target(symbol, market)
+    multi_word_symbol_market = re.fullmatch(r"(.+)\s+([A-Za-z]{1,5})", cleaned)
+    if multi_word_symbol_market:
+        symbol, market = multi_word_symbol_market.groups()
+        normalized = normalize_provider_target(symbol, market)
+        if provider_target_resolution(*normalized):
+            return normalized
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None
