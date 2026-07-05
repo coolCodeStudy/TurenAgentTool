@@ -973,7 +973,7 @@ def render_command_workbench_html() -> str:
     }
 
     function parseDecisionCard(message) {
-      const lines = String(message || "").split(/\r?\n/).map((line) => line.trimEnd());
+      const lines = String(message || "").split(/\\r?\\n/).map((line) => line.trimEnd());
       const title = (lines[0] || "").trim();
       const thesisIndex = lines.findIndex((line) => line.startsWith("Thesis:"));
       const driversIndex = lines.findIndex((line) => line === "Drivers:");
