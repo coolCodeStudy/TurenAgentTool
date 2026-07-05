@@ -32,7 +32,16 @@ GLOBAL_PM_ALLOWED_WORDS = (
     "release ref",
     "deploy/ref",
 )
-WATCH_WORDS = ("watch owner", "watch path", "monitoring not active", "heartbeat", "monitor", "this coordinator")
+WATCH_WORDS = (
+    "watch owner",
+    "watch path",
+    "watch contract",
+    "watched item",
+    "monitoring not active",
+    "heartbeat",
+    "monitor",
+    "this coordinator",
+)
 WATCH_CONTRACT_WORDS = ("watch contract", "watched item", "wake event", "wake cadence", "next check event")
 PASSIVE_WATCH_PHRASES = ("i will wait", "watch active", "will wait", "wait for")
 DEPLOY_DECISION_WORDS = ("self_deploy", "dispatch_deploy_owner", "blocked", "not_required", "deploy decision")
