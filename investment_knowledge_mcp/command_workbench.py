@@ -16,6 +16,7 @@ from investment_knowledge_mcp.command_router import (
     WEEKLY_REVIEW_COMMANDS,
     WORKER_STATUS_COMMANDS,
 )
+from investment_knowledge_mcp.valuation_data_provider import normalize_provider_target
 
 COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
     "Enter the private Command Workbench access token and preview again. "
@@ -1986,12 +1987,12 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     market_symbol_match = re.fullmatch(r"([A-Za-z]{1,5})\.([A-Za-z0-9._-]+)", cleaned)
     if market_symbol_match:
         market, symbol = market_symbol_match.groups()
-        return symbol.upper(), market.upper()
+        return normalize_provider_target(symbol, market)
     symbol_market_match = re.fullmatch(r"(\S+)\s+(\S+)", cleaned)
     if symbol_market_match:
         symbol, market = symbol_market_match.groups()
         if re.fullmatch(r"[A-Za-z]{1,5}", market):
-            return symbol.upper(), market.upper()
+            return normalize_provider_target(symbol, market)
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None

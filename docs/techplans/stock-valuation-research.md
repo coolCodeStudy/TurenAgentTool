@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: implemented and deployed through superseding combined cloud release `801136fa9b3ed023d300effb3fd9fa3770693059`, but independent P0.2 retest `AT-2026-07-04-002` failed major on 2026-07-04 SGT because the fresh valuation card exposed raw provider error text in user-facing degraded-state copy. The Development copy fix is local-verified on branch `codex/stock-valuation-coordinator-dispatch` and needs a combined Kline plus Stock valuation release ref, cloud deploy, and independent retest before user acceptance. Artifact evidence read-back itself passed raw/display/meaningfulness/provider/bridge/frame-fit checks. User acceptance remains pending.
+Status: P0, P0.1, and P0.2 are accepted and must not be reopened. P0.3 non-US valuation provider coverage is implemented locally on branch `codex/stock-valuation-coordinator-dispatch` for the first KR/HK fixtures and needs Coordinator Return Gate review, cloud deploy of an integrated ref, and independent cloud-IP retest before any P0.3 user acceptance request.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -16,14 +16,16 @@ P0.2 addresses the accepted P0.1 follow-up: the command card must render readabl
 
 P0.2 artifact evidence addresses the 2026-07-04 independent acceptance blocker: visible Workbench behavior passed, but black-box Acceptance Testing could not verify saved artifact raw-value preservation from the allowed cloud surface. The implementation adds a bounded latest-artifact evidence command for a stock target rather than exposing direct filesystem reads. A later P0.2 copy fix keeps card-facing provider gaps on taxonomy copy such as `Market snapshot: partial provider gap` and sanitized degraded-state summaries while preserving raw provider errors only in saved artifact internals when needed for debugging.
 
+P0.3 addresses the 2026-07-05 Product addendum for non-US valuation provider coverage. It is not broad global coverage. The implementation adds fixture-scoped KR/HK ticker/entity mapping, Yahoo/yfinance-style market snapshot attempts, HKD/KRW currency behavior, category-level official/company source attempts, vendor-labeled fallback fundamentals when quote payloads expose operating anchors, and recovery behavior that names missing source families instead of stopping at a US-only provider gap.
+
 ## Touched Modules
 
 - `investment_knowledge_mcp/stock_valuation.py`: valuation method library, deterministic fact extraction, calculations, display formatting, provider-gap taxonomy, market-implied bridge, frame-fit ranking, artifact writing, latest-artifact loading, and card rendering.
 - `investment_knowledge_mcp/stock_valuation.py`: P0.2 artifact evidence projection for black-box read-back of raw numeric values, display values, calculation meaningfulness, and frame-fit fields without exposing local paths or raw provider errors.
 - `investment_knowledge_mcp/stock_valuation.py`: P0.2 provider-gap copy fix so card degraded-state lines summarize provider taxonomy and never render raw HTTP/provider diagnostics.
-- `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, returning structured facts, sources, and provider errors without raising through the command path.
-- `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`.
-- `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands.
+- `investment_knowledge_mcp/valuation_data_provider.py`: P0.1 US provider snapshot fetcher for SEC company facts and Yahoo quote fields, plus P0.3 fixture-scoped non-US target resolution for `KR.000660` / `000660.KS` and `HK.01888` / `1888.HK`.
+- `investment_knowledge_mcp/command_router.py`: command entrypoints for `valuation SYMBOL MARKET`, `value SYMBOL MARKET`, `估值 SYMBOL MARKET`, `查看估值 SYMBOL MARKET`, and `估值方法`, with KR/HK target normalization before repository lookup.
+- `investment_knowledge_mcp/command_workbench.py`: Workbench registry and deterministic parsing for valuation commands, with the same KR/HK normalization used by the router.
 - `scripts/smoke_test.py`: end-to-end command smoke path using local fixture data.
 - `tests/test_stock_valuation.py`: provider-free unit coverage for calculations, degraded behavior, artifact save/load, and method listing.
 
@@ -51,6 +53,8 @@ Artifact packet fields:
 - `watch_items`: triggers and failure checks per selected frame.
 - `source_coverage`: fact count, source count, official-source count, market-snapshot status, peer-data status, and user-confirmed-case state.
 - `source_coverage.provider_statuses`: P0.2 provider taxonomy for official financial facts and low-cost market snapshots: `complete_missing`, `partial_provider_gap`, `fallback_used`, or `stale_or_unknown_freshness` where applicable, plus human-readable explanation.
+- `target_resolution`: P0.3 mapping evidence for supported non-US fixtures: user-entered command, normalized internal target, company name, provider market ticker, provider, currency, mapping confidence, and mapping source.
+- `source_coverage.source_attempts`: P0.3 category-level attempts for provider mapping, Yahoo/yfinance market snapshot, official/company financial source families, and vendor-labeled fallback fundamentals.
 - `market_implied_bridge`: deterministic bridge lines such as sales anchor, EV/sales anchor, FCF yield or required future FCF margin, and cycle-normalized earnings placeholder when current earnings are negative.
 - `selected_frames[].fit_to_current_market_value`: P0.2 fit ranking fields: fit status, why the frame fits or not, implied assumptions, assumptions that must become true, main data gaps, and confidence.
 - `degraded_state`: explicit degraded reasons and data gaps.
@@ -59,6 +63,8 @@ Artifact packet fields:
 ## Command/API Entrypoints
 
 - `valuation US.INTC`, `value US.INTC`, `估值 US.INTC`: create and save a new valuation artifact, then return a concise valuation card.
+- `valuation KR.000660`, `valuation 000660 KR`: create and save a P0.3 non-US valuation artifact for SK hynix with normalized target `KR.000660`, provider ticker `000660.KS`, and `KRW` labeling.
+- `valuation 建滔积层板 HK`, `valuation HK.01888`, `valuation 1888 HK`: create and save a P0.3 non-US valuation artifact for Kingboard Laminates with normalized target `HK.01888`, provider ticker `1888.HK`, and `HKD` labeling.
 - `查看估值 US.INTC`, `latest valuation US.INTC`: read the latest saved valuation artifact for the stock.
 - `valuation artifact evidence US.INTC`, `valuation evidence US.INTC`, `估值证据 US.INTC`: read a bounded JSON evidence summary from the latest saved valuation artifact for the stock.
 - `估值方法`, `valuation methods`: list the five P0 internal core frames.
@@ -77,6 +83,14 @@ P0.1 also fetches a provider snapshot for US stocks:
 - Yahoo quote for latest price, market cap, shares outstanding, currency, and quote timestamp.
 - Each provider fact carries source ID, source type, confidence, timestamp, period end when known, and provider name.
 - Provider errors are preserved in saved artifact internals when needed for debugging, while card-facing degraded reasons use sanitized provider taxonomy rather than raw HTTP errors, exception fragments, URLs, local paths, or auth-ish text.
+
+P0.3 also fetches provider snapshots for the first supported non-US fixtures:
+
+- `KR.000660` and `000660 KR` normalize to SK hynix, internal target `KR.000660`, provider ticker `000660.KS`, and currency `KRW`.
+- `HK.01888`, `1888 HK`, and `建滔积层板 HK` normalize to Kingboard Laminates Holdings Limited, internal target `HK.01888`, provider ticker `1888.HK`, and currency `HKD`.
+- Yahoo/yfinance-style quote data is treated as vendor market data for price, market cap, shares, currency, and timestamp.
+- Yahoo/yfinance operating anchors such as revenue, net income, operating cash flow, capex, cash, debt, free cash flow, and EBITDA are used only when exposed by the quote payload and are labeled `yahoo_fallback_fundamentals`, not HKEXnews, DART/FSS, FSS, company IR, audited, or official facts.
+- Official/company financial extraction is represented as explicit source-attempt status. HK attempts are labeled `HKEXnews and official company reports`; KR attempts are labeled `DART/FSS and company IR`. Structured official extraction is still missing in this P0.3 slice.
 
 P0 computes:
 
@@ -152,9 +166,27 @@ The command remains usable without provider credentials, fresh market data, peer
 
 When degraded, the output presents frame research scaffolding rather than target-price precision.
 
+P0.3 degraded behavior adds category-level recovery:
+
+- If market snapshot exists but official/company financial facts are missing, the card still shows the currency-labeled market snapshot and any vendor-labeled fallback anchors, but marks official/company financials as `complete_missing`.
+- If fallback fundamentals are available, deterministic ratios and market-implied bridge lines can be computed provisionally and the card labels them as vendor fallback, not official facts.
+- If market snapshot and operating anchors are both missing, the card is a recovery card: it lists attempted source families, missing categories, provider mapping, market snapshot, official/company financials, fallback fundamentals, peer/estimate gaps, and valuation-case status. It must not present `unknown currency` as a usable report for supported fixtures.
+- User-facing copy must not include raw HTTP/provider diagnostics, endpoint URLs, exception fragments, auth/header text, stack traces, arbitrary file-read content, or local artifact paths. Raw provider errors may remain only in saved artifact internals.
+
+## P0.3 Acceptance Matrix
+
+| Fixture / form | Expected behavior | Evidence target |
+|---|---|---|
+| `valuation KR.000660` | Resolves to SK hynix, normalized `KR.000660`, provider ticker `000660.KS`, currency `KRW`, DART/FSS/company-IR source attempt, Yahoo/yfinance market snapshot status, fallback-fundamentals status, no raw diagnostics. | `tests.test_stock_valuation.StockValuationTests.test_p0_3_kr_provider_snapshot_maps_ticker_currency_and_source_categories` |
+| `valuation 000660 KR` | Same normalized target and Workbench exact command as `KR.000660`. | `tests.test_stock_valuation.StockValuationTests.test_p0_3_hk_and_kr_command_forms_normalize_in_workbench_and_router` |
+| `valuation 建滔积层板 HK` | Resolves to Kingboard Laminates Holdings Limited, normalized `HK.01888`, provider ticker `1888.HK`, currency `HKD`, HKEXnews/company-report source attempt, fallback-fundamentals status, no raw diagnostics. | `tests.test_stock_valuation.StockValuationTests.test_p0_3_hk_alias_maps_to_kingboard_and_evidence_preserves_mapping` |
+| `valuation HK.01888` / `valuation 1888 HK` | Normalize to `HK.01888`; Workbench preview and router lookup use the same normalized symbol. | `tests.test_stock_valuation.StockValuationTests.test_p0_3_hk_and_kr_command_forms_normalize_in_workbench_and_router` |
+| Artifact evidence read-back | Preserves target mapping, source attempts, provider statuses, raw/display calculation fields, meaningfulness, market-implied bridge, and safety flags without exposing raw provider diagnostics. | `build_valuation_artifact_evidence()` fixture assertions |
+| Existing US/Kline behavior | P0/P0.1/P0.2 remain accepted; existing US `US.INTC` tests and Kline preservation checks must continue to pass in focused verification. | `tests.test_stock_valuation`, Kline-focused tests or audit when available |
+
 ## Deployment Impact
 
-No service startup, database migration, external credential, or new provider integration is required for P0.2 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.2 requires cloud deploy of the integrated release ref and independent cloud-IP retest using the private token route. The artifact evidence path passed after Ops deploy event `#48`, but superseding release `801136fa9b3ed023d300effb3fd9fa3770693059` / Ops event `#49` failed independent retest because the fresh valuation card surfaced raw provider error text in degraded-state copy. Direct deploy of only the Stock valuation branch may clobber Kline live-provider behavior, so the copy fix should be included in a combined Kline plus Stock valuation release ref before cloud deploy.
+No service startup, database migration, external credential, or new provider account is required for P0.3 local command verification. Because the accepted user surface is the cloud Command Workbench at `http://47.84.190.191:8010/command`, P0.3 still needs cloud deploy of an integrated release ref and independent cloud-IP retest using the private token route before user acceptance. The Coordinator should decide whether this branch can be deployed directly or must be combined with any newer Kline/Command Workbench lineage to avoid clobbering accepted behavior.
 
 ## Verification Plan
 
@@ -164,6 +196,10 @@ No service startup, database migration, external credential, or new provider int
 - `python3 scripts/audit_delivery_state.py --feature "Stock valuation research"`
 - `python3 scripts/audit_agent_flow_health.py --feature "Stock valuation research"`
 - `git diff --check`
+
+Current P0.3 verification on 2026-07-05 SGT:
+
+- Planned focused checks: `.venv/bin/python -m unittest tests.test_stock_valuation`, targeted Kline preservation tests if present, `.venv/bin/python -m py_compile` for touched modules, `git diff --check`, `python3 scripts/audit_delivery_state.py --feature "Stock valuation research"`, and `python3 scripts/audit_agent_flow_health.py --feature "Stock valuation research"`.
 
 Current P0.2 verification on 2026-07-04 SGT:
 
@@ -212,5 +248,10 @@ P0 originally did not verify provider-backed market or financial statement fetch
 | P0.2 market-implied bridge | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Includes P/S and EV/sales anchors, required future FCF margin lines for negative FCF, cycle-normalized earnings placeholder for negative earnings, and no target-price precision. |
 | P0.2 frame fit ranking | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Selected frames are ranked by `fit_to_current_market_value` with assumptions, must-become-true items, gaps, and confidence. |
 | P0.2 black-box-safe artifact evidence path | needs_retest_after_deploy | `stock_valuation.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py`, cloud evidence in `AT-2026-07-04-002` | `valuation artifact evidence US.INTC` returns bounded JSON evidence from the latest stock valuation artifact and passed the raw/display/meaningfulness/provider/bridge/frame-fit checks on superseding release `801136fa9b3ed023d300effb3fd9fa3770693059`; the same retest failed because the fresh valuation card exposed raw provider error text. The user-facing provider-gap copy fix is local-verified and needs combined release deploy plus Acceptance retest before user acceptance. |
+| P0.3 non-US fixture ticker/entity mapping | local_verified | `valuation_data_provider.py`, `command_router.py`, `command_workbench.py`, `tests/test_stock_valuation.py` | `KR.000660` / `000660 KR` map to SK hynix and `000660.KS`; `HK.01888` / `1888 HK` / `建滔积层板 HK` map to Kingboard Laminates and `1888.HK`. |
+| P0.3 HKD/KRW currency behavior | local_verified | `stock_valuation.py`, `valuation_data_provider.py`, `tests/test_stock_valuation.py` | Supported fixtures render `KRW` and `HK$` values instead of `unknown currency`. |
+| P0.3 official/company source attempts | local_verified | `valuation_data_provider.py`, `stock_valuation.py`, `tests/test_stock_valuation.py` | HK source attempt labels HKEXnews/company reports; KR labels DART/FSS/company IR; fallback Yahoo/yfinance fundamentals are separated from official facts. |
+| P0.3 market-implied bridge or recovery behavior | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | When fallback operating anchors and market cap exist, deterministic bridge lines are produced. If inputs are missing, source attempts and missing categories remain visible as recovery evidence. |
+| P0.3 no raw diagnostics in user-facing cards/evidence | local_verified | `stock_valuation.py`, `tests/test_stock_valuation.py` | Card/evidence omit raw HTTP/provider diagnostics while saved artifact internals may retain raw errors. |
 | Do not present direct investment advice or write valuation inference into formal user insights | verified | `stock_valuation.py` | Safety flags and no repository insight-write calls. |
 | Valuation method listing | verified | `render_valuation_methods()`, Workbench action `valuation_methods` | Lists five P0 core frames without exposing specialist frames as defaults. |

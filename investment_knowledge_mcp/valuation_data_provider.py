@@ -29,10 +29,56 @@ SEC_FACT_TAGS: dict[str, tuple[str, ...]] = {
     "shares_outstanding": ("EntityCommonStockSharesOutstanding",),
 }
 
+NON_US_TARGETS: dict[tuple[str, str], dict[str, str]] = {
+    ("KR", "000660"): {
+        "normalized_symbol": "000660",
+        "normalized_market": "KR",
+        "normalized_target": "KR.000660",
+        "company_name": "SK hynix Inc.",
+        "provider_market_ticker": "000660.KS",
+        "currency": "KRW",
+        "mapping_confidence": "fixture",
+        "mapping_source": "p0_3_fixture",
+        "official_family": "DART/FSS and company IR",
+    },
+    ("HK", "01888"): {
+        "normalized_symbol": "01888",
+        "normalized_market": "HK",
+        "normalized_target": "HK.01888",
+        "company_name": "Kingboard Laminates Holdings Limited",
+        "provider_market_ticker": "1888.HK",
+        "currency": "HKD",
+        "mapping_confidence": "fixture",
+        "mapping_source": "p0_3_fixture",
+        "official_family": "HKEXnews and official company reports",
+    },
+}
+
+HK_ALIAS_SYMBOLS = {
+    "1888": "01888",
+    "01888": "01888",
+    "建滔积层板": "01888",
+    "建滔積層板": "01888",
+    "建滔积层板控股有限公司": "01888",
+    "建滔積層板控股有限公司": "01888",
+    "kingboard laminates": "01888",
+    "kingboard laminates holdings limited": "01888",
+}
+
+YAHOO_FALLBACK_FIELDS: dict[str, str] = {
+    "totalRevenue": "revenue",
+    "netIncomeToCommon": "net_income",
+    "operatingCashflow": "operating_cash_flow",
+    "capitalExpenditures": "capex",
+    "freeCashflow": "free_cash_flow",
+    "totalCash": "cash",
+    "totalDebt": "debt",
+    "ebitda": "ebitda",
+}
+
 
 def fetch_provider_snapshot(symbol: str, market: str, *, timeout: float = 8.0) -> dict[str, Any]:
-    normalized_symbol = symbol.strip().upper()
-    normalized_market = market.strip().upper()
+    normalized_symbol, normalized_market = normalize_provider_target(symbol, market)
     snapshot: dict[str, Any] = {
         "facts": [],
         "sources": [],
@@ -40,6 +86,27 @@ def fetch_provider_snapshot(symbol: str, market: str, *, timeout: float = 8.0) -
         "market_snapshot_status": "missing",
         "financial_fact_status": "missing",
     }
+    target = provider_target_resolution(normalized_symbol, normalized_market)
+    if target:
+        snapshot["target_resolution"] = target
+        snapshot["currency"] = target["currency"]
+        snapshot["source_attempts"] = _non_us_source_attempts(target)
+        yahoo_result = _fetch_yahoo_quote(target["provider_market_ticker"], timeout=timeout, fallback_financials=True)
+        snapshot["facts"].extend(yahoo_result["facts"])
+        snapshot["sources"].extend(yahoo_result["sources"])
+        snapshot["errors"].extend(yahoo_result["errors"])
+        if any(fact.get("metric") in {"price", "market_cap", "shares_outstanding"} for fact in yahoo_result["facts"]):
+            snapshot["market_snapshot_status"] = "present"
+            snapshot["source_attempts"]["market_snapshot"]["status"] = "available"
+        else:
+            snapshot["source_attempts"]["market_snapshot"]["status"] = "complete_missing"
+        if any(fact.get("source_type") == "yahoo_fallback_fundamentals" for fact in yahoo_result["facts"]):
+            snapshot["financial_fact_status"] = "fallback_used"
+            snapshot["source_attempts"]["fallback_fundamentals"]["status"] = "fallback_used"
+        else:
+            snapshot["source_attempts"]["fallback_fundamentals"]["status"] = "complete_missing"
+        return snapshot
+
     if normalized_market != "US":
         snapshot["errors"].append(f"provider snapshot is not implemented for market {normalized_market}")
         return snapshot
@@ -59,6 +126,64 @@ def fetch_provider_snapshot(symbol: str, market: str, *, timeout: float = 8.0) -
         snapshot["market_snapshot_status"] = "present"
 
     return snapshot
+
+
+def normalize_provider_target(symbol: str, market: str) -> tuple[str, str]:
+    normalized_market = market.strip().upper()
+    raw_symbol = symbol.strip()
+    normalized_symbol = raw_symbol.upper()
+    if normalized_market == "HK":
+        alias = HK_ALIAS_SYMBOLS.get(raw_symbol) or HK_ALIAS_SYMBOLS.get(raw_symbol.lower())
+        if alias:
+            normalized_symbol = alias
+        elif raw_symbol.isdigit():
+            normalized_symbol = raw_symbol.zfill(5)
+    return normalized_symbol, normalized_market
+
+
+def provider_target_resolution(symbol: str, market: str, *, input_target: str | None = None) -> dict[str, Any] | None:
+    normalized_symbol, normalized_market = normalize_provider_target(symbol, market)
+    target = NON_US_TARGETS.get((normalized_market, normalized_symbol))
+    if not target:
+        return None
+    return {
+        "input_target": input_target or f"{normalized_market}.{normalized_symbol}",
+        "normalized_symbol": target["normalized_symbol"],
+        "normalized_market": target["normalized_market"],
+        "normalized_target": target["normalized_target"],
+        "company_name": target["company_name"],
+        "provider_market_ticker": target["provider_market_ticker"],
+        "provider": "yahoo_quote",
+        "currency": target["currency"],
+        "mapping_confidence": target["mapping_confidence"],
+        "mapping_source": target["mapping_source"],
+        "official_family": target["official_family"],
+    }
+
+
+def _non_us_source_attempts(target: dict[str, str]) -> dict[str, dict[str, str]]:
+    return {
+        "provider_mapping": {
+            "family": "P0.3 fixture ticker/entity map",
+            "status": "available",
+            "detail": f"{target['normalized_target']} maps to {target['provider_market_ticker']}.",
+        },
+        "market_snapshot": {
+            "family": "Yahoo/yfinance market snapshot",
+            "status": "attempted",
+            "detail": f"Attempted market snapshot ticker {target['provider_market_ticker']}.",
+        },
+        "official_financials": {
+            "family": target["official_family"],
+            "status": "complete_missing",
+            "detail": "Official structured extraction is not implemented in this P0.3 slice.",
+        },
+        "fallback_fundamentals": {
+            "family": "Yahoo/yfinance vendor-labeled fallback fundamentals",
+            "status": "not_attempted",
+            "detail": "Used only when quote payload exposes operating anchors; not official/regulator facts.",
+        },
+    }
 
 
 def _fetch_sec_companyfacts(symbol: str, *, timeout: float) -> dict[str, Any]:
@@ -87,7 +212,7 @@ def _fetch_sec_companyfacts(symbol: str, *, timeout: float) -> dict[str, Any]:
     return result
 
 
-def _fetch_yahoo_quote(symbol: str, *, timeout: float) -> dict[str, Any]:
+def _fetch_yahoo_quote(symbol: str, *, timeout: float, fallback_financials: bool = False) -> dict[str, Any]:
     result: dict[str, Any] = {"facts": [], "sources": [], "errors": []}
     quote_time: Any = None
     try:
@@ -95,6 +220,8 @@ def _fetch_yahoo_quote(symbol: str, *, timeout: float) -> dict[str, Any]:
         quote = (((payload.get("quoteResponse") or {}).get("result") or [])[:1] or [{}])[0]
         quote_time = quote.get("regularMarketTime")
         facts = _extract_yahoo_quote_facts(symbol, quote)
+        if fallback_financials:
+            facts.extend(_extract_yahoo_fallback_fundamentals(symbol, quote, quote_time=quote_time))
         if not facts:
             facts = _extract_yahoo_chart_facts(symbol, _get_json(YAHOO_CHART_URL.format(symbol=symbol), timeout=timeout, headers=_yahoo_headers()))
         result["facts"].extend(facts)
@@ -117,6 +244,33 @@ def _fetch_yahoo_quote(symbol: str, *, timeout: float) -> dict[str, Any]:
             }
         )
     return result
+
+
+def _extract_yahoo_fallback_fundamentals(symbol: str, quote: dict[str, Any], *, quote_time: Any) -> list[dict[str, Any]]:
+    timestamp = _timestamp_to_iso(quote_time) or _now_iso()
+    currency = quote.get("financialCurrency") or quote.get("currency")
+    facts: list[dict[str, Any]] = []
+    for yahoo_field, metric in YAHOO_FALLBACK_FIELDS.items():
+        value = _raw_number(quote.get(yahoo_field))
+        if value is None:
+            continue
+        facts.append(
+            {
+                "metric": metric,
+                "value": value,
+                "source_id": f"yahoo:{symbol}:fallback:{metric}",
+                "source_type": "yahoo_fallback_fundamentals",
+                "knowledge_id": None,
+                "confidence": 0.48,
+                "confirmed_by_user": False,
+                "timestamp": timestamp,
+                "period_end": None,
+                "input_text": f"Yahoo/yfinance fallback fundamentals {symbol} {metric}",
+                "provider": "yahoo_fallback_fundamentals",
+                "currency": currency,
+            }
+        )
+    return facts
 
 
 def _get_json(url: str, *, timeout: float, headers: dict[str, str] | None = None, params: dict[str, str] | None = None) -> dict:
