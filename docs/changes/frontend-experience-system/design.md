@@ -28,17 +28,19 @@ Likely implementation locations for the first slice:
 
 ## Data And State
 
-This package should update:
+This package updates:
 
 - `docs/changes/frontend-experience-system/*`
 - `docs/project-management/Delivery-Queue.md`
-- Future PRD or technical plan only after Product/Frontend scope is decided.
+- `docs/project-management/Feature-Registry.md`
+- `docs/product/PRD-Frontend-Experience-System.md`
+- `docs/techplans/frontend-experience-system.md`
 
-It should not update `Feature-Registry.md` until a concrete user-facing implementation slice is approved. This inventory changes delivery state only; it does not change PRD status, implementation status, deployment status, or user acceptance.
+Feature Registry is now updated because a concrete user-facing implementation slice is approved and technically planned. Implementation status, deployment status, independent acceptance testing, and user acceptance remain not started or not required for this docs-only phase.
 
-PRD decision: yes, Product/Frontend should create a concise PRD before implementation. Reason: the first visible frontend slice changes cross-page information architecture, primary navigation labels, and what future surfaces such as Daily Market Brief are allowed to expose. The current Feature Registry row also says Product context is missing.
+PRD decision: complete in `docs/product/PRD-Frontend-Experience-System.md`.
 
-Technical plan decision: yes, a technical plan is needed after the PRD. Reason: even a conservative server-rendered slice touches shared HTML/CSS/JS output, two route owners, cloud-served pages, renderer tests, and acceptance evidence expectations.
+Technical plan decision: complete in `docs/techplans/frontend-experience-system.md`. Reason: even a conservative server-rendered slice touches shared HTML/CSS/JS output, two route owners, cloud-served pages, renderer tests, and acceptance evidence expectations.
 
 ## Risks
 
@@ -67,14 +69,14 @@ Accessibility risks:
 - Status and error messages are visually prominent, but only part of Weekly Review uses `aria-live`; Command Workbench result updates are not announced consistently.
 - Bilingual UI copy is inconsistent: `/command` is primarily English with Chinese examples, while `/weekly-review` is primarily Chinese.
 
-First implementation slice recommendation:
+First implementation slice decision:
 
-- Build a shared server-rendered app shell and primary navigation contract, then apply it to both `/weekly-review` and `/command` in one bounded slice if Product accepts a two-surface release gate.
+- Build a shared server-rendered app shell and primary navigation contract, then apply it to both `/weekly-review` and `/command` in one bounded slice. Product accepted this two-surface release gate in `docs/product/PRD-Frontend-Experience-System.md`.
 - The shell should include a stable brand/header area, primary nav entries for active pages only (`Weekly Review`, `Command Workbench`), a disabled or omitted Daily Market Brief entry until its PRD exists, shared design tokens, shared notice/button/card class names, a basic skip link/focus style, and consistent token-field placement/copy.
 - Keep all existing API contracts, command parsing, weekly-review generation, candidate-insight behavior, and localStorage token keys unchanged.
 - Non-goals for the first slice: no new frontend framework, no Daily Market Brief implementation, no result-card semantic redesign, no auth/token behavior change, no Weekly Review data/model changes, no user acceptance marking.
 
-If Product wants a lower-risk first slice, the fallback is to implement the shared shell in Weekly Review first and only add a visible link to the existing `/command` route. That avoids changing `/command` rendering in the same release, but it proves less of the shared system and leaves the Command Workbench island in place until the second slice.
+The lower-risk first-slice fallback was to implement the shared shell in Weekly Review first and only add a visible link to the existing `/command` route. Product rejected that fallback for this slice because it proves less of the shared system and leaves the Command Workbench island in place until the second slice.
 
 ## Reviewer Gates
 

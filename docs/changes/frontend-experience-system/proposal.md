@@ -20,10 +20,10 @@ Create a frontend experience coordination package that can inventory current sur
 ## Source Links
 
 - PRD: `docs/product/PRD-Frontend-Experience-System.md`.
-- Technical plan: `not_started`.
+- Technical plan: `docs/techplans/frontend-experience-system.md`.
 - Feature Registry row: `Frontend experience system`.
-- Acceptance Queue row: `not_required` for PRD docs; required when a user-facing implementation slice is deployed.
-- Delivery Queue rows: `DQ-2026-07-04-020` for inventory and `DQ-2026-07-05-002` for Product PRD return.
+- Acceptance Queue row: `not_required` for docs/planning; required when a user-facing implementation slice is deployed.
+- Delivery Queue rows: `DQ-2026-07-04-020` for inventory, `DQ-2026-07-05-002` for Product PRD return, and `DQ-2026-07-05-003` for Development technical-plan return.
 
 ## Owner Decisions
 

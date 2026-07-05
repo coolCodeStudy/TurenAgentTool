@@ -35,21 +35,23 @@
   - Security/Access Reviewer is required only if auth/token/private route behavior changes.
 - [x] Decide whether a PRD or technical plan is needed before implementation.
   - PRD needed: completed in `docs/product/PRD-Frontend-Experience-System.md`.
-  - Technical plan needed: yes. The implementation will touch server-rendered HTML/CSS/JS, shared UI helpers, route owners, tests, release review, and acceptance evidence.
+  - Technical plan needed: completed in `docs/techplans/frontend-experience-system.md`.
+  - Product decision: choose the recommended two-surface shared shell/navigation/design-token slice for `/weekly-review` and `/command`.
 - [x] Update Delivery Queue with the next owner and watch contract.
   - `DQ-2026-07-04-020` updated through Coordinator Return Gate after this inventory output.
-  - `DQ-2026-07-05-002` records the Product PRD return and the next Development technical-plan owner.
+  - `DQ-2026-07-05-002` records the Product PRD return.
+  - `DQ-2026-07-05-003` records this Development technical-plan return and the next reviewer owner.
 - [x] Keep deploy decision `not_required` until implementation begins.
-  - Deploy decision for this inventory phase remains `not_required`; no code or cloud surface changed.
+  - Deploy decision for inventory, PRD, and technical-plan phases remains `not_required`; no code or cloud surface changed.
 
 ## Next Owner Packet
 
-- Next owner: Development Agent.
-- Task: create the technical plan for the shared server-rendered shell/navigation/design-token slice across `/weekly-review` and `/command`, then return to the Feature Coordinator before implementation.
-- Recommended first implementation branch shape: one bounded server-rendered shell/navigation slice; no framework migration and no auth/token/API behavior changes.
+- Next owner: Feature Coordinator for Return Gate, then Frontend Experience Reviewer.
+- Task: apply Return Gate to `docs/techplans/frontend-experience-system.md`, then review it against `docs/product/PRD-Frontend-Experience-System.md` before implementation handoff.
+- Recommended first implementation branch shape: one bounded server-rendered shell/navigation slice; no framework migration.
 - Release gate note: if implementation updates both `/weekly-review` and `/command`, Release Reviewer is required before deploy because two active cloud surfaces are affected.
 - Acceptance gate note: independent Acceptance Reviewer is required only after a deployed user-facing slice exists.
-- Frontend gate note: Frontend Experience Reviewer is required before implementation handoff.
+- Security gate note: Security/Access Reviewer is not required unless implementation changes auth headers, token storage keys, private route behavior, secret handling, or token/error exposure.
 
 ## Verification Commands
 
@@ -69,4 +71,4 @@ Expected outcome: active queue state is visible; any missing watch or stale coor
 python3 scripts/audit_delivery_state.py --feature "Frontend experience system"
 ```
 
-Expected outcome: Feature Registry and Delivery Queue reflect PRD readiness and the next Development technical-plan owner.
+Expected outcome: Feature Registry and Delivery Queue reflect PRD readiness, technical-plan readiness, and the next Frontend Experience Reviewer owner.
