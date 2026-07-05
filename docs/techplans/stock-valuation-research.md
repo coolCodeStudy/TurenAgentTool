@@ -1,6 +1,6 @@
 # Stock Valuation Research P0 Technical Plan
 
-Status: P0, P0.1, and P0.2 are accepted and must not be reopened. P0.3 non-US valuation provider coverage is integrated in combined release branch `codex/release-kline-stock-valuation-p03` for the first KR/HK fixtures. The first cloud deploy-smoke found a blocker in name-based HK Workbench routing and explicit HKD labeling; the combined release branch now carries a local fix and needs redeploy, coordinator cloud smoke, and independent cloud-IP retest before any P0.3 user acceptance request.
+Status: P0, P0.1, and P0.2 are accepted and must not be reopened. P0.3 non-US valuation provider coverage is integrated in combined release branch `codex/release-kline-stock-valuation-p03` for the first KR/HK fixtures. The first cloud deploy-smoke found a blocker in name-based HK Workbench routing and explicit HKD labeling; release commit `e05e68900411c170b56115c357b06952b755b4fb` fixed that blocker, was quick-deployed through Ops event `#52`, and passed coordinator cloud smoke. P0.3 now needs independent cloud-IP retest before any P0.3 user acceptance request.
 
 Linked PRD: [`docs/product/PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
