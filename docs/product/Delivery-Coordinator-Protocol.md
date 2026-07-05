@@ -244,6 +244,14 @@ The coordinator must not present "role completed" as "feature completed" unless 
 
 The Coordinator Return Gate must end with one of the Feature Ownership Closure Contract actions: `accept_and_route`, `reject_and_return`, `blocked_with_owner`, or `ready_for_user_acceptance`.
 
+If the returned or coordinator branch changes durable delivery state, the coordinator must also apply the State Reconciliation Gate before portfolio status is reported:
+
+1. Compare the returned/coordinator ref with the authoritative project branch for `Feature-Registry.md`, `Acceptance-Queue.md`, `Delivery-Queue.md`, and linked PRD/technical-plan files.
+2. Preserve newer authoritative changes from unrelated features; do not merge a stale coordinator branch wholesale if it would revert other project state.
+3. Cherry-pick or manually port only the valid feature-specific state and evidence.
+4. Run `python3 scripts/audit_agent_flow_health.py --compare-ref <returned-ref> --feature "<feature>"` when a returned ref is known.
+5. Record the result as `reconciled`, `rejected`, or `blocked_with_owner`.
+
 For cloud-served or browser-tested features, a Development Agent return that says "code fixed and pushed" is not enough to close the coordinator loop. If the returned fix is not yet merged, deployed, and retested on the real cloud entrypoint, the coordinator must immediately create or dispatch the next owner for that gap:
 
 - `Development Agent` when the returned branch still needs merge conflict resolution, release prep, or deployment implementation work.

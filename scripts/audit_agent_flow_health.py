@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -139,6 +140,13 @@ def main() -> None:
         default=2,
         help="Flag active dispatch rows whose queue ID date is older than this many days. Default: 2.",
     )
+    parser.add_argument(
+        "--compare-ref",
+        help=(
+            "Compare current delivery state with another local ref/branch. "
+            "Use this when a coordinator branch may contain newer terminal state that has not been reconciled."
+        ),
+    )
     args = parser.parse_args()
 
     delivery_rows = parse_delivery_queue(DELIVERY_QUEUE_PATH)
@@ -153,6 +161,15 @@ def main() -> None:
         today=date.today(),
         include_history=args.include_history,
     )
+    if args.compare_ref:
+        findings.extend(
+            audit_state_reconciliation_needed(
+                args.compare_ref,
+                delivery_rows,
+                acceptance_rows,
+                registry_rows,
+            )
+        )
     if args.feature:
         findings = [finding for finding in findings if matches_finding(finding, args.feature)]
 
@@ -186,6 +203,69 @@ def audit_flow_health(
     findings.extend(audit_context_required(delivery_rows, acceptance_rows, registry_rows))
     findings.extend(audit_repeated_blockers(delivery_rows, acceptance_rows, include_history=include_history))
     findings.extend(audit_deploy_conflicts(delivery_rows, acceptance_rows, registry_rows, include_history=include_history))
+    return findings
+
+
+def audit_state_reconciliation_needed(
+    compare_ref: str,
+    delivery_rows: list[DeliveryRow],
+    acceptance_rows: list[AcceptanceRow],
+    registry_rows: list[RegistryRow],
+) -> list[FlowFinding]:
+    try:
+        other_registry = parse_registry_text(read_ref_file(compare_ref, "docs/project-management/Feature-Registry.md"))
+        other_acceptance = parse_acceptance_queue_text(
+            read_ref_file(compare_ref, "docs/project-management/Acceptance-Queue.md")
+        )
+        other_delivery = parse_delivery_queue_text(read_ref_file(compare_ref, "docs/project-management/Delivery-Queue.md"))
+    except RuntimeError as exc:
+        return [
+            FlowFinding(
+                "state_reconciliation_needed",
+                "blocker",
+                compare_ref,
+                f"Cannot compare coordinator ref `{compare_ref}`: {exc}",
+                "Fetch or repair the returned coordinator ref, then rerun the state reconciliation audit.",
+                "yes",
+                "returned coordinator ref is unavailable",
+            )
+        ]
+
+    findings: list[FlowFinding] = []
+    current_registry = {normalize(row.feature): row for row in registry_rows}
+    current_acceptance = group_by_normalized_feature(acceptance_rows)
+    current_delivery = group_by_normalized_feature(delivery_rows)
+
+    for other_row in other_registry:
+        key = normalize(other_row.feature)
+        current_row = current_registry.get(key)
+        if not current_row:
+            continue
+        reasons = registry_advancement_reasons(current_row, other_row)
+        acceptance_reasons = acceptance_advancement_reasons(
+            current_acceptance.get(key, []),
+            [row for row in other_acceptance if normalize(row.feature) == key],
+        )
+        delivery_reasons = delivery_terminal_reasons(
+            current_delivery.get(key, []),
+            [row for row in other_delivery if normalize(row.feature) == key],
+        )
+        all_reasons = reasons + acceptance_reasons + delivery_reasons
+        if all_reasons:
+            findings.append(
+                FlowFinding(
+                    "state_reconciliation_needed",
+                    "major",
+                    other_row.feature,
+                    f"`{compare_ref}` appears ahead of current authoritative state: {'; '.join(all_reasons[:4])}.",
+                    (
+                        "Run the State Reconciliation Gate: cherry-pick or manually port valid feature-specific "
+                        "registry/acceptance/delivery/tech-plan state, or record `rejected` / `blocked_with_owner`."
+                    ),
+                    "yes",
+                    "coordinator branch may contain unreconciled durable state",
+                )
+            )
     return findings
 
 
@@ -467,8 +547,113 @@ def blocker_bucket(text: str) -> str:
     return ""
 
 
+def registry_advancement_reasons(current: RegistryRow, other: RegistryRow) -> list[str]:
+    reasons: list[str] = []
+    if rank(other.technical_status, TECHNICAL_STATUS_RANK) > rank(current.technical_status, TECHNICAL_STATUS_RANK):
+        reasons.append(f"technical status {current.technical_status} -> {other.technical_status}")
+    if rank(other.implementation, IMPLEMENTATION_STATUS_RANK) > rank(current.implementation, IMPLEMENTATION_STATUS_RANK):
+        reasons.append(f"implementation {current.implementation} -> {other.implementation}")
+    if rank(other.evidence, EVIDENCE_STATUS_RANK) > rank(current.evidence, EVIDENCE_STATUS_RANK):
+        reasons.append(f"evidence {current.evidence} -> {other.evidence}")
+    if rank(other.user_acceptance, USER_ACCEPTANCE_RANK) > rank(current.user_acceptance, USER_ACCEPTANCE_RANK):
+        reasons.append(f"user acceptance {current.user_acceptance} -> {other.user_acceptance}")
+    if is_missing_plan(current.technical_plan) and not is_missing_plan(other.technical_plan):
+        reasons.append(f"technical plan added: {other.technical_plan}")
+    return reasons
+
+
+def acceptance_advancement_reasons(current_rows: list[AcceptanceRow], other_rows: list[AcceptanceRow]) -> list[str]:
+    current_by_id = {row.item_id: row for row in current_rows}
+    reasons: list[str] = []
+    for other in other_rows:
+        current = current_by_id.get(other.item_id)
+        if not current:
+            if rank(other.status, ACCEPTANCE_STATUS_RANK) >= rank("passed", ACCEPTANCE_STATUS_RANK):
+                reasons.append(f"acceptance row {other.item_id} exists as {other.status} on compared ref")
+            continue
+        if rank(other.status, ACCEPTANCE_STATUS_RANK) > rank(current.status, ACCEPTANCE_STATUS_RANK):
+            reasons.append(f"acceptance {other.item_id} {current.status} -> {other.status}")
+    return reasons
+
+
+def delivery_terminal_reasons(current_rows: list[DeliveryRow], other_rows: list[DeliveryRow]) -> list[str]:
+    current_by_id = {row.item_id: row for row in current_rows}
+    reasons: list[str] = []
+    for other in other_rows:
+        current = current_by_id.get(other.item_id)
+        if not current:
+            if other.status == "closed":
+                reasons.append(f"delivery row {other.item_id} closed on compared ref")
+            continue
+        if current.status in ACTIVE_DISPATCH_STATUSES and other.status in {"closed", "blocked"}:
+            reasons.append(f"delivery {other.item_id} {current.status} -> {other.status}")
+    return reasons
+
+
+def rank(value: str, table: dict[str, int]) -> int:
+    return table.get(value.strip().lower(), 0)
+
+
+def is_missing_plan(value: str) -> bool:
+    return value.strip().lower() in {"", "missing", "none", "not_applicable"}
+
+
+TECHNICAL_STATUS_RANK = {
+    "missing": 0,
+    "not_started": 0,
+    "needs_review": 1,
+    "draft": 1,
+    "partially_implemented": 2,
+    "implemented": 3,
+    "superseded": 0,
+    "not_applicable": 0,
+}
+IMPLEMENTATION_STATUS_RANK = {
+    "missing": 0,
+    "not_started": 0,
+    "none": 0,
+    "needs_review": 1,
+    "in_progress": 2,
+    "local_verified": 3,
+    "deployed": 4,
+    "not_applicable": 0,
+}
+EVIDENCE_STATUS_RANK = {
+    "none": 0,
+    "missing": 0,
+    "code_reference": 1,
+    "local_verified": 2,
+    "test_passed": 3,
+    "deploy_verified": 4,
+    "doc_reference": 1,
+}
+USER_ACCEPTANCE_RANK = {
+    "not_required": 0,
+    "pending": 1,
+    "needs_reacceptance": 2,
+    "rejected": 0,
+    "accepted": 3,
+}
+ACCEPTANCE_STATUS_RANK = {
+    "pending": 0,
+    "blocked": 0,
+    "failed": 0,
+    "needs_retest": 1,
+    "passed": 2,
+}
+
+
 def parse_delivery_queue(path: Path) -> list[DeliveryRow]:
     rows = parse_table(path, "| ID | Feature | Target Role |")
+    return parse_delivery_queue_rows(rows)
+
+
+def parse_delivery_queue_text(text: str) -> list[DeliveryRow]:
+    rows = parse_table_text(text, "| ID | Feature | Target Role |")
+    return parse_delivery_queue_rows(rows)
+
+
+def parse_delivery_queue_rows(rows: list[list[str]]) -> list[DeliveryRow]:
     parsed: list[DeliveryRow] = []
     for cells in rows:
         if len(cells) != 8:
@@ -479,6 +664,15 @@ def parse_delivery_queue(path: Path) -> list[DeliveryRow]:
 
 def parse_acceptance_queue(path: Path) -> list[AcceptanceRow]:
     rows = parse_table(path, "| ID | Feature | Surface | Status |")
+    return parse_acceptance_queue_rows(rows)
+
+
+def parse_acceptance_queue_text(text: str) -> list[AcceptanceRow]:
+    rows = parse_table_text(text, "| ID | Feature | Surface | Status |")
+    return parse_acceptance_queue_rows(rows)
+
+
+def parse_acceptance_queue_rows(rows: list[list[str]]) -> list[AcceptanceRow]:
     parsed: list[AcceptanceRow] = []
     for cells in rows:
         if len(cells) != 8:
@@ -489,6 +683,15 @@ def parse_acceptance_queue(path: Path) -> list[AcceptanceRow]:
 
 def parse_registry(path: Path) -> list[RegistryRow]:
     rows = parse_table(path, "| Feature | Product Doc | PRD Status |")
+    return parse_registry_rows(rows)
+
+
+def parse_registry_text(text: str) -> list[RegistryRow]:
+    rows = parse_table_text(text, "| Feature | Product Doc | PRD Status |")
+    return parse_registry_rows(rows)
+
+
+def parse_registry_rows(rows: list[list[str]]) -> list[RegistryRow]:
     parsed: list[RegistryRow] = []
     for cells in rows:
         if len(cells) != 10:
@@ -500,9 +703,13 @@ def parse_registry(path: Path) -> list[RegistryRow]:
 def parse_table(path: Path, header_prefix: str) -> list[list[str]]:
     if not path.exists():
         raise SystemExit(f"Missing file: {path}")
+    return parse_table_text(path.read_text(encoding="utf-8"), header_prefix)
+
+
+def parse_table_text(text: str, header_prefix: str) -> list[list[str]]:
     table_rows: list[list[str]] = []
     in_table = False
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in text.splitlines():
         line = raw_line.strip()
         if line.startswith(header_prefix):
             in_table = True
@@ -519,6 +726,20 @@ def parse_table(path: Path, header_prefix: str) -> list[list[str]]:
             continue
         table_rows.append(split_markdown_table_row(line))
     return table_rows
+
+
+def read_ref_file(ref: str, relative_path: str) -> str:
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{relative_path}"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        message = clean_cell(result.stderr or result.stdout or "git show failed")
+        raise RuntimeError(message)
+    return result.stdout
 
 
 def split_markdown_table_row(line: str) -> list[str]:
@@ -616,6 +837,8 @@ def matches_finding(finding: FlowFinding, query: str) -> bool:
 def group_findings(findings: Iterable[FlowFinding]) -> dict[str, list[FlowFinding]]:
     order = [
         "deploy_conflict",
+        "release_compatibility_missing",
+        "state_reconciliation_needed",
         "returned_not_integrated",
         "stale_coordinator",
         "missing_watch_path",

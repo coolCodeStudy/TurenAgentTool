@@ -91,6 +91,26 @@ Do not escalate normal next-owner routing, developer follow-up, deploy retest, o
 
 When the Global Project Manager recovers a stale or broken feature flow, the recovery action should normally hand the result back to the same Feature Coordinator with an instruction to apply the Return Gate. The Global Project Manager should not become the steady-state feature coordinator unless the original coordinator is missing, cancelled, or explicitly replaced.
 
+## State Reconciliation Gate
+
+Feature-level delivery state is not authoritative merely because it was updated on a coordinator or child-agent branch. When a feature coordinator reaches a terminal state on any branch that is not the current authoritative project branch, the coordinator or Global Project Manager must run a state reconciliation gate before using that result in portfolio status.
+
+The reconciliation gate checks:
+
+- `docs/project-management/Feature-Registry.md`
+- `docs/project-management/Acceptance-Queue.md`
+- `docs/project-management/Delivery-Queue.md`
+- linked PRDs, technical plans, and implementation traceability rows
+- release/deploy refs and acceptance evidence mentioned by the returned branch
+
+The result must be one of:
+
+- `reconciled`: valid state has been cherry-picked or manually ported to the authoritative branch and verified.
+- `rejected`: the returned state is stale, superseded, or contradicted by newer authoritative state.
+- `blocked_with_owner`: a conflict, missing ref, or permission prevents reconciliation; the exact owner and unblock action are recorded.
+
+The Global Project Manager should not report a feature as not started or unfinished when a known coordinator branch records that it is implemented, acceptance-passed, or user-accepted. First run `python3 scripts/audit_agent_flow_health.py --compare-ref <coordinator-ref> --feature "<feature>"`, then reconcile or reject the returned state.
+
 ## Completion Gates
 
 - Code-done: code or docs are committed, pushed when expected, locally verified, and returned with evidence.
