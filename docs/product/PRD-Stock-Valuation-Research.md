@@ -1,6 +1,6 @@
 # PRD: Stock Valuation Research
 
-Status: ready for technical planning. P0 and P0.1 are accepted; P0.2 product addendum is ready for technical planning.
+Status: ready for technical planning. P0, P0.1, and P0.2 are accepted; P0.3 product addendum is ready for technical planning.
 
 ## Background
 
@@ -671,6 +671,81 @@ P0.2 remains a research-aid feature:
 10. The output identifies relevant frames that do not fit current market value and explains why without dismissive or advisory language.
 11. The feature continues to show source coverage, stale fields, confidence, no-advice wording, and no formal user-insight-write behavior.
 12. Peer set sourcing, analyst estimates, normalized multi-year financial tables, async refresh, and user-confirmed valuation-case workflow are not required for P0.2 acceptance unless Engineering finds one is strictly necessary to satisfy the market-implied bridge.
+
+## P0.3 Addendum: Non-US Valuation Provider Coverage
+
+Status: ready for technical planning.
+
+P0, P0.1, and P0.2 remain accepted and must not be reopened. P0.3 is a new provider-coverage addendum for non-US listed stocks where the accepted US-only provider path is not enough. The first implementation scope is conservative: support Korea and Hong Kong well enough for useful single-stock valuation reports, with `KR.000660` / SK hynix and `HK.01888` / 建滔積層板控股有限公司 / Kingboard Laminates Holdings Limited as the first acceptance fixtures.
+
+Product mapping notes:
+
+- SK hynix maps to internal target `KR.000660`; the first Yahoo/yfinance-style market snapshot candidate is `000660.KS`; reporting currency should be `KRW`.
+- 建滔積層板 / Kingboard Laminates maps to HKEX stock code `1888`, displayed internally as `HK.01888` when the command parser normalizes Hong Kong codes to five digits; the first Yahoo/yfinance-style market snapshot candidate is `1888.HK`; reporting currency should be `HKD`.
+- Engineering must preserve both the user-entered target and the resolved provider ticker in the output, for example `Input: 建滔积层板 HK -> resolved: HK.01888 Kingboard Laminates Holdings Limited -> market snapshot ticker: 1888.HK`.
+- If Engineering discovers that a provider requires a different exchange suffix, code format, or entity mapping, the card and artifact must show the attempted mapping and the selected mapping instead of silently substituting another stock.
+
+### P0.3 Minimum Useful Report
+
+A P0.3 non-US valuation card must not stop at "unknown currency" or a generic provider gap. The minimum useful report for a supported KR or HK stock is:
+
+- Resolved ticker and entity mapping: input text, normalized internal symbol/market, company name, provider market ticker, exchange/market, and mapping confidence or mapping source.
+- Currency-labeled market snapshot when available: latest price, market cap, shares outstanding when available, currency, provider, snapshot timestamp or stale/unknown freshness label, and any FX note if later frames compare across currencies.
+- Official or company financial source coverage: whether official financial facts were available, partially available, or missing, with source family and attempted provider/source named.
+- Valuation snapshot: revenue, net income, operating cash flow, capex/free cash flow, cash, debt/net debt, shares, and enterprise value only where inputs exist; every value must carry `HKD`, `KRW`, or an explicit source currency.
+- Deterministic ratios where inputs exist: P/S, PE, FCF margin, FCF yield, EV/sales, EV/FCF, net debt, and other P0/P0.2 ratios, with `not meaningful` labels for negative earnings, negative FCF, negative EBITDA, zero denominators, or missing denominators.
+- Market-implied scenario or bridge: explain whether current market cap or EV is being bridged by sales multiple, normalized earnings, FCF recovery, cyclical duration, HBM/cycle expectations, segment/asset value, or another selected P0 frame. The bridge may be partially qualitative only when the missing inputs are named.
+- Source coverage and degraded-state section: show official financials, market snapshot, provider mapping, peer/estimate availability, and user-confirmed valuation-case status as separate categories.
+- Safety line: research aid only, no direct buy/sell/hold recommendation, no formal user insight written without confirmation.
+
+### P0.3 Source Policy
+
+Market snapshot:
+
+- Use Yahoo/yfinance-style exchange ticker mapping where available for low-cost market snapshots, starting with `000660.KS` for SK hynix and `1888.HK` for Kingboard Laminates if provider verification succeeds.
+- Market snapshot facts are vendor-labeled market data. They may support price, market cap, shares outstanding, quote currency, quote timestamp, and stale status.
+- If the snapshot provider returns partial data, use P0.2 taxonomy such as `partial_provider_gap` and name the missing category without raw HTTP/provider diagnostics.
+
+Official or company financials:
+
+- HK listed companies: prefer HKEXnews filings, annual/interim reports, and official company investor-relations reports. HKEXnews or official company reports are the authoritative source for financial-statement facts.
+- KR listed companies: prefer DART/FSS filings, company investor-relations reports, or explicitly sourced company reports. Company IR and regulator filings are authoritative for financial-statement facts.
+- Yahoo/yfinance fundamentals may be used only as vendor-labeled fallback facts, not as official/regulator facts. The output must not describe yfinance fundamentals as audited, official, HKEX, DART, FSS, or company-reported unless the underlying source is separately verified.
+- User knowledge and existing research may influence frame selection, but it must be labeled separately from official financial facts and market data.
+
+Missing data labeling:
+
+- Missing data must be labeled by category: `provider_mapping`, `market_snapshot`, `official_financials`, `cash_flow_statement`, `balance_sheet`, `shares_outstanding`, `enterprise_value_inputs`, `peer_multiples`, `analyst_estimates`, `valuation_case`, or `freshness`.
+- User-facing output must not show raw provider errors, exception classes, endpoint URLs, auth/header text, local paths, or stack traces. Raw diagnostics may remain only in protected artifact internals when needed for debugging.
+
+### P0.3 Degraded Behavior
+
+P0.3 should allow transparent partial reports, but only when enough data remains to help the user think about valuation.
+
+- If market snapshot exists but official financials are missing, show the currency-labeled market snapshot, explain that deterministic operating ratios are blocked by missing official/company financial facts, and offer a refresh/source-discovery path. Do not present this as a full valuation report.
+- If official/company financials exist but market snapshot is missing, show sourced financial facts and frame relevance, but mark market-implied bridge, market cap, EV, and market multiples as unavailable because the market snapshot provider failed or is missing.
+- If both official/company financials and market snapshot are missing, return a recovery card that lists attempted source families and missing categories; it is not a usable valuation report and must not show `unknown currency` as if it were a valid report.
+- If provider mapping is ambiguous or unverified, return candidates or a mapping-confirmation card rather than running valuation against the wrong entity.
+- If only vendor-labeled fallback fundamentals are available, the card may compute provisional ratios, but must label them as vendor fallback, lower confidence, and not official/regulator facts.
+- If current data supports only one narrow bridge, show that bridge and explicitly list follow-up inputs needed for stronger frames, such as official cash flow, net debt, segment revenue, HBM/cycle evidence, or peer multiples.
+
+### P0.3 Acceptance Criteria
+
+1. `valuation KR.000660` and `valuation 000660 KR` resolve to SK hynix, display the normalized target `KR.000660`, the provider market ticker attempted or used, and `KRW` currency labels for market and financial facts when available.
+2. `valuation 建滔积层板 HK`, `valuation HK.01888`, and `valuation 1888 HK` resolve or ask for confirmation as Kingboard Laminates Holdings Limited / 建滔積層板控股有限公司, display normalized target `HK.01888`, provider market ticker attempted or used, and `HKD` currency labels when available.
+3. The prior SK hynix output fails P0.3 if it only reports a US-only provider gap, unknown currency, no provider ticker mapping, or no category-level source coverage.
+4. The prior HK missing output fails P0.3 if it cannot map 建滔積層板/Kingboard Laminates to HK code `1888`/`HK.01888`, or if it stops at generic missing provider text without attempted HK market snapshot and official-source categories.
+5. For supported KR/HK fixtures, the card distinguishes market snapshot provider data from official/company financial facts and from vendor-labeled fallback fundamentals.
+6. HK official financial source attempts are labeled as HKEXnews and/or official company reports; KR official financial source attempts are labeled as DART/FSS, company IR, or explicitly sourced company reports.
+7. Yahoo/yfinance fundamentals, if used, are labeled as vendor fallback and never presented as official/regulator facts.
+8. Currency formatting uses `HKD` and `KRW` prefixes or labels consistently; no user-facing valuation report may treat `unknown currency` as usable for market cap, revenue, FCF, net debt, or ratios.
+9. Deterministic ratios are computed only when their inputs exist and share a compatible currency basis; negative or missing denominator behavior follows P0.2 meaningfulness rules.
+10. When market cap/EV and at least one operating anchor exist, the output includes a market-implied bridge. For SK hynix, the bridge should be able to discuss sales multiple, cycle-normalized earnings, FCF recovery, and HBM/memory-cycle expectations when relevant inputs or sourced context exist. For Kingboard Laminates, the bridge should be able to discuss sales/earnings/cash-flow support and cyclical laminate/PCB-material expectations when relevant inputs exist.
+11. When bridge inputs are missing, the output names the missing categories and attempted providers/sources, and avoids target-price precision.
+12. Source coverage is visible in the card and artifact: provider mapping, market snapshot, official/company financials, deterministic calculations, fallback fundamentals, peer/estimate availability, and stale/unknown freshness.
+13. User-facing degraded copy contains no raw HTTP/provider diagnostics, endpoint URLs, exception fragments, auth/header text, local paths, stack traces, or arbitrary file-read content.
+14. Bounded artifact evidence, if available for P0.3, preserves mapping, source coverage, raw numeric facts, display values, calculation meaningfulness, market-implied bridge, and degraded categories without exposing unsafe diagnostics.
+15. P0.3 does not require broad global market coverage, peer-set sourcing, analyst estimates, async refresh, or user-confirmed valuation-case workflow beyond the KR/HK fixture scope unless Engineering finds one of those is strictly necessary to produce the minimum useful report.
 
 #### Use Database First
 
