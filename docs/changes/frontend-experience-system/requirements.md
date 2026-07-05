@@ -14,6 +14,16 @@
 - Delivery Queue remains the active dispatch state.
 - No routine daily log is created.
 
+First-slice frontend acceptance criteria:
+
+- Active user-facing pages expose one shared primary navigation model with clear active state.
+- The first slice must not add a Daily Market Brief link unless its Product package or PRD exists; a disabled future placeholder is acceptable only if Product explicitly asks for it.
+- Existing API routes, auth headers, localStorage token keys, command execution guards, weekly-review generation, save/refresh behavior, and candidate-insight behavior remain unchanged.
+- Desktop and mobile verification captures `/weekly-review` and every changed `/command` route owner.
+- Primary controls remain reachable by keyboard and visible at mobile widths.
+- Status, error, loading, and result updates have a defined announcement or focus-management behavior.
+- No user acceptance is marked by the implementation or review agents.
+
 ## Degraded Behavior
 
 If implementation ownership or framework direction is unclear, the coordinator should stop at a Product/Frontend decision packet rather than making a broad technical migration.
