@@ -25,20 +25,24 @@
   - Keyboard users can reach primary nav, main content, token field, primary actions, generated results, and action catalog without pointer-only controls.
   - Status/error/result updates have a documented live-region or focus-management rule.
 - [x] Decide whether a PRD or technical plan is needed before implementation.
-  - PRD needed: yes. The slice changes product information architecture and primary navigation across user-facing surfaces, and the Feature Registry currently says Product context is missing.
-  - Technical plan needed: yes. The implementation will touch server-rendered HTML/CSS/JS, shared UI helpers, route owners, tests, and acceptance evidence.
+  - PRD needed: completed in `docs/product/PRD-Frontend-Experience-System.md`.
+  - Technical plan needed: completed in `docs/techplans/frontend-experience-system.md`.
+  - Product decision: choose the recommended two-surface shared shell/navigation/design-token slice for `/weekly-review` and `/command`.
 - [x] Update Delivery Queue with the next owner and watch contract.
   - `DQ-2026-07-04-020` updated through Coordinator Return Gate after this inventory output.
+  - `DQ-2026-07-05-002` records the Product PRD return.
+  - `DQ-2026-07-05-003` records this Development technical-plan return and the next reviewer owner.
 - [x] Keep deploy decision `not_required` until implementation begins.
-  - Deploy decision for this inventory phase remains `not_required`; no code or cloud surface changed.
+  - Deploy decision for inventory, PRD, and technical-plan phases remains `not_required`; no code or cloud surface changed.
 
 ## Next Owner Packet
 
-- Next owner: Product/Frontend Experience owner.
-- Task: write or approve a concise PRD for the shared app shell/navigation first slice, then route Engineering to create a technical plan.
+- Next owner: Feature Coordinator for Return Gate, then Frontend Experience Reviewer.
+- Task: apply Return Gate to `docs/techplans/frontend-experience-system.md`, then review it against `docs/product/PRD-Frontend-Experience-System.md` before implementation handoff.
 - Recommended first implementation branch shape: one bounded server-rendered shell/navigation slice; no framework migration.
 - Release gate note: if implementation updates both `/weekly-review` and `/command`, Release Reviewer is required before deploy because two active cloud surfaces are affected.
 - Acceptance gate note: independent Acceptance Reviewer is required only after a deployed user-facing slice exists.
+- Security gate note: Security/Access Reviewer is not required unless implementation changes auth headers, token storage keys, private route behavior, secret handling, or token/error exposure.
 
 ## Verification Commands
 
@@ -53,3 +57,9 @@ python3 scripts/audit_agent_flow_health.py --feature "Frontend experience system
 ```
 
 Expected outcome: active queue state is visible; any missing watch or stale coordinator state is actionable.
+
+```bash
+python3 scripts/audit_delivery_state.py --feature "Frontend experience system"
+```
+
+Expected outcome: Feature Registry and Delivery Queue reflect PRD readiness, technical-plan readiness, and the next Frontend Experience Reviewer owner.

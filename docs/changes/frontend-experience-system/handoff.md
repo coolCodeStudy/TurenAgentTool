@@ -3,19 +3,19 @@
 ## Coordinator Packet
 
 - Change ID: `frontend-experience-system`
-- Current owner: Feature Coordinator / Product Experience Owner for inventory phase
-- Next owner: Product/Frontend Experience owner for PRD, then Development Agent for technical plan
-- Source PRD: `not_applicable` for inventory phase
-- Technical plan: `needed_after_PRD`
-- Feature Registry row: `Frontend experience system` exists with Product context and technical plan still missing; inventory phase does not change implementation or acceptance status
-- Acceptance Queue row: `not_required` for inventory phase
-- Delivery Queue row: `DQ-2026-07-04-020`
-- Scope: inventory current frontend surfaces, define shared experience direction, and recommend the first implementation slice
-- Out of scope: full redesign, framework migration, product-feature user acceptance
-- Completion gate: inventory and first-slice recommendation are recorded in this package and Delivery Queue is updated through the Coordinator Return Gate
+- Current owner: Development Agent for technical-plan phase
+- Next owner: Feature Coordinator for Return Gate, then Frontend Experience Reviewer before implementation handoff
+- Source PRD: `docs/product/PRD-Frontend-Experience-System.md`
+- Technical plan: `docs/techplans/frontend-experience-system.md`
+- Feature Registry row: `Frontend experience system` links the PRD and technical plan; implementation remains not started
+- Acceptance Queue row: `not_required` for docs/planning; required after a deployed user-facing implementation slice exists
+- Delivery Queue row: `DQ-2026-07-05-003`
+- Scope: define the first implementation slice for shared server-rendered app shell, primary navigation, and design-token contract across `/weekly-review`, `/`, and `/command`
+- Out of scope: full redesign, framework migration, product-feature user acceptance, deploy, and implementation code in this phase
+- Completion gate: technical plan identifies shared shell/render-helper design, module boundaries, route ownership, regression constraints, test strategy, screenshot evidence, deploy strategy, reviewer gates, rollout plan, and non-goals
 - Deploy needed: no
-- Deploy decision: `not_required` for inventory phase
-- Return target: source Global Project Manager / Owner thread for review of this completed inventory return
+- Deploy decision: `not_required` for technical-plan docs; implementation will need Release Reviewer and a concrete deploy decision after code changes
+- Return target: source Feature Coordinator thread for Return Gate review
 - Escalation target: Global Project Manager only for cross-feature conflict, deploy conflict, stale coordinator recovery, or operating-model defect
 
 ## Inventory Return
@@ -29,24 +29,43 @@
 - Daily Market Brief status: pending only. No route, PRD, package, renderer, or static asset exists in this worktree.
 - Frontend architecture finding: active pages are Python-rendered self-contained HTML/CSS/JS strings. No shared template directory, static asset directory, frontend build pipeline, or common component module was found.
 - UX risks: navigation islands, mismatched page shells, duplicate inline CSS variables/components, mobile density risk around tables/control bars/catalogs, incomplete shared focus/live-region policy, inconsistent bilingual UI copy, and no safe Daily Market Brief affordance yet.
-- First implementation slice: shared server-rendered app shell/navigation/design-token contract, applied to `/weekly-review` and `/command` if Product accepts the two-surface release gate. Lower-risk fallback is Weekly Review first, with a link to the existing `/command` route.
-- Non-goals for first slice: no framework migration, no Daily Market Brief implementation, no auth/token behavior change, no API contract change, no result semantics rewrite, no weekly-review data/model change, no product-feature user acceptance.
-- PRD needed: yes. Product context is missing and the next slice changes information architecture and primary navigation.
-- Technical plan needed: yes. Implementation will touch shared render helpers, route owners, tests, and user-facing acceptance evidence.
-- Reviewer gates applied: Frontend Experience Reviewer self-review applied for inventory. Release Reviewer not required for inventory; required if the next implementation touches both `/weekly-review` and `/command`. Acceptance Reviewer not required until a deployed slice exists. Security/Access Reviewer not required unless auth/token/private route behavior changes.
+
+## PRD Return
+
+- PRD path: `docs/product/PRD-Frontend-Experience-System.md`
+- Chosen first slice: shared server-rendered app shell, primary navigation, and design-token contract for both `/weekly-review` and `/command`.
+- Rejected fallback: Weekly Review-only shell first, because it leaves Command Workbench as a separate page island and does not prove the shared frontend system across active standalone pages.
+- User journeys defined: Weekly Review user, Command Workbench user, cross-surface navigation, and mobile check.
+- Non-goals defined: no frontend framework migration, no Daily Market Brief link or implementation, no Candidate Insights standalone nav, no API/auth/token behavior changes, no result-card semantic redesign, no Weekly Review data/model changes, no deploy behavior changes, and no user acceptance marking.
+- Acceptance summary: shared shell/tokens/nav across `/weekly-review`, `/`, and `/command`; active nav only for active routes; Daily Market Brief omitted until Product package/PRD and route exist; Weekly Review and Command Workbench behaviors preserved; both `/command` route owners verified; desktop/mobile and keyboard/status evidence required.
+- Reviewer gates required: Frontend Experience Reviewer before implementation handoff; Release Reviewer before deploy for the chosen two-surface release; Acceptance Reviewer after deployed user-facing slice; Security/Access Reviewer only if auth/token/private route behavior changes.
+
+## Technical Plan Return
+
+- Technical plan path: `docs/techplans/frontend-experience-system.md`
+- Implementation slice summary: one Development pass to add `investment_knowledge_mcp/frontend_shell.py`, refactor Weekly Review and Command Workbench renderers to consume it, preserve route/API/token/result semantics, add renderer/smoke assertions, and capture desktop/mobile evidence.
+- Files likely to change:
+  - `investment_knowledge_mcp/frontend_shell.py`
+  - `investment_knowledge_mcp/weekly_review_web.py`
+  - `investment_knowledge_mcp/command_workbench.py`
+  - `scripts/smoke_test.py`
+- Route ownership: `/` and `/weekly-review` stay in `weekly_review_web.py`; public `/command` stays mirrored through `weekly_review_web.py`; internal `/command` stays in `command_api.py` through the same `render_command_workbench_html()` import.
+- Regression constraints: preserve Weekly Review APIs, Command Workbench APIs, Candidate Insights APIs, `weekly_review_web_token`, `command_workbench_token`, `command_workbench_recent`, `command_workbench_pinned`, confirmation guards, command result-card parser semantics, and Weekly Review generation/persistence behavior.
+- Tests/verification plan: Python compile checks for affected modules, `python3 scripts/smoke_test.py`, `git diff --check`, and desktop/mobile browser evidence for `/weekly-review` and `/command` during implementation.
+- Reviewer gates: Frontend Experience Reviewer next, Release Reviewer before deploy, Acceptance Reviewer after deploy; Security/Access Reviewer only if implementation needs auth/token/private-route changes.
 
 ## Watch Contract
 
-- Watched item: `DQ-2026-07-04-020` and branch `codex/frontend-experience-inventory`
-- Wake event or cadence: source coordinator/Owner reviews the pushed inventory return or explicitly approves the recommended first slice
-- Expected artifact: accepted inventory package plus either a concise Product/Frontend PRD for shared app shell/navigation or a recorded product decision choosing the lower-risk Weekly Review-only fallback
-- Coordinator action on wake: open the next Delivery Queue row for Product/Frontend PRD work, then route Development for a technical plan; require Frontend Experience Reviewer before implementation dispatch and Release Reviewer before deploy if both `/weekly-review` and `/command` are changed
+- Watched item: `DQ-2026-07-05-003` and branch `codex/frontend-experience-techplan`
+- Wake event or cadence: Development technical-plan branch push and final return to the Feature Coordinator
+- Expected artifact: pushed technical-plan commit, verified change package, updated Feature Registry and Delivery Queue, and explicit next-owner recommendation
+- Coordinator action on wake: apply Coordinator Return Gate; if accepted, dispatch Frontend Experience Reviewer to review the technical plan against the PRD before any implementation handoff
 
 ## Return Gate
 
-- Branch: `codex/frontend-experience-inventory`
+- Branch: `codex/frontend-experience-techplan`
 - Commit: see final return summary for the commit SHA
-- Verification: `scripts/verify_change_package.py docs/changes/frontend-experience-system`, `scripts/audit_agent_flow_health.py --feature "Frontend experience system"`, and `git diff --check` passed in the inventory worktree
-- Delivery-state updates: `DQ-2026-07-04-020` is closed because the inventory output is complete and deploy is not required
-- Remaining gaps: no Daily Market Brief product package exists; PRD and technical plan are still needed before implementation; no browser screenshots were taken because this phase did not run or change a web surface
-- Recommended next owner: Product/Frontend Experience owner for concise PRD, then Development Agent for technical plan
+- Verification: `scripts/verify_change_package.py docs/changes/frontend-experience-system`, `scripts/audit_agent_flow_health.py --feature "Frontend experience system"`, `scripts/audit_delivery_state.py --feature "Frontend experience system"`, and `git diff --check`
+- Delivery-state updates: `DQ-2026-07-05-003` records Development technical-plan completion and next Feature Coordinator Return Gate owner; Feature Registry links the technical plan and keeps implementation not started
+- Remaining gaps: no implementation, deployment, independent acceptance test, or user acceptance exists; no Daily Market Brief product package exists; browser screenshots are implementation evidence and were not expected for docs-only planning
+- Recommended next owner: Feature Coordinator for Return Gate, then Frontend Experience Reviewer for pre-implementation plan review
