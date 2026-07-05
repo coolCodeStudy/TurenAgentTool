@@ -19,13 +19,13 @@ Create a frontend experience coordination package that can inventory current sur
 
 ## Source Links
 
-- PRD: `not_applicable` for the inventory phase; Product may create or link a PRD after scope is approved.
+- PRD: `docs/product/PRD-Frontend-Experience-System.md`.
 - Technical plan: `not_started`.
-- Feature Registry row: `not_applicable` because this is a frontend experience infrastructure package, not a direct user feature yet.
-- Acceptance Queue row: `not_required` for inventory; required when a user-facing implementation slice is deployed.
-- Delivery Queue row: `DQ-2026-07-04-020`.
+- Feature Registry row: `Frontend experience system`.
+- Acceptance Queue row: `not_required` for PRD docs; required when a user-facing implementation slice is deployed.
+- Delivery Queue rows: `DQ-2026-07-04-020` for inventory and `DQ-2026-07-05-002` for Product PRD return.
 
 ## Owner Decisions
 
-- Whether the first implementation slice should prioritize Command Workbench, Weekly Review, Daily Market Brief, or global navigation.
-- Whether the frontend should remain server-rendered in Python for the first slice or introduce a shared frontend build path after inventory.
+- Resolved for the first slice: prioritize shared global shell/navigation across active Weekly Review and Command Workbench surfaces.
+- Resolved for the first slice: remain server-rendered in Python; do not introduce a shared frontend build path yet.
