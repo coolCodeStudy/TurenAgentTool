@@ -37,12 +37,27 @@ WATCH_WORDS = (
     "watch path",
     "watch contract",
     "watched item",
+    "wake event",
+    "wake cadence",
+    "runtime watcher",
     "monitoring not active",
     "heartbeat",
     "monitor",
     "this coordinator",
 )
-WATCH_CONTRACT_WORDS = ("watch contract", "watched item", "wake event", "wake cadence", "next check event")
+WATCH_CONTRACT_ITEM_WORDS = ("watch contract", "watched item", "watch owner/path", "watch owner", "watch path")
+WATCH_CONTRACT_WAKE_WORDS = ("wake event", "wake cadence", "next check event", "check cadence", "returned final message")
+WATCH_CONTRACT_ARTIFACT_WORDS = ("expected artifact", "expected return", "branch", "commit", "verification", "acceptance result", "blocker")
+WATCH_CONTRACT_ACTION_WORDS = (
+    "coordinator action",
+    "action on wake",
+    "return gate",
+    "integrate",
+    "reject",
+    "dispatch",
+    "close",
+    "deploy decision",
+)
 PASSIVE_WATCH_PHRASES = ("i will wait", "watch active", "will wait", "wait for")
 DEPLOY_DECISION_WORDS = ("self_deploy", "dispatch_deploy_owner", "blocked", "not_required", "deploy decision")
 VAGUE_CLOSURE_WORDS = (
@@ -54,6 +69,7 @@ VAGUE_CLOSURE_WORDS = (
     "branch pushed",
     "code fixed",
 )
+ROUTINE_GLOBAL_PM_RETURN_PHRASES = ("return to global pm", "return to global project manager")
 
 
 @dataclass(frozen=True)
@@ -289,7 +305,7 @@ def audit_owner_routing(rows: Iterable[DeliveryRow]) -> list[FlowFinding]:
                     "no",
                 )
             )
-        if row.status in ACTIVE_DISPATCH_STATUSES and "return to global pm" in text.lower():
+        if row.status in ACTIVE_DISPATCH_STATUSES and contains_any(text, ROUTINE_GLOBAL_PM_RETURN_PHRASES):
             if not contains_any(text, GLOBAL_PM_ALLOWED_WORDS):
                 findings.append(
                     FlowFinding(
@@ -595,12 +611,11 @@ def contains_any(text: str, needles: Iterable[str]) -> bool:
 
 def has_watch_contract(text: str) -> bool:
     lower = text.lower()
-    if contains_any(lower, WATCH_CONTRACT_WORDS):
-        return True
     return (
-        contains_any(lower, ("watch owner/path", "watch owner", "watch path"))
-        and contains_any(lower, ("next check event", "wake event", "until", "after returned", "after deployment"))
-        and contains_any(lower, ("return gate", "dispatch", "close", "blocker", "deploy decision", "completion gate"))
+        contains_any(lower, WATCH_CONTRACT_ITEM_WORDS)
+        and contains_any(lower, WATCH_CONTRACT_WAKE_WORDS)
+        and contains_any(lower, WATCH_CONTRACT_ARTIFACT_WORDS)
+        and contains_any(lower, WATCH_CONTRACT_ACTION_WORDS)
     )
 
 

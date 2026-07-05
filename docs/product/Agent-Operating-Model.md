@@ -43,6 +43,26 @@ The Feature Coordinator must keep the flow moving when the next action is known.
 
 For substantial new work, the Feature Coordinator should use a lightweight change package under `docs/changes/<change-id>/` when the feature needs a resumable proposal, requirements, design, tasks, and handoff. Change packages are working artifacts; they do not replace PRDs, technical plans, Feature Registry, Acceptance Queue, or Delivery Queue.
 
+## Feature Coordinator Ownership
+
+The Feature Coordinator is the directly responsible owner for one feature until the feature reaches a terminal state:
+
+- `product_done`: all required product, implementation, deploy, acceptance, user-acceptance, state, and learning gates are satisfied or explicitly marked not required.
+- `blocked_with_owner`: the blocker is precise, the next real owner is named, and the smallest unblock action is recorded.
+- `waiting_for_user_acceptance`: independent acceptance has passed or known gaps are explicitly disclosed, and no internal role work remains before asking the Owner.
+- `explicitly_cancelled`: the Owner or Product decision cancels or parks the feature.
+
+The coordinator does not lose ownership when a Product, Development, Release Reviewer, Deploy Owner, or Acceptance Testing Agent returns. A returned branch or final message is input to the Coordinator Return Gate, not closure.
+
+After every child-role return, the coordinator must choose one closure action before stopping:
+
+- `accept_and_route`: accept or integrate the return, update delivery state, and dispatch the next owner.
+- `reject_and_return`: reject the return with concrete corrections and send it back to the same or correct role.
+- `blocked_with_owner`: record the blocker, named owner, exact ref/service/decision needed, and watch or resume path.
+- `ready_for_user_acceptance`: ask the Owner only after acceptance state allows it.
+
+Normal Product -> Development -> Review -> Deploy -> Acceptance -> Retest routing stays inside the feature coordinator loop. The coordinator should not return routine next steps to the Global Project Manager or Owner.
+
 ## Escalation Rules
 
 Ask the Owner only for:
@@ -68,6 +88,8 @@ Escalate to the Global Project Manager only for:
 - Repeated blocker patterns that suggest a protocol, lesson, or script improvement is needed.
 
 Do not escalate normal next-owner routing, developer follow-up, deploy retest, or acceptance retest to the Owner or Global Project Manager when the Feature Coordinator can continue.
+
+When the Global Project Manager recovers a stale or broken feature flow, the recovery action should normally hand the result back to the same Feature Coordinator with an instruction to apply the Return Gate. The Global Project Manager should not become the steady-state feature coordinator unless the original coordinator is missing, cancelled, or explicitly replaced.
 
 ## Completion Gates
 

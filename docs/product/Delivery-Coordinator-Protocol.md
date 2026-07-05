@@ -30,6 +30,26 @@ Escalate from a Feature Coordinator to the Global Project Manager only when:
 
 Do not report every routine role transition upward. A healthy Feature Coordinator should continue through Product, Development, deploy, Acceptance Testing, and Return Gates autonomously. Report to the Global Project Manager or Owner only for milestone summaries, true blockers, user/global decisions, cross-feature conflicts, credentials/permissions, operating-model defects, or readiness for user acceptance.
 
+### Feature Ownership Closure Contract
+
+The Feature Coordinator is the directly responsible owner for its feature until the feature reaches one of these terminal states:
+
+- `product_done`
+- `blocked_with_owner`
+- `waiting_for_user_acceptance`
+- `explicitly_cancelled`
+
+A child role returning, pushing a branch, passing review, failing review, or recommending a next owner is not a terminal state. It is a Return Gate input.
+
+After each child return, the coordinator must stop only after recording one of these closure actions:
+
+- `accept_and_route`: accepted or integrated the returned work, updated durable delivery state, and dispatched the next owner or made a concrete deploy decision.
+- `reject_and_return`: rejected the returned work with concrete corrections and routed it back to the same or correct role.
+- `blocked_with_owner`: recorded the precise blocker, the named owner, the exact unblock condition, and the resume/watch path.
+- `ready_for_user_acceptance`: independent acceptance allows user review and there is no hidden internal next step.
+
+Routine Product -> Development -> Review -> Deploy -> Acceptance -> Retest steps must stay inside the feature coordinator loop. `Return to Global PM` is invalid for routine next-owner routing. It is valid only for cross-feature release conflict, stale coordinator recovery, credentials/permissions, priority/budget decision, or operating-model defect.
+
 ## Responsibilities
 
 The Delivery Coordinator must:
@@ -285,6 +305,8 @@ When a dispatched role returns, the coordinator must:
 8. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
 
 The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
+
+The Coordinator Return Gate must end with one of the Feature Ownership Closure Contract actions: `accept_and_route`, `reject_and_return`, `blocked_with_owner`, or `ready_for_user_acceptance`.
 
 For cloud-served or browser-tested features, a Development Agent return that says "code fixed and pushed" is not enough to close the coordinator loop. If the returned fix is not yet merged, deployed, and retested on the real cloud entrypoint, the coordinator must immediately create or dispatch the next owner for that gap:
 
