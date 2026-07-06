@@ -117,4 +117,5 @@ These files are useful for context, but current implementation decisions should 
 - Feature-specific coordination should use `python3 scripts/audit_delivery_state.py --feature "<feature>"` and `python3 scripts/audit_delivery_state.py --handoff-packet "<feature>"`.
 - Global Project Manager portfolio-health checks should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. Add `--include-history` only when investigating repeated historical patterns.
 - Agent operating-model and coordinator-rule changes should run `python3 scripts/evaluate_agent_flow_cases.py` before handoff.
+- Governance-only documentation and local audit/eval script changes should use the GitHub Actions `no_deploy` path instead of being held on feature branches to avoid production-deploy friction.
 - Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.

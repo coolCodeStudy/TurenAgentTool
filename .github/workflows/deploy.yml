@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - auto
+          - no_deploy
           - quick
           - full
 
@@ -38,7 +39,7 @@ jobs:
           set -e
 
           requested="${{ inputs.deploy_mode || 'auto' }}"
-          if [ "$requested" = "quick" ] || [ "$requested" = "full" ]; then
+          if [ "$requested" = "no_deploy" ] || [ "$requested" = "quick" ] || [ "$requested" = "full" ]; then
             echo "deploy_mode=$requested" >> "$GITHUB_OUTPUT"
             echo "changed_files=manual-$requested" >> "$GITHUB_OUTPUT"
             echo "Manual deployment mode: $requested"
@@ -63,15 +64,21 @@ jobs:
           changed_file_list="$(mktemp)"
           printf '%s\n' "$changed_files" > "$changed_file_list"
 
-          mode="quick"
+          mode="no_deploy"
           while IFS= read -r file; do
             file="${file#"${file%%[![:space:]]*}"}"
             file="${file%"${file##*[![:space:]]}"}"
             [ -z "$file" ] && continue
             echo "Classifying changed file: $file"
             case "$file" in
-              docs/*|*.md|db/*|investment_knowledge_mcp/*|investment_knowledge_mcp/**/*|scripts/*.py|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
+              AGENTS.md|docs/*|*.md|scripts/agent_preflight.py|scripts/audit_agent_flow_health.py|scripts/audit_delivery_state.py|scripts/audit_prd_status.py|scripts/evaluate_agent_flow_cases.py|.github/workflows/*.yml|.github/workflows/*.yaml)
+                echo "  -> no-deploy-compatible"
+                ;;
+              db/*|investment_knowledge_mcp/*|investment_knowledge_mcp/**/*|scripts/*.py|scripts/*.sh|deploy/systemd/*)
                 echo "  -> quick-compatible"
+                if [ "$mode" = "no_deploy" ]; then
+                  mode="quick"
+                fi
                 ;;
               *)
                 echo "  -> requires full deploy"
@@ -93,6 +100,20 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           echo "Selected deployment mode: $mode"
+
+  no_deploy:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.deploy_mode == 'no_deploy'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirm no deployment needed
+        run: |
+          echo "No production deployment needed for these changes."
+          echo "Changed files:"
+          cat <<'EOF'
+          ${{ needs.detect_changes.outputs.changed_files }}
+          EOF
 
   quick_deploy:
     needs: detect_changes
