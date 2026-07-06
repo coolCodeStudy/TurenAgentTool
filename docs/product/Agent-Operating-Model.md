@@ -22,6 +22,8 @@ There may be many Feature Coordinators running in parallel, but there is only on
 
 The Global Project Manager should use `python3 scripts/audit_agent_flow_health.py` as the default portfolio-health check before opening individual coordinator or child-agent conversation context. Conversation context is second-line evidence, not the primary operating record. Read it when the health audit reports `context_required: yes`, or when Delivery Queue, Acceptance Queue, Feature Registry, commits, and returned summaries contradict each other.
 
+Operating-model infrastructure is tracked in `docs/project-management/Agent-Operating-Model-Roadmap.md`. When this model, the coordinator protocol, prompt templates, or flow-health audit rules change, run `python3 scripts/evaluate_agent_flow_cases.py` before handoff so known multi-agent failure patterns stay covered.
+
 ## Standard Delivery Flow
 
 Use this flow for substantial product-feature work:
@@ -42,6 +44,8 @@ Owner intent
 The Feature Coordinator must keep the flow moving when the next action is known. It should dispatch the next role, record a blocker, or ask the Owner only for a real Owner decision.
 
 For substantial new work, the Feature Coordinator should use a lightweight change package under `docs/changes/<change-id>/` when the feature needs a resumable proposal, requirements, design, tasks, and handoff. Change packages are working artifacts; they do not replace PRDs, technical plans, Feature Registry, Acceptance Queue, or Delivery Queue.
+
+When a feature already has delivery history, the Feature Coordinator should fill or refresh `docs/project-management/Coordinator-Context-Packet.md` before dispatching roles or reading long conversation history. The packet keeps context narrow: source docs, registry rows, acceptance rows, delivery rows, refs, watch contract, deploy decision, and escalation boundary.
 
 ## Feature Coordinator Ownership
 

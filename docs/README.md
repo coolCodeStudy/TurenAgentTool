@@ -15,6 +15,10 @@ The documentation is intentionally split by decision type:
 |---|---|
 | Agent operating rules | [`../AGENTS.md`](../AGENTS.md) |
 | Agent operating model | [`product/Agent-Operating-Model.md`](product/Agent-Operating-Model.md) |
+| Agent operating roadmap | [`project-management/Agent-Operating-Model-Roadmap.md`](project-management/Agent-Operating-Model-Roadmap.md) |
+| Coordinator context packet | [`project-management/Coordinator-Context-Packet.md`](project-management/Coordinator-Context-Packet.md) |
+| Agent-flow eval cases | [`project-management/agent-flow-eval-cases.json`](project-management/agent-flow-eval-cases.json) |
+| Role prompt templates | [`project-management/prompt-templates/`](project-management/prompt-templates/) |
 | Product strategy | [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md) |
 | Delivery-coordinator protocol | [`product/Delivery-Coordinator-Protocol.md`](product/Delivery-Coordinator-Protocol.md) |
 | Product-agent protocol | [`product/Product-Agent-Working-Protocol.md`](product/Product-Agent-Working-Protocol.md) |
@@ -112,4 +116,5 @@ These files are useful for context, but current implementation decisions should 
 - Broad delivery-state, readiness, handoff, and acceptance gaps should be checked with `python3 scripts/audit_delivery_state.py`.
 - Feature-specific coordination should use `python3 scripts/audit_delivery_state.py --feature "<feature>"` and `python3 scripts/audit_delivery_state.py --handoff-packet "<feature>"`.
 - Global Project Manager portfolio-health checks should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. Add `--include-history` only when investigating repeated historical patterns.
+- Agent operating-model and coordinator-rule changes should run `python3 scripts/evaluate_agent_flow_cases.py` before handoff.
 - Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.

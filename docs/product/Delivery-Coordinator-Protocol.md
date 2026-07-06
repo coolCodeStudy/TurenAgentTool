@@ -62,6 +62,7 @@ The Delivery Coordinator must:
 - Review returned role/session output, integrate or reject returned branches, and continue to the next owner when the next action is known.
 - Keep the user-facing answer focused on feature status, next owner, blockers, and decisions needed from the user.
 - Run or request delivery audits when status is unclear.
+- Fill or refresh `docs/project-management/Coordinator-Context-Packet.md` when taking over a feature, recovering a stale flow, or coordinating a feature with existing delivery history.
 - Prevent work from being called done when required registry, acceptance, verification, or lesson-capture gates are missing.
 
 The Delivery Coordinator must not:
@@ -85,9 +86,10 @@ When the user asks about a product feature, use this flow:
 4. Read the linked PRD and technical plan when the request requires product or engineering judgment.
 5. Run `python3 scripts/audit_delivery_state.py` when the question is about overall status, missing work, readiness, handoff, or acceptance.
 6. For a specific feature, run `python3 scripts/audit_delivery_state.py --feature "<feature name>"`.
-7. Before routing a substantial task to another role or session, run `python3 scripts/audit_delivery_state.py --handoff-packet "<feature name>"`.
-8. If the request requires another role to act, enter Dispatch Mode.
-9. Answer with:
+7. If the feature has existing delivery history or a prior coordinator branch/thread, fill or refresh `docs/project-management/Coordinator-Context-Packet.md`.
+8. Before routing a substantial task to another role or session, run `python3 scripts/audit_delivery_state.py --handoff-packet "<feature name>"`.
+9. If the request requires another role to act, enter Dispatch Mode.
+10. Answer with:
    - current state;
    - next owner;
    - dispatch result;
@@ -96,6 +98,8 @@ When the user asks about a product feature, use this flow:
    - exact next action.
 
 For broad questions such as "what should we do next?", "which PRDs are unfinished?", or "can I ask the user to accept this?", the coordinator should use the audit script first, then inspect documents only where the audit result needs interpretation.
+
+When dispatching common role work, prefer the templates under `docs/project-management/prompt-templates/` and adapt them to the exact feature. Templates do not replace the handoff packet; they reduce missing fields and vague return contracts.
 
 ## Handoff Packet
 
