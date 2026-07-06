@@ -90,4 +90,3 @@ The current repository can still get high leverage from deterministic docs, scri
 - Context should be packed narrowly for the current role and feature.
 - Lessons are checked every substantial flow and recorded rarely.
 - Eval failures should improve scripts, protocols, or templates rather than create more chat instructions.
-

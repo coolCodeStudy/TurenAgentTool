@@ -31,4 +31,3 @@ Return to Coordinator:
 - Recommended next handoff:
 - Role learning:
 ```
-
