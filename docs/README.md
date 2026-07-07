@@ -18,6 +18,7 @@ The documentation is intentionally split by decision type:
 | Agent operating roadmap | [`project-management/Agent-Operating-Model-Roadmap.md`](project-management/Agent-Operating-Model-Roadmap.md) |
 | Coordinator context packet | [`project-management/Coordinator-Context-Packet.md`](project-management/Coordinator-Context-Packet.md) |
 | Agent-flow eval cases | [`project-management/agent-flow-eval-cases.json`](project-management/agent-flow-eval-cases.json) |
+| Deploy classification | [`project-management/Deploy-Classification.md`](project-management/Deploy-Classification.md) |
 | Role prompt templates | [`project-management/prompt-templates/`](project-management/prompt-templates/) |
 | Product strategy | [`product/Product-Strategy-and-Roadmap.md`](product/Product-Strategy-and-Roadmap.md) |
 | Delivery-coordinator protocol | [`product/Delivery-Coordinator-Protocol.md`](product/Delivery-Coordinator-Protocol.md) |
@@ -117,5 +118,5 @@ These files are useful for context, but current implementation decisions should 
 - Feature-specific coordination should use `python3 scripts/audit_delivery_state.py --feature "<feature>"` and `python3 scripts/audit_delivery_state.py --handoff-packet "<feature>"`.
 - Global Project Manager portfolio-health checks should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. Add `--include-history` only when investigating repeated historical patterns.
 - Agent operating-model and coordinator-rule changes should run `python3 scripts/evaluate_agent_flow_cases.py` before handoff.
-- Governance-only documentation and local audit/eval script changes should use the GitHub Actions `no_deploy` path instead of being held on feature branches to avoid production-deploy friction.
+- Governance-only documentation, tests-only, workflow-governance, and local audit/eval script changes should use the GitHub Actions `no_deploy` path in [`project-management/Deploy-Classification.md`](project-management/Deploy-Classification.md) instead of being held on feature branches to avoid production-deploy friction.
 - Completed substantial tasks should follow `lesson-capture-protocol.md` and either record durable lessons in the right document or state why there was no durable lesson.

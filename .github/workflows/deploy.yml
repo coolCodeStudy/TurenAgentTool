@@ -39,13 +39,6 @@ jobs:
           set -e
 
           requested="${{ inputs.deploy_mode || 'auto' }}"
-          if [ "$requested" = "no_deploy" ] || [ "$requested" = "quick" ] || [ "$requested" = "full" ]; then
-            echo "deploy_mode=$requested" >> "$GITHUB_OUTPUT"
-            echo "changed_files=manual-$requested" >> "$GITHUB_OUTPUT"
-            echo "Manual deployment mode: $requested"
-            exit 0
-          fi
-
           base="${{ github.event.before }}"
           head="${{ github.sha }}"
           zero_sha="0000000000000000000000000000000000000000"
@@ -64,42 +57,14 @@ jobs:
           changed_file_list="$(mktemp)"
           printf '%s\n' "$changed_files" > "$changed_file_list"
 
-          mode="no_deploy"
-          while IFS= read -r file; do
-            file="${file#"${file%%[![:space:]]*}"}"
-            file="${file%"${file##*[![:space:]]}"}"
-            [ -z "$file" ] && continue
-            echo "Classifying changed file: $file"
-            case "$file" in
-              AGENTS.md|docs/*|*.md|scripts/agent_preflight.py|scripts/audit_agent_flow_health.py|scripts/audit_delivery_state.py|scripts/audit_prd_status.py|scripts/evaluate_agent_flow_cases.py|.github/workflows/*.yml|.github/workflows/*.yaml)
-                echo "  -> no-deploy-compatible"
-                ;;
-              db/*|investment_knowledge_mcp/*|investment_knowledge_mcp/**/*|scripts/*.py|scripts/*.sh|deploy/systemd/*)
-                echo "  -> quick-compatible"
-                if [ "$mode" = "no_deploy" ]; then
-                  mode="quick"
-                fi
-                ;;
-              *)
-                echo "  -> requires full deploy"
-                mode="full"
-                break
-                ;;
-            esac
-          done < "$changed_file_list"
-
-          if [ -z "$changed_files" ]; then
-            mode="full"
-          fi
-
-          {
-            echo "deploy_mode=$mode"
-            echo "changed_files<<EOF"
-            echo "$changed_files"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Selected deployment mode: $mode"
+          python3 scripts/classify_deploy_change.py \
+            --manual-mode "$requested" \
+            --changed-files-file "$changed_file_list" \
+            --format text
+          python3 scripts/classify_deploy_change.py \
+            --manual-mode "$requested" \
+            --changed-files-file "$changed_file_list" \
+            --format github-output >> "$GITHUB_OUTPUT"
 
   no_deploy:
     needs: detect_changes

@@ -59,12 +59,14 @@ Deliverables:
   - Frontend Review.
 - Template guidance that each prompt must name inputs, source docs, expected return shape, deploy decision, and escalation boundary.
 - Reviewer lanes for release compatibility, UX/frontend consistency, and acceptance evidence.
+- Deploy classification extracted from workflow shell into `scripts/classify_deploy_change.py`, backed by `tests/test_deploy_change_classifier.py` and documented in `docs/project-management/Deploy-Classification.md`.
 
 Success criteria:
 
 - A coordinator can dispatch normal next-owner work from a template.
 - A returned role result is easy to accept, reject, or route onward.
 - Global PM intervention is reserved for stale coordinators, missing watch paths, credentials/permissions, user decisions, and cross-feature conflicts.
+- Governance/docs/tests-only changes can push through `main` with a successful `no_deploy` job instead of restarting production or getting stranded on a feature branch.
 
 ## P2: Context Retrieval And Memory
 
@@ -78,6 +80,7 @@ Deferred items:
 - RAG over product docs, tech plans, lessons, and project-management state.
 - LLM judge for review assistance.
 - Automatic hooks that block invalid handoffs or routine daily-log creation.
+- GitHub `environment: production` protection and stricter deploy queue semantics, after confirming they will not reintroduce Owner approval friction for normal releases.
 
 Deferral reason:
 
