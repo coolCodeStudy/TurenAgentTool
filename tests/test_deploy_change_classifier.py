@@ -51,13 +51,20 @@ class FakeRunner:
 
 
 class DeployContractTests(TestCase):
-    def test_known_documentation_path_is_no_deploy(self) -> None:
-        plan = classify_paths(("docs/README.md",), compose_image_changed=False)
+    def test_known_documentation_roots_and_root_files_are_no_deploy(self) -> None:
+        cases = (
+            "docs/unreviewed-deployment-notes.md",
+            "prompts/stock_research_draft_prompt.md",
+            "DEPLOYMENT.md",
+            "系统设计.md",
+        )
+        for path in cases:
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
 
-        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
-
-    def test_unknown_documentation_and_workflow_paths_are_rejected(self) -> None:
-        for path in ("docs/unreviewed-deployment-notes.md", ".github/workflows/new-release.yml"):
+    def test_unknown_markdown_and_workflow_paths_are_rejected(self) -> None:
+        for path in ("new_area/notes.md", "UNKNOWN.md", ".github/workflows/new-release.yml"):
             with self.subTest(path=path):
                 with self.assertRaisesRegex(ValueError, "unclassified deployment-sensitive path"):
                     classify_paths((path,), compose_image_changed=False)
