@@ -49,8 +49,10 @@ an application deployment target.
 | --- | --- |
 | Web-only Daily Market Brief files such as `daily_market_brief_web.py`, Web templates, and Web shell modules | `weekly-review-web` |
 | `command_workbench.py` and shared Web command-workbench assets | `weekly-review-web`, `command-api` |
-| Shared command logic such as `command_router.py`, `daily_market_brief.py`, and `weekly_review.py` | `weekly-review-web`, `command-api`, `mcp`, `dingtalk-stream-bot` |
+| Shared command logic such as `command_router.py`, `daily_market_brief.py`, and `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
+| Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
 | Command API transport-only modules | `command-api` |
+| DingTalk HTTP API transport-only modules | `dingtalk-api` |
 | MCP server and MCP tool modules | `mcp` |
 | Scheduler entrypoints | The matching scheduler service, such as `account-snapshot-scheduler` or `ipo-reminder-scheduler` |
 | DingTalk stream bot entrypoint or adapter-only code | `dingtalk-stream-bot` |
@@ -60,6 +62,16 @@ an application deployment target.
 | Unknown runtime paths | All application services under `targeted_quick` |
 | Unknown image/package paths | `full_image` |
 | Unknown docs/governance paths | Fail classification until an explicit rule is added |
+
+`dingtalk-api` is the DingTalk HTTP API Compose service. It uses the shared
+application image and imports shared command logic, so it is targeted with the
+other active command consumers. It is distinct from `dingtalk-stream-bot`, the
+DingTalk Stream Mode long-connection service.
+
+For `config_restart`, `full_image`, and other all-application-service paths,
+the shared-image application service set is `weekly-review-web`, `command-api`,
+`dingtalk-api`, `mcp`, `account-snapshot-scheduler`,
+`ipo-reminder-scheduler`, and `dingtalk-stream-bot`.
 
 ## File Classification
 

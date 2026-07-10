@@ -183,7 +183,10 @@ bash /opt/investment-knowledge-repo/scripts/deploy_from_local_checkout.sh
 - Linking the app `.env` into the staged release when present.
 - Switching `current` only after the release has the required files.
 - Rolling `current` back to the previous release if compose activation fails.
-- 重启 `postgres`、`mcp`、`account-snapshot-scheduler`、`ipo-reminder-scheduler`、`dingtalk-stream-bot`
+- Recreates mapped application services such as `mcp`, `command-api`,
+  `dingtalk-api`, `weekly-review-web`, `account-snapshot-scheduler`,
+  `ipo-reminder-scheduler`, and `dingtalk-stream-bot` without recreating
+  PostgreSQL.
 - 写入本地部署事件
 
 后续会让 Ops API 的 deploy 流程统一写 `deploy_events`。
@@ -457,9 +460,13 @@ The classifier returns a mode and sorted target set:
 - Web-only Daily Market Brief files target `weekly-review-web`.
 - `command_workbench.py` targets `weekly-review-web` and `command-api`.
 - Shared command logic such as `command_router.py`, `daily_market_brief.py`,
-  and `weekly_review.py` targets `weekly-review-web`, `command-api`, `mcp`,
-  and `dingtalk-stream-bot`.
+  and `weekly_review.py` targets `weekly-review-web`, `command-api`,
+  `dingtalk-api`, `mcp`, and `dingtalk-stream-bot`.
+- Database initialization code such as `scripts/init_db.py` targets
+  `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, and
+  `dingtalk-stream-bot`.
 - Command API transport-only modules target `command-api`.
+- DingTalk HTTP API transport-only modules target `dingtalk-api`.
 - MCP server and tool modules target `mcp`.
 - Scheduler entrypoints target only their scheduler service.
 - DingTalk stream bot entrypoints or adapter-only modules target
@@ -476,6 +483,15 @@ The classifier returns a mode and sorted target set:
 
 PostgreSQL is immutable during application deploys. It is never an application
 target, and deploy recreates use `--no-deps`.
+
+`dingtalk-api` is a Compose HTTP service using the shared application image and
+the shared command router. It is distinct from `dingtalk-stream-bot`, which is
+the DingTalk Stream Mode long-connection service.
+
+For `config_restart`, `full_image`, and other all-application-service paths,
+the shared-image application service set is `weekly-review-web`, `command-api`,
+`dingtalk-api`, `mcp`, `account-snapshot-scheduler`,
+`ipo-reminder-scheduler`, and `dingtalk-stream-bot`.
 
 ### Preflight Thresholds and Product-Safe Errors
 
@@ -543,7 +559,7 @@ Stage 2 executes the cloud acceptance matrix:
 - managed app image count does not grow after quick deployments;
 - PostgreSQL container ID and image ID remain unchanged;
 - required routes remain healthy, including Daily Market Brief, Weekly Review,
-  Command Workbench, MCP, and configured health endpoints;
+  Command Workbench, MCP, `dingtalk-api`, and configured health endpoints;
 - one controlled `full_image` deployment;
 - managed app image set contains at most current and previous SHA tags;
 - pgvector remains present;
@@ -616,6 +632,7 @@ docker compose build
 docker compose ps
 Postgres socket
 MCP socket 或 /mcp 可达
+dingtalk-api /health
 dingtalk-stream-bot running
 account-snapshot-scheduler running
 ipo-reminder-scheduler running

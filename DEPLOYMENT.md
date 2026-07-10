@@ -20,6 +20,7 @@ ChatGPT / Codex / Web UI
 - `postgres`: `pgvector/pgvector:pg16`
 - `mcp`: Python FastMCP 服务，生产 transport 使用 `streamable-http`
 - `command-api`: 给自动化、脚本和未来 Agent 外壳调用的 HTTP 指令入口
+- `dingtalk-api`: DingTalk HTTP adapter service using the shared application image
 - `dingtalk-stream-bot`: 钉钉 Stream Mode 长连接机器人，不需要公网回调地址
 
 生产默认 `COMPOSE_PROFILES=stream`，只启动 `postgres` 和 `dingtalk-stream-bot`，适合 2GB 内存左右的小规格 ECS。需要 HTTP/MCP 入口时再改成：
@@ -221,17 +222,9 @@ docker compose -f /opt/investment-knowledge/docker-compose.prod.yml ps
 
 ## 更新部署
 
-```bash
-cd /opt/investment-knowledge
-git pull
-docker compose -f docker-compose.prod.yml up -d --build
-```
-
-如果使用 systemd：
-
-```bash
-sudo systemctl restart investment-knowledge
-```
+Current production updates use the Optimized Pull Deploy Runbook below. Direct
+`git pull`, Compose rebuilds, or systemd restarts are reserved for local drills
+or an explicitly approved manual recovery, not normal operator deployment.
 
 ## Optimized Pull Deploy Runbook
 
@@ -243,7 +236,7 @@ may deploy only `main` or a 40-character commit SHA that is reachable from
 
 | Mode | Use when | Image behavior | Runtime behavior |
 | --- | --- | --- | --- |
-| `no_deploy` | Docs, governance, local audits/evals, or tests-only changes | No image build or ECS access | CI/classification succeeds without Ops API, SSH, SCP, Docker, or service restart. |
+| `no_deploy` | Docs, governance, local audits/evals, or tests-only changes | No image build or ECS access | CI/classification succeeds without Ops API, remote shell, file-copy transport, Docker, or service restart. |
 | `targeted_quick` | Application code, scripts, DB initialization code, or host worker code changed | Reuse the current immutable app image | Stage the target release and recreate only mapped application targets with `--no-deps`. |
 | `config_restart` | Compose/environment/runtime wiring changed without image/build semantics | Reuse the current immutable app image | Validate Compose and recreate only mapped targets with `--no-deps`. |
 | `full_image` | Dockerfile, requirements, base-image, package lockfile, or Compose `image`/`build` semantics changed | Build/load `investment-knowledge-app:<40-char-sha>` | Activate release and image tag together; recreate application targets sequentially. |
@@ -262,14 +255,25 @@ target. All application recreates use `--no-deps`.
 | --- | --- |
 | Web-only Daily Market Brief files | `weekly-review-web` |
 | `command_workbench.py` or shared command-workbench UI | `weekly-review-web`, `command-api` |
-| Shared command logic such as `command_router.py`, `daily_market_brief.py`, `weekly_review.py` | `weekly-review-web`, `command-api`, `mcp`, `dingtalk-stream-bot` |
+| Shared command logic such as `command_router.py`, `daily_market_brief.py`, `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
+| Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
 | Command API transport-only modules | `command-api` |
+| DingTalk HTTP API transport-only modules | `dingtalk-api` |
 | MCP server/tool modules | `mcp` |
 | Scheduler entrypoints | Matching scheduler service |
 | DingTalk stream bot entrypoint or adapter code | `dingtalk-stream-bot` |
 | Shared runtime modules | Union of importing application services |
 | Requirements, Dockerfile, base-image, or app-image Compose semantics | All application services using the shared app image |
 | Host control-plane scripts | Matching host unit, such as `investment-ops-api.service`, under the deploy lock |
+
+`dingtalk-api` is a Compose HTTP service that uses the shared application image
+and imports shared command logic. It is distinct from `dingtalk-stream-bot`,
+which is the DingTalk Stream Mode long-connection service.
+
+For `config_restart`, `full_image`, and other all-application-service paths,
+the shared-image application service set is `weekly-review-web`, `command-api`,
+`dingtalk-api`, `mcp`, `account-snapshot-scheduler`,
+`ipo-reminder-scheduler`, and `dingtalk-stream-bot`.
 
 ### Preflight Gates
 
@@ -301,9 +305,9 @@ investment-knowledge-app:<40-char-sha>
 Keep the current and previous managed app images from deploy state, plus any
 image referenced by a running container. Preserve `pgvector/pgvector:pg16` and
 the PostgreSQL volume. Do not use broad `docker system prune`, `docker image
-prune -a`, or `docker volume prune` during normal deployment. Full deploys may
-remove only older unreferenced `investment-knowledge-app:<sha>` images and
-uploaded archives.
+prune -a`, or `docker volume prune` during normal deployment. `full_image`
+deployments may remove only older unreferenced
+`investment-knowledge-app:<sha>` images and uploaded archives.
 
 ### Read-Only Audit Commands
 
@@ -333,10 +337,11 @@ Brief release:
 
 - run three independently triggered `targeted_quick` deployments;
 - confirm each completes in under 60 seconds;
-- confirm managed app image count does not grow after quick deploys;
+- confirm managed app image count does not grow after `targeted_quick`
+  deployments;
 - confirm PostgreSQL container ID and image ID are unchanged;
-- confirm Daily Market Brief, Weekly Review, Command Workbench, MCP, and
-  required health routes are available after each deploy;
+- confirm Daily Market Brief, Weekly Review, Command Workbench, MCP,
+  `dingtalk-api`, and required health routes are available after each deploy;
 - run one controlled `full_image`;
 - confirm managed app images retain at most current and previous SHA tags;
 - confirm pgvector remains present and PostgreSQL identity is unchanged;
@@ -351,11 +356,26 @@ AKShare requires one `full_image`, deploy once, and dispatch independent
 Acceptance Testing. The coordinator must not mark Daily Market Brief user
 acceptance as accepted.
 
-## GitHub Actions 自动部署
+## GitHub Actions Deployment Role
 
-本仓库内置 `.github/workflows/deploy.yml`，参考了 ReportingSystem 的 ECS 部署方式，但部署目标改成 Docker Compose。
+The current P0 workflow does not use GitHub Actions as the normal production
+operator path. Daily production deployment is:
 
-需要在 GitHub 仓库 `coolCodeStudy/TurenAgentTool` 配置这些 secrets：
+```text
+Codex/local verification
+  -> commit and push
+  -> Ops API /ops/deploy with no_deploy, targeted_quick, config_restart, or full_image
+  -> shared deploy core validates source policy, preflight, target mapping, activation, rollback, and retention
+```
+
+GitHub Actions remains CI plus the controlled builder/transport for
+`full_image` app-image artifacts when the shared deploy core requires an image
+input release. It must use the same source policy, mode names, preflight gates,
+immutable image tag, and retention rules as the Ops API. It is not a separate
+operator runbook and must not be used to bypass `/ops/deploy`, the global lock,
+PostgreSQL immutability, or cloud acceptance gates.
+
+Required GitHub repository secrets for CI and controlled release workflows:
 
 ```text
 ECS_HOST
@@ -385,36 +405,25 @@ OPENAI_MODEL
 DINGTALK_STREAM_ALLOW_WRITE
 ```
 
-workflow 会先判断本次提交适合哪种部署：
+Current workflow expectations:
 
-- `quick`：只改 `docs/`、根目录 Markdown、`scripts/*.sh`、`deploy/systemd/*` 或 workflow 文件时触发。只上传源码包到 ECS，不构建镜像，不重启 Docker 服务。通常用于文档、服务器脚本、systemd 模板这类改动。
-- `full`：改 Python 代码、依赖、Dockerfile、Compose、数据库 schema 等运行时内容时触发。会构建镜像、上传镜像包，并重启生产容器。
+- Documentation, tests, and governance changes classify as `no_deploy`; CI
+  succeeds without production credentials or ECS mutation.
+- Application/source changes classify as `targeted_quick`; the Ops API pulls
+  the target from GitHub and the shared deploy core recreates only mapped
+  application services.
+- Runtime-only Compose/environment changes classify as `config_restart`; the
+  shared deploy core validates Compose and recreates only mapped services.
+- Image-input changes classify as `full_image`; GitHub Actions may build and
+  transfer only `investment-knowledge-app:<40-char-sha>` for the shared core to
+  load and activate after ECS preflight.
 
-手动触发 workflow 时可以选择 `auto`、`quick` 或 `full`。不确定时用 `auto`。
-
-full deploy 会在 GitHub Actions runner 上打包当前提交，并构建/保存生产镜像：
-
-- `/tmp/investment-knowledge-release.tar.gz`
-- `/tmp/investment-knowledge-images.tar.gz`
-
-两个包会通过 SCP 上传到 ECS；ECS 解压代码到 `/opt/investment-knowledge`，执行 `docker load` 导入镜像，生成服务器 `.env`，然后执行：
-
-```bash
-docker compose -f docker-compose.prod.yml up -d --no-build postgres dingtalk-stream-bot
-```
-
-第一次运行前，ECS 仍然需要预装 Docker Engine 和 Docker Compose plugin。
-如果 ECS 是干净系统，workflow 会先尝试自动安装基础工具、Docker Engine 和 Docker Compose plugin；自动安装支持 Ubuntu/Debian、CentOS/RHEL 系系统。
-ECS 不再需要访问 GitHub，也不需要访问 Docker Hub 拉应用基础镜像；代码和镜像都由 GitHub Actions 通过 SCP 上传。
-
-quick deploy 只上传：
-
-```text
-/tmp/investment-knowledge-release.tar.gz
-```
-
-ECS 会直接解压到 `/opt/investment-knowledge`，并保留现有 `.env` 和正在运行的容器。
-workflow 判断变更文件时会关闭 Git 的路径转义，避免中文文档路径被输出成带引号的八进制转义形式后误判为 full deploy。
+Manual workflow dispatch must use the four P0 modes above. Any emergency
+`full_image` dispatch must include the reason plus archive path/size evidence
+in the deployment event. Legacy source-bundle extraction, direct app-root
+replacement, broad image bundles, direct service restarts, and PostgreSQL
+recreation are historical/rescue-only mechanics and are not current operator
+guidance.
 
 ## 安全原则
 

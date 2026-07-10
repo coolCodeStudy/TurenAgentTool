@@ -111,6 +111,7 @@ targets are:
 
 - `weekly-review-web`
 - `command-api`
+- `dingtalk-api`
 - `mcp`
 - `account-snapshot-scheduler`
 - `ipo-reminder-scheduler`
@@ -126,14 +127,25 @@ Initial mapping rules include:
   because both services render that UI.
 - `command_router.py`, `daily_market_brief.py`, and `weekly_review.py` target
   every active command consumer that imports them: `weekly-review-web`,
-  `command-api`, `mcp`, and `dingtalk-stream-bot`.
+  `command-api`, `dingtalk-api`, `mcp`, and `dingtalk-stream-bot`.
+- `scripts/init_db.py` targets every active application service that runs
+  database initialization before startup: `weekly-review-web`, `command-api`,
+  `dingtalk-api`, `mcp`, and `dingtalk-stream-bot`.
 - Command API transport-only modules target `command-api`.
+- DingTalk HTTP API transport-only modules target `dingtalk-api`.
 - MCP server and MCP tool modules target `mcp`.
 - Scheduler entrypoints target only their scheduler service.
 - Shared runtime modules used by multiple entrypoints return the union of the
   affected services.
 - Requirements or Dockerfile changes target every application service because
   the services share one application image.
+- `dingtalk-api` is a Compose HTTP service that uses the shared application
+  image and shared command router. It is distinct from `dingtalk-stream-bot`,
+  the DingTalk Stream Mode long-connection service.
+- For `config_restart`, `full_image`, and other all-application-service paths,
+  the shared-image application service set is `weekly-review-web`,
+  `command-api`, `dingtalk-api`, `mcp`, `account-snapshot-scheduler`,
+  `ipo-reminder-scheduler`, and `dingtalk-stream-bot`.
 - PostgreSQL is never an application deployment target. Schema initialization
   continues through application startup against the existing healthy database.
 - Control-plane script changes target only the matching systemd unit and use
@@ -274,6 +286,7 @@ existing product endpoint or health endpoint to return a successful response.
 - `weekly-review-web`: `/health`, `/weekly-review`, `/command`, and any feature
   route explicitly named by the deployment request.
 - `command-api`: HTTP health response and authenticated-route negative check.
+- `dingtalk-api`: HTTP health response and DingTalk HTTP adapter readiness.
 - `mcp`: transport endpoint responds without a process-level failure.
 - schedulers and stream bot: container remains running through the stability
   window and logs contain no startup traceback or crash-loop signal.
@@ -423,8 +436,8 @@ On a unified Deploy Flow P0 `main` release, before resuming Daily Market Brief:
 3. Run one controlled full release; current and previous application images
    must be the only retained managed application images.
 4. Confirm PostgreSQL container identity and start time did not change.
-5. Confirm Daily Market Brief, Weekly Review, Command Workbench, and MCP routes
-   remain available after each release.
+5. Confirm Daily Market Brief, Weekly Review, Command Workbench, MCP, and
+   `dingtalk-api` routes remain available after each release.
 6. Run a deliberately failing candidate in the test harness, not production,
    and verify rollback.
 7. Confirm root disk remains below 70% after retention and pgvector remains
@@ -450,8 +463,8 @@ On a unified Deploy Flow P0 `main` release, before resuming Daily Market Brief:
   identified by the structured dependency map.
 - Failed activation restores the previous release and image.
 - Automatic cleanup never deletes volumes or non-managed images.
-- Daily Market Brief, Weekly Review, Command Workbench, and MCP remain present
-  after unrelated releases.
+- Daily Market Brief, Weekly Review, Command Workbench, MCP, and `dingtalk-api`
+  remain present after unrelated releases.
 - Routine deployment completes in less than 60 seconds under normal ECS
   conditions.
 - Root filesystem usage remains below 70% after stable-release cleanup.
