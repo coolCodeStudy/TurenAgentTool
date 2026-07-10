@@ -420,7 +420,151 @@ Ops API 必须防止并发部署。
 - 如果已有 deploy 在跑，新的请求返回 busy。
 - busy 结果也写入或返回明确原因。
 
+## Deploy Flow Optimization P0 Addendum
+
+This section supersedes the older V1 `quick/full` shorthand below for current
+production rollout planning.
+
+### Production Source Policy
+
+Production deployment accepts only:
+
+- named ref `main`; or
+- a 40-character commit SHA that is reachable from `origin/main` according to
+  `git merge-base --is-ancestor <sha> origin/main`.
+
+Named feature branches and SHAs not reachable from `origin/main` are rejected.
+This keeps production from moving to a feature snapshot that omits already
+accepted work.
+
+### Exact Mode Matrix
+
+| Mode | Trigger | Image build/load | Runtime action |
+| --- | --- | --- | --- |
+| `no_deploy` | Documentation, governance, tests, local audit/eval assets | No | No ECS access, no Ops API call, no service mutation. |
+| `targeted_quick` | Application code, scripts, DB initialization code, host worker code | No | Stage release, switch `current`, recreate only mapped application targets with `--no-deps`. |
+| `config_restart` | Compose/environment/runtime wiring without image/build semantic changes | No | Validate Compose and recreate only mapped targets with `--no-deps`. |
+| `full_image` | Dockerfile, requirements, base image, package lockfile, or Compose `image`/`build` semantics | Yes, app image only | Load `investment-knowledge-app:<40-char-sha>`, activate release and image tag together, recreate app targets sequentially. |
+
+Manual emergency `full_image` requires an explicit operator reason plus the
+compressed image archive path and size. The normal path rejects `full_image`
+when no image-input diff exists.
+
+### Path-to-Service Mapping
+
+The classifier returns a mode and sorted target set:
+
+- Web-only Daily Market Brief files target `weekly-review-web`.
+- `command_workbench.py` targets `weekly-review-web` and `command-api`.
+- Shared command logic such as `command_router.py`, `daily_market_brief.py`,
+  and `weekly_review.py` targets `weekly-review-web`, `command-api`, `mcp`,
+  and `dingtalk-stream-bot`.
+- Command API transport-only modules target `command-api`.
+- MCP server and tool modules target `mcp`.
+- Scheduler entrypoints target only their scheduler service.
+- DingTalk stream bot entrypoints or adapter-only modules target
+  `dingtalk-stream-bot`.
+- Shared runtime modules target the union of application services importing
+  them.
+- Requirements, Dockerfile, base-image, or app-image Compose semantics target
+  every application service that uses the shared image.
+- Host control-plane scripts target the matching host unit, such as
+  `investment-ops-api.service`, under the same global deployment lock.
+- Unknown runtime paths target all application services under
+  `targeted_quick`; unknown image/package paths select `full_image`; unknown
+  docs/governance paths fail classification until they have an explicit rule.
+
+PostgreSQL is immutable during application deploys. It is never an application
+target, and deploy recreates use `--no-deps`.
+
+### Preflight Thresholds and Product-Safe Errors
+
+Every ECS-touching mode must pass preflight before release activation:
+
+- at least 8 GiB free on `/`;
+- root disk usage at or below 80%;
+- at least 512 MiB available memory;
+- Docker responds within 10 seconds;
+- PostgreSQL is running and healthy;
+- the global production deployment lock is available;
+- target source satisfies the source policy above;
+- Compose config validates for the staged release and environment;
+- `full_image` additionally has free disk of at least two times the compressed
+  image archive size plus 2 GiB.
+
+Preflight failure leaves the previous release active, returns a clear error,
+records deploy-event evidence when possible, and performs no service mutation.
+The deployer must not use broad prune commands to force an unsafe deployment
+through.
+
+### Immutable Image and Retention
+
+Full builds create exactly one managed application image:
+
+```text
+investment-knowledge-app:<40-character-commit-sha>
+```
+
+The mutable `prod` tag is not deployment identity. Deploy state records current
+and previous commit SHAs and app image tags.
+
+Retention preserves current and previous managed app images, images referenced
+by containers, `pgvector/pgvector:pg16`, and PostgreSQL volumes. Cleanup may
+remove only older unreferenced `investment-knowledge-app:<sha>` images,
+uploaded archives, and older release directories. It must not run broad
+`docker system prune`, `docker image prune -a`, or `docker volume prune`.
+
+### Read-Only Cloud Audit Commands
+
+Use these commands for baseline, each rollout checkpoint, and final evidence:
+
+```bash
+df -h /
+free -m
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+curl -fsS http://127.0.0.1:8765/deploy/status | python3 -m json.tool
+```
+
+Record PostgreSQL container ID and image ID before and after each deployment.
+They must remain unchanged.
+
+### Two-Stage Rollout and Daily Market Brief Gate
+
+Stage 1 merges only Deploy Flow Optimization P0 to `main`, installs or updates
+the independent Ops API, records baseline disk/image/container/PostgreSQL
+identity, records route health, then validates one no-op deployment and one
+narrow `targeted_quick` deployment.
+
+Stage 2 executes the cloud acceptance matrix:
+
+- three independent `targeted_quick` deployments;
+- each quick deployment completes in under 60 seconds;
+- managed app image count does not grow after quick deployments;
+- PostgreSQL container ID and image ID remain unchanged;
+- required routes remain healthy, including Daily Market Brief, Weekly Review,
+  Command Workbench, MCP, and configured health endpoints;
+- one controlled `full_image` deployment;
+- managed app image set contains at most current and previous SHA tags;
+- pgvector remains present;
+- root disk usage is below 70% after retention;
+- rollback state names the immediately previous SHA.
+
+Evidence to record: branch, commit, deployment mode, duration, managed image
+count, root disk percentage, PostgreSQL identity, route checks, and rollback
+state.
+
+Daily Market Brief remains blocked until Deploy Flow P0 review and cloud
+acceptance pass. Only then should its branch be rebased or cherry-picked onto
+the accepted `main`; the AKShare dependency diff should classify that one
+release as `full_image`; Acceptance Testing must own the Daily Market Brief
+page and live/degraded data behavior. The coordinator must not mark user
+acceptance accepted.
+
 ## quick/full 模式
+
+Historical V1 shorthand follows. For current production decisions, use the P0
+mode matrix above.
 
 ### quick
 

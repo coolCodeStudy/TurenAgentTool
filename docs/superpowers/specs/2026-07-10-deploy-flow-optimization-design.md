@@ -415,10 +415,11 @@ commands through an injected command runner or PATH fixture. They verify:
 
 ### Cloud Acceptance
 
-On a unified `main` release:
+On a unified Deploy Flow P0 `main` release, before resuming Daily Market Brief:
 
 1. Record baseline disk usage, memory, image list, containers, and active SHA.
-2. Run three code-only targeted quick releases; image count must not increase.
+2. Run three independently triggered code-only targeted quick releases; each
+   must complete in under 60 seconds and image count must not increase.
 3. Run one controlled full release; current and previous application images
    must be the only retained managed application images.
 4. Confirm PostgreSQL container identity and start time did not change.
@@ -426,7 +427,10 @@ On a unified `main` release:
    remain available after each release.
 6. Run a deliberately failing candidate in the test harness, not production,
    and verify rollback.
-7. Confirm root disk remains below 70% after retention.
+7. Confirm root disk remains below 70% after retention and pgvector remains
+   present.
+8. Record branch, commit, deployment mode, duration, managed image count, root
+   disk percentage, PostgreSQL identity, route checks, and rollback state.
 
 ## Acceptance Criteria
 
@@ -463,8 +467,10 @@ On a unified `main` release:
 6. Reduce GitHub full build to the app image and route activation through the
    shared core.
 7. Validate locally with fake command integration tests.
-8. Integrate Daily Market Brief and current main into one release commit.
-9. Perform one controlled cloud full release because AKShare is an image
-   dependency.
-10. Run cloud deployment acceptance, then resume Daily Market Brief product
-    acceptance.
+8. Merge only Deploy Flow Optimization P0 to `main`; install or update the Ops
+   API and validate the no-op plus narrow `targeted_quick` rollout gates.
+9. Run the Deploy Flow P0 cloud acceptance matrix above.
+10. After P0 cloud acceptance passes, integrate Daily Market Brief onto the
+    accepted `main`, perform one controlled `full_image` release for AKShare,
+    and dispatch independent Daily Market Brief product acceptance. The
+    coordinator must not mark user acceptance accepted.

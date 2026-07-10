@@ -233,6 +233,124 @@ docker compose -f docker-compose.prod.yml up -d --build
 sudo systemctl restart investment-knowledge
 ```
 
+## Optimized Pull Deploy Runbook
+
+The P0 production deploy path is pull-based and source-controlled. Production
+may deploy only `main` or a 40-character commit SHA that is reachable from
+`origin/main`; feature branch names and non-main SHAs are rejected.
+
+### Mode Matrix
+
+| Mode | Use when | Image behavior | Runtime behavior |
+| --- | --- | --- | --- |
+| `no_deploy` | Docs, governance, local audits/evals, or tests-only changes | No image build or ECS access | CI/classification succeeds without Ops API, SSH, SCP, Docker, or service restart. |
+| `targeted_quick` | Application code, scripts, DB initialization code, or host worker code changed | Reuse the current immutable app image | Stage the target release and recreate only mapped application targets with `--no-deps`. |
+| `config_restart` | Compose/environment/runtime wiring changed without image/build semantics | Reuse the current immutable app image | Validate Compose and recreate only mapped targets with `--no-deps`. |
+| `full_image` | Dockerfile, requirements, base-image, package lockfile, or Compose `image`/`build` semantics changed | Build/load `investment-knowledge-app:<40-char-sha>` | Activate release and image tag together; recreate application targets sequentially. |
+
+Manual emergency `full_image` is allowed only with an operator-recorded reason
+and image archive evidence. The archive path and compressed size must be
+recorded before transfer/load. A normal `full_image` request without an
+image-input diff is rejected.
+
+### Path-to-Service Mapping
+
+PostgreSQL is immutable during application deploys and is never an application
+target. All application recreates use `--no-deps`.
+
+| Change family | Targets |
+| --- | --- |
+| Web-only Daily Market Brief files | `weekly-review-web` |
+| `command_workbench.py` or shared command-workbench UI | `weekly-review-web`, `command-api` |
+| Shared command logic such as `command_router.py`, `daily_market_brief.py`, `weekly_review.py` | `weekly-review-web`, `command-api`, `mcp`, `dingtalk-stream-bot` |
+| Command API transport-only modules | `command-api` |
+| MCP server/tool modules | `mcp` |
+| Scheduler entrypoints | Matching scheduler service |
+| DingTalk stream bot entrypoint or adapter code | `dingtalk-stream-bot` |
+| Shared runtime modules | Union of importing application services |
+| Requirements, Dockerfile, base-image, or app-image Compose semantics | All application services using the shared app image |
+| Host control-plane scripts | Matching host unit, such as `investment-ops-api.service`, under the deploy lock |
+
+### Preflight Gates
+
+Every ECS-touching mode fails before activation when any gate is unsafe:
+
+- root filesystem has less than 8 GiB free;
+- root filesystem usage is above 80%;
+- available memory is below 512 MiB;
+- Docker does not respond within 10 seconds;
+- PostgreSQL is not running and healthy;
+- the global production deployment lock is held;
+- the target source violates the `main`/reachable-40-char-SHA policy;
+- rendered Compose config is invalid;
+- `full_image` does not have free disk of at least two times the compressed
+  archive size plus 2 GiB.
+
+Failures are product-safe: keep the previous release active, report an
+actionable error, write deployment evidence when possible, do not recreate
+PostgreSQL, and do not run broad prune commands to make a deploy fit.
+
+### Image and Retention Rules
+
+The only managed application image identity is:
+
+```text
+investment-knowledge-app:<40-char-sha>
+```
+
+Keep the current and previous managed app images from deploy state, plus any
+image referenced by a running container. Preserve `pgvector/pgvector:pg16` and
+the PostgreSQL volume. Do not use broad `docker system prune`, `docker image
+prune -a`, or `docker volume prune` during normal deployment. Full deploys may
+remove only older unreferenced `investment-knowledge-app:<sha>` images and
+uploaded archives.
+
+### Read-Only Audit Commands
+
+Use these commands before rollout, after each acceptance deploy, and before
+recording final evidence:
+
+```bash
+df -h /
+free -m
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+curl -fsS http://127.0.0.1:8765/deploy/status | python3 -m json.tool
+```
+
+Also record PostgreSQL container ID and image ID before and after each
+deployment. They must not change during application deploys.
+
+### Two-Stage Rollout Gate
+
+Stage 1 deploys only Deploy Flow Optimization P0 to `main`. Install or update
+the independent Ops API, record baseline disk, memory, managed image count,
+container state, PostgreSQL identity, active SHA, and route health, then
+validate one no-op deployment plus one narrow `targeted_quick` deployment.
+
+Stage 2 executes cloud acceptance for Deploy Flow P0 before any Daily Market
+Brief release:
+
+- run three independently triggered `targeted_quick` deployments;
+- confirm each completes in under 60 seconds;
+- confirm managed app image count does not grow after quick deploys;
+- confirm PostgreSQL container ID and image ID are unchanged;
+- confirm Daily Market Brief, Weekly Review, Command Workbench, MCP, and
+  required health routes are available after each deploy;
+- run one controlled `full_image`;
+- confirm managed app images retain at most current and previous SHA tags;
+- confirm pgvector remains present and PostgreSQL identity is unchanged;
+- confirm root disk usage is below 70% after retention;
+- confirm rollback state names the immediately previous SHA.
+
+Record evidence for branch, commit, mode, duration, image count, disk
+percentage, PostgreSQL identity, routes, and rollback state. Daily Market Brief
+remains blocked until P0 cloud acceptance passes. After that gate, rebase or
+cherry-pick Daily Market Brief onto accepted `main`, let the classifier prove
+AKShare requires one `full_image`, deploy once, and dispatch independent
+Acceptance Testing. The coordinator must not mark Daily Market Brief user
+acceptance as accepted.
+
 ## GitHub Actions 自动部署
 
 本仓库内置 `.github/workflows/deploy.yml`，参考了 ReportingSystem 的 ECS 部署方式，但部署目标改成 Docker Compose。
