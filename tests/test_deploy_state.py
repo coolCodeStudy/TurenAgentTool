@@ -239,6 +239,48 @@ class DeployStateTests(TestCase):
 
         self.assertFalse((self.directory / "events" / "event-1.json").exists())
 
+    def test_write_event_rejects_authenticated_urls_bare_credentials_and_assignments(self) -> None:
+        reasons = (
+            "https://user:value@host/path",
+            "user:secret@host/path",
+            "database_url=postgresql://user:password@db/app",
+            "Command_Api_Token=abc123",
+            "name=value",
+            "NaMe=value",
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                with self.assertRaises(StateFormatError):
+                    write_event(self.directory / "events", replace(sample_event(), emergency_reason=reason))
+
+        self.assertFalse((self.directory / "events" / "event-1.json").exists())
+
+    def test_state_preflight_rejects_authenticated_urls_bare_credentials_and_assignments(self) -> None:
+        path = self.directory / "deploy-state.json"
+        previous = sample_state(current_sha="b" * 40, previous_sha="a" * 40)
+        write_state(path, previous)
+        reasons = (
+            "https://user:value@host/path",
+            "user:secret@host/path",
+            "database_url=postgresql://user:password@db/app",
+            "command_api_token=abc123",
+            "name=value",
+        )
+
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                invalid = replace(previous, preflight={**_valid_preflight(), "docker_health": reason})
+                with self.assertRaises(StateFormatError):
+                    write_state(path, invalid)
+                self.assertEqual(previous, load_state(path))
+
+    def test_write_event_accepts_plain_language_emergency_reason(self) -> None:
+        reason = "The previous release stayed healthy, but activation was not attempted."
+
+        path = write_event(self.directory / "events", replace(sample_event(), emergency_reason=reason))
+
+        self.assertEqual(reason, json.loads(path.read_text(encoding="utf-8"))["emergency_reason"])
+
 
 def _as_json(value: DeploymentState) -> dict[str, object]:
     return {

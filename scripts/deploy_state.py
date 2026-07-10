@@ -85,9 +85,12 @@ _SENSITIVE_TEXT = re.compile(
     r"(?i)\b(?:database[_-]?url|password|passwd|token|api[_-]?key|secret|credential|"
     r"authorization|bearer|private[_-]?key|access[_-]?key)\b"
 )
-_ENV_ASSIGNMENT = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\s*=\s*\S+")
-_CREDENTIAL_URI = re.compile(
-    r"(?i)\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?):\/\/[^\s/:@]+:[^\s@]+@"
+_ASSIGNMENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*\S+")
+_AUTHENTICATED_URI = re.compile(
+    r"(?i)\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s@]+@[^\s]+"
+)
+_BARE_CREDENTIAL = re.compile(
+    r"(?i)(?<![A-Za-z0-9_.-])[^\s/:@]+:[^\s/@]+@[^\s]+"
 )
 
 
@@ -291,7 +294,12 @@ def _metrics_dict(value: object, name: str) -> dict[str, int | float | str]:
 
 
 def _has_sensitive_material(value: str) -> bool:
-    return bool(_SENSITIVE_TEXT.search(value) or _ENV_ASSIGNMENT.search(value) or _CREDENTIAL_URI.search(value))
+    return bool(
+        _SENSITIVE_TEXT.search(value)
+        or _ASSIGNMENT.search(value)
+        or _AUTHENTICATED_URI.search(value)
+        or _BARE_CREDENTIAL.search(value)
+    )
 
 
 def _reject_sensitive_material(value: str, name: str) -> None:
