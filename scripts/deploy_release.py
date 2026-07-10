@@ -9,10 +9,10 @@ import tarfile
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import ContextManager, Protocol
 
 try:
     from scripts.deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_deployment
@@ -25,9 +25,9 @@ try:
     )
     from scripts.deploy_retention import (
         ImageRecord,
-        load_image_archive,
         remove_managed_images,
         retain_release_directories,
+        select_managed_images_for_removal,
     )
     from scripts.deploy_state import (
         DeploymentEvent,
@@ -47,7 +47,12 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
         evaluate_preflight,
         validate_runtime,
     )
-    from deploy_retention import ImageRecord, load_image_archive, remove_managed_images, retain_release_directories
+    from deploy_retention import (
+        ImageRecord,
+        remove_managed_images,
+        retain_release_directories,
+        select_managed_images_for_removal,
+    )
     from deploy_state import (
         DeploymentEvent,
         DeploymentState,
@@ -128,7 +133,7 @@ class DockerHealthChecker:
             self._http_success("http://127.0.0.1:8001/health", "command API health route is unavailable")
             self._authenticated_negative_check()
         elif service == "mcp":
-            self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 404, 405, 406}, "MCP transport is unavailable")
+            self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "MCP transport is unavailable")
         elif service in self._PROCESS_SERVICES:
             result = self._run(
                 ("docker", "compose", "logs", "--no-color", "--tail", "200", service)
@@ -149,7 +154,7 @@ class DockerHealthChecker:
             self._http_success(f"http://127.0.0.1:8010{route}", "aggregate weekly review route is unavailable")
         self._http_success("http://127.0.0.1:8001/health", "aggregate command API route is unavailable")
         self._authenticated_negative_check()
-        self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 404, 405, 406}, "aggregate MCP route is unavailable")
+        self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "aggregate MCP route is unavailable")
 
     def _check_running(self, service: str) -> None:
         result = self._run(
@@ -233,6 +238,7 @@ class DeployRequest:
     archive_path: Path | None
     emergency_reason: str | None
     feature_routes: tuple[str, ...] = ()
+    external_event_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "requested_targets", tuple(sorted(set(self.requested_targets))))
@@ -250,6 +256,73 @@ class DeployOutcome:
     rolled_back_services: tuple[str, ...]
     message: str
     manual_recovery: dict[str, str] | None = None
+    rollback_failures: tuple[str, ...] = ()
+    archive_cleanup: str = "not_applicable"
+    audit_status: str = "not_recorded"
+    image_count_after: int = -1
+    disk_used_after: float = -1.0
+    cleanup_reclaimed_bytes: int = -1
+    cleanup_status: str = "not_applicable"
+
+
+@dataclass
+class SelectorSnapshot:
+    current_release: Path | None
+    previous_release: Path | None
+    env_contents: bytes | None
+
+
+@dataclass
+class SelectorJournal:
+    previous_attempted: bool = False
+    current_attempted: bool = False
+    image_attempted: bool = False
+
+    @property
+    def touched(self) -> bool:
+        return self.previous_attempted or self.current_attempted or self.image_attempted
+
+
+@dataclass(frozen=True)
+class RollbackResult:
+    successful_services: tuple[str, ...]
+    service_failures: tuple[str, ...]
+    selector_failures: tuple[str, ...]
+    aggregate_failed: bool
+    state_failed: bool
+
+    @property
+    def ok(self) -> bool:
+        return not (
+            self.service_failures
+            or self.selector_failures
+            or self.aggregate_failed
+            or self.state_failed
+        )
+
+
+@dataclass
+class DeploymentContext:
+    request: DeployRequest
+    started_at: str
+    target_sha: str = ""
+    computed_plan: DeploymentPlan | None = None
+    plan: DeploymentPlan | None = None
+    previous_state: DeploymentState | None = None
+    selectors: SelectorSnapshot | None = None
+    selector_journal: SelectorJournal = field(default_factory=SelectorJournal)
+    touched_services: list[str] = field(default_factory=list)
+    target_durations_ms: dict[str, int] = field(default_factory=dict)
+    preflight: dict[str, int | float | str] = field(default_factory=dict)
+    archive_bytes: int | None = None
+    archive_cleanup: str = "not_applicable"
+    candidate_loaded: bool = False
+    image_count_before: int = -1
+    image_count_after: int = -1
+    disk_used_after: float = -1.0
+    cleanup_reclaimed_bytes: int = -1
+    cleanup_status: str = "not_applicable"
+
 
 
 PlanBuilder = Callable[[Path, str, str, CommandRunner], DeploymentPlan]
@@ -258,6 +331,7 @@ RuntimeValidator = Callable[[CommandRunner, Path], tuple[str, ...]]
 ReleaseStager = Callable[[str], Path]
 ImageInventory = Callable[[], tuple[ImageRecord, ...]]
 ReferencedImageIds = Callable[[], set[str]]
+LockFactory = Callable[[Path], ContextManager[None]]
 
 
 class DeploymentEngine:
@@ -277,6 +351,7 @@ class DeploymentEngine:
         referenced_image_ids: ReferencedImageIds | None = None,
         compose_project_name: str = "turenagenttool_prod",
         env_file: Path | None = None,
+        lock_factory: LockFactory = deployment_lock,
     ) -> None:
         self.repo = repo
         self.app_root = app_root
@@ -290,6 +365,7 @@ class DeploymentEngine:
         self.image_inventory = image_inventory or self._image_inventory
         self.referenced_image_ids = referenced_image_ids or self._referenced_image_ids
         self.compose_project_name = compose_project_name
+        self.lock_factory = lock_factory
         self.releases_dir = app_root / "releases"
         self.shared_dir = app_root / "shared"
         self.current_link = app_root / "current"
@@ -301,303 +377,563 @@ class DeploymentEngine:
         self.lockout_path = self.shared_dir / "deploy.lockout"
 
     def deploy(self, request: DeployRequest) -> DeployOutcome:
-        if self.lockout_path.exists():
-            if request.requested_mode is DeployMode.FULL_IMAGE:
-                self._remove_archive(request.archive_path)
+        context = DeploymentContext(request=request, started_at=self._safe_timestamp())
+        try:
+            with self.lock_factory(self.lock_path):
+                return self._deploy_locked(context)
+        except Exception as error:
             return DeployOutcome(
                 ok=False,
                 target_sha="",
                 mode=request.requested_mode,
                 activated_services=(),
                 rolled_back_services=(),
-                message="deployment is locked out pending manual recovery",
-                manual_recovery=self._load_lockout_recovery(),
+                message=(
+                    "deployment lock could not be acquired"
+                    if not isinstance(error, DeploymentError)
+                    else self._safe_message(error)
+                ),
+                archive_cleanup="deferred_lock_unavailable",
             )
 
-        preview = self._preview_plan(request)
-        if isinstance(preview, DeployOutcome):
-            if request.requested_mode is DeployMode.FULL_IMAGE:
-                self._remove_archive(request.archive_path)
-            return preview
-        preview_sha, preview_plan = preview
-        if preview_plan.mode is DeployMode.NO_DEPLOY:
-            if request.requested_mode is not DeployMode.NO_DEPLOY or request.requested_targets:
+    def _deploy_locked(self, context: DeploymentContext) -> DeployOutcome:
+        try:
+            if self.lockout_path.exists():
+                archive_cleanup = self._cleanup_archive_safe(
+                    context.request.archive_path
+                )
                 return DeployOutcome(
                     ok=False,
-                    target_sha=preview_sha,
-                    mode=preview_plan.mode,
+                    target_sha="",
+                    mode=context.request.requested_mode,
                     activated_services=(),
                     rolled_back_services=(),
-                    message="requested deployment plan does not match server classification",
+                    message="deployment is locked out pending manual recovery",
+                    manual_recovery=self._load_lockout_recovery(),
+                    archive_cleanup=archive_cleanup,
                 )
+            return self._execute_locked(context)
+        except Exception as error:
+            return self._handle_failure_locked(context, error)
+
+    def _execute_locked(self, context: DeploymentContext) -> DeployOutcome:
+        request = context.request
+        if request.requested_mode is not DeployMode.NO_DEPLOY:
+            self._run_checked(
+                ("git", "-C", str(self.repo), "fetch", "origin", "main"),
+                "production source refresh failed",
+            )
+        context.target_sha = resolve_production_target(
+            self.repo, request.requested_ref, self.runner
+        )
+        context.previous_state = load_state(self.state_path)
+        if context.previous_state.current_sha is None:
+            raise DeploymentError("deployment state does not identify the active commit")
+        context.computed_plan = self.plan_builder(
+            self.repo,
+            context.previous_state.current_sha,
+            context.target_sha,
+            self.runner,
+        )
+        context.plan = self._validate_request(request, context.computed_plan)
+        if context.plan.mode is DeployMode.NO_DEPLOY:
             return DeployOutcome(
                 ok=True,
-                target_sha=preview_sha,
+                target_sha=context.target_sha,
                 mode=DeployMode.NO_DEPLOY,
                 activated_services=(),
                 rolled_back_services=(),
                 message="server classification requires no deployment",
+                archive_cleanup="not_applicable",
             )
 
-        target_sha = ""
-        plan: DeploymentPlan | None = None
-        computed_mode: DeployMode | None = None
-        previous_state: DeploymentState | None = None
-        previous_current = self._resolved_link(self.current_link)
-        previous_previous = self._resolved_link(self.previous_link)
-        previous_env = self.env_file.read_bytes() if self.env_file.exists() else None
-        activated: list[str] = []
-        target_durations_ms: dict[str, int] = {}
-        started_at = self._timestamp()
-        preflight: dict[str, int | float | str] = {}
-        release_activated = False
-        candidate_loaded = False
-        manual_recovery: dict[str, str] | None = None
-        archive_bytes: int | None = None
-        image_count_before = 0
-        image_count_after = 0
-        disk_used_after = 0.0
+        context.selectors = SelectorSnapshot(
+            current_release=self._resolved_link(self.current_link),
+            previous_release=self._resolved_link(self.previous_link),
+            env_contents=(
+                self.env_file.read_bytes() if self.env_file.exists() else None
+            ),
+        )
 
+        snapshot = self.resource_collector(self.runner)
+        context.disk_used_after = snapshot.disk_used_percent
+        context.archive_bytes = (
+            request.archive_path.stat().st_size if request.archive_path else None
+        )
+        result = evaluate_preflight(
+            snapshot, context.plan.mode, context.archive_bytes
+        )
+        if not result.ok:
+            raise DeploymentError(
+                "deployment resource preflight failed: " + "; ".join(result.errors)
+            )
+        context.preflight = self._preflight_observations(
+            snapshot, context.archive_bytes
+        )
+        current_compose = self.current_link / "docker-compose.prod.yml"
+        with _compose_environment(self.compose_project_name):
+            labels = self.runtime_validator(self.runner, current_compose)
+        context.preflight.update(self._runtime_observations(labels))
+        self._verify_baseline_image_identity(
+            context.previous_state, context.selectors
+        )
+        context.image_count_before = len(
+            {image.image_id for image in self.image_inventory()}
+        )
+        context.image_count_after = context.image_count_before
+
+        release = self.release_stager(context.target_sha)
+        with _compose_environment(self.compose_project_name):
+            self._run_checked(
+                (
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(release / "docker-compose.prod.yml"),
+                    "config",
+                    "--quiet",
+                ),
+                "staged Compose configuration is invalid",
+            )
+
+        selected_image = context.previous_state.current_image
+        if context.plan.mode is DeployMode.FULL_IMAGE:
+            if request.archive_path is None:
+                raise DeploymentError("full image deployment requires an archive")
+            selected_image = f"investment-knowledge-app:{context.target_sha}"
+            self._load_candidate_archive(
+                context, request.archive_path, selected_image
+            )
+
+        self._switch_selectors(context, release, selected_image)
+        for target in context.plan.targets:
+            started = self.clock.monotonic()
+            context.touched_services.append(target)
+            self._activate_target(target)
+            self.health.check_service(target, request.feature_routes)
+            self.health.check_aggregate(request.feature_routes)
+            context.target_durations_ms[target] = round(
+                (self.clock.monotonic() - started) * 1000
+            )
+
+        stability_seconds = 60 if context.plan.mode is DeployMode.FULL_IMAGE else 30
+        self.clock.sleep(stability_seconds)
+        for target in context.touched_services:
+            self.health.check_service(target, request.feature_routes)
+        self.health.check_aggregate(request.feature_routes)
+
+        completed_at = self._safe_timestamp()
+        event_id = self._event_id(
+            context.target_sha,
+            context.started_at,
+            context.request.external_event_id,
+        )
+        state = self._successful_state(
+            request=request,
+            plan=context.plan,
+            target_sha=context.target_sha,
+            release=release,
+            previous_state=context.previous_state,
+            previous_current=(
+                context.selectors.current_release if context.selectors else None
+            ),
+            preflight=context.preflight,
+            event_id=event_id,
+            started_at=context.started_at,
+            completed_at=completed_at,
+        )
+        write_state(self.state_path, state)
+        retain_release_directories(
+            self.releases_dir,
+            tuple(
+                sha
+                for sha in (context.target_sha, context.previous_state.current_sha)
+                if sha is not None
+            ),
+        )
+        if context.plan.mode is DeployMode.FULL_IMAGE:
+            context.cleanup_reclaimed_bytes = self._remove_images_with_metrics(
+                self.image_inventory(),
+                state,
+                self.referenced_image_ids(),
+                successful_full_deployment=True,
+            )
+            context.cleanup_status = "completed"
+        context.archive_cleanup = self._cleanup_archive_safe(request.archive_path)
+        self._collect_post_metrics(context)
+        write_event(
+            self.events_dir,
+            self._event(
+                event_id=event_id,
+                request=request,
+                plan=context.plan,
+                computed_mode=context.computed_plan.mode,
+                target_sha=context.target_sha,
+                deployed_sha=context.target_sha,
+                preflight=context.preflight,
+                archive_bytes=context.archive_bytes,
+                image_count_before=context.image_count_before,
+                image_count_after=context.image_count_after,
+                disk_used_after=context.disk_used_after,
+                target_durations_ms=context.target_durations_ms,
+                cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
+                rollback_status=f"not_needed|archive_cleanup:{context.archive_cleanup}",
+                final_health="healthy",
+                started_at=context.started_at,
+                completed_at=completed_at,
+            ),
+        )
+        return DeployOutcome(
+            ok=True,
+            target_sha=context.target_sha,
+            mode=context.plan.mode,
+            activated_services=tuple(context.touched_services),
+            rolled_back_services=(),
+            message="deployment completed and remained healthy",
+            archive_cleanup=context.archive_cleanup,
+            audit_status="recorded",
+            image_count_after=context.image_count_after,
+            disk_used_after=context.disk_used_after,
+            cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
+            cleanup_status=context.cleanup_status,
+        )
+
+    def _audit_plan(self, context: DeploymentContext) -> DeploymentPlan:
+        if context.plan is not None:
+            return context.plan
+        if context.computed_plan is not None:
+            return context.computed_plan
+        return DeploymentPlan(
+            mode=context.request.requested_mode,
+            targets=context.request.requested_targets,
+            changed_files=(),
+            image_input_files=(),
+            reasons=("deployment failed before classification",),
+        )
+
+    def _sanitized_audit_request(self, request: DeployRequest) -> DeployRequest:
+        reason = request.emergency_reason
+        if reason is not None and _SENSITIVE_REASON.search(reason):
+            reason = None
+        return replace(request, emergency_reason=reason)
+
+    def _persist_audit_failure_locked(
+        self, context: DeploymentContext, completed_at: str
+    ) -> str:
+        recovery = self._safe_manual_recovery(context.previous_state)
+        audit_written = False
+        lockout_written = False
         try:
-            with deployment_lock(self.lock_path):
-                self._run_checked(
-                    ("git", "-C", str(self.repo), "fetch", "origin", "main"),
-                    "production source refresh failed",
-                )
-                target_sha = resolve_production_target(self.repo, request.requested_ref, self.runner)
-                previous_state = load_state(self.state_path)
-                if previous_state.current_sha is None:
-                    raise DeploymentError("deployment state does not identify the active commit")
-                computed_plan = self.plan_builder(
-                    self.repo,
-                    previous_state.current_sha,
-                    target_sha,
-                    self.runner,
-                )
-                computed_mode = computed_plan.mode
-                plan = self._validate_request(request, computed_plan)
-
-                snapshot = self.resource_collector(self.runner)
-                disk_used_after = snapshot.disk_used_percent
-                archive_bytes = request.archive_path.stat().st_size if request.archive_path else None
-                result = evaluate_preflight(snapshot, plan.mode, archive_bytes)
-                if not result.ok:
-                    raise DeploymentError("deployment resource preflight failed: " + "; ".join(result.errors))
-                preflight = self._preflight_observations(snapshot, archive_bytes)
-
-                current_compose = self.current_link / "docker-compose.prod.yml"
-                with _compose_environment(self.compose_project_name):
-                    labels = self.runtime_validator(self.runner, current_compose)
-                preflight.update(self._runtime_observations(labels))
-                image_count_before = len({image.image_id for image in self.image_inventory()})
-                image_count_after = image_count_before
-
-                release = self.release_stager(target_sha)
-                with _compose_environment(self.compose_project_name):
-                    self._run_checked(
-                        (
-                            "docker",
-                            "compose",
-                            "-f",
-                            str(release / "docker-compose.prod.yml"),
-                            "config",
-                            "--quiet",
-                        ),
-                        "staged Compose configuration is invalid",
+            self._atomic_write(
+                self.shared_dir / "deploy-audit-failure.json",
+                (
+                    json.dumps(
+                        {
+                            "completed_at": completed_at,
+                            "status": "audit_failed",
+                            "target_sha": context.target_sha or "unresolved",
+                        },
+                        ensure_ascii=True,
+                        sort_keys=True,
                     )
-
-                selected_image = previous_state.current_image
-                if plan.mode is DeployMode.FULL_IMAGE:
-                    if request.archive_path is None:
-                        raise DeploymentError("full image deployment requires an archive")
-                    load_image_archive(self.runner, request.archive_path)
-                    candidate_loaded = True
-                    selected_image = f"investment-knowledge-app:{target_sha}"
-                    self._run_checked(
-                        ("docker", "image", "inspect", selected_image),
-                        "immutable candidate image is unavailable",
-                    )
-                self._activate_release(release, previous_current)
-                release_activated = True
-                if selected_image:
-                    self._write_image_tag(selected_image)
-
-                for target in plan.targets:
-                    started = self.clock.monotonic()
-                    activated.append(target)
-                    self._activate_target(target)
-                    self.health.check_service(target, request.feature_routes)
-                    self.health.check_aggregate(request.feature_routes)
-                    target_durations_ms[target] = round(
-                        (self.clock.monotonic() - started) * 1000
-                    )
-
-                stability_seconds = 60 if plan.mode is DeployMode.FULL_IMAGE else 30
-                self.clock.sleep(stability_seconds)
-                for target in activated:
-                    self.health.check_service(target, request.feature_routes)
-                self.health.check_aggregate(request.feature_routes)
-
-                completed_at = self._timestamp()
-                event_id = self._event_id(target_sha, started_at)
-                state = self._successful_state(
-                    request=request,
-                    plan=plan,
-                    target_sha=target_sha,
-                    release=release,
-                    previous_state=previous_state,
-                    previous_current=previous_current,
-                    preflight=preflight,
-                    event_id=event_id,
-                    started_at=started_at,
-                    completed_at=completed_at,
-                )
-                write_state(self.state_path, state)
-                retain_release_directories(
-                    self.releases_dir,
-                    tuple(
-                        sha
-                        for sha in (target_sha, previous_state.current_sha)
-                        if sha is not None
-                    ),
-                )
-                if plan.mode is DeployMode.FULL_IMAGE:
-                    remove_managed_images(
-                        self.runner,
-                        self.image_inventory(),
-                        state,
-                        self.referenced_image_ids(),
-                        successful_full_deployment=True,
-                        prune_builder_cache=True,
-                    )
-                image_count_after = len({image.image_id for image in self.image_inventory()})
-                final_snapshot = self.resource_collector(self.runner)
-                disk_used_after = final_snapshot.disk_used_percent
-                write_event(
-                    self.events_dir,
-                    self._event(
-                        event_id=event_id,
-                        request=request,
-                        plan=plan,
-                        computed_mode=computed_mode,
-                        target_sha=target_sha,
-                        deployed_sha=target_sha,
-                        preflight=preflight,
-                        archive_bytes=archive_bytes,
-                        image_count_before=image_count_before,
-                        image_count_after=image_count_after,
-                        disk_used_after=disk_used_after,
-                        target_durations_ms=target_durations_ms,
-                        rollback_status="not_needed",
-                        final_health="healthy",
-                        started_at=started_at,
+                    + "\n"
+                ).encode("ascii"),
+            )
+            audit_written = True
+        except Exception:
+            pass
+        try:
+            self._atomic_write(
+                self.lockout_path,
+                (
+                    json.dumps(recovery, ensure_ascii=True, sort_keys=True) + "\n"
+                ).encode("ascii"),
+            )
+            lockout_written = True
+        except Exception:
+            pass
+        if context.previous_state is not None:
+            try:
+                write_state(
+                    self.state_path,
+                    replace(
+                        context.previous_state,
                         completed_at=completed_at,
+                        final_health="audit_failed",
                     ),
                 )
-                return DeployOutcome(
-                    ok=True,
-                    target_sha=target_sha,
-                    mode=plan.mode,
-                    activated_services=tuple(activated),
-                    rolled_back_services=(),
-                    message="deployment completed and remained healthy",
-                )
+            except Exception:
+                pass
+        return (
+            "failed_durable"
+            if audit_written and lockout_written
+            else "failed_unpersisted"
+        )
+
+    def _verify_baseline_image_identity(
+        self, state: DeploymentState, selectors: SelectorSnapshot | None
+    ) -> None:
+        if selectors is None or selectors.env_contents is None or not state.current_image:
+            raise DeploymentError("active application image identity is unavailable")
+        selected_tag = None
+        try:
+            for line in selectors.env_contents.decode("utf-8").splitlines():
+                if line.startswith("APP_IMAGE_TAG="):
+                    selected_tag = line.split("=", 1)[1].strip()
+                    break
+        except UnicodeDecodeError as error:
+            raise DeploymentError("active application image identity is invalid") from error
+        selected_image = (
+            f"investment-knowledge-app:{selected_tag}" if selected_tag else None
+        )
+        if selected_image != state.current_image:
+            raise DeploymentError(
+                "durable and active application image identity do not match"
+            )
+
+        result = self.runner.run(
+            (
+                "docker",
+                "ps",
+                "--filter",
+                f"label=com.docker.compose.project={self.compose_project_name}",
+                "--format",
+                "{{json .}}",
+            )
+        )
+        if result.returncode != 0:
+            raise DeploymentError("running application image identity could not be read")
+        running_images = {
+            str(row.get("Image") or "")
+            for row in _json_rows(result.stdout)
+            if str(row.get("Image") or "").startswith("investment-knowledge-app:")
+        }
+        if not running_images or running_images != {state.current_image}:
+            raise DeploymentError("running application image identity does not match state")
+
+    def _load_candidate_archive(
+        self, context: DeploymentContext, archive_path: Path, expected_image: str
+    ) -> None:
+        inspect = (
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            expected_image,
+        )
+        before = self.runner.run(inspect)
+        before_id = before.stdout.strip() if before.returncode == 0 else ""
+        try:
+            loaded = self.runner.run(("docker", "load", "--input", str(archive_path)))
         except Exception as error:
-            rolled_back: tuple[str, ...] = ()
-            rollback_status = "not_started"
-            if release_activated and previous_state is not None:
-                rolled_back = tuple(reversed(activated))
-                rollback_status = self._rollback(
-                    rolled_back,
-                    previous_current,
-                    previous_previous,
-                    previous_env,
-                    request.feature_routes,
-                    previous_state,
-                )
-                if plan is not None and target_sha:
-                    completed_at = self._timestamp()
-                    final_health = "rollback_failed" if rollback_status == "rollback_failed" else "unhealthy"
-                    if rollback_status == "rollback_failed":
-                        manual_recovery = self._manual_recovery(previous_state)
-                        self._persist_lockout(
-                            previous_state,
-                            target_sha,
-                            completed_at,
-                            manual_recovery,
-                        )
-                    try:
-                        write_event(
-                            self.events_dir,
-                            self._event(
-                                event_id=self._event_id(target_sha, started_at),
-                                request=request,
-                                plan=plan,
-                                computed_mode=computed_mode or plan.mode,
-                                target_sha=target_sha,
-                                deployed_sha=None,
-                                preflight=preflight,
-                                archive_bytes=archive_bytes,
-                                image_count_before=image_count_before,
-                                image_count_after=image_count_after,
-                                disk_used_after=disk_used_after,
-                                target_durations_ms=target_durations_ms,
-                                rollback_status=rollback_status,
-                                final_health=final_health,
-                                started_at=started_at,
-                                completed_at=completed_at,
-                            ),
-                        )
-                    except Exception:
-                        pass
-            if candidate_loaded and previous_state is not None and target_sha:
-                try:
-                    candidate_tag = f"investment-knowledge-app:{target_sha}"
-                    candidate_images = tuple(
-                        image for image in self.image_inventory() if image.tag == candidate_tag
-                    )
-                    remove_managed_images(
-                        self.runner,
-                        candidate_images,
-                        previous_state,
-                        self.referenced_image_ids(),
-                    )
-                except Exception:
-                    pass
-            if request.requested_mode is DeployMode.FULL_IMAGE:
-                self._remove_archive(request.archive_path)
-            return DeployOutcome(
-                ok=False,
-                target_sha=target_sha,
-                mode=plan.mode if plan is not None else request.requested_mode,
-                activated_services=tuple(activated),
-                rolled_back_services=rolled_back,
-                message=self._safe_message(error),
-                manual_recovery=(
-                    manual_recovery if rollback_status == "rollback_failed" else None
+            raise DeploymentError("candidate image archive load could not run") from error
+        context.candidate_loaded = True
+        if loaded.returncode != 0:
+            raise DeploymentError("candidate image archive load failed")
+        loaded_images = {
+            line.split(": ", 1)[1].strip()
+            for line in loaded.stdout.splitlines()
+            if line.startswith("Loaded image: ")
+        }
+        after = self.runner.run(inspect)
+        after_id = after.stdout.strip() if after.returncode == 0 else ""
+        if expected_image not in loaded_images or not after_id:
+            raise DeploymentError("candidate archive image identity does not match target")
+        if before_id and before_id == after_id and loaded_images != {expected_image}:
+            raise DeploymentError("candidate archive image identity does not match target")
+
+    def _cleanup_archive_safe(self, archive_path: Path | None) -> str:
+        if archive_path is None:
+            return "not_applicable"
+        try:
+            existed = archive_path.exists() or archive_path.is_symlink()
+            self._remove_archive(archive_path)
+            if archive_path.exists() or archive_path.is_symlink():
+                return "failed"
+            return "removed" if existed else "already_removed"
+        except Exception:
+            return "failed"
+
+    def _cleanup_candidate_safe(self, context: DeploymentContext) -> str:
+        if context.previous_state is None or not context.target_sha:
+            return "not_applicable"
+        try:
+            candidate_tag = f"investment-knowledge-app:{context.target_sha}"
+            candidate_images = tuple(
+                image for image in self.image_inventory() if image.tag == candidate_tag
+            )
+            referenced_image_ids = self.referenced_image_ids()
+            selected = select_managed_images_for_removal(
+                candidate_images,
+                current_image=context.previous_state.current_image,
+                previous_image=context.previous_state.previous_image,
+                referenced_image_ids=referenced_image_ids,
+            )
+            reclaimed = self._remove_images_with_metrics(
+                candidate_images,
+                context.previous_state,
+                referenced_image_ids,
+                successful_full_deployment=False,
+            )
+            if reclaimed >= 0:
+                context.cleanup_reclaimed_bytes = reclaimed
+            return "removed" if selected else "preserved_referenced"
+        except Exception:
+            return "failed"
+
+    def _remove_images_with_metrics(
+        self,
+        images: tuple[ImageRecord, ...],
+        state: DeploymentState,
+        referenced_image_ids: set[str],
+        *,
+        successful_full_deployment: bool,
+    ) -> int:
+        removable = select_managed_images_for_removal(
+            images,
+            current_image=state.current_image,
+            previous_image=state.previous_image,
+            referenced_image_ids=referenced_image_ids,
+        )
+        reclaimed = 0
+        metrics_available = True
+        for image_id in removable:
+            result = self.runner.run(
+                ("docker", "image", "inspect", "--format", "{{.Size}}", image_id)
+            )
+            try:
+                reclaimed += int(result.stdout.strip())
+            except (ValueError, TypeError):
+                metrics_available = False
+        remove_managed_images(
+            self.runner,
+            images,
+            state,
+            referenced_image_ids,
+            successful_full_deployment=successful_full_deployment,
+            prune_builder_cache=successful_full_deployment,
+        )
+        return reclaimed if metrics_available else -1
+
+    def _collect_post_metrics(self, context: DeploymentContext) -> None:
+        try:
+            context.image_count_after = len(
+                {image.image_id for image in self.image_inventory()}
+            )
+        except Exception:
+            context.image_count_after = -1
+        try:
+            context.disk_used_after = self.resource_collector(
+                self.runner
+            ).disk_used_percent
+        except Exception:
+            context.disk_used_after = -1.0
+
+    def _handle_failure_locked(
+        self, context: DeploymentContext, error: Exception
+    ) -> DeployOutcome:
+        rollback = RollbackResult((), (), (), False, False)
+        rollback_attempted = bool(
+            (context.selector_journal.touched or context.touched_services)
+            and context.selectors is not None
+            and context.previous_state is not None
+        )
+        if rollback_attempted:
+            rollback = self._rollback(context)
+        rollback_status = (
+            "succeeded"
+            if rollback_attempted and rollback.ok
+            else "rollback_failed"
+            if rollback_attempted
+            else "not_started"
+        )
+        manual_recovery = None
+        lockout_persisted = True
+        completed_at = self._safe_timestamp()
+        if rollback_attempted and not rollback.ok:
+            manual_recovery = self._safe_manual_recovery(context.previous_state)
+            lockout_persisted = self._persist_lockout_with_fallback(
+                context.previous_state,
+                context.target_sha,
+                completed_at,
+                manual_recovery,
+            )
+        if context.candidate_loaded and context.previous_state is not None:
+            context.cleanup_status = self._cleanup_candidate_safe(context)
+        context.archive_cleanup = self._cleanup_archive_safe(
+            context.request.archive_path
+        )
+        self._collect_post_metrics(context)
+
+        audit_plan = self._audit_plan(context)
+        audit_request = self._sanitized_audit_request(context.request)
+        audit_status = "recorded"
+        try:
+            write_event(
+                self.events_dir,
+                self._event(
+                    event_id=self._event_id(
+                        context.target_sha or "unresolved",
+                        context.started_at,
+                        context.request.external_event_id,
+                    ),
+                    request=audit_request,
+                    plan=audit_plan,
+                    computed_mode=(
+                        context.computed_plan.mode
+                        if context.computed_plan is not None
+                        else audit_plan.mode
+                    ),
+                    target_sha=context.target_sha or "unresolved",
+                    deployed_sha=None,
+                    preflight=context.preflight,
+                    archive_bytes=context.archive_bytes,
+                    image_count_before=context.image_count_before,
+                    image_count_after=context.image_count_after,
+                    disk_used_after=context.disk_used_after,
+                    target_durations_ms=context.target_durations_ms,
+                    cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
+                    rollback_status=(
+                        f"{rollback_status}|archive_cleanup:{context.archive_cleanup}"
+                        f"|candidate_cleanup:{context.cleanup_status}"
+                    ),
+                    final_health=(
+                        "rollback_failed"
+                        if rollback_attempted and not rollback.ok
+                        else "unhealthy"
+                    ),
+                    started_at=context.started_at,
+                    completed_at=completed_at,
                 ),
             )
+        except Exception:
+            audit_status = self._persist_audit_failure_locked(context, completed_at)
 
-    def _preview_plan(
-        self, request: DeployRequest
-    ) -> tuple[str, DeploymentPlan] | DeployOutcome:
-        try:
-            target_sha = resolve_production_target(self.repo, request.requested_ref, self.runner)
-            state = load_state(self.state_path)
-            if state.current_sha is None:
-                raise DeploymentError("deployment state does not identify the active commit")
-            return target_sha, self.plan_builder(
-                self.repo, state.current_sha, target_sha, self.runner
-            )
-        except Exception as error:
-            return DeployOutcome(
-                ok=False,
-                target_sha="",
-                mode=request.requested_mode,
-                activated_services=(),
-                rolled_back_services=(),
-                message=self._safe_message(error),
-            )
+        message = self._safe_message(error)
+        if audit_status == "failed_durable":
+            message = f"{message}; audit persistence failed; deployment locked out"
+            manual_recovery = self._load_lockout_recovery()
+        elif audit_status == "failed_unpersisted":
+            message = f"{message}; audit persistence failed"
+        if not lockout_persisted:
+            message = f"{message}; deployment lockout persistence failed"
+        return DeployOutcome(
+            ok=False,
+            target_sha=context.target_sha,
+            mode=(context.plan.mode if context.plan else context.request.requested_mode),
+            activated_services=tuple(context.touched_services),
+            rolled_back_services=rollback.successful_services,
+            message=message,
+            manual_recovery=manual_recovery,
+            rollback_failures=rollback.service_failures,
+            archive_cleanup=context.archive_cleanup,
+            audit_status=audit_status,
+            image_count_after=context.image_count_after,
+            disk_used_after=context.disk_used_after,
+            cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
+            cleanup_status=context.cleanup_status,
+        )
 
     def _validate_request(
         self, request: DeployRequest, plan: DeploymentPlan
@@ -606,15 +942,32 @@ class DeploymentEngine:
             raise DeploymentError("emergency reason must be at least 20 characters")
         if request.emergency_reason is not None and _SENSITIVE_REASON.search(request.emergency_reason):
             raise DeploymentError("emergency reason contains protected material")
-        requested_targets = request.requested_targets
-        if plan.mode is not DeployMode.NO_DEPLOY and not requested_targets:
-            raise DeploymentError("requested deployment plan does not match server classification")
+        legacy_omitted_targets = not request.requested_targets
+        requested_targets = (
+            plan.targets if legacy_omitted_targets else request.requested_targets
+        )
         for target in requested_targets:
             if target == "postgres":
                 raise DeploymentError("PostgreSQL cannot be an application deployment target")
             if target not in _APPLICATION_TARGETS and not target.endswith(".service"):
                 raise DeploymentError("deployment request contains an unknown target")
-        if request.requested_mode is not plan.mode or requested_targets != plan.targets:
+        legacy_quick_matches = (
+            legacy_omitted_targets
+            and request.requested_mode is DeployMode.TARGETED_QUICK
+            and plan.mode
+            in {
+                DeployMode.NO_DEPLOY,
+                DeployMode.TARGETED_QUICK,
+                DeployMode.CONFIG_RESTART,
+            }
+        )
+        if (
+            not legacy_quick_matches
+            and (
+                request.requested_mode is not plan.mode
+                or requested_targets != plan.targets
+            )
+        ):
             if request.emergency_reason is not None:
                 return DeploymentPlan(
                     mode=request.requested_mode,
@@ -626,10 +979,21 @@ class DeploymentEngine:
             raise DeploymentError("requested deployment plan does not match server classification")
         return plan
 
-    def _activate_release(self, release: Path, previous_current: Path | None) -> None:
-        if previous_current is not None:
-            self._replace_symlink(self.previous_link, previous_current)
+    def _switch_selectors(
+        self, context: DeploymentContext, release: Path, selected_image: str | None
+    ) -> None:
+        if context.selectors is None:
+            raise DeploymentError("deployment selectors were not snapshotted")
+        if context.selectors.current_release is not None:
+            context.selector_journal.previous_attempted = True
+            self._replace_symlink(
+                self.previous_link, context.selectors.current_release
+            )
+        context.selector_journal.current_attempted = True
         self._replace_symlink(self.current_link, release)
+        if selected_image:
+            context.selector_journal.image_attempted = True
+            self._write_image_tag(selected_image)
 
     def _activate_target(self, target: str) -> None:
         if target.endswith(".service"):
@@ -651,26 +1015,59 @@ class DeploymentEngine:
                 f"application service {target} failed to activate",
             )
 
-    def _rollback(
-        self,
-        targets: tuple[str, ...],
-        previous_current: Path | None,
-        previous_previous: Path | None,
-        previous_env: bytes | None,
-        feature_routes: tuple[str, ...],
-        previous_state: DeploymentState,
-    ) -> str:
-        try:
-            self._restore_link(self.current_link, previous_current)
-            self._restore_link(self.previous_link, previous_previous)
-            self._restore_env(previous_env)
-            for target in targets:
+    def _rollback(self, context: DeploymentContext) -> RollbackResult:
+        if context.selectors is None or context.previous_state is None:
+            return RollbackResult((), (), ("snapshot",), True, True)
+
+        selector_failures: list[str] = []
+        if context.selector_journal.current_attempted:
+            try:
+                self._restore_link(
+                    self.current_link, context.selectors.current_release
+                )
+            except Exception:
+                selector_failures.append("current_release")
+        if context.selector_journal.previous_attempted:
+            try:
+                self._restore_link(
+                    self.previous_link, context.selectors.previous_release
+                )
+            except Exception:
+                selector_failures.append("previous_release")
+        if context.selector_journal.image_attempted:
+            try:
+                self._restore_env(context.selectors.env_contents)
+            except Exception:
+                selector_failures.append("current_image")
+
+        successful_services: list[str] = []
+        service_failures: list[str] = []
+        for target in reversed(context.touched_services):
+            try:
                 self._activate_target(target)
-            self.health.check_aggregate(feature_routes)
-            write_state(self.state_path, previous_state)
-            return "succeeded"
+                successful_services.append(target)
+            except Exception:
+                service_failures.append(target)
+
+        aggregate_failed = False
+        try:
+            self.health.check_aggregate(context.request.feature_routes)
         except Exception:
-            return "rollback_failed"
+            aggregate_failed = True
+
+        state_failed = False
+        try:
+            write_state(self.state_path, context.previous_state)
+        except Exception:
+            state_failed = True
+
+        return RollbackResult(
+            successful_services=tuple(successful_services),
+            service_failures=tuple(service_failures),
+            selector_failures=tuple(selector_failures),
+            aggregate_failed=aggregate_failed,
+            state_failed=state_failed,
+        )
 
     def _successful_state(
         self,
@@ -725,6 +1122,7 @@ class DeploymentEngine:
         image_count_after: int,
         disk_used_after: float,
         target_durations_ms: dict[str, int],
+        cleanup_reclaimed_bytes: int,
         rollback_status: str,
         final_health: str,
         started_at: str,
@@ -742,11 +1140,11 @@ class DeploymentEngine:
             archive_bytes=archive_bytes,
             image_count_before=image_count_before,
             image_count_after=image_count_after,
-            disk_used_before=float(preflight.get("disk_used_percent", 0.0)),
+            disk_used_before=float(preflight.get("disk_used_percent", -1.0)),
             disk_used_after=disk_used_after,
             target_durations_ms=target_durations_ms,
             rollback_status=rollback_status,
-            cleanup_reclaimed_bytes=0,
+            cleanup_reclaimed_bytes=cleanup_reclaimed_bytes,
             emergency_override=request.emergency_reason is not None,
             emergency_reason=request.emergency_reason,
             final_health=final_health,
@@ -926,6 +1324,47 @@ class DeploymentEngine:
             ),
         )
 
+    def _persist_lockout_with_fallback(
+        self,
+        previous_state: DeploymentState,
+        target_sha: str,
+        completed_at: str,
+        manual_recovery: dict[str, str],
+    ) -> bool:
+        try:
+            self._persist_lockout(
+                previous_state,
+                target_sha,
+                completed_at,
+                manual_recovery,
+            )
+            return True
+        except Exception:
+            try:
+                self._atomic_write(
+                    self.lockout_path,
+                    (
+                        json.dumps(
+                            manual_recovery, ensure_ascii=True, sort_keys=True
+                        )
+                        + "\n"
+                    ).encode("ascii"),
+                )
+            except Exception:
+                return False
+            try:
+                write_state(
+                    self.state_path,
+                    replace(
+                        previous_state,
+                        completed_at=completed_at,
+                        final_health="rollback_failed",
+                    ),
+                )
+            except Exception:
+                pass
+            return True
+
     def _manual_recovery(
         self, state: DeploymentState | None
     ) -> dict[str, str]:
@@ -967,6 +1406,24 @@ class DeploymentEngine:
             "memory": memory,
         }
 
+    def _safe_manual_recovery(
+        self, state: DeploymentState | None
+    ) -> dict[str, str]:
+        try:
+            return self._manual_recovery(state)
+        except Exception:
+            return {
+                "current_release": "unknown",
+                "current_image": (
+                    state.current_image if state and state.current_image else "unknown"
+                ),
+                "container_status": "[]",
+                "disk": json.dumps(
+                    {"available_bytes": "unknown", "used_percent": "unknown"}
+                ),
+                "memory": json.dumps({"available_bytes": "unknown"}),
+            }
+
     def _load_lockout_recovery(self) -> dict[str, str]:
         try:
             payload = json.loads(self.lockout_path.read_text(encoding="ascii"))
@@ -980,7 +1437,7 @@ class DeploymentEngine:
                 return payload
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pass
-        return self._manual_recovery(None)
+        return self._safe_manual_recovery(None)
 
     def _remove_archive(self, archive_path: Path | None) -> None:
         if archive_path is not None and (archive_path.is_file() or archive_path.is_symlink()):
@@ -1048,12 +1505,25 @@ class DeploymentEngine:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _event_id(self, target_sha: str, started_at: str) -> str:
+    def _event_id(
+        self,
+        target_sha: str,
+        started_at: str,
+        external_event_id: str | None = None,
+    ) -> str:
+        if external_event_id and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", external_event_id):
+            return external_event_id
         compact_time = started_at.replace("-", "").replace(":", "").replace("+00:00", "Z")
         return f"{compact_time}-{target_sha[:12]}"
 
     def _timestamp(self) -> str:
         return self.clock.now().astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _safe_timestamp(self) -> str:
+        try:
+            return self._timestamp()
+        except Exception:
+            return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def _safe_message(self, error: Exception) -> str:
         if isinstance(error, DeploymentError):
@@ -1119,6 +1589,7 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--emergency-reason")
     parser.add_argument("--feature-routes")
+    parser.add_argument("--external-event-id")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument(
         "--app-root", type=Path, default=Path("/opt/investment-knowledge")
@@ -1143,6 +1614,7 @@ def main(argv: list[str] | None = None) -> int:
         archive_path=arguments.archive,
         emergency_reason=arguments.emergency_reason,
         feature_routes=feature_routes,
+        external_event_id=arguments.external_event_id,
     )
     engine = DeploymentEngine(
         repo=arguments.repo.resolve(),

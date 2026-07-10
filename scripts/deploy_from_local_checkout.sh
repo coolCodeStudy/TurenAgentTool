@@ -15,6 +15,15 @@ if [[ -z "$deploy_mode" ]]; then
   fi
 fi
 
+case "$deploy_mode" in
+  quick)
+    deploy_mode="targeted_quick"
+    ;;
+  full)
+    deploy_mode="full_image"
+    ;;
+esac
+
 args=(
   "$python_bin"
   "$script_dir/deploy_release.py"
@@ -31,14 +40,21 @@ fi
 if [[ -n "${DEPLOY_TARGETS:-}" ]]; then
   args+=(--targets "$DEPLOY_TARGETS")
 fi
-if [[ -n "${DEPLOY_ARCHIVE:-}" ]]; then
-  args+=(--archive "$DEPLOY_ARCHIVE")
+deploy_archive="${DEPLOY_ARCHIVE:-}"
+if [[ -z "$deploy_archive" && "$deploy_mode" == "full_image" ]]; then
+  deploy_archive="${IMAGE_TAR:-/tmp/investment-knowledge-images.tar.gz}"
+fi
+if [[ -n "$deploy_archive" ]]; then
+  args+=(--archive "$deploy_archive")
 fi
 if [[ -n "${DEPLOY_EMERGENCY_REASON:-}" ]]; then
   args+=(--emergency-reason "$DEPLOY_EMERGENCY_REASON")
 fi
 if [[ -n "${DEPLOY_FEATURE_ROUTES:-}" ]]; then
   args+=(--feature-routes "$DEPLOY_FEATURE_ROUTES")
+fi
+if [[ -n "${DEPLOY_EVENT_ID:-}" ]]; then
+  args+=(--external-event-id "$DEPLOY_EVENT_ID")
 fi
 
 exec "${args[@]}"
