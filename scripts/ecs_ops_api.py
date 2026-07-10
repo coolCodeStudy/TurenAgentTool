@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from datetime import datetime
 import fcntl
 import hmac
 import json
@@ -347,9 +348,6 @@ def build_deploy_status() -> dict[str, Any]:
             "min_available_memory_bytes": 512 * MIB,
         },
         "last_outcome": _read_last_outcome(state.last_event_id, state.final_health),
-        "state_path": str(DEPLOY_STATE_PATH),
-        "release_root": str(RELEASE_ROOT),
-        "lock_path": str(DEPLOY_LOCK_PATH),
     }
 
 
@@ -446,6 +444,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 "source_policy_rejected",
                 sanitize_text(str(exc)),
             ) from exc
+        deploy_event_id = _new_deploy_event_id()
         request = DeployRequest(
             requested_ref=ref,
             requested_mode=mode,
@@ -453,6 +452,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             archive_path=archive_path,
             emergency_reason=emergency_reason,
             feature_routes=feature_routes,
+            external_event_id=str(deploy_event_id),
         )
         engine = build_deployment_engine()
         try:
@@ -486,13 +486,15 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
     DEPLOY_MUTEX.release()
 
     return {
+        "deploy_event_id": deploy_event_id,
         "ref": ref,
         "commit_sha": outcome.target_sha or target_sha,
         "mode": outcome.mode.value,
         "targets": list(outcome.activated_services or targets),
         "status": "completed",
         "summary": sanitize_text(outcome.message),
-        "status_url": "/deploy/status",
+        "status_url": f"/ops/deploy-status?id={deploy_event_id}",
+        "aggregate_status_url": "/deploy/status",
         "outcome": _deploy_outcome_payload(outcome),
     }
 
@@ -682,6 +684,10 @@ def wait_for_deploy_health(timeout_seconds: float = 90.0, stable_seconds: float 
 
 
 def read_deploy_event(event_id: int) -> dict[str, Any] | None:
+    shared_event = _read_shared_deploy_event(str(event_id))
+    if shared_event is not None:
+        return shared_event
+
     result = _run(
         [
             PYTHON_BIN,
@@ -702,6 +708,61 @@ def read_deploy_event(event_id: int) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise RuntimeError("read deploy event returned a non-object JSON payload")
     return value
+
+
+def _read_shared_deploy_event(event_id: str) -> dict[str, Any] | None:
+    if not event_id or Path(event_id).name != event_id:
+        return None
+    path = DEPLOY_EVENTS_DIR / f"{event_id}.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _shared_event_status_payload(payload, event_id)
+
+
+def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict[str, Any]:
+    final_health = str(payload.get("final_health") or "")
+    status = "succeeded" if final_health == "healthy" else "failed"
+    completed_at = str(payload.get("completed_at") or "")
+    started_at = str(payload.get("started_at") or "")
+    metadata = {
+        "targets": payload.get("targets") if isinstance(payload.get("targets"), list) else [],
+        "preflight": payload.get("preflight") if isinstance(payload.get("preflight"), dict) else {},
+        "final_health": final_health or "unknown",
+        "rollback_status": str(payload.get("rollback_status") or ""),
+    }
+    return _sanitize_payload(
+        {
+            "id": int(event_id) if event_id.isdigit() else event_id,
+            "deploy_mode": str(payload.get("requested_mode") or payload.get("computed_mode") or ""),
+            "status": status,
+            "commit_sha": str(payload.get("deployed_sha") or payload.get("target_sha") or ""),
+            "branch_name": "",
+            "duration_seconds": _duration_seconds(started_at, completed_at),
+            "summary": f"shared deployment event {status}",
+            "metadata": metadata,
+            "logs_tail": "",
+        }
+    )
+
+
+def _new_deploy_event_id() -> int:
+    return time.time_ns() // 1_000_000
+
+
+def _duration_seconds(started_at: str, completed_at: str) -> float | None:
+    try:
+        if not started_at or not completed_at:
+            return None
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return round((completed - started).total_seconds(), 3)
 
 
 def _check_compose_service_running(service: str) -> dict[str, Any]:

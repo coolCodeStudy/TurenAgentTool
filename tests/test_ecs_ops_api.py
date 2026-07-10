@@ -74,7 +74,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
         self.assertEqual(DeployMode.TARGETED_QUICK, engine.requests[0].requested_mode)
 
-    def test_canonical_modes_dispatch_to_shared_engine(self) -> None:
+    def test_http_deploy_endpoint_dispatches_all_canonical_modes(self) -> None:
         cases = (
             ("no_deploy", DeployMode.NO_DEPLOY, []),
             ("targeted_quick", DeployMode.TARGETED_QUICK, ["weekly-review-web"]),
@@ -106,13 +106,17 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                     patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
                     patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
                 ):
-                    result = ops.deploy_ref(payload)
+                    status, response = self._post_json("/deploy", payload)
 
-                self.assertEqual("completed", result["status"])
+                self.assertEqual(202, status)
+                self.assertTrue(response["ok"])
+                data = response["data"]
+                self.assertEqual("completed", data["status"])
+                self.assertEqual(expected_mode.value, data["mode"])
                 self.assertEqual(expected_mode, engine.requests[0].requested_mode)
                 self.assertEqual(tuple(targets), engine.requests[0].requested_targets)
 
-    def test_legacy_full_alias_maps_to_full_image_when_retained(self) -> None:
+    def test_http_deploy_endpoint_maps_legacy_full_alias_when_retained(self) -> None:
         engine = FakeEngine(
             DeployOutcome(
                 ok=True,
@@ -128,7 +132,8 @@ class EcsOpsApiDeployTests(unittest.TestCase):
             patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
             patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
         ):
-            ops.deploy_ref(
+            status, response = self._post_json(
+                "/deploy",
                 {
                     "ref": "main",
                     "mode": "full",
@@ -137,7 +142,44 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 }
             )
 
+        self.assertEqual(202, status)
+        self.assertTrue(response["ok"])
         self.assertEqual(DeployMode.FULL_IMAGE, engine.requests[0].requested_mode)
+
+    def test_legacy_ops_deploy_response_preserves_event_status_contract(self) -> None:
+        engine = FakeEngine()
+
+        with (
+            patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            status, response = self._post_json(
+                "/ops/deploy",
+                {"ref": "main", "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(202, status)
+        data = response["data"]
+        self.assertIsInstance(data["deploy_event_id"], int)
+        self.assertGreater(data["deploy_event_id"], 0)
+        self.assertEqual(f"/ops/deploy-status?id={data['deploy_event_id']}", data["status_url"])
+        self.assertEqual(str(data["deploy_event_id"]), engine.requests[0].external_event_id)
+
+    def test_http_deploy_endpoint_keeps_quick_alias_coverage(self) -> None:
+        engine = FakeEngine()
+
+        with (
+            patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            status, response = self._post_json(
+                "/deploy",
+                {"ref": "main", "mode": "quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(202, status)
+        self.assertTrue(response["ok"])
+        self.assertEqual(DeployMode.TARGETED_QUICK, engine.requests[0].requested_mode)
 
     def test_feature_ref_is_rejected_before_worker_dispatch(self) -> None:
         engine = FakeEngine()
@@ -325,12 +367,49 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual(["weekly-review-web"], data["targets"])
         self.assertEqual(42.0, data["resources"]["disk_used_percent"])
         self.assertEqual(80.0, data["resource_thresholds"]["max_disk_used_percent"])
+        self.assertNotIn("state_path", data)
+        self.assertNotIn("release_root", data)
+        self.assertNotIn("lock_path", data)
         self.assertNotIn("secret", json.dumps(data["last_outcome"]))
 
     def test_read_deploy_event_returns_json_object(self) -> None:
         payload = '{"id": 42, "status": "started"}'
         with patch.object(ops, "_run", return_value=CommandResult(0, payload, "")):
             self.assertEqual(ops.read_deploy_event(42), {"id": 42, "status": "started"})
+
+    def test_read_deploy_event_bridges_shared_engine_event_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            events_dir = Path(tmp)
+            (events_dir / "42.json").write_text(
+                json.dumps(
+                    {
+                        "event_id": "42",
+                        "requested_mode": "targeted_quick",
+                        "computed_mode": "targeted_quick",
+                        "deployed_sha": TARGET_SHA,
+                        "target_sha": TARGET_SHA,
+                        "targets": ["weekly-review-web"],
+                        "preflight": {"disk_used_percent": 40.0},
+                        "rollback_status": "not_needed",
+                        "final_health": "healthy",
+                        "started_at": "2026-07-10T00:00:00+00:00",
+                        "completed_at": "2026-07-10T00:00:02+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(ops, "DEPLOY_EVENTS_DIR", events_dir, create=True),
+                patch.object(ops, "_run", side_effect=AssertionError("shared event file should satisfy status read")),
+            ):
+                event = ops.read_deploy_event(42)
+
+        self.assertEqual(42, event["id"])
+        self.assertEqual("targeted_quick", event["deploy_mode"])
+        self.assertEqual("succeeded", event["status"])
+        self.assertEqual(TARGET_SHA, event["commit_sha"])
+        self.assertEqual(2.0, event["duration_seconds"])
 
     def test_command_error_summary_prefers_traceback_exception_tail(self) -> None:
         text = "\n".join(
