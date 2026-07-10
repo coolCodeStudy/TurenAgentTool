@@ -36,21 +36,26 @@ def select_managed_images_for_removal(
     previous_image: str | None,
     referenced_image_ids: Collection[str],
 ) -> tuple[str, ...]:
-    """Return only old, unreferenced images from the managed application allow-list."""
+    """Return only IDs whose complete tag set is old managed app tags."""
     records = tuple(images)
     protected_tags = {tag for tag in (current_image, previous_image) if tag}
-    protected_image_ids = {
-        image.image_id for image in records if image.tag in protected_tags
-    }
+    tags_by_id: dict[str, list[ImageRecord]] = {}
+    for image in records:
+        tags_by_id.setdefault(image.image_id, []).append(image)
+
     referenced = set(referenced_image_ids)
-    return tuple(
-        image.image_id
-        for image in sorted(records, key=lambda item: item.created_epoch)
-        if MANAGED_IMAGE_RE.fullmatch(image.tag)
-        and image.tag not in protected_tags
-        and image.image_id not in protected_image_ids
-        and image.image_id not in referenced
-    )
+    removable: list[tuple[int, str]] = []
+    for image_id, tagged_images in tags_by_id.items():
+        tags = {image.tag for image in tagged_images}
+        has_protected_tag = bool(tags & protected_tags)
+        has_nonmanaged_tag = any(not MANAGED_IMAGE_RE.fullmatch(tag) for tag in tags)
+        if image_id in referenced or has_protected_tag or has_nonmanaged_tag:
+            continue
+        if not all(MANAGED_IMAGE_RE.fullmatch(tag) for tag in tags):
+            continue
+        removable.append((min(image.created_epoch for image in tagged_images), image_id))
+
+    return tuple(image_id for _, image_id in sorted(removable))
 
 
 def remove_managed_images(

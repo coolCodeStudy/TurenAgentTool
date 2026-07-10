@@ -82,14 +82,56 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(("id-old",), removable)
 
     def test_protects_id_with_both_old_and_current_tags(self) -> None:
-        images = self.images + (ImageRecord("id-current", "investment-knowledge-app:" + "a" * 40, 1),)
+        images = (
+            ImageRecord("shared", "investment-knowledge-app:" + "a" * 40, 1),
+            ImageRecord("shared", self.current, 2),
+        )
         removable = select_managed_images_for_removal(
             images,
             current_image=self.current,
             previous_image=self.previous,
             referenced_image_ids=set(),
         )
-        self.assertEqual(("id-old",), removable)
+        self.assertEqual((), removable)
+
+    def test_protects_id_with_old_managed_and_pgvector_alias(self) -> None:
+        images = (
+            ImageRecord("shared", "investment-knowledge-app:" + "a" * 40, 1),
+            ImageRecord("shared", "pgvector/pgvector:pg16", 2),
+        )
+        removable = select_managed_images_for_removal(
+            images,
+            current_image=self.current,
+            previous_image=self.previous,
+            referenced_image_ids=set(),
+        )
+        self.assertEqual((), removable)
+
+    def test_protects_id_with_old_managed_and_arbitrary_nonmanaged_alias(self) -> None:
+        images = (
+            ImageRecord("shared", "investment-knowledge-app:" + "a" * 40, 1),
+            ImageRecord("shared", "custom-app:stable", 2),
+        )
+        removable = select_managed_images_for_removal(
+            images,
+            current_image=self.current,
+            previous_image=self.previous,
+            referenced_image_ids=set(),
+        )
+        self.assertEqual((), removable)
+
+    def test_deduplicates_multiple_old_managed_aliases(self) -> None:
+        images = (
+            ImageRecord("shared", "investment-knowledge-app:" + "d" * 40, 2),
+            ImageRecord("shared", "investment-knowledge-app:" + "e" * 40, 1),
+        )
+        removable = select_managed_images_for_removal(
+            images,
+            current_image=self.current,
+            previous_image=self.previous,
+            referenced_image_ids=set(),
+        )
+        self.assertEqual(("shared",), removable)
 
     def test_remove_managed_images_uses_only_image_rm_for_selected_ids(self) -> None:
         runner = RecordingRunner()
