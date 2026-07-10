@@ -36,6 +36,17 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("mode", self.workflow)
         self.assertIn("targets", self.workflow)
 
+    def test_no_deploy_classification_runs_before_ops_credentials_or_status(self) -> None:
+        early = self.workflow.index("Classify credential-free no_deploy plan")
+        authoritative = self.workflow.index("Build server-authoritative deployment plan")
+        early_block = self.workflow[early:authoritative]
+
+        self.assertLess(early, self.workflow.index("OPS_API_TOKEN"))
+        self.assertLess(early, self.workflow.index("/deploy/status"))
+        self.assertNotIn("OPS_API_TOKEN", early_block)
+        self.assertNotIn("/deploy/status", early_block)
+        self.assertIn("steps.early_plan.outputs.mode != 'no_deploy'", self.workflow)
+
     def test_full_image_uploads_only_immutable_app_image_archive(self) -> None:
         self.assertIn("dist/investment-knowledge-app-${{ github.sha }}.tar.gz", self.workflow)
         self.assertNotIn("dist/investment-knowledge-release.tar.gz", self.workflow)

@@ -6,6 +6,11 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
+import os
+import re
+import shutil
+import subprocess
+import sys
 import threading
 import unittest
 from unittest.mock import patch
@@ -20,6 +25,51 @@ from scripts.deploy_support import CommandResult
 
 TARGET_SHA = "b" * 40
 PREVIOUS_SHA = "a" * 40
+
+
+class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_installed_ops_home_contains_runtime_import_closure(self) -> None:
+        installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
+        match = re.search(r"OPS_API_MODULES=\((?P<body>.*?)\)", installer, re.DOTALL)
+        self.assertIsNotNone(match, "installer must declare the copied Ops API module closure")
+        modules = re.findall(r'"([^"]+\.py)"', match.group("body"))
+        required = {
+            "ecs_ops_api.py",
+            "deploy_contract.py",
+            "deploy_preflight.py",
+            "deploy_release.py",
+            "deploy_retention.py",
+            "deploy_state.py",
+            "deploy_support.py",
+        }
+        self.assertTrue(required.issubset(set(modules)))
+
+        with TemporaryDirectory() as tmp:
+            ops_home = Path(tmp) / "investment-ops"
+            ops_home.mkdir()
+            for module in modules:
+                shutil.copy2(Path("scripts") / module, ops_home / module)
+
+            env = {
+                **os.environ,
+                "PYTHONPATH": "",
+                "INVESTMENT_APP_ROOT": str(Path(tmp) / "app"),
+                "OPS_DEPLOY_REPO_DIR": str(Path(tmp) / "repo"),
+            }
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import ecs_ops_api; import deploy_release; print(ecs_ops_api.APP_ROOT)",
+                ],
+                cwd=ops_home,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class FakeEngine:

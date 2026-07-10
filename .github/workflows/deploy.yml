@@ -34,13 +34,13 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      target_sha: ${{ steps.plan.outputs.target_sha }}
-      base_sha: ${{ steps.plan.outputs.base_sha }}
-      mode: ${{ steps.plan.outputs.mode }}
-      targets: ${{ steps.plan.outputs.targets }}
-      targets_csv: ${{ steps.plan.outputs.targets_csv }}
-      plan_json: ${{ steps.plan.outputs.plan_json }}
-      emergency_reason: ${{ steps.plan.outputs.emergency_reason }}
+      target_sha: ${{ steps.early_plan.outputs.target_sha || steps.plan.outputs.target_sha }}
+      base_sha: ${{ steps.early_plan.outputs.base_sha || steps.plan.outputs.base_sha }}
+      mode: ${{ steps.early_plan.outputs.mode || steps.plan.outputs.mode }}
+      targets: ${{ steps.early_plan.outputs.targets || steps.plan.outputs.targets }}
+      targets_csv: ${{ steps.early_plan.outputs.targets_csv || steps.plan.outputs.targets_csv }}
+      plan_json: ${{ steps.early_plan.outputs.plan_json || steps.plan.outputs.plan_json }}
+      emergency_reason: ${{ steps.early_plan.outputs.emergency_reason || steps.plan.outputs.emergency_reason }}
 
     steps:
       - name: Checkout code
@@ -48,8 +48,108 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Classify credential-free no_deploy plan
+        id: early_plan
+        env:
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
+          REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
+          EMERGENCY_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.emergency_reason || '' }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+
+          if ! printf '%s' "$REQUESTED_REF" | grep -Eq '^(main|[0-9a-f]{40})$'; then
+            echo "::error::Manual target_ref must be main or a 40-character SHA."
+            exit 1
+          fi
+
+          git fetch --prune origin main
+          if [ "$REQUESTED_REF" = "main" ]; then
+            target_sha="$WORKFLOW_SHA"
+          else
+            target_sha="$REQUESTED_REF"
+            if [ "$target_sha" != "$WORKFLOW_SHA" ]; then
+              echo "::error::Manual SHA dispatch must run from the same 40-character SHA."
+              exit 1
+            fi
+          fi
+
+          if ! git cat-file -e "$target_sha^{commit}" 2>/dev/null; then
+            echo "::error::Target SHA is not present in the checked-out repository."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+            echo "::error::Target SHA is not reachable from origin/main."
+            exit 1
+          fi
+
+          emit_no_deploy_outputs() {
+            local plan_path="$1"
+            local base_sha="$2"
+            python3 - "$plan_path" "$target_sha" "$base_sha" "$EMERGENCY_REASON" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          plan_path, target_sha, base_sha, emergency_reason = sys.argv[1:5]
+          with open(plan_path, encoding="utf-8") as handle:
+              plan = json.load(handle)
+          targets = plan.get("targets") or []
+          print(f"target_sha={target_sha}")
+          print(f"base_sha={base_sha}")
+          print(f"mode={plan['mode']}")
+          print(f"targets={json.dumps(targets, separators=(',', ':'))}")
+          print(f"targets_csv={','.join(targets)}")
+          print(f"emergency_reason={emergency_reason}")
+          print("plan_json<<EOF")
+          print(json.dumps(plan, ensure_ascii=False, indent=2))
+          print("EOF")
+          PY
+          }
+
+          plan_json="$(mktemp)"
+          if [ "$REQUESTED_MODE" = "no_deploy" ]; then
+            python3 scripts/classify_deploy_change.py \
+              --manual-mode no_deploy \
+              --format json > "$plan_json"
+            emit_no_deploy_outputs "$plan_json" "$target_sha"
+            echo "Credential-free no_deploy plan:"
+            cat "$plan_json"
+            exit 0
+          fi
+
+          if [ "$REQUESTED_MODE" = "auto" ] &&
+             [ "$GITHUB_EVENT_NAME" = "push" ] &&
+             printf '%s' "$GITHUB_EVENT_BEFORE" | grep -Eq '^[0-9a-f]{40}$' &&
+             ! printf '%s' "$GITHUB_EVENT_BEFORE" | grep -Eq '^0{40}$' &&
+             git cat-file -e "$GITHUB_EVENT_BEFORE^{commit}" 2>/dev/null; then
+            python3 scripts/classify_deploy_change.py \
+              --repo . \
+              --base-sha "$GITHUB_EVENT_BEFORE" \
+              --target-sha "$target_sha" \
+              --format json > "$plan_json"
+            early_mode="$(python3 - "$plan_json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle)["mode"])
+          PY
+          )"
+            if [ "$early_mode" = "no_deploy" ]; then
+              emit_no_deploy_outputs "$plan_json" "$GITHUB_EVENT_BEFORE"
+              echo "Credential-free no_deploy plan:"
+              cat "$plan_json"
+              exit 0
+            fi
+          fi
+
+          echo "Server-authoritative deploy status is required for this plan."
+
       - name: Build server-authoritative deployment plan
         id: plan
+        if: steps.early_plan.outputs.mode != 'no_deploy'
         env:
           OPS_API_URL: ${{ vars.OPS_API_URL }}
           OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}

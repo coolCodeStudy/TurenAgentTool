@@ -64,11 +64,21 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_OPS_API="$SCRIPT_DIR/ecs_ops_api.py"
-if [ ! -f "$SOURCE_OPS_API" ]; then
-  echo "Missing $SOURCE_OPS_API. Run this script from a full repo checkout." >&2
-  exit 1
-fi
+OPS_API_MODULES=(
+  "ecs_ops_api.py"
+  "deploy_contract.py"
+  "deploy_preflight.py"
+  "deploy_release.py"
+  "deploy_retention.py"
+  "deploy_state.py"
+  "deploy_support.py"
+)
+for module in "${OPS_API_MODULES[@]}"; do
+  if [ ! -f "$SCRIPT_DIR/$module" ]; then
+    echo "Missing $SCRIPT_DIR/$module. Run this script from a full repo checkout." >&2
+    exit 1
+  fi
+done
 
 if [ -f "$COMPOSE_ENV_FILE" ]; then
   set -a
@@ -104,7 +114,9 @@ if [ -z "$OPS_API_TOKEN" ]; then
 fi
 
 mkdir -p "$OPS_HOME"
-cp -a "$SOURCE_OPS_API" "$OPS_HOME/ecs_ops_api.py"
+for module in "${OPS_API_MODULES[@]}"; do
+  cp -a "$SCRIPT_DIR/$module" "$OPS_HOME/$module"
+done
 chmod +x "$OPS_HOME/ecs_ops_api.py"
 
 if [ ! -x "$OPS_API_VENV/bin/python" ]; then

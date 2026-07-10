@@ -144,6 +144,9 @@ class DockerHealthChecker:
         elif service == "command-api":
             self._http_success("http://127.0.0.1:8001/health", "command API health route is unavailable")
             self._authenticated_negative_check()
+        elif service == "dingtalk-api":
+            self._http_success("http://127.0.0.1:8002/health", "DingTalk API health route is unavailable")
+            self._dingtalk_negative_check()
         elif service == "mcp":
             self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "MCP transport is unavailable")
         elif service in self._PROCESS_SERVICES:
@@ -166,6 +169,8 @@ class DockerHealthChecker:
             self._http_success(f"http://127.0.0.1:8010{route}", "aggregate weekly review route is unavailable")
         self._http_success("http://127.0.0.1:8001/health", "aggregate command API route is unavailable")
         self._authenticated_negative_check()
+        self._http_success("http://127.0.0.1:8002/health", "aggregate DingTalk API route is unavailable")
+        self._dingtalk_negative_check()
         self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "aggregate MCP route is unavailable")
 
     def _check_running(self, service: str) -> None:
@@ -197,6 +202,14 @@ class DockerHealthChecker:
             "http://127.0.0.1:8001/command",
             {401, 403},
             "command API authentication boundary is unavailable",
+            method="POST",
+        )
+
+    def _dingtalk_negative_check(self) -> None:
+        self._http_response(
+            "http://127.0.0.1:8002/dingtalk/webhook",
+            {401, 403},
+            "DingTalk webhook signature boundary is unavailable",
             method="POST",
         )
 

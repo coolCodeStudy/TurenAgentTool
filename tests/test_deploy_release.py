@@ -170,6 +170,8 @@ class HealthRunner(RecordingRunner):
         if command[:2] == ("curl", "--silent"):
             if "http://127.0.0.1:8001/command" in command:
                 return CommandResult(0, "401", "")
+            if "http://127.0.0.1:8002/dingtalk/webhook" in command:
+                return CommandResult(0, "401", "")
             if "http://127.0.0.1:8000/mcp" in command:
                 return CommandResult(0, "400", "")
             return CommandResult(0, "200", "")
@@ -1654,6 +1656,7 @@ class DockerHealthCheckerTests(TestCase):
     def test_exact_target_and_aggregate_health_routes_are_checked(self) -> None:
         self.health.check_service("weekly-review-web", ("/daily-market-brief",))
         self.health.check_service("command-api", ())
+        self.health.check_service("dingtalk-api", ())
         self.health.check_service("mcp", ())
         self.health.check_aggregate(("/daily-market-brief",))
 
@@ -1665,9 +1668,17 @@ class DockerHealthCheckerTests(TestCase):
             "http://127.0.0.1:8010/daily-market-brief",
             "http://127.0.0.1:8001/health",
             "http://127.0.0.1:8001/command",
+            "http://127.0.0.1:8002/health",
+            "http://127.0.0.1:8002/dingtalk/webhook",
             "http://127.0.0.1:8000/mcp",
         ):
             self.assertTrue(any(url in command for command in rendered), url)
+        self.assertTrue(
+            any(
+                "POST http://127.0.0.1:8002/dingtalk/webhook" in command
+                for command in rendered
+            )
+        )
         self.assertTrue(any("exec -T postgres pg_isready" in command for command in rendered))
 
     def test_scheduler_health_rejects_startup_traceback(self) -> None:
