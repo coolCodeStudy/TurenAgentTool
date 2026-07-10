@@ -23,12 +23,6 @@ COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
 )
 
 
-COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
-    "Enter the private Command Workbench access token and preview again. "
-    "The token is stored only in this browser and is required for private previews and runs."
-)
-
-
 def command_workbench_auth_error_payload() -> dict[str, Any]:
     return {
         "ok": False,
@@ -169,6 +163,22 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=(),
         expected_output="Recovery message explaining that decision history is not available yet.",
         supports_execution=False,
+    ),
+    "bootstrap_stock_profile": CommandAction(
+        id="bootstrap_stock_profile",
+        action_family="Decision",
+        label="Initialize stock profile",
+        description="Create a minimal stock profile when a valid symbol is not in the knowledge base yet.",
+        aliases=("创建股票档案", "初始化股票", "initialize stock profile"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="创建股票档案 {symbol} {market}",
+        safety_level="writes_durable_record",
+        confirmation_required=True,
+        result_type="stock_profile_bootstrap",
+        side_effects="Creates a minimal stock profile row. Does not trade and does not invent analysis facts.",
+        data_sources=("stock profile",),
+        expected_output="A minimal stock profile is created so decision/research commands can continue.",
     ),
     "portfolio_positions": CommandAction(
         id="portfolio_positions",
@@ -467,19 +477,6 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
     return None
 
 
-def command_workbench_auth_error_payload() -> dict[str, Any]:
-    return {
-        "ok": False,
-        "error": "unauthorized",
-        "message": COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE,
-        "recovery": {
-            "title": "Access token required",
-            "next_action": "Enter the private access token and preview again.",
-            "storage": "Stored only in this browser localStorage key command_workbench_token.",
-        },
-    }
-
-
 def render_command_workbench_html() -> str:
     return """<!doctype html>
 <html lang="en">
@@ -700,6 +697,52 @@ def render_command_workbench_html() -> str:
     }
     .ok { color: var(--good); }
     .bad { color: var(--bad); }
+    .result-summary {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .result-card {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .result-head {
+      display: grid;
+      gap: 3px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    .result-head strong {
+      font-size: 16px;
+    }
+    .result-section {
+      display: grid;
+      gap: 6px;
+    }
+    .result-section h3 {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .result-section p {
+      margin: 0;
+      line-height: 1.5;
+    }
+    .result-section ul {
+      margin: 0;
+      padding-left: 18px;
+      line-height: 1.5;
+    }
+    .raw-output {
+      margin-top: 12px;
+    }
+    .raw-output summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
     @media (max-width: 980px) {
       .shell { display: block; }
       aside { border-left: 0; border-top: 1px solid var(--line); }
@@ -730,7 +773,7 @@ def render_command_workbench_html() -> str:
         <div id="form" class="form-grid"></div>
       </section>
       <section>
-        <h2>Execution Result</h2>
+        <h2>Execution Result / 执行结果</h2>
         <div id="result"><span class="label">No command has run in this session.</span></div>
       </section>
     </main>
@@ -927,15 +970,111 @@ def render_command_workbench_html() -> str:
     };
 
     function showResult(data) {
-      const status = data.ok ? `<span class="ok">success</span>` : `<span class="bad">failed</span>`;
-      const event = data.event_id ? `Event #${data.event_id}` : "No event id";
+      const status = data.ok ? `<span class="ok">success / 成功</span>` : `<span class="bad">failed / 失败</span>`;
+      const event = data.event_id ? `Event / 事件 #${data.event_id}` : "No event id / 无事件 ID";
       const exact = data.executed_command || (data.preview && data.preview.exact_command) || "";
       const message = data.message || data.error || "";
       $("#result").innerHTML = `
-        <div><span class="label">Status</span>${status} · ${escapeHtml(event)}</div>
-        <div><span class="label">Executed command</span><code>${escapeHtml(exact)}</code></div>
-        <pre class="result">${escapeHtml(message)}</pre>
+        <div class="result-summary">
+          <div><span class="label">Status / 状态</span>${status} · ${escapeHtml(event)}</div>
+          <div><span class="label">Executed command / 已执行命令</span><code>${escapeHtml(exact || "None")}</code></div>
+        </div>
+        ${formatResultMessage(message)}
       `;
+    }
+
+    function formatResultMessage(message) {
+      if (!message) {
+        return `<div class="notice">No result body returned. / 没有返回结果正文。</div>`;
+      }
+      const decisionCard = parseDecisionCard(message);
+      if (decisionCard) return renderDecisionResult(decisionCard, message);
+      return `
+        <div class="result-card">
+          <div class="result-head">
+            <span class="label">Raw result / 原始结果</span>
+          </div>
+          <pre class="result">${escapeHtml(message)}</pre>
+        </div>
+      `;
+    }
+
+    function parseDecisionCard(message) {
+      const lines = String(message || "").split(/\r?\n/).map((line) => line.trimEnd());
+      const title = (lines[0] || "").trim();
+      const thesisIndex = lines.findIndex((line) => line.startsWith("Thesis:"));
+      const driversIndex = lines.findIndex((line) => line === "Drivers:");
+      const risksIndex = lines.findIndex((line) => line === "Risks:");
+      const watchIndex = lines.findIndex((line) => line === "Watch:");
+      const freshnessIndex = lines.findIndex((line) => line.startsWith("Freshness:"));
+      const evidenceIndex = lines.findIndex((line) => line.startsWith("Evidence:"));
+      if (!title || thesisIndex < 0 || driversIndex < 0 || risksIndex < 0 || watchIndex < 0 || freshnessIndex < 0 || evidenceIndex < 0) {
+        return null;
+      }
+      return {
+        title,
+        thesis: lines[thesisIndex].replace(/^Thesis:\s*/, "").trim(),
+        drivers: parseBullets(lines.slice(driversIndex + 1, risksIndex)),
+        risks: parseBullets(lines.slice(risksIndex + 1, watchIndex)),
+        watch: parseBullets(lines.slice(watchIndex + 1, freshnessIndex)),
+        freshness: lines[freshnessIndex].replace(/^Freshness:\s*/, "").trim(),
+        evidence: lines[evidenceIndex].replace(/^Evidence:\s*/, "").trim()
+      };
+    }
+
+    function parseBullets(lines) {
+      return lines
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.replace(/^-\s*/, ""));
+    }
+
+    function renderDecisionResult(card, rawMessage) {
+      return `
+        <div class="result-card">
+          <div class="result-head">
+            <span class="label">Decision card / 决策卡</span>
+            <strong>${escapeHtml(card.title)}</strong>
+          </div>
+          ${resultSection("Thesis / 投资结论", card.thesis)}
+          ${resultListSection("Drivers / 驱动因素", card.drivers)}
+          ${resultListSection("Risks / 风险", card.risks)}
+          ${resultListSection("Watch / 跟踪项", card.watch)}
+          ${resultSection("Freshness / 数据新鲜度", card.freshness)}
+          ${resultSection("Evidence / 证据", translateEvidence(card.evidence))}
+        </div>
+        <details class="raw-output">
+          <summary>Raw output / 原始输出</summary>
+          <pre class="result">${escapeHtml(rawMessage)}</pre>
+        </details>
+      `;
+    }
+
+    function resultSection(title, value) {
+      return `
+        <div class="result-section">
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(value || "None / 暂无")}</p>
+        </div>
+      `;
+    }
+
+    function resultListSection(title, values) {
+      const items = values && values.length ? values : ["None / 暂无"];
+      return `
+        <div class="result-section">
+          <h3>${escapeHtml(title)}</h3>
+          <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+        </div>
+      `;
+    }
+
+    function translateEvidence(value) {
+      const match = String(value || "").match(/^(\d+)\s+sources,\s+(\d+)\s+facts,\s+audit\s+(.+)$/i);
+      if (!match) return value || "unknown / 未知";
+      const audit = match[3].trim();
+      const auditZh = audit === "pass" ? "通过" : audit === "unknown" ? "未知" : audit;
+      return `${match[1]} sources / ${match[1]} 个来源, ${match[2]} facts / ${match[2]} 条事实, audit ${audit} / 审计${auditZh}`;
     }
 
     function addRecent(data) {
@@ -1100,6 +1239,26 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    bootstrap_target = _match_first(
+        text,
+        [
+            r"^创建股票档案\s+(.+)$",
+            r"^初始化股票\s+(.+)$",
+            r"^initialize stock profile\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if bootstrap_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "bootstrap_stock_profile",
+                "deterministic_alias",
+                0.98,
+                fields={"stock": bootstrap_target},
+            )
+        )
+
     decision_target = _match_first(
         text,
         [
@@ -1199,6 +1358,24 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
                 )
             )
 
+    bootstrap_exact = _match_first(
+        text,
+        [r"^(?:创建股票档案|初始化股票|initialize stock profile)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if bootstrap_exact:
+        parsed = _parse_stock_target(bootstrap_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="bootstrap_stock_profile",
+                    fields={"stock": bootstrap_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
     simple_exact = {
         "本周复盘": "weekly_current",
         "weekly review": "weekly_current",
@@ -1252,22 +1429,103 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     confidence = context.confidence or 0.9
 
     needs_stock = any(field.get("type") == "stock" for field in action.required_fields)
+    if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
+        resolved_target = _candidate_with_stock_profile(target)
+        if resolved_target is None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=context.raw_input,
+                    action_id="bootstrap_stock_profile",
+                    fields={"stock": f"{target['market']}.{target['symbol']}"},
+                    selected_target=target,
+                    parse_source=context.parse_source,
+                    confidence=min(confidence, float(target.get("confidence") or confidence)),
+                    recovery_message=(
+                        f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
+                        "Initialize a minimal stock profile, then preview the decision command again."
+                    ),
+                )
+            )
+        target = resolved_target
+
+    if action.id == "decision_card" and target is not None and _target_needs_research(target):
+        return _preview_from_action(
+            ParseContext(
+                raw_input=context.raw_input,
+                action_id="research_create_stock_job",
+                fields={"stock": f"{target['market']}.{target['symbol']}"},
+                selected_target=target,
+                parse_source=context.parse_source,
+                confidence=min(confidence, float(target.get("confidence") or confidence)),
+                recovery_message=(
+                    f'{target["market"]}.{target["symbol"]} has only a minimal stock profile. '
+                    "Create a research job first; run the decision card again after facts are imported."
+                ),
+            )
+        )
+
     if needs_stock and target is None:
         stock_query = str(fields.get("stock") or "").strip()
         if not stock_query:
             status = "needs_field"
             recovery_message = "Choose a stock target before running this action."
+        elif action.id == "bootstrap_stock_profile":
+            target = _symbol_candidate_from_query(stock_query)
+            if target is None:
+                status = "needs_entity"
+                recovery_message = (
+                    "Enter a market-qualified symbol such as US.MSTR, MSTR US, HK.09988, or 000660 KR "
+                    "before initializing a stock profile."
+                )
+            else:
+                confidence = min(confidence, float(target.get("confidence") or confidence))
         else:
             candidates = resolve_stock_candidates(stock_query)
             if not candidates:
+                bootstrap_target = _symbol_candidate_from_query(stock_query)
+                if bootstrap_target is not None:
+                    return _preview_from_action(
+                        ParseContext(
+                            raw_input=context.raw_input,
+                            action_id="bootstrap_stock_profile",
+                            fields={"stock": f"{bootstrap_target['market']}.{bootstrap_target['symbol']}"},
+                            selected_target=bootstrap_target,
+                            parse_source=context.parse_source,
+                            confidence=min(confidence, float(bootstrap_target.get("confidence") or confidence)),
+                            recovery_message=(
+                                f'I recognized {action.label}, but {bootstrap_target["market"]}.'
+                                f'{bootstrap_target["symbol"]} is not in the stock profile database yet. '
+                                "Initialize a minimal stock profile, then preview the decision command again."
+                            ),
+                        )
+                    )
                 status = "needs_entity"
-                recovery_message = f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". Enter a stock already in the knowledge base, such as US.INTC or 000660 KR.'
+                recovery_message = (
+                    f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
+                    "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                )
             elif len(candidates) == 1:
                 target = candidates[0]
                 confidence = min(confidence, float(target.get("confidence") or confidence))
             else:
                 status = "ambiguous_entity"
                 recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
+
+    if status == "parsed" and action.id == "decision_card" and target is not None and _target_needs_research(target):
+        return _preview_from_action(
+            ParseContext(
+                raw_input=context.raw_input,
+                action_id="research_create_stock_job",
+                fields={"stock": f"{target['market']}.{target['symbol']}"},
+                selected_target=target,
+                parse_source=context.parse_source,
+                confidence=min(confidence, float(target.get("confidence") or confidence)),
+                recovery_message=(
+                    f'{target["market"]}.{target["symbol"]} has only a minimal stock profile. '
+                    "Create a research job first; run the decision card again after facts are imported."
+                ),
+            )
+        )
 
     if action.id == "service_logs":
         service = _normalize_service(str(fields.get("service") or ""))
@@ -1320,6 +1578,7 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
         return []
 
     candidates: list[dict[str, Any]] = []
+    alias_candidates: list[dict[str, Any]] = []
     parsed = _parse_stock_target(cleaned)
     if parsed is not None:
         symbol, market = parsed
@@ -1328,7 +1587,9 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
     alias_key = cleaned.lower()
     if alias_key in ALIAS_STOCKS:
         for item in ALIAS_STOCKS[alias_key]:
-            candidates.append(_candidate(source="alias", **item))
+            candidate = _candidate(source="alias", **item)
+            candidates.append(candidate)
+            alias_candidates.append(candidate)
 
     try:
         for row in repository.resolve_stock_reference(cleaned):
@@ -1344,7 +1605,36 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
     except Exception:
         pass
 
+    if len(alias_candidates) > 1:
+        return _dedupe_candidates(_profile_or_preserve_alias_candidates(alias_candidates, candidates))
     return _filter_profiled_candidates(_dedupe_candidates(candidates))
+
+
+def _profile_or_preserve_alias_candidates(
+    alias_candidates: list[dict[str, Any]],
+    all_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for candidate in alias_candidates:
+        merged.append(_candidate_with_stock_profile(candidate) or candidate)
+    for candidate in all_candidates:
+        if candidate.get("source") == "stock_profile":
+            merged.append(candidate)
+    return merged
+
+
+def _symbol_candidate_from_query(query: str) -> dict[str, Any] | None:
+    parsed = _parse_stock_target(query)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    return _candidate(
+        symbol=symbol,
+        market=market,
+        name=f"{market.upper()}.{symbol.upper()}",
+        confidence=1.0,
+        source="symbol",
+    )
 
 
 def _filter_profiled_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1378,6 +1668,36 @@ def _candidate_with_stock_profile(candidate: dict[str, Any]) -> dict[str, Any] |
                 source=str(candidate.get("source") or "stock_profile"),
             )
     return None
+
+
+def _target_needs_research(target: dict[str, Any]) -> bool:
+    symbol = str(target.get("symbol") or "").strip().upper()
+    market = str(target.get("market") or "").strip().upper()
+    if not symbol or not market:
+        return False
+    try:
+        context = repository.get_stock_context(symbol=symbol, market=market)
+    except Exception:
+        return False
+    return _stock_context_needs_research(context)
+
+
+def _stock_context_needs_research(context: dict[str, Any]) -> bool:
+    stock = context.get("stock") or {}
+    if not stock:
+        return False
+    knowledge_count = len(context.get("stock_knowledge") or context.get("knowledge_items") or [])
+    source_count = len(context.get("sources") or [])
+    marker_text = " ".join(
+        str(stock.get(field) or "")
+        for field in ("core_business", "stock_character", "notable_history")
+    ).lower()
+    minimal_marker = (
+        "minimal profile initialized from command workbench" in marker_text
+        or "needs research" in marker_text
+        or "missing-stock recovery" in marker_text
+    )
+    return minimal_marker and knowledge_count == 0 and source_count == 0
 
 
 def _parse_with_llm(raw_input: str) -> dict[str, Any] | None:
@@ -1487,6 +1807,8 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
         symbol, market = symbol_market_match.groups()
         if re.fullmatch(r"[A-Za-z]{1,5}", market):
             return symbol.upper(), market.upper()
+    if re.fullmatch(r"[A-Z]{1,5}", cleaned):
+        return cleaned.upper(), "US"
     return None
 
 

@@ -580,6 +580,8 @@ Quality metrics:
 8. Access token input remains separate from command history.
 9. Existing exact commands still work for advanced users.
 10. No unsupported free text reaches command execution.
+11. A valid market-qualified or uppercase US stock symbol that is not yet in stock profiles, such as `US.MSTR` or `MSTR`, does not dead-end as an unknown command. The workbench offers a confirmed stock-profile initialization path, then lets the user preview the decision command again.
+12. A decision command for a stock with only a minimal bootstrap profile and no imported facts/sources must not present an empty decision card as success. It should recover by offering a confirmed research-job creation path and explain that the decision card should be rerun after facts are imported.
 
 ## 18. Open Questions
 

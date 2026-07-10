@@ -72,7 +72,7 @@ def run_single_stock_research(
 
     if not options.refresh:
         existing = repository.search_stock(symbol=symbol, market=market)
-        if existing.get("stock"):
+        if existing.get("stock") and not _existing_stock_needs_research(existing):
             return ResearchPipelineResult(
                 symbol=symbol,
                 market=market,
@@ -157,6 +157,23 @@ def _artifact_paths(output_dir: Path, symbol: str, market: str) -> dict[str, Pat
         "audit": output_dir / f"{stem}_audit_report.md",
         "source_facts": output_dir / f"{stem}_source_facts.json",
     }
+
+
+def _existing_stock_needs_research(search_result: dict[str, Any]) -> bool:
+    stock = search_result.get("stock") or {}
+    if not stock:
+        return False
+    marker_text = " ".join(
+        str(stock.get(field) or "")
+        for field in ("core_business", "stock_character", "notable_history")
+    ).lower()
+    minimal_marker = (
+        "minimal profile initialized from command workbench" in marker_text
+        or "needs research" in marker_text
+        or "missing-stock recovery" in marker_text
+    )
+    knowledge_items = search_result.get("knowledge_items") or []
+    return minimal_marker and len(knowledge_items) == 0
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

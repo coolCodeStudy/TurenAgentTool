@@ -4,6 +4,8 @@
 
 The Delivery Coordinator is the single front door for product-feature delivery in this repository.
 
+This protocol implements `Agent-Operating-Model.md` for feature-level coordination. If this protocol and the Agent Operating Model appear to disagree, follow the Agent Operating Model and update this protocol.
+
 The user should be able to ask about a product feature once, and the coordinator should route the work across Product, Engineering, Acceptance Testing, and Project Management without making the user repeat context in several sessions.
 
 The coordinator is an orchestration role. It does not replace the specialized roles:
@@ -26,6 +28,28 @@ Escalate from a Feature Coordinator to the Global Project Manager only when:
 - the coordinator is blocked or stale and needs recovery;
 - a delivery-system rule or process defect needs to be changed.
 
+Do not report every routine role transition upward. A healthy Feature Coordinator should continue through Product, Development, deploy, Acceptance Testing, and Return Gates autonomously. Report to the Global Project Manager or Owner only for milestone summaries, true blockers, user/global decisions, cross-feature conflicts, credentials/permissions, operating-model defects, or readiness for user acceptance.
+
+### Feature Ownership Closure Contract
+
+The Feature Coordinator is the directly responsible owner for its feature until the feature reaches one of these terminal states:
+
+- `product_done`
+- `blocked_with_owner`
+- `waiting_for_user_acceptance`
+- `explicitly_cancelled`
+
+A child role returning, pushing a branch, passing review, failing review, or recommending a next owner is not a terminal state. It is a Return Gate input.
+
+After each child return, the coordinator must stop only after recording one of these closure actions:
+
+- `accept_and_route`: accepted or integrated the returned work, updated durable delivery state, and dispatched the next owner or made a concrete deploy decision.
+- `reject_and_return`: rejected the returned work with concrete corrections and routed it back to the same or correct role.
+- `blocked_with_owner`: recorded the precise blocker, the named owner, the exact unblock condition, and the resume/watch path.
+- `ready_for_user_acceptance`: independent acceptance allows user review and there is no hidden internal next step.
+
+Routine Product -> Development -> Review -> Deploy -> Acceptance -> Retest steps must stay inside the feature coordinator loop. `Return to Global PM` is invalid for routine next-owner routing. It is valid only for cross-feature release conflict, stale coordinator recovery, credentials/permissions, priority/budget decision, or operating-model defect.
+
 ## Responsibilities
 
 The Delivery Coordinator must:
@@ -38,6 +62,7 @@ The Delivery Coordinator must:
 - Review returned role/session output, integrate or reject returned branches, and continue to the next owner when the next action is known.
 - Keep the user-facing answer focused on feature status, next owner, blockers, and decisions needed from the user.
 - Run or request delivery audits when status is unclear.
+- Fill or refresh `docs/project-management/Coordinator-Context-Packet.md` when taking over a feature, recovering a stale flow, or coordinating a feature with existing delivery history.
 - Prevent work from being called done when required registry, acceptance, verification, or lesson-capture gates are missing.
 
 The Delivery Coordinator must not:
@@ -61,9 +86,10 @@ When the user asks about a product feature, use this flow:
 4. Read the linked PRD and technical plan when the request requires product or engineering judgment.
 5. Run `python3 scripts/audit_delivery_state.py` when the question is about overall status, missing work, readiness, handoff, or acceptance.
 6. For a specific feature, run `python3 scripts/audit_delivery_state.py --feature "<feature name>"`.
-7. Before routing a substantial task to another role or session, run `python3 scripts/audit_delivery_state.py --handoff-packet "<feature name>"`.
-8. If the request requires another role to act, enter Dispatch Mode.
-9. Answer with:
+7. If the feature has existing delivery history or a prior coordinator branch/thread, fill or refresh `docs/project-management/Coordinator-Context-Packet.md`.
+8. Before routing a substantial task to another role or session, run `python3 scripts/audit_delivery_state.py --handoff-packet "<feature name>"`.
+9. If the request requires another role to act, enter Dispatch Mode.
+10. Answer with:
    - current state;
    - next owner;
    - dispatch result;
@@ -73,6 +99,8 @@ When the user asks about a product feature, use this flow:
 
 For broad questions such as "what should we do next?", "which PRDs are unfinished?", or "can I ask the user to accept this?", the coordinator should use the audit script first, then inspect documents only where the audit result needs interpretation.
 
+When dispatching common role work, prefer the templates under `docs/project-management/prompt-templates/` and adapt them to the exact feature. Templates do not replace the handoff packet; they reduce missing fields and vague return contracts.
+
 ## Handoff Packet
 
 Every substantial routed task must include this packet. Keep it short, but do not omit required fields.
@@ -81,6 +109,7 @@ Every substantial routed task must include this packet. Keep it short, but do no
 ## Delivery Handoff
 
 - Task:
+- Operating model source:
 - Coordinator:
 - Current owner:
 - Source PRD:
@@ -97,6 +126,11 @@ Every substantial routed task must include this packet. Keep it short, but do no
 - User decisions needed:
 - Next owner:
 - Expected handoff result:
+- Completion gate:
+- Deploy needed:
+- Deploy decision:
+- Return target:
+- Escalation target:
 ```
 
 Use `not_applicable` only with a reason. Use `needs_review` when evidence is unclear.
@@ -152,6 +186,8 @@ The handoff is incomplete if the coordinator only says "I will wait" without a c
 
 Do not use a Global Project Manager heartbeat as the normal watch path for a feature dispatch. A Global Project Manager monitor is allowed only as an escalation or portfolio audit mechanism, such as detecting stale coordinators, missing watch paths, or returned child work that the feature coordinator failed to process.
 
+Global Project Manager portfolio audits should use `python3 scripts/audit_agent_flow_health.py` before reading individual coordinator or child-agent conversation context. The audit may mark `context_required: yes` for missing Return Gates, contradictory status, repeated escalation, or unclear blockers. If it does not, prefer repo-native state and returned summaries over reading full conversations.
+
 When a child role returns and the feature coordinator is idle, the Global Project Manager may send the returned result back to the feature coordinator and instruct it to apply the Coordinator Return Gate. That is a recovery path, not the designed steady state.
 
 ## Deploy Intent And Serialization
@@ -177,6 +213,19 @@ GitHub Actions production deploys use the `production-deploy` concurrency group.
 
 The current Ops API already has an in-process mutex and file lock for `/ops/deploy`. P0 does not add a separate deploy queue; use `Delivery-Queue.md` to record deploy intent, deploy completion, or `blocked` state. Add a dedicated Deploy Queue only if Delivery Queue becomes too noisy.
 
+## Deploy Decision Gate
+
+Every coordinator return involving a cloud-served or browser-tested feature must make a concrete deploy decision before the coordinator stops.
+
+Allowed deploy decisions:
+
+- `self_deploy`: the feature coordinator has the required permission, no active deploy conflict is known, Deploy Intent is complete, and it will trigger the shared deploy path itself.
+- `dispatch_deploy_owner`: deployment needs another role/session; the coordinator dispatches a named owner with the exact ref or commit, deploy path, affected service or URL, verification target, and watch path.
+- `blocked`: deployment cannot proceed; the coordinator records the exact blocker, such as missing credentials, active deploy conflict, merge conflict, unpushed ref, unknown service, or user pause.
+- `not_required`: no cloud deploy is needed; the coordinator records why, such as docs-only change, local-only fixture, rejected branch, or acceptance not tied to the cloud surface.
+
+The deploy decision is not valid if it uses a vague owner such as `Coordinator/Ops`, `someone`, `later`, or `after deploy`. If the coordinator itself is the right owner, say `self_deploy` and continue through the shared deploy path. If another owner is required, name the role or thread and dispatch it when tools are available.
+
 ## Coordinator Return Gate
 
 Dispatch is not closed when another role/thread/session is created. A dispatched role's final response or pushed branch means the work has returned to the coordinator for review.
@@ -192,9 +241,30 @@ When a dispatched role returns, the coordinator must:
    - create a new row for the next role when more work is required.
 5. Update `Feature-Registry.md`, `Acceptance-Queue.md`, PRD, or technical plan state when the returned work changes durable delivery truth.
 6. Run the relevant delivery audit and narrow verification.
-7. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
+7. Commit and push the coordinator's verified integration or state update to the relevant delivery/release branch when the target is clear; do not ask the Owner whether to push normal coordinator work.
+8. Continue dispatching the next owner when dispatch tools are available and the next action is clear, or record `Dispatch not executed` / `blocked` with the smallest required user action.
 
 The coordinator must not present "role completed" as "feature completed" unless the completion gates are satisfied. A role branch that remains only on `origin/codex/...` is not authoritative project state until it is integrated into `main` or explicitly recorded as rejected/blocked.
+
+The Coordinator Return Gate must end with one of the Feature Ownership Closure Contract actions: `accept_and_route`, `reject_and_return`, `blocked_with_owner`, or `ready_for_user_acceptance`.
+
+If the returned or coordinator branch changes durable delivery state, the coordinator must also apply the State Reconciliation Gate before portfolio status is reported:
+
+1. Compare the returned/coordinator ref with the authoritative project branch for `Feature-Registry.md`, `Acceptance-Queue.md`, `Delivery-Queue.md`, and linked PRD/technical-plan files.
+2. Preserve newer authoritative changes from unrelated features; do not merge a stale coordinator branch wholesale if it would revert other project state.
+3. Cherry-pick or manually port only the valid feature-specific state and evidence.
+4. Run `python3 scripts/audit_agent_flow_health.py --compare-ref <returned-ref> --feature "<feature>"` when a returned ref is known.
+5. Record the result as `reconciled`, `rejected`, or `blocked_with_owner`.
+
+For cloud-served or browser-tested features, a Development Agent return that says "code fixed and pushed" is not enough to close the coordinator loop. If the returned fix is not yet merged, deployed, and retested on the real cloud entrypoint, the coordinator must immediately create or dispatch the next owner for that gap:
+
+- `Development Agent` when the returned branch still needs merge conflict resolution, release prep, or deployment implementation work.
+- `Release/Deploy owner` when the branch is ready but the cloud service has not been updated.
+- `Acceptance Testing Agent` only after the relevant cloud service has been deployed or the coordinator has recorded why cloud deployment is not required.
+
+The coordinator's next action must name the exact branch or commit to deploy, the intended deploy path, the affected service or URL, and the retest owner. It must not stop at "after deploy, retest" without either executing the dispatch or recording `Dispatch not executed` with the smallest required user/project-manager action.
+
+Before stopping, the coordinator must pass the Deploy Decision Gate above. A response that says "next step is Coordinator/Ops deploy" has not passed the gate because it does not assign a concrete owner or action.
 
 Every returned role should make the coordinator's next step obvious by ending with:
 
@@ -208,6 +278,8 @@ Return to Coordinator:
 - Remaining gaps:
 - Recommended next owner:
 - Recommended next handoff:
+- Deploy needed: yes/no/not_applicable, with affected service or URL when yes
+- Deploy decision: self_deploy/dispatch_deploy_owner/blocked/not_required, with reason
 ```
 
 ## Routing Rules

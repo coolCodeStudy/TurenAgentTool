@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - auto
+          - no_deploy
           - quick
           - full
 
@@ -38,13 +39,6 @@ jobs:
           set -e
 
           requested="${{ inputs.deploy_mode || 'auto' }}"
-          if [ "$requested" = "quick" ] || [ "$requested" = "full" ]; then
-            echo "deploy_mode=$requested" >> "$GITHUB_OUTPUT"
-            echo "changed_files=manual-$requested" >> "$GITHUB_OUTPUT"
-            echo "Manual deployment mode: $requested"
-            exit 0
-          fi
-
           base="${{ github.event.before }}"
           head="${{ github.sha }}"
           zero_sha="0000000000000000000000000000000000000000"
@@ -63,36 +57,28 @@ jobs:
           changed_file_list="$(mktemp)"
           printf '%s\n' "$changed_files" > "$changed_file_list"
 
-          mode="quick"
-          while IFS= read -r file; do
-            file="${file#"${file%%[![:space:]]*}"}"
-            file="${file%"${file##*[![:space:]]}"}"
-            [ -z "$file" ] && continue
-            echo "Classifying changed file: $file"
-            case "$file" in
-              docs/*|*.md|db/*|investment_knowledge_mcp/*|investment_knowledge_mcp/**/*|scripts/*.py|scripts/*.sh|deploy/systemd/*|.github/workflows/*.yml|.github/workflows/*.yaml)
-                echo "  -> quick-compatible"
-                ;;
-              *)
-                echo "  -> requires full deploy"
-                mode="full"
-                break
-                ;;
-            esac
-          done < "$changed_file_list"
+          python3 scripts/classify_deploy_change.py \
+            --manual-mode "$requested" \
+            --changed-files-file "$changed_file_list" \
+            --format text
+          python3 scripts/classify_deploy_change.py \
+            --manual-mode "$requested" \
+            --changed-files-file "$changed_file_list" \
+            --format github-output >> "$GITHUB_OUTPUT"
 
-          if [ -z "$changed_files" ]; then
-            mode="full"
-          fi
+  no_deploy:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.deploy_mode == 'no_deploy'
+    runs-on: ubuntu-latest
 
-          {
-            echo "deploy_mode=$mode"
-            echo "changed_files<<EOF"
-            echo "$changed_files"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Selected deployment mode: $mode"
+    steps:
+      - name: Confirm no deployment needed
+        run: |
+          echo "No production deployment needed for these changes."
+          echo "Changed files:"
+          cat <<'EOF'
+          ${{ needs.detect_changes.outputs.changed_files }}
+          EOF
 
   quick_deploy:
     needs: detect_changes
@@ -234,7 +220,7 @@ jobs:
                 curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
               fi
               if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-                sudo bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
+                sudo INVESTMENT_DIR="$APP_DIR" bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
                 systemctl status investment-research-agent-worker.service --no-pager || true
               fi
             else
@@ -547,7 +533,7 @@ jobs:
               curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
             fi
             if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-              sudo bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
+              sudo INVESTMENT_DIR="$APP_DIR" bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
               systemctl status investment-research-agent-worker.service --no-pager || true
             fi
 

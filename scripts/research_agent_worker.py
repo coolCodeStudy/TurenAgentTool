@@ -322,6 +322,13 @@ def finalize_research_artifacts(
     execution_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     if draft_path is None or not draft_path.exists():
+        symbol = str(job["symbol"]).upper()
+        market = str(job["market"]).upper()
+        fallback_draft_path = artifact_dir / f"{symbol}_{market}_research_draft.json"
+        if fallback_draft_path.exists():
+            draft_path = fallback_draft_path
+
+    if draft_path is None or not draft_path.exists():
         return {
             "status": "failed",
             "summary": "draft file missing after research worker run",

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INVESTMENT_DIR=${INVESTMENT_DIR:-/opt/investment-knowledge}
+INVESTMENT_DIR=${INVESTMENT_DIR:-/opt/investment-knowledge/current}
 WORKER_HOME=${WORKER_HOME:-/opt/investment-knowledge-codex}
 WORKER_ENV=${WORKER_ENV:-/etc/investment-knowledge/codex-worker.env}
 START_WORKER=false

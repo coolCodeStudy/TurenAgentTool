@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "description": "Regression cases for repo-native multi-agent flow health rules. Cases are synthetic but based on observed delivery failures.",
+  "cases": [
+    {
+      "id": "returned-child-not-integrated",
+      "description": "A child role returned a branch, but the Feature Coordinator did not apply the Return Gate.",
+      "today": "2026-07-07",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-07-001",
+          "feature": "Example Feature",
+          "target_role": "Development Agent",
+          "status": "returned",
+          "thread_or_branch": "origin/codex/example-return",
+          "source": "Feature Coordinator dispatch",
+          "expected_result": "Implement fix and return branch.",
+          "next_action": "Developer returned commit abc123."
+        }
+      ],
+      "acceptance_rows": [],
+      "registry_rows": [],
+      "expected_categories": ["returned_not_integrated"]
+    },
+    {
+      "id": "missing-feature-watch-path",
+      "description": "A dispatched child role has no feature-owned watch contract.",
+      "today": "2026-07-07",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-07-002",
+          "feature": "Example Feature",
+          "target_role": "Acceptance Testing Agent",
+          "status": "dispatched",
+          "thread_or_branch": "thread 019f-example",
+          "source": "Coordinator handoff",
+          "expected_result": "Run cloud acceptance retest.",
+          "next_action": "I will wait for the tester to return."
+        }
+      ],
+      "acceptance_rows": [],
+      "registry_rows": [],
+      "expected_categories": ["missing_watch_path"]
+    },
+    {
+      "id": "normal-routing-overescalated-to-global-pm",
+      "description": "Normal deploy/retest routing was sent to Global PM without a global trigger.",
+      "today": "2026-07-07",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-07-003",
+          "feature": "Example Feature",
+          "target_role": "Global Project Manager",
+          "status": "dispatched",
+          "thread_or_branch": "global-pm-thread",
+          "source": "Acceptance retest failed",
+          "expected_result": "Please tell the developer to fix it.",
+          "next_action": "Return to Global PM for normal next owner routing."
+        }
+      ],
+      "acceptance_rows": [],
+      "registry_rows": [],
+      "expected_categories": ["global_pm_overuse", "missing_watch_path"]
+    },
+    {
+      "id": "acceptance-blocked-without-follow-up",
+      "description": "Acceptance is blocked, but no active Delivery Queue owner exists.",
+      "today": "2026-07-07",
+      "delivery_rows": [],
+      "acceptance_rows": [
+        {
+          "item_id": "AT-2026-07-07-001",
+          "feature": "Example Feature",
+          "surface": "http://example.invalid/feature",
+          "status": "blocked",
+          "severity": "blocker",
+          "evidence": "Cloud page returned 503.",
+          "findings": "Acceptance cannot run because deployed ref is missing the feature.",
+          "next_action": "Coordinator should assign a deploy owner."
+        }
+      ],
+      "registry_rows": [
+        {
+          "feature": "Example Feature",
+          "product_doc": "docs/product/PRD-example.md",
+          "prd_status": "ready",
+          "technical_plan": "docs/techplans/example.md",
+          "technical_status": "implemented",
+          "implementation": "deployed",
+          "evidence": "deploy_verified",
+          "user_acceptance": "pending",
+          "known_gaps": "Acceptance blocked.",
+          "next_action": "Needs coordinator follow-up."
+        }
+      ],
+      "expected_categories": ["context_required"]
+    },
+    {
+      "id": "cross-feature-deploy-ref-conflict",
+      "description": "Two features have deploy/ref overwrite language that requires Global PM release integration.",
+      "today": "2026-07-07",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-07-004",
+          "feature": "Feature A",
+          "target_role": "Global Project Manager",
+          "status": "dispatched",
+          "thread_or_branch": "origin/codex/feature-a",
+          "source": "Coordinator escalation",
+          "expected_result": "Resolve cross-feature release ref conflict.",
+          "next_action": "Current deploy overwritten Feature A behavior; produce combined release ref preserving Feature B."
+        },
+        {
+          "item_id": "DQ-2026-07-07-005",
+          "feature": "Feature B",
+          "target_role": "Global Project Manager",
+          "status": "dispatched",
+          "thread_or_branch": "origin/codex/feature-b",
+          "source": "Coordinator escalation",
+          "expected_result": "Resolve cross-feature release ref conflict.",
+          "next_action": "Direct redeploy may clobber Feature A; release ref conflict needs integration."
+        }
+      ],
+      "acceptance_rows": [],
+      "registry_rows": [],
+      "expected_categories": ["deploy_conflict", "missing_watch_path", "repeated_blocker"]
+    }
+  ]
+}
