@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import ContextManager, Protocol
 
 try:
-    from scripts.deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_deployment
+    from scripts.deploy_contract import (
+        APPLICATION_SERVICES,
+        MODE_RANK,
+        DeployMode,
+        DeploymentPlan,
+        classify_deployment,
+    )
     from scripts.deploy_preflight import (
         ResourceSnapshot,
         collect_resources,
@@ -39,7 +45,13 @@ try:
     )
     from scripts.deploy_support import CommandRunner, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.py.
-    from deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_deployment
+    from deploy_contract import (
+        APPLICATION_SERVICES,
+        MODE_RANK,
+        DeployMode,
+        DeploymentPlan,
+        classify_deployment,
+    )
     from deploy_preflight import (
         ResourceSnapshot,
         collect_resources,
@@ -418,11 +430,10 @@ class DeploymentEngine:
 
     def _execute_locked(self, context: DeploymentContext) -> DeployOutcome:
         request = context.request
-        if request.requested_mode is not DeployMode.NO_DEPLOY:
-            self._run_checked(
-                ("git", "-C", str(self.repo), "fetch", "origin", "main"),
-                "production source refresh failed",
-            )
+        self._run_checked(
+            ("git", "-C", str(self.repo), "fetch", "origin", "main"),
+            "production source refresh failed",
+        )
         context.target_sha = resolve_production_target(
             self.repo, request.requested_ref, self.runner
         )
@@ -457,9 +468,16 @@ class DeploymentEngine:
 
         snapshot = self.resource_collector(self.runner)
         context.disk_used_after = snapshot.disk_used_percent
-        context.archive_bytes = (
-            request.archive_path.stat().st_size if request.archive_path else None
-        )
+        if context.plan.mode is DeployMode.FULL_IMAGE and request.archive_path is None:
+            raise DeploymentError(
+                "full image deployment requires an immutable image archive"
+            )
+        try:
+            context.archive_bytes = (
+                request.archive_path.stat().st_size if request.archive_path else None
+            )
+        except OSError as error:
+            raise DeploymentError("full image archive is unavailable") from error
         result = evaluate_preflight(
             snapshot, context.plan.mode, context.archive_bytes
         )
@@ -542,25 +560,6 @@ class DeploymentEngine:
             started_at=context.started_at,
             completed_at=completed_at,
         )
-        write_state(self.state_path, state)
-        retain_release_directories(
-            self.releases_dir,
-            tuple(
-                sha
-                for sha in (context.target_sha, context.previous_state.current_sha)
-                if sha is not None
-            ),
-        )
-        if context.plan.mode is DeployMode.FULL_IMAGE:
-            context.cleanup_reclaimed_bytes = self._remove_images_with_metrics(
-                self.image_inventory(),
-                state,
-                self.referenced_image_ids(),
-                successful_full_deployment=True,
-            )
-            context.cleanup_status = "completed"
-        context.archive_cleanup = self._cleanup_archive_safe(request.archive_path)
-        self._collect_post_metrics(context)
         write_event(
             self.events_dir,
             self._event(
@@ -577,21 +576,95 @@ class DeploymentEngine:
                 disk_used_after=context.disk_used_after,
                 target_durations_ms=context.target_durations_ms,
                 cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
-                rollback_status=f"not_needed|archive_cleanup:{context.archive_cleanup}",
+                rollback_status="not_needed|cleanup:pending|archive_cleanup:pending",
                 final_health="healthy",
                 started_at=context.started_at,
                 completed_at=completed_at,
             ),
         )
+        write_state(self.state_path, state)
+
+        cleanup_statuses: list[str] = []
+        try:
+            retain_release_directories(
+                self.releases_dir,
+                tuple(
+                    sha
+                    for sha in (
+                        context.target_sha,
+                        context.previous_state.current_sha,
+                    )
+                    if sha is not None
+                ),
+            )
+            cleanup_statuses.append("release_completed")
+        except Exception:
+            cleanup_statuses.append("release_failed")
+
+        if context.plan.mode is DeployMode.FULL_IMAGE:
+            try:
+                context.cleanup_reclaimed_bytes = self._remove_images_with_metrics(
+                    self.image_inventory(),
+                    state,
+                    self.referenced_image_ids(),
+                    successful_full_deployment=True,
+                )
+                cleanup_statuses.append("image_completed")
+            except Exception:
+                context.cleanup_reclaimed_bytes = -1
+                cleanup_statuses.append("image_failed")
+        else:
+            cleanup_statuses.append("image_not_applicable")
+
+        context.archive_cleanup = self._cleanup_archive_safe(request.archive_path)
+        cleanup_statuses.append(f"archive_{context.archive_cleanup}")
+        context.cleanup_status = "|".join(cleanup_statuses)
+        self._collect_post_metrics(context)
+        cleanup_completed_at = self._safe_timestamp()
+        audit_status = "recorded"
+        try:
+            write_event(
+                self.events_dir,
+                self._event(
+                    event_id=event_id,
+                    request=request,
+                    plan=context.plan,
+                    computed_mode=context.computed_plan.mode,
+                    target_sha=context.target_sha,
+                    deployed_sha=context.target_sha,
+                    preflight=context.preflight,
+                    archive_bytes=context.archive_bytes,
+                    image_count_before=context.image_count_before,
+                    image_count_after=context.image_count_after,
+                    disk_used_after=context.disk_used_after,
+                    target_durations_ms=context.target_durations_ms,
+                    cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
+                    rollback_status=(
+                        f"not_needed|cleanup:{context.cleanup_status}"
+                    ),
+                    final_health="healthy",
+                    started_at=context.started_at,
+                    completed_at=cleanup_completed_at,
+                ),
+            )
+        except Exception:
+            audit_status = "cleanup_event_failed"
+            context.cleanup_status += "|event_failed"
+
+        cleanup_failed = "failed" in context.cleanup_status
         return DeployOutcome(
             ok=True,
             target_sha=context.target_sha,
             mode=context.plan.mode,
             activated_services=tuple(context.touched_services),
             rolled_back_services=(),
-            message="deployment completed and remained healthy",
+            message=(
+                "deployment completed and remained healthy; post-success cleanup incomplete"
+                if cleanup_failed
+                else "deployment completed and remained healthy"
+            ),
             archive_cleanup=context.archive_cleanup,
-            audit_status="recorded",
+            audit_status=audit_status,
             image_count_after=context.image_count_after,
             disk_used_after=context.disk_used_after,
             cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
@@ -691,6 +764,22 @@ class DeploymentEngine:
                 "durable and active application image identity do not match"
             )
 
+        selected_result = self.runner.run(
+            (
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                "{{.Id}}",
+                state.current_image,
+            )
+        )
+        selected_image_id = selected_result.stdout.strip()
+        if selected_result.returncode != 0 or not selected_image_id:
+            raise DeploymentError(
+                "durable application immutable image identity is unavailable"
+            )
+
         result = self.runner.run(
             (
                 "docker",
@@ -703,13 +792,37 @@ class DeploymentEngine:
         )
         if result.returncode != 0:
             raise DeploymentError("running application image identity could not be read")
-        running_images = {
-            str(row.get("Image") or "")
+        app_rows = tuple(
+            row
             for row in _json_rows(result.stdout)
             if str(row.get("Image") or "").startswith("investment-knowledge-app:")
-        }
-        if not running_images or running_images != {state.current_image}:
+        )
+        if not app_rows or {
+            str(row.get("Image") or "") for row in app_rows
+        } != {state.current_image}:
             raise DeploymentError("running application image identity does not match state")
+        for row in app_rows:
+            container_id = str(row.get("ID") or "")
+            if not container_id:
+                raise DeploymentError(
+                    "running application immutable image identity is unavailable"
+                )
+            container_result = self.runner.run(
+                (
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.Image}}",
+                    container_id,
+                )
+            )
+            if (
+                container_result.returncode != 0
+                or container_result.stdout.strip() != selected_image_id
+            ):
+                raise DeploymentError(
+                    "running application immutable image identity does not match state"
+                )
 
     def _load_candidate_archive(
         self, context: DeploymentContext, archive_path: Path, expected_image: str
@@ -969,6 +1082,14 @@ class DeploymentEngine:
             )
         ):
             if request.emergency_reason is not None:
+                if requested_targets != plan.targets:
+                    raise DeploymentError(
+                        "emergency override cannot change server-computed deployment targets"
+                    )
+                if MODE_RANK[request.requested_mode] < MODE_RANK[plan.mode]:
+                    raise DeploymentError(
+                        "emergency override cannot reduce the server-computed deployment risk"
+                    )
                 return DeploymentPlan(
                     mode=request.requested_mode,
                     targets=requested_targets,

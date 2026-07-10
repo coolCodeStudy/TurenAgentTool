@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 from scripts.deploy_contract import DeployMode, DeploymentPlan
 from scripts.deploy_release import (
@@ -67,6 +68,7 @@ class RecordingRunner:
                 0,
                 json.dumps(
                     {
+                        "ID": "container-1",
                         "Image": f"investment-knowledge-app:{OLD_SHA}",
                         "Names": "app-command-api-1",
                     }
@@ -79,7 +81,14 @@ class RecordingRunner:
                 0, f"Loaded image: investment-knowledge-app:{TARGET_SHA}\n", ""
             )
         if command[:4] == ("docker", "image", "inspect", "--format"):
-            return CommandResult(0, "sha256:target-image\n", "")
+            image_id = (
+                "sha256:old-image"
+                if command[-1] == f"investment-knowledge-app:{OLD_SHA}"
+                else "sha256:target-image"
+            )
+            return CommandResult(0, image_id + "\n", "")
+        if command[:4] == ("docker", "inspect", "--format", "{{.Image}}"):
+            return CommandResult(0, "sha256:old-image\n", "")
         return CommandResult(0, "", "")
 
 
@@ -438,7 +447,49 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(current_before, os.readlink(self.app_root / "current"))
         self.assertFalse(self.engine.events_dir.exists())
         self.assertFalse(any(command[:2] == ("docker", "compose") for command in self.runner.commands))
-        self.assertFalse(any("fetch" in command for command in self.runner.commands))
+        self.assertIn(
+            ("git", "-C", str(self.repo), "fetch", "origin", "main"),
+            self.runner.commands,
+        )
+
+    def test_no_deploy_refreshes_origin_before_resolving_and_classifying(self) -> None:
+        self.plan = DeploymentPlan(
+            mode=DeployMode.NO_DEPLOY,
+            targets=(),
+            changed_files=("docs/README.md",),
+            image_input_files=(),
+            reasons=("documentation",),
+        )
+        request = replace(
+            self.targeted_request,
+            requested_mode=DeployMode.NO_DEPLOY,
+            requested_targets=(),
+        )
+        source_fresh = False
+
+        def observe(command):
+            nonlocal source_fresh
+            if command == (
+                "git",
+                "-C",
+                str(self.repo),
+                "fetch",
+                "origin",
+                "main",
+            ):
+                source_fresh = True
+
+        def classify_after_refresh(repo, base_sha, target_sha, runner):
+            del repo, base_sha, target_sha, runner
+            self.assertTrue(source_fresh)
+            return self.plan
+
+        self.runner.on_run = observe
+        self.engine.plan_builder = classify_after_refresh
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
 
     def test_no_deploy_does_not_read_or_rewrite_image_selector(self) -> None:
         self.plan = DeploymentPlan(
@@ -524,7 +575,13 @@ class DeploymentEngineTests(TestCase):
         )
         self.runner.results[managed_command] = CommandResult(
             0,
-            json.dumps({"Image": f"investment-knowledge-app:{OLD_SHA}"}) + "\n",
+            json.dumps(
+                {
+                    "ID": "container-1",
+                    "Image": f"investment-knowledge-app:{OLD_SHA}",
+                }
+            )
+            + "\n",
             "",
         )
 
@@ -532,6 +589,68 @@ class DeploymentEngineTests(TestCase):
 
         self.assertTrue(outcome.ok)
         self.assertIn(managed_command, self.runner.commands)
+
+    def test_active_image_rejects_same_tag_with_wrong_container_image_id(self) -> None:
+        selected_image = f"investment-knowledge-app:{OLD_SHA}"
+        managed_command = (
+            "docker",
+            "ps",
+            "--filter",
+            "label=com.docker.compose.project=turenagenttool_prod",
+            "--format",
+            "{{json .}}",
+        )
+        self.runner.results[managed_command] = CommandResult(
+            0,
+            json.dumps({"ID": "container-1", "Image": selected_image}) + "\n",
+            "",
+        )
+        self.runner.results[
+            ("docker", "image", "inspect", "--format", "{{.Id}}", selected_image)
+        ] = CommandResult(0, "sha256:expected\n", "")
+        self.runner.results[
+            ("docker", "inspect", "--format", "{{.Image}}", "container-1")
+        ] = CommandResult(0, "sha256:wrong\n", "")
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("immutable image identity", outcome.message)
+        self.assertEqual([], self.stage_calls)
+
+    def test_active_image_accepts_matching_tag_and_container_image_ids(self) -> None:
+        selected_image = f"investment-knowledge-app:{OLD_SHA}"
+        managed_command = (
+            "docker",
+            "ps",
+            "--filter",
+            "label=com.docker.compose.project=turenagenttool_prod",
+            "--format",
+            "{{json .}}",
+        )
+        self.runner.results[managed_command] = CommandResult(
+            0,
+            json.dumps({"ID": "container-1", "Image": selected_image}) + "\n",
+            "",
+        )
+        self.runner.results[
+            ("docker", "image", "inspect", "--format", "{{.Id}}", selected_image)
+        ] = CommandResult(0, "sha256:expected\n", "")
+        container_inspect = (
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Image}}",
+            "container-1",
+        )
+        self.runner.results[container_inspect] = CommandResult(
+            0, "sha256:expected\n", ""
+        )
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertTrue(outcome.ok)
+        self.assertIn(container_inspect, self.runner.commands)
 
     def test_full_image_loads_and_activates_target_sha_tag_for_sixty_seconds(self) -> None:
         archive = self.directory / "candidate.tar"
@@ -612,6 +731,47 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
         self.assertEqual("recorded", outcome.audit_status)
 
+    def test_full_rejects_mutable_prod_only_archive_with_product_safe_event(self) -> None:
+        archive = self.directory / "candidate.tar.gz"
+        archive.write_bytes(b"legacy-prod-image")
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api",),
+            changed_files=("requirements.txt",),
+            image_input_files=("requirements.txt",),
+            reasons=("dependency input",),
+        )
+        self.runner.results[("docker", "load", "--input", str(archive))] = (
+            CommandResult(0, "Loaded image: investment-knowledge-app:prod\n", "")
+        )
+        request = DeployRequest("main", DeployMode.FULL_IMAGE, (), archive, None)
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("archive image identity", outcome.message)
+        self.assertEqual("recorded", outcome.audit_status)
+        self.assertFalse(
+            any(command[:3] == ("docker", "compose", "up") for command in self.runner.commands)
+        )
+
+    def test_archive_less_legacy_full_returns_product_safe_audited_error(self) -> None:
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api",),
+            changed_files=("requirements.txt",),
+            image_input_files=("requirements.txt",),
+            reasons=("dependency input",),
+        )
+        request = DeployRequest("main", DeployMode.FULL_IMAGE, (), None, None)
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("archive", outcome.message)
+        self.assertEqual("recorded", outcome.audit_status)
+        self.assertNotIn("traceback", outcome.message.lower())
+
     def test_mismatched_client_plan_is_rejected_before_staging(self) -> None:
         request = replace(self.targeted_request, requested_targets=("command-api",))
 
@@ -654,7 +814,7 @@ class DeploymentEngineTests(TestCase):
         self.assertIn("at least 20 characters", outcome.message)
         self.assertEqual([], self.stage_calls)
 
-    def test_valid_emergency_override_can_narrow_targets_and_is_audited(self) -> None:
+    def test_emergency_override_cannot_change_server_computed_targets(self) -> None:
         reason = "Restore the command API while its peer is investigated."
         request = replace(
             self.targeted_request,
@@ -664,12 +824,54 @@ class DeploymentEngineTests(TestCase):
 
         outcome = self.engine.deploy(request)
 
-        self.assertTrue(outcome.ok)
-        self.assertEqual(("command-api",), outcome.activated_services)
+        self.assertFalse(outcome.ok)
+        self.assertIn("cannot change", outcome.message)
+        self.assertEqual((), outcome.activated_services)
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertTrue(event["emergency_override"])
         self.assertEqual(reason, event["emergency_reason"])
-        self.assertEqual(["command-api"], event["targets"])
+        self.assertEqual(["command-api", "weekly-review-web"], event["targets"])
+
+    def test_emergency_override_cannot_downgrade_full_image_to_no_deploy(self) -> None:
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api",),
+            changed_files=("requirements.txt",),
+            image_input_files=("requirements.txt",),
+            reasons=("dependency input",),
+        )
+        request = DeployRequest(
+            "main",
+            DeployMode.NO_DEPLOY,
+            (),
+            None,
+            "Keep production unchanged while dependency risk is reviewed.",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("cannot reduce", outcome.message)
+        self.assertEqual([], self.stage_calls)
+
+    def test_emergency_override_can_increase_computed_risk_to_full_image(self) -> None:
+        archive = self.directory / "candidate.tar"
+        archive.write_bytes(b"candidate")
+        request = DeployRequest(
+            "main",
+            DeployMode.FULL_IMAGE,
+            self.plan.targets,
+            archive,
+            "Force an immutable rebuild while investigating runtime drift.",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual("targeted_quick", event["computed_mode"])
+        self.assertEqual("full_image", event["requested_mode"])
 
     def test_feature_ref_is_rejected_even_with_valid_emergency_reason(self) -> None:
         request = replace(
@@ -977,6 +1179,53 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(2, event["image_count_after"])
         self.assertEqual(35.0, event["disk_used_after"])
         self.assertEqual(123, event["cleanup_reclaimed_bytes"])
+
+    def test_late_release_cleanup_failure_keeps_healthy_activation_committed(self) -> None:
+        activation_commands = (
+            (
+                "docker",
+                "compose",
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "command-api",
+            ),
+            (
+                "docker",
+                "compose",
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "weekly-review-web",
+            ),
+        )
+
+        def fail_after_durable_success(releases_dir, protected_shas):
+            del releases_dir, protected_shas
+            self.assertEqual(TARGET_SHA, load_state(self.state_path).current_sha)
+            event = json.loads(
+                next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8")
+            )
+            self.assertEqual("healthy", event["final_health"])
+            raise OSError("PASSWORD=late-cleanup-secret")
+
+        with patch(
+            "scripts.deploy_release.retain_release_directories",
+            side_effect=fail_after_durable_success,
+        ):
+            outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertTrue(outcome.ok)
+        self.assertIn("release_failed", outcome.cleanup_status)
+        self.assertEqual(TARGET_SHA, load_state(self.state_path).current_sha)
+        self.assertEqual((self.releases_dir / TARGET_SHA).resolve(), self.engine.current_link.resolve())
+        self.assertTrue(self.old_release.exists())
+        for command in activation_commands:
+            self.assertEqual(1, self.runner.commands.count(command))
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertIn("release_failed", event["rollback_status"])
 
     def test_host_units_restart_independently_without_compose(self) -> None:
         self.plan = DeploymentPlan(
@@ -1483,6 +1732,7 @@ class ShellWrapperTests(TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             archive = directory / "legacy images.tar.gz"
+            archive.write_bytes(b"legacy archive")
             arguments = self._run_wrapper(
                 directory,
                 {
@@ -1495,18 +1745,89 @@ class ShellWrapperTests(TestCase):
         self.assertEqual(str(archive), arguments[arguments.index("--archive") + 1])
         self.assertNotIn("--targets", arguments)
 
-    def test_wrapper_build_image_uses_full_mode_and_default_archive_convention(self) -> None:
+    def test_github_preloaded_archive_environment_selects_explicit_full_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            archive = directory / "investment-knowledge-images.tar.gz"
+            archive.write_bytes(b"mutable prod archive")
             arguments = self._run_wrapper(
-                Path(temporary_directory),
-                {"BUILD_IMAGE": "true"},
+                directory,
+                {
+                    "BUILD_IMAGE": "false",
+                    "IMAGE_TAR": str(archive),
+                },
             )
 
         self.assertEqual("full_image", arguments[arguments.index("--mode") + 1])
+        self.assertEqual(str(archive), arguments[arguments.index("--archive") + 1])
+        self.assertNotIn("--targets", arguments)
+
+    def test_ecs_ops_full_environment_does_not_fabricate_missing_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            arguments = self._run_wrapper(
+                directory,
+                {
+                    "BUILD_IMAGE": "true",
+                    "DEPLOY_EVENT_ID": "ops-event-456",
+                    "IMAGE_TAR": str(directory / "missing-images.tar.gz"),
+                },
+            )
+
+        self.assertEqual("full_image", arguments[arguments.index("--mode") + 1])
+        self.assertEqual("main", arguments[arguments.index("--ref") + 1])
+        self.assertNotIn("--targets", arguments)
+        self.assertNotIn("--archive", arguments)
         self.assertEqual(
-            "/tmp/investment-knowledge-images.tar.gz",
-            arguments[arguments.index("--archive") + 1],
+            "ops-event-456", arguments[arguments.index("--external-event-id") + 1]
         )
+
+    def test_wrapper_derives_detached_checkout_sha_when_ref_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            repo = directory / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True)
+            (repo / "README.md").write_text("checkout\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "checkout",
+                ],
+                cwd=repo,
+                check=True,
+            )
+            sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip()
+
+            arguments = self._run_wrapper(directory, {"BUILD_IMAGE": "false"})
+
+        self.assertEqual(sha, arguments[arguments.index("--ref") + 1])
+
+    def test_codex_worker_quick_environment_derives_ref_and_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            arguments = self._run_wrapper(
+                Path(temporary_directory),
+                {"BUILD_IMAGE": "false"},
+            )
+
+        self.assertEqual("targeted_quick", arguments[arguments.index("--mode") + 1])
+        self.assertEqual("main", arguments[arguments.index("--ref") + 1])
+        self.assertNotIn("--targets", arguments)
+        self.assertNotIn("--archive", arguments)
 
 
 def _state() -> DeploymentState:

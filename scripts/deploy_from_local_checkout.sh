@@ -6,9 +6,21 @@ python_bin="${PYTHON_BIN:-python3}"
 app_root="${APP_ROOT:-${INVESTMENT_APP_ROOT:-/opt/investment-knowledge}}"
 source_dir="${SOURCE_DIR:-$(pwd)}"
 deploy_mode="${DEPLOY_MODE:-}"
+deploy_ref="${DEPLOY_REF:-}"
+deploy_archive="${DEPLOY_ARCHIVE:-}"
+conventional_archive="${IMAGE_TAR:-/tmp/investment-knowledge-images.tar.gz}"
+
+if [[ -z "$deploy_archive" && -f "$conventional_archive" ]]; then
+  deploy_archive="$conventional_archive"
+fi
+
+if [[ -z "$deploy_ref" ]]; then
+  deploy_ref="$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
+fi
+deploy_ref="${deploy_ref:-main}"
 
 if [[ -z "$deploy_mode" ]]; then
-  if [[ "${BUILD_IMAGE:-false}" == "true" ]]; then
+  if [[ "${BUILD_IMAGE:-false}" == "true" || -n "$deploy_archive" ]]; then
     deploy_mode="full_image"
   else
     deploy_mode="targeted_quick"
@@ -27,7 +39,7 @@ esac
 args=(
   "$python_bin"
   "$script_dir/deploy_release.py"
-  --ref "${DEPLOY_REF:-main}"
+  --ref "$deploy_ref"
   --mode "$deploy_mode"
   --repo "$source_dir"
   --app-root "$app_root"
@@ -39,10 +51,6 @@ if [[ -n "${COMPOSE_ENV_FILE:-}" ]]; then
 fi
 if [[ -n "${DEPLOY_TARGETS:-}" ]]; then
   args+=(--targets "$DEPLOY_TARGETS")
-fi
-deploy_archive="${DEPLOY_ARCHIVE:-}"
-if [[ -z "$deploy_archive" && "$deploy_mode" == "full_image" ]]; then
-  deploy_archive="${IMAGE_TAR:-/tmp/investment-knowledge-images.tar.gz}"
 fi
 if [[ -n "$deploy_archive" ]]; then
   args+=(--archive "$deploy_archive")
