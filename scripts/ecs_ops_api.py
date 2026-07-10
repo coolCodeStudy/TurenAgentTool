@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,10 +17,40 @@ import sys
 import threading
 import time
 
+try:
+    from scripts.deploy_contract import DeployMode
+    from scripts.deploy_preflight import GIB, MIB, ResourceSnapshot, collect_resources
+    from scripts.deploy_release import (
+        DeployOutcome,
+        DeployRequest,
+        DeploymentEngine,
+        DeploymentError,
+        DockerHealthChecker,
+        SystemClock,
+    )
+    from scripts.deploy_state import SourcePolicyError, load_state, resolve_production_target
+    from scripts.deploy_support import CommandResult, SubprocessRunner
+except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
+    from deploy_contract import DeployMode
+    from deploy_preflight import GIB, MIB, ResourceSnapshot, collect_resources
+    from deploy_release import (
+        DeployOutcome,
+        DeployRequest,
+        DeploymentEngine,
+        DeploymentError,
+        DockerHealthChecker,
+        SystemClock,
+    )
+    from deploy_state import SourcePolicyError, load_state, resolve_production_target
+    from deploy_support import CommandResult, SubprocessRunner
+
 
 APP_ROOT = Path(os.getenv("INVESTMENT_APP_ROOT", "/opt/investment-knowledge"))
 APP_DIR = Path(os.getenv("INVESTMENT_DIR", str(APP_ROOT / "current")))
 REPO_DIR = Path(os.getenv("OPS_DEPLOY_REPO_DIR", "/opt/investment-knowledge-repo"))
+RELEASE_ROOT = Path(os.getenv("OPS_DEPLOY_RELEASE_ROOT", str(APP_ROOT / "releases")))
+DEPLOY_STATE_PATH = Path(os.getenv("OPS_DEPLOY_STATE_PATH", str(APP_ROOT / "shared" / "deploy-state.json")))
+DEPLOY_EVENTS_DIR = Path(os.getenv("OPS_DEPLOY_EVENTS_DIR", str(APP_ROOT / "shared" / "deploy-events")))
 COMPOSE_FILE = APP_DIR / "docker-compose.prod.yml"
 COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "turenagenttool_prod")
 COMPOSE_ENV_FILE = Path(os.getenv("COMPOSE_ENV_FILE", str(APP_ROOT / ".env")))
@@ -31,7 +60,7 @@ TOKEN = os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or ""
 MAX_LOG_LINES = 400
 COMMAND_TIMEOUT_SECONDS = float(os.getenv("OPS_API_COMMAND_TIMEOUT_SECONDS", "8"))
 DEPLOY_TIMEOUT_SECONDS = float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600"))
-DEPLOY_LOCK_PATH = Path(os.getenv("OPS_DEPLOY_LOCK_PATH", "/tmp/investment-knowledge-deploy.lock"))
+DEPLOY_LOCK_PATH = Path(os.getenv("OPS_DEPLOY_LOCK_PATH", str(APP_ROOT / "shared" / "deploy.lock")))
 PYTHON_BIN = os.getenv("OPS_API_PYTHON_BIN") or sys.executable
 ALLOWED_NAMED_REFS = {
     ref.strip()
@@ -89,20 +118,21 @@ SENSITIVE_PATTERNS = [
     (re.compile(r"sk-[A-Za-z0-9_-]{12,}"), "sk-<redacted>"),
     (re.compile(r"(?i)(login_pwd=)[^\s]+"), r"\1<redacted>"),
     (re.compile(r"(?i)(login_pwd_md5=)[^\s]+"), r"\1<redacted>"),
+    (re.compile(r"(?i)SSL:\s*[A-Z0-9_:-]+"), "SSL:<redacted>"),
+    (re.compile(r"(?i)certificate[_\s-]*verify[_\s-]*failed"), "certificate verification failed"),
 ]
-
-
-@dataclass
-class CommandResult:
-    ok: bool
-    command: list[str]
-    stdout: str
-    stderr: str
-    returncode: int
 
 
 class DeploymentBusy(RuntimeError):
     pass
+
+
+class DeployApiError(ValueError):
+    def __init__(self, status: HTTPStatus, error_code: str, message: str, data: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.error_code = error_code
+        self.data = data or {}
 
 
 class OpsRequestHandler(BaseHTTPRequestHandler):
@@ -132,14 +162,22 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/ops/coding-status":
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": build_coding_status()})
             elif parsed.path == "/ops/deploy-status":
-                event_id = _required_int_query(query, "id", minimum=1, maximum=10**12)
-                event = read_deploy_event(event_id)
-                if event is None:
-                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "deploy_event_not_found"})
+                raw_event_id = _first_query(query, "id")
+                if raw_event_id is None:
+                    self._write_json(HTTPStatus.OK, {"ok": True, "data": build_deploy_status()})
                 else:
-                    self._write_json(HTTPStatus.OK, {"ok": True, "data": event})
+                    event_id = _required_int_query(query, "id", minimum=1, maximum=10**12)
+                    event = read_deploy_event(event_id)
+                    if event is None:
+                        self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "deploy_event_not_found"})
+                    else:
+                        self._write_json(HTTPStatus.OK, {"ok": True, "data": event})
+            elif parsed.path == "/deploy/status":
+                self._write_json(HTTPStatus.OK, {"ok": True, "data": build_deploy_status()})
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        except DeployApiError as exc:
+            self._write_json(exc.status, _api_error_payload(exc))
         except ValueError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
         except Exception as exc:
@@ -157,12 +195,15 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
                 service = str(payload.get("service") or "")
                 action = str(payload.get("action") or "")
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": control_service(service=service, action=action)})
-            elif parsed.path == "/ops/deploy":
+            elif parsed.path in {"/ops/deploy", "/deploy"}:
                 self._write_json(HTTPStatus.ACCEPTED, {"ok": True, "data": deploy_ref(payload)})
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        except DeployApiError as exc:
+            self._write_json(exc.status, _api_error_payload(exc))
         except DeploymentBusy as exc:
-            self._write_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc), "data": {"status": "busy"}})
+            error = DeployApiError(HTTPStatus.CONFLICT, "deployment_busy", str(exc), {"status": "busy"})
+            self._write_json(error.status, _api_error_payload(error))
         except ValueError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
         except Exception as exc:
@@ -232,7 +273,7 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
         entries.append(
             {
                 "service": name,
-                "ok": result.ok,
+                "ok": _command_ok(result),
                 "lines": _tail_nonempty_lines(text, limit=40),
             }
         )
@@ -248,7 +289,7 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
         try:
             result = _run(_compose_command(["logs", "--tail", str(lines), name]))
             text = _filter_error_lines(_combine_output(result))
-            entries.append({"service": name, "ok": result.ok, "lines": _tail_nonempty_lines(text, limit=40)})
+            entries.append({"service": name, "ok": _command_ok(result), "lines": _tail_nonempty_lines(text, limit=40)})
         except ValueError as exc:
             entries.append({"service": name, "ok": False, "lines": [str(exc)]})
 
@@ -263,7 +304,7 @@ def get_service_logs(service: str, lines: int = 120) -> dict[str, Any]:
         return {
             "service": normalized,
             "kind": "systemd",
-            "ok": result.ok,
+            "ok": _command_ok(result),
             "logs": _tail_nonempty_lines(_combine_output(result), limit=lines),
         }
 
@@ -272,7 +313,7 @@ def get_service_logs(service: str, lines: int = 120) -> dict[str, Any]:
         return {
             "service": normalized,
             "kind": "docker-compose",
-            "ok": result.ok,
+            "ok": _command_ok(result),
             "logs": _tail_nonempty_lines(_combine_output(result), limit=lines),
         }
 
@@ -285,6 +326,55 @@ def build_coding_status() -> dict[str, Any]:
     return {
         "worker": worker_status,
         "recent_logs": logs.get("logs", [])[-30:],
+    }
+
+
+def build_deploy_status() -> dict[str, Any]:
+    state = load_state(DEPLOY_STATE_PATH)
+    resources = collect_deploy_resources()
+    return {
+        "current_sha": state.current_sha,
+        "previous_sha": state.previous_sha,
+        "active_mode": state.last_mode,
+        "requested_ref": state.requested_ref,
+        "resolved_ref": state.resolved_ref,
+        "targets": list(state.targets),
+        "preflight": _sanitize_payload(state.preflight),
+        "resources": _resource_payload(resources),
+        "resource_thresholds": {
+            "min_free_disk_bytes": 8 * GIB,
+            "max_disk_used_percent": 80.0,
+            "min_available_memory_bytes": 512 * MIB,
+        },
+        "last_outcome": _read_last_outcome(state.last_event_id, state.final_health),
+        "state_path": str(DEPLOY_STATE_PATH),
+        "release_root": str(RELEASE_ROOT),
+        "lock_path": str(DEPLOY_LOCK_PATH),
+    }
+
+
+def collect_deploy_resources() -> ResourceSnapshot:
+    return collect_resources(SubprocessRunner())
+
+
+def _read_last_outcome(event_id: str | None, fallback_health: str | None) -> dict[str, Any]:
+    if event_id:
+        path = DEPLOY_EVENTS_DIR / f"{event_id}.json"
+        try:
+            with path.open(encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, dict):
+                return _sanitize_payload(payload)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            pass
+    return {"final_health": sanitize_text(fallback_health or "unknown")}
+
+
+def _resource_payload(snapshot: ResourceSnapshot) -> dict[str, int | float]:
+    return {
+        "free_disk_bytes": snapshot.free_disk_bytes,
+        "disk_used_percent": snapshot.disk_used_percent,
+        "available_memory_bytes": snapshot.available_memory_bytes,
     }
 
 
@@ -306,7 +396,7 @@ def control_service(service: str, action: str) -> dict[str, Any]:
         "service": normalized,
         "unit": unit,
         "action": normalized_action,
-        "ok": result.ok if normalized_action != "status" else status["ok"],
+        "ok": _command_ok(result) if normalized_action != "status" else status["ok"],
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
@@ -315,62 +405,103 @@ def control_service(service: str, action: str) -> dict[str, Any]:
 
 
 def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
-    ref = _validate_deploy_ref(str(payload.get("ref") or ""))
-    mode = _validate_deploy_mode(str(payload.get("mode") or "quick"))
-    source = _safe_label(str(payload.get("source") or "codex_app"), default="codex_app")
-    requested_by = _safe_label(str(payload.get("requested_by") or "codex"), default="codex")
-
-    if not REPO_DIR.exists() or not (REPO_DIR / ".git").exists():
-        raise ValueError(f"deploy repo is not initialized: {REPO_DIR}")
-    if not (REPO_DIR / "scripts" / "deploy_from_local_checkout.sh").exists():
-        raise ValueError(f"deploy script not found in repo: {REPO_DIR}")
-
     if not DEPLOY_MUTEX.acquire(blocking=False):
-        raise DeploymentBusy("deployment is already running")
+        raise DeployApiError(
+            HTTPStatus.CONFLICT,
+            "deployment_busy",
+            "deployment is already running",
+            {"status": "busy"},
+        )
 
-    branch_name = ref if ref in ALLOWED_NAMED_REFS else ""
-    metadata: dict[str, Any] = {
-        "requested_ref": ref,
-        "requested_by": requested_by,
-        "repo_dir": str(REPO_DIR),
-        "app_root": str(APP_ROOT),
-        "app_dir": str(APP_DIR),
-        "async": True,
-    }
     try:
-        event_id = _record_deploy_start(
-            source=source,
-            mode=mode,
-            commit_sha=ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
-            branch_name=branch_name,
-            metadata=metadata,
+        ref = _validate_deploy_ref(str(payload.get("ref") or ""))
+        mode = _validate_deploy_mode(str(payload.get("mode") or "targeted_quick"))
+        targets = _validate_deploy_targets(payload.get("targets"))
+        emergency_reason = _optional_text(payload.get("emergency_reason"))
+        archive_path = _optional_path(
+            payload.get("archive_path")
+            or payload.get("archive")
+            or payload.get("full_image_archive_path")
         )
-        thread = threading.Thread(
-            target=_deploy_ref_background,
-            kwargs={
-                "event_id": event_id,
-                "ref": ref,
-                "mode": mode,
-                "source": source,
-                "requested_by": requested_by,
-                "metadata": metadata,
-            },
-            daemon=True,
+        feature_routes = _validate_feature_routes(payload.get("feature_routes"))
+
+        if (
+            mode is DeployMode.FULL_IMAGE
+            and archive_path is None
+            and (emergency_reason is None or len(emergency_reason.strip()) < 20)
+        ):
+            raise DeployApiError(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "deployment_rejected",
+                "emergency reason must be at least 20 characters",
+            )
+
+        try:
+            target_sha = _resolve_deploy_source_policy(ref)
+        except DeployApiError:
+            raise
+        except ValueError as exc:
+            raise DeployApiError(
+                HTTPStatus.BAD_REQUEST,
+                "source_policy_rejected",
+                sanitize_text(str(exc)),
+            ) from exc
+        request = DeployRequest(
+            requested_ref=ref,
+            requested_mode=mode,
+            requested_targets=targets,
+            archive_path=archive_path,
+            emergency_reason=emergency_reason,
+            feature_routes=feature_routes,
         )
-        thread.start()
+        engine = build_deployment_engine()
+        try:
+            outcome = engine.deploy(request)
+        except DeploymentError as exc:
+            raise DeployApiError(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "deployment_rejected",
+                sanitize_text(str(exc)),
+            ) from exc
+        if not outcome.ok:
+            raise DeployApiError(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "deployment_rejected",
+                outcome.message,
+                {"outcome": _deploy_outcome_payload(outcome)},
+            )
     except Exception:
         DEPLOY_MUTEX.release()
         raise
+    DEPLOY_MUTEX.release()
 
     return {
-        "deploy_event_id": int(event_id),
         "ref": ref,
-        "commit_sha": ref if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref) else "",
-        "mode": mode,
-        "status": "started",
-        "summary": "deployment started",
-        "status_url": f"/ops/deploy-status?id={event_id}",
+        "commit_sha": outcome.target_sha or target_sha,
+        "mode": outcome.mode.value,
+        "targets": list(outcome.activated_services or targets),
+        "status": "completed",
+        "summary": sanitize_text(outcome.message),
+        "status_url": "/deploy/status",
+        "outcome": _deploy_outcome_payload(outcome),
     }
+
+
+def build_deployment_engine() -> DeploymentEngine:
+    runner = SubprocessRunner()
+    return DeploymentEngine(
+        repo=REPO_DIR,
+        app_root=APP_ROOT,
+        runner=runner,
+        health=DockerHealthChecker(
+            runner,
+            APP_DIR,
+            compose_project_name=COMPOSE_PROJECT_NAME,
+        ),
+        clock=SystemClock(),
+        compose_project_name=COMPOSE_PROJECT_NAME,
+        env_file=COMPOSE_ENV_FILE,
+    )
 
 
 def _deploy_ref_background(
@@ -419,16 +550,16 @@ def _run_deploy_with_event(
     try:
         _ensure_clean_repo()
         fetch = _run_git(["fetch", "--prune", "origin"], timeout=DEPLOY_TIMEOUT_SECONDS)
-        if not fetch.ok:
+        if not _command_ok(fetch):
             raise RuntimeError(f"git fetch failed: {_summarize_command_error(fetch.stderr or fetch.stdout)}")
 
         checkout_target = f"origin/{ref}" if ref in ALLOWED_NAMED_REFS else ref
         checkout = _run_git(["checkout", "--detach", checkout_target], timeout=DEPLOY_TIMEOUT_SECONDS)
-        if not checkout.ok:
+        if not _command_ok(checkout):
             raise RuntimeError(f"git checkout failed: {_summarize_command_error(checkout.stderr or checkout.stdout)}")
 
         commit_result = _run_git(["rev-parse", "HEAD"])
-        if not commit_result.ok:
+        if not _command_ok(commit_result):
             raise RuntimeError(f"git rev-parse failed: {_summarize_command_error(commit_result.stderr or commit_result.stdout)}")
         commit_sha = commit_result.stdout.strip()
         metadata["resolved_commit_sha"] = commit_sha
@@ -451,7 +582,7 @@ def _run_deploy_with_event(
             timeout=DEPLOY_TIMEOUT_SECONDS,
         )
         logs_tail = _tail_text(_combine_output(deploy), limit=80)
-        if not deploy.ok:
+        if not _command_ok(deploy):
             raise RuntimeError(f"deploy script failed: {_summarize_command_error(deploy.stderr or deploy.stdout)}")
 
         health = wait_for_deploy_health()
@@ -550,7 +681,7 @@ def read_deploy_event(event_id: int) -> dict[str, Any] | None:
         cwd=APP_DIR,
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
-    if not result.ok:
+    if not _command_ok(result):
         raise RuntimeError(f"read deploy event failed: {_summarize_command_error(_combine_output(result))}")
     try:
         value = json.loads(result.stdout)
@@ -565,7 +696,7 @@ def read_deploy_event(event_id: int) -> dict[str, Any] | None:
 
 def _check_compose_service_running(service: str) -> dict[str, Any]:
     result = _run(_compose_command(["ps", "--status", "running", "--services", service]))
-    if not result.ok:
+    if not _command_ok(result):
         return {"name": service, "ok": False, "message": _first_line(result.stderr or result.stdout) or "failed"}
     running = {line.strip() for line in result.stdout.splitlines() if line.strip()}
     if service in running:
@@ -601,7 +732,7 @@ def _record_deploy_start(
         cwd=APP_DIR,
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
-    if not result.ok:
+    if not _command_ok(result):
         raise RuntimeError(f"record deploy start failed: {_summarize_command_error(_combine_output(result))}")
     event_id = result.stdout.strip().splitlines()[-1].strip()
     if not event_id.isdigit():
@@ -635,7 +766,7 @@ def _record_deploy_finish(
         cwd=APP_DIR,
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
-    if not result.ok:
+    if not _command_ok(result):
         raise RuntimeError(f"record deploy finish failed: {_summarize_command_error(_combine_output(result))}")
 
 
@@ -655,7 +786,7 @@ def _try_record_deploy_finish(
 
 def _ensure_clean_repo() -> None:
     status = _run_git(["status", "--porcelain"])
-    if not status.ok:
+    if not _command_ok(status):
         raise RuntimeError(f"git status failed: {_first_line(status.stderr or status.stdout) or 'unknown error'}")
     if status.stdout.strip():
         raise RuntimeError("deploy repo has local changes; refusing to deploy")
@@ -668,18 +799,132 @@ def _run_git(args: list[str], timeout: float | None = None) -> CommandResult:
 def _validate_deploy_ref(ref: str) -> str:
     value = ref.strip()
     if not value:
-        raise ValueError("ref is required")
-    if value in ALLOWED_NAMED_REFS:
+        raise DeployApiError(HTTPStatus.BAD_REQUEST, "source_policy_rejected", "ref is required")
+    if value in ALLOWED_NAMED_REFS or re.fullmatch(r"[0-9a-fA-F]{40}", value):
         return value
-    if re.fullmatch(r"[0-9a-fA-F]{7,40}", value):
-        return value
-    raise ValueError("ref must be a commit SHA or an allowed named ref")
+    raise DeployApiError(
+        HTTPStatus.BAD_REQUEST,
+        "source_policy_rejected",
+        "ref must be main or a 40-character commit SHA reachable from origin/main",
+    )
 
 
-def _validate_deploy_mode(mode: str) -> str:
+def _validate_deploy_mode(mode: str) -> DeployMode:
     value = mode.strip().lower()
-    if value not in {"quick", "full"}:
-        raise ValueError("mode must be quick or full")
+    aliases = {
+        "quick": DeployMode.TARGETED_QUICK,
+        "full": DeployMode.FULL_IMAGE,
+    }
+    if value in aliases:
+        return aliases[value]
+    try:
+        return DeployMode(value)
+    except ValueError as exc:
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "mode must be no_deploy, targeted_quick, config_restart, or full_image",
+        ) from exc
+
+
+def _validate_deploy_targets(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "targets must be a list of strings")
+    targets = tuple(sorted({item.strip() for item in raw if item.strip()}))
+    if len(targets) != len([item for item in raw if isinstance(item, str) and item.strip()]):
+        return targets
+    return targets
+
+
+def _validate_feature_routes(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "feature_routes must be a list of strings")
+    routes = tuple(dict.fromkeys(item.strip() for item in raw if item.strip()))
+    if any(not route.startswith("/") or route.startswith("//") for route in routes):
+        raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "feature routes must be absolute local paths")
+    return routes
+
+
+def _optional_text(raw: object) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "emergency_reason must be a string")
+    value = raw.strip()
+    return value or None
+
+
+def _optional_path(raw: object) -> Path | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "archive path must be a string")
+    value = raw.strip()
+    return Path(value) if value else None
+
+
+def _resolve_deploy_source_policy(ref: str) -> str:
+    try:
+        return resolve_production_target(REPO_DIR, ref, SubprocessRunner())
+    except SourcePolicyError as exc:
+        raise DeployApiError(
+            HTTPStatus.BAD_REQUEST,
+            "source_policy_rejected",
+            sanitize_text(str(exc)),
+        ) from exc
+    except Exception as exc:
+        raise DeployApiError(
+            HTTPStatus.BAD_REQUEST,
+            "source_policy_rejected",
+            sanitize_text(str(exc)),
+        ) from exc
+
+
+def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:
+    return _sanitize_payload(
+        {
+            "ok": outcome.ok,
+            "target_sha": outcome.target_sha,
+            "mode": outcome.mode.value,
+            "activated_services": list(outcome.activated_services),
+            "rolled_back_services": list(outcome.rolled_back_services),
+            "message": outcome.message,
+            "manual_recovery": outcome.manual_recovery,
+            "rollback_failures": list(outcome.rollback_failures),
+            "archive_cleanup": outcome.archive_cleanup,
+            "audit_status": outcome.audit_status,
+            "image_count_after": outcome.image_count_after,
+            "disk_used_after": outcome.disk_used_after,
+            "cleanup_reclaimed_bytes": outcome.cleanup_reclaimed_bytes,
+            "cleanup_status": outcome.cleanup_status,
+        }
+    )
+
+
+def _api_error_payload(exc: DeployApiError) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "error": exc.error_code,
+        "message": sanitize_text(str(exc)),
+    }
+    if exc.data:
+        payload["data"] = _sanitize_payload(exc.data)
+    return payload
+
+
+def _sanitize_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_text(value)
+    if isinstance(value, list):
+        return [_sanitize_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_payload(item) for key, item in value.items()}
     return value
 
 
@@ -694,7 +939,7 @@ def _safe_label(value: str, default: str) -> str:
 
 def _check_command(name: str, command: list[str]) -> dict[str, Any]:
     result = _run(command)
-    if result.ok:
+    if _command_ok(result):
         return {"name": name, "ok": True, "message": _first_line(result.stdout) or "ok"}
     return {"name": name, "ok": False, "message": _first_line(result.stderr or result.stdout) or "failed"}
 
@@ -706,7 +951,7 @@ def _check_compose() -> dict[str, Any]:
         return {"name": "docker_compose", "ok": False, "message": str(exc)}
 
     result = _run(command)
-    if not result.ok:
+    if not _command_ok(result):
         return {"name": "docker_compose", "ok": False, "message": _first_line(result.stderr or result.stdout) or "failed"}
 
     summary = _summarize_compose_ps(result.stdout)
@@ -814,21 +1059,17 @@ def _run(
         stdout = exc.stdout if isinstance(exc.stdout, str) else ""
         stderr = exc.stderr if isinstance(exc.stderr, str) else ""
         return CommandResult(
-            ok=False,
-            command=command,
+            returncode=124,
             stdout=sanitize_text(stdout),
             stderr=sanitize_text(stderr or f"command timed out after {command_timeout}s"),
-            returncode=124,
         )
     except Exception as exc:
-        return CommandResult(ok=False, command=command, stdout="", stderr=sanitize_text(str(exc)), returncode=1)
+        return CommandResult(returncode=1, stdout="", stderr=sanitize_text(str(exc)))
 
     return CommandResult(
-        ok=completed.returncode == 0,
-        command=command,
+        returncode=completed.returncode,
         stdout=sanitize_text(completed.stdout or ""),
         stderr=sanitize_text(completed.stderr or ""),
-        returncode=completed.returncode,
     )
 
 
@@ -848,6 +1089,10 @@ def _combine_output(result: CommandResult) -> str:
     if result.stderr:
         return result.stdout + ("\n" if result.stdout else "") + result.stderr
     return result.stdout
+
+
+def _command_ok(result: CommandResult) -> bool:
+    return result.returncode == 0
 
 
 def _first_line(text: str) -> str:
