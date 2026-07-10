@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import json
+import re
 import subprocess
 import time
 from contextlib import contextmanager
@@ -98,11 +100,13 @@ def validate_runtime(runner: CommandRunner, compose_file: Path) -> tuple[str, ..
 
     postgres_container = _run_runtime_probe(
         runner,
-        (*compose, "ps", "--status", "running", "postgres"),
+        (*compose, "ps", "--status", "running", "--format", "json", "postgres"),
         timeout=None,
         timeout_message="postgresql container probe timed out",
         failure_message="postgresql container is not running",
     )
+    if not _contains_postgres_row(postgres_container.stdout):
+        raise DeployPreflightError("postgresql container is not running")
     _successful_label(postgres_container, "postgresql_health")
 
     health_result = _run_runtime_probe(
@@ -177,6 +181,35 @@ def _run_runtime_probe(
 def _successful_label(result: object, label: str) -> str:
     del result
     return label
+
+
+def _contains_postgres_row(output: str) -> bool:
+    rows = _parse_compose_rows(output)
+    for row in rows:
+        if str(row.get("Service") or "").strip() == "postgres":
+            return True
+        for key in ("Name", "Names"):
+            names = str(row.get(key) or "").split(",")
+            if any(re.search(r"(?:^|[-_.])postgres(?:[-_.]|$)", name.strip()) for name in names):
+                return True
+    return False
+
+
+def _parse_compose_rows(output: str) -> tuple[dict[str, object], ...]:
+    text = output.strip()
+    if not text:
+        return ()
+    try:
+        value = json.loads(text)
+        values = value if isinstance(value, list) else [value]
+    except json.JSONDecodeError:
+        values = []
+        try:
+            for line in text.splitlines():
+                values.append(json.loads(line))
+        except json.JSONDecodeError:
+            return ()
+    return tuple(value for value in values if isinstance(value, dict))
 
 
 def _parse_disk_output(output: str) -> tuple[int, float]:

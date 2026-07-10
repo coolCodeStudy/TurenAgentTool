@@ -143,8 +143,13 @@ class PreflightTests(TestCase):
                     "ps",
                     "--status",
                     "running",
+                    "--format",
+                    "json",
                     "postgres",
-                ): ok("postgres\n"),
+                ): ok(
+                    '{"ID":"container-id","Name":"project-postgres-1",'
+                    '"Service":"postgres","State":"running","Status":"Up 10 seconds"}\n'
+                ),
                 (
                     "docker",
                     "compose",
@@ -163,6 +168,48 @@ class PreflightTests(TestCase):
         self.assertEqual(("docker_health", "compose_valid", "postgresql_health"), labels)
         self.assertEqual(("docker", "info"), runner.calls[0][0])
         self.assertEqual(10, runner.calls[0][1])
+
+    def test_validate_runtime_rejects_empty_postgres_rows_before_health_probe(self) -> None:
+        compose_file = self.directory / "compose.yml"
+        postgres_command = (
+            "docker",
+            "compose",
+            "-f",
+            str(compose_file),
+            "ps",
+            "--status",
+            "running",
+            "--format",
+            "json",
+            "postgres",
+        )
+        health_command = (
+            "docker",
+            "compose",
+            "-f",
+            str(compose_file),
+            "exec",
+            "-T",
+            "postgres",
+            "pg_isready",
+        )
+
+        for output in ("", " \n\t"):
+            with self.subTest(output=repr(output)):
+                runner = FakeRunner(
+                    {
+                        ("docker", "info"): ok(),
+                        ("docker", "compose", "-f", str(compose_file), "config", "--quiet"): ok(),
+                        postgres_command: ok(output),
+                        health_command: ok("accepting connections\n"),
+                    }
+                )
+
+                with self.assertRaises(DeployPreflightError) as context:
+                    validate_runtime(runner, compose_file)
+
+                self.assertEqual("postgresql container is not running", str(context.exception))
+                self.assertNotIn(health_command, [command for command, _ in runner.calls])
 
     def test_validate_runtime_rejects_docker_timeout_without_stderr(self) -> None:
         compose_file = self.directory / "compose.yml"
@@ -208,8 +255,13 @@ class PreflightTests(TestCase):
                     "ps",
                     "--status",
                     "running",
+                    "--format",
+                    "json",
                     "postgres",
-                ): ok("postgres\n"),
+                ): ok(
+                    '{"ID":"container-id","Name":"project-postgres-1",'
+                    '"Service":"postgres","State":"running","Status":"Up 10 seconds"}\n'
+                ),
                 (
                     "docker",
                     "compose",
