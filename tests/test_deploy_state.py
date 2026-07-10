@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from unittest import TestCase
 
@@ -38,7 +39,7 @@ def sample_state(*, current_sha: str | None, previous_sha: str | None) -> Deploy
         last_event_id="event-1",
         started_at="2026-07-10T01:02:03Z",
         completed_at="2026-07-10T01:03:04Z",
-        preflight={"disk_used_percent": 42.5, "archive_bytes": 1234, "status": "ok"},
+        preflight=_valid_preflight(),
         final_health="healthy",
     )
 
@@ -52,7 +53,7 @@ def sample_event() -> DeploymentEvent:
         target_sha="b" * 40,
         changed_image_inputs=("Dockerfile",),
         targets=("mcp", "weekly-review-web"),
-        preflight={"disk_used_percent": 42.5, "status": "ok"},
+        preflight=_valid_preflight(),
         archive_bytes=1234,
         image_count_before=2,
         image_count_after=3,
@@ -184,6 +185,27 @@ class DeployStateTests(TestCase):
         with self.assertRaises(StateFormatError):
             load_state(path)
 
+    def test_preflight_allowlist_rejects_unknown_key_and_preserves_state(self) -> None:
+        path = self.directory / "deploy-state.json"
+        previous = sample_state(current_sha="b" * 40, previous_sha="a" * 40)
+        write_state(path, previous)
+
+        invalid = replace(previous, preflight={"DATABASE_URL": "redacted"})
+        with self.assertRaises(StateFormatError):
+            write_state(path, invalid)
+
+        self.assertEqual(previous, load_state(path))
+        self.assertFalse((self.directory / "deploy-state.json.tmp").exists())
+
+    def test_load_state_rejects_credential_bearing_preflight(self) -> None:
+        path = self.directory / "deploy-state.json"
+        payload = _as_json(sample_state(current_sha="b" * 40, previous_sha="a" * 40))
+        payload["preflight"] = {"DATABASE_URL": "postgresql://user:password@db/app"}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaises(StateFormatError):
+            load_state(path)
+
     def test_write_event_is_atomic_and_returns_event_path(self) -> None:
         events_dir = self.directory / "events"
         event = sample_event()
@@ -200,6 +222,22 @@ class DeployStateTests(TestCase):
 
         with self.assertRaises(ValueError):
             write_event(self.directory / "events", event)
+
+    def test_write_event_rejects_credential_bearing_preflight(self) -> None:
+        event = replace(sample_event(), preflight={"TOKEN": "abc123"})
+
+        with self.assertRaises(StateFormatError):
+            write_event(self.directory / "events", event)
+
+        self.assertFalse((self.directory / "events" / "event-1.json").exists())
+
+    def test_write_event_rejects_credential_material_in_free_text(self) -> None:
+        event = replace(sample_event(), emergency_reason="DATABASE_URL=postgresql://user:password@db/app")
+
+        with self.assertRaises(StateFormatError):
+            write_event(self.directory / "events", event)
+
+        self.assertFalse((self.directory / "events" / "event-1.json").exists())
 
 
 def _as_json(value: DeploymentState) -> dict[str, object]:
@@ -220,4 +258,20 @@ def _as_json(value: DeploymentState) -> dict[str, object]:
         "completed_at": value.completed_at,
         "preflight": value.preflight,
         "final_health": value.final_health,
+    }
+
+
+def _valid_preflight() -> dict[str, int | float | str]:
+    return {
+        "disk_available_bytes": 16 * 1024**3,
+        "disk_used_percent": 42.5,
+        "available_memory_bytes": 1024 * 1024**2,
+        "docker_response_ms": 120,
+        "docker_health": "healthy",
+        "postgresql_health": "healthy",
+        "compose_valid": "valid",
+        "source_valid": "valid",
+        "lock_valid": "free",
+        "archive_bytes": 1234,
+        "required_free_bytes": 2 * 1024**3,
     }

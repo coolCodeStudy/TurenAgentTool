@@ -68,7 +68,27 @@ class DeploymentEvent:
 
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 _STATE_FIELDS = tuple(field.name for field in fields(DeploymentState))
-_EVENT_FIELDS = tuple(field.name for field in fields(DeploymentEvent))
+_PREFLIGHT_OBSERVATION_TYPES: dict[str, type | tuple[type, ...]] = {
+    "disk_available_bytes": int,
+    "disk_used_percent": (int, float),
+    "available_memory_bytes": int,
+    "docker_response_ms": (int, float),
+    "docker_health": str,
+    "postgresql_health": str,
+    "compose_valid": str,
+    "source_valid": str,
+    "lock_valid": str,
+    "archive_bytes": int,
+    "required_free_bytes": int,
+}
+_SENSITIVE_TEXT = re.compile(
+    r"(?i)\b(?:database[_-]?url|password|passwd|token|api[_-]?key|secret|credential|"
+    r"authorization|bearer|private[_-]?key|access[_-]?key)\b"
+)
+_ENV_ASSIGNMENT = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\s*=\s*\S+")
+_CREDENTIAL_URI = re.compile(
+    r"(?i)\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?):\/\/[^\s/:@]+:[^\s@]+@"
+)
 
 
 def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRunner) -> str:
@@ -195,7 +215,8 @@ def _validate_state(state: DeploymentState) -> None:
 
 
 def _validate_event(event: DeploymentEvent) -> None:
-    if not isinstance(event.event_id, str) or not event.event_id:
+    _required_string(event.event_id, "event_id")
+    if not event.event_id:
         raise StateFormatError("event_id must be a non-empty string")
     for name in (
         "requested_mode",
@@ -221,7 +242,7 @@ def _validate_event(event: DeploymentEvent) -> None:
         if not _number(getattr(event, name)):
             raise StateFormatError(f"{name} must be a number")
     if not isinstance(event.target_durations_ms, dict) or any(
-        not isinstance(key, str) or not _integer(value)
+        not isinstance(key, str) or not _integer(value) or _has_sensitive_material(key)
         for key, value in event.target_durations_ms.items()
     ):
         raise StateFormatError("target_durations_ms must map strings to integers")
@@ -232,28 +253,50 @@ def _validate_event(event: DeploymentEvent) -> None:
 def _required_string(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise StateFormatError(f"{name} must be a string")
+    _reject_sensitive_material(value, name)
     return value
 
 
 def _optional_string(value: object, name: str) -> str | None:
     if value is not None and not isinstance(value, str):
         raise StateFormatError(f"{name} must be a string or null")
+    if value is not None:
+        _reject_sensitive_material(value, name)
     return value
 
 
 def _string_tuple(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (tuple, list)) or any(not isinstance(item, str) for item in value):
         raise StateFormatError(f"{name} must be a list of strings")
+    for item in value:
+        _reject_sensitive_material(item, name)
     return tuple(value)
 
 
 def _metrics_dict(value: object, name: str) -> dict[str, int | float | str]:
-    if not isinstance(value, dict) or any(
-        not isinstance(key, str) or not isinstance(item, (int, float, str)) or isinstance(item, bool)
-        for key, item in value.items()
-    ):
-        raise StateFormatError(f"{name} must map strings to numbers or strings")
+    if not isinstance(value, dict):
+        raise StateFormatError(f"{name} must be a deployment observation object")
+    unknown_keys = set(value) - set(_PREFLIGHT_OBSERVATION_TYPES)
+    if unknown_keys:
+        raise StateFormatError(f"{name} contains unknown observation keys")
+    for key, item in value.items():
+        expected_type = _PREFLIGHT_OBSERVATION_TYPES[key]
+        if isinstance(item, bool) or not isinstance(item, expected_type):
+            raise StateFormatError(f"{name}.{key} has an invalid observation type")
+        if isinstance(item, str):
+            _reject_sensitive_material(item, f"{name}.{key}")
+        elif item < 0 or (key == "disk_used_percent" and item > 100):
+            raise StateFormatError(f"{name}.{key} has an invalid observation value")
     return value
+
+
+def _has_sensitive_material(value: str) -> bool:
+    return bool(_SENSITIVE_TEXT.search(value) or _ENV_ASSIGNMENT.search(value) or _CREDENTIAL_URI.search(value))
+
+
+def _reject_sensitive_material(value: str, name: str) -> None:
+    if _has_sensitive_material(value):
+        raise StateFormatError(f"{name} contains credential or environment material")
 
 
 def _integer(value: object) -> bool:
