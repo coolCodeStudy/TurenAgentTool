@@ -55,8 +55,6 @@ jobs:
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
           EMERGENCY_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.emergency_reason || '' }}
           WORKFLOW_SHA: ${{ github.sha }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
         run: |
           set -euo pipefail
 
@@ -114,35 +112,9 @@ jobs:
               --manual-mode no_deploy \
               --format json > "$plan_json"
             emit_no_deploy_outputs "$plan_json" "$target_sha"
-            echo "Credential-free no_deploy plan:"
+            echo "Credential-free manual no_deploy plan:"
             cat "$plan_json"
             exit 0
-          fi
-
-          if [ "$REQUESTED_MODE" = "auto" ] &&
-             [ "$GITHUB_EVENT_NAME" = "push" ] &&
-             printf '%s' "$GITHUB_EVENT_BEFORE" | grep -Eq '^[0-9a-f]{40}$' &&
-             ! printf '%s' "$GITHUB_EVENT_BEFORE" | grep -Eq '^0{40}$' &&
-             git cat-file -e "$GITHUB_EVENT_BEFORE^{commit}" 2>/dev/null; then
-            python3 scripts/classify_deploy_change.py \
-              --repo . \
-              --base-sha "$GITHUB_EVENT_BEFORE" \
-              --target-sha "$target_sha" \
-              --format json > "$plan_json"
-            early_mode="$(python3 - "$plan_json" <<'PY'
-          import json
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8") as handle:
-              print(json.load(handle)["mode"])
-          PY
-          )"
-            if [ "$early_mode" = "no_deploy" ]; then
-              emit_no_deploy_outputs "$plan_json" "$GITHUB_EVENT_BEFORE"
-              echo "Credential-free no_deploy plan:"
-              cat "$plan_json"
-              exit 0
-            fi
           fi
 
           echo "Server-authoritative deploy status is required for this plan."
