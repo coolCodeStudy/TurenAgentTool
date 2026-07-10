@@ -12,12 +12,14 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from scripts.deploy_contract import DeployMode, DeploymentPlan
+from scripts.deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan
 from scripts.deploy_release import (
     DeployRequest,
+    DeploymentContext,
     DeploymentEngine,
     DeploymentHealthError,
     DockerHealthChecker,
+    SelectorSnapshot,
 )
 from scripts.deploy_retention import ImageRecord
 from scripts.deploy_state import DeploymentState, load_state, write_state
@@ -214,7 +216,14 @@ class DeploymentEngineTests(TestCase):
         (self.app_root / "current").symlink_to(self.old_release, target_is_directory=True)
         (self.app_root / "previous").symlink_to(self.older_release, target_is_directory=True)
         (self.app_root / ".env").write_text(f"APP_IMAGE_TAG={OLD_SHA}\n", encoding="utf-8")
-        write_state(self.state_path, _state())
+        write_state(
+            self.state_path,
+            replace(
+                _state(),
+                active_release=str(self.old_release),
+                previous_release=str(self.older_release),
+            ),
+        )
 
         self.runner = RecordingRunner()
         self.health = FakeHealth()
@@ -854,9 +863,12 @@ class DeploymentEngineTests(TestCase):
         self.assertIn("cannot reduce", outcome.message)
         self.assertEqual([], self.stage_calls)
 
-    def test_emergency_override_can_increase_computed_risk_to_full_image(self) -> None:
+    def test_emergency_override_cannot_escalate_narrow_targets_to_full_image(self) -> None:
         archive = self.directory / "candidate.tar"
         archive.write_bytes(b"candidate")
+        state_before = self.state_path.read_bytes()
+        current_before = self.engine.current_link.resolve()
+        env_before = self.engine.env_file.read_bytes()
         request = DeployRequest(
             "main",
             DeployMode.FULL_IMAGE,
@@ -867,11 +879,38 @@ class DeploymentEngineTests(TestCase):
 
         outcome = self.engine.deploy(request)
 
-        self.assertTrue(outcome.ok)
-        self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
+        self.assertFalse(outcome.ok)
+        self.assertIn("complete application target set", outcome.message)
+        self.assertEqual((), outcome.activated_services)
+        self.assertEqual(state_before, self.state_path.read_bytes())
+        self.assertEqual(current_before, self.engine.current_link.resolve())
+        self.assertEqual(env_before, self.engine.env_file.read_bytes())
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertEqual("targeted_quick", event["computed_mode"])
         self.assertEqual("full_image", event["requested_mode"])
+
+    def test_emergency_full_escalation_accepts_complete_application_targets(self) -> None:
+        archive = self.directory / "candidate.tar"
+        archive.write_bytes(b"candidate")
+        self.plan = DeploymentPlan(
+            mode=DeployMode.CONFIG_RESTART,
+            targets=APPLICATION_SERVICES,
+            changed_files=("docker-compose.prod.yml",),
+            image_input_files=(),
+            reasons=("runtime configuration",),
+        )
+        request = DeployRequest(
+            "main",
+            DeployMode.FULL_IMAGE,
+            APPLICATION_SERVICES,
+            archive,
+            "Force a complete immutable rebuild for configuration recovery.",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
 
     def test_feature_ref_is_rejected_even_with_valid_emergency_reason(self) -> None:
         request = replace(
@@ -1226,6 +1265,45 @@ class DeploymentEngineTests(TestCase):
             self.assertEqual(1, self.runner.commands.count(command))
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertIn("release_failed", event["rollback_status"])
+
+    def test_release_selector_state_drift_fails_before_staging_or_mutation(self) -> None:
+        stale_state = replace(
+            load_state(self.state_path),
+            current_sha=OLDER_SHA,
+            active_release=str(self.older_release),
+        )
+        write_state(self.state_path, stale_state)
+        current_before = self.engine.current_link.resolve()
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("release baseline", outcome.message)
+        self.assertEqual([], self.stage_calls)
+        self.assertEqual(current_before, self.engine.current_link.resolve())
+        self.assertFalse(
+            any(command[:3] == ("docker", "compose", "up") for command in self.runner.commands)
+        )
+
+    def test_retention_protects_snapshotted_rollback_release_name(self) -> None:
+        context = DeploymentContext(
+            request=self.targeted_request,
+            started_at="2026-07-10T00:00:00Z",
+            target_sha=TARGET_SHA,
+            previous_state=replace(
+                load_state(self.state_path),
+                current_sha=OLDER_SHA,
+            ),
+            selectors=SelectorSnapshot(
+                current_release=self.old_release.resolve(),
+                previous_release=self.older_release.resolve(),
+                env_contents=self.engine.env_file.read_bytes(),
+            ),
+        )
+
+        protected = self.engine._protected_release_shas(context)
+
+        self.assertEqual({TARGET_SHA, OLDER_SHA, OLD_SHA}, set(protected))
 
     def test_host_units_restart_independently_without_compose(self) -> None:
         self.plan = DeploymentPlan(

@@ -465,6 +465,7 @@ class DeploymentEngine:
                 self.env_file.read_bytes() if self.env_file.exists() else None
             ),
         )
+        self._verify_release_baseline(context.previous_state, context.selectors)
 
         snapshot = self.resource_collector(self.runner)
         context.disk_used_after = snapshot.disk_used_percent
@@ -588,14 +589,7 @@ class DeploymentEngine:
         try:
             retain_release_directories(
                 self.releases_dir,
-                tuple(
-                    sha
-                    for sha in (
-                        context.target_sha,
-                        context.previous_state.current_sha,
-                    )
-                    if sha is not None
-                ),
+                self._protected_release_shas(context),
             )
             cleanup_statuses.append("release_completed")
         except Exception:
@@ -823,6 +817,53 @@ class DeploymentEngine:
                 raise DeploymentError(
                     "running application immutable image identity does not match state"
                 )
+
+    def _verify_release_baseline(
+        self, state: DeploymentState, selectors: SelectorSnapshot | None
+    ) -> None:
+        if (
+            selectors is None
+            or selectors.current_release is None
+            or not state.current_sha
+            or not state.active_release
+        ):
+            raise DeploymentError("active release baseline is unavailable")
+        try:
+            releases_root = self.releases_dir.resolve(strict=True)
+            current_release = selectors.current_release.resolve(strict=True)
+            durable_release = Path(state.active_release).resolve(strict=True)
+        except OSError as error:
+            raise DeploymentError("active release baseline is unavailable") from error
+        if (
+            not current_release.is_dir()
+            or current_release.parent != releases_root
+            or current_release.name != state.current_sha
+            or durable_release != current_release
+        ):
+            raise DeploymentError(
+                "durable and active release baseline do not match"
+            )
+
+    def _protected_release_shas(
+        self, context: DeploymentContext
+    ) -> tuple[str, ...]:
+        protected = [context.target_sha]
+        if context.previous_state is not None and context.previous_state.current_sha:
+            protected.append(context.previous_state.current_sha)
+        if context.selectors is not None and context.selectors.current_release is not None:
+            snapshot = context.selectors.current_release
+            try:
+                releases_root = self.releases_dir.resolve(strict=True)
+                snapshot = snapshot.resolve(strict=True)
+            except OSError:
+                snapshot = Path()
+                releases_root = self.releases_dir
+            if (
+                snapshot.parent == releases_root
+                and re.fullmatch(r"[0-9a-f]{40}", snapshot.name)
+            ):
+                protected.append(snapshot.name)
+        return tuple(dict.fromkeys(value for value in protected if value))
 
     def _load_candidate_archive(
         self, context: DeploymentContext, archive_path: Path, expected_image: str
@@ -1089,6 +1130,14 @@ class DeploymentEngine:
                 if MODE_RANK[request.requested_mode] < MODE_RANK[plan.mode]:
                     raise DeploymentError(
                         "emergency override cannot reduce the server-computed deployment risk"
+                    )
+                if (
+                    request.requested_mode is DeployMode.FULL_IMAGE
+                    and plan.mode is not DeployMode.FULL_IMAGE
+                    and requested_targets != tuple(sorted(APPLICATION_SERVICES))
+                ):
+                    raise DeploymentError(
+                        "emergency full image deployment requires the complete application target set"
                     )
                 return DeploymentPlan(
                     mode=request.requested_mode,
