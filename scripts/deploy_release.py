@@ -88,7 +88,7 @@ _SENSITIVE_REASON = re.compile(
     r"(?i)(?:\b(?:token|password|passwd|secret|credential|authorization|api[_-]?key)\b|"
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
 )
-_APPLICATION_TARGETS = set(APPLICATION_SERVICES) | {"dingtalk-api"}
+_APPLICATION_TARGETS = set(APPLICATION_SERVICES)
 
 
 class HealthChecker(Protocol):

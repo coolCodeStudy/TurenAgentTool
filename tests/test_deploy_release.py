@@ -911,6 +911,8 @@ class DeploymentEngineTests(TestCase):
 
         self.assertTrue(outcome.ok)
         self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
+        self.assertIn("dingtalk-api", APPLICATION_SERVICES)
+        self.assertIn("dingtalk-api", outcome.activated_services)
 
     def test_feature_ref_is_rejected_even_with_valid_emergency_reason(self) -> None:
         request = replace(

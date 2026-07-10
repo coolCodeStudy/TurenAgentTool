@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import TestCase
 
 from scripts.deploy_contract import (
+    APPLICATION_SERVICES,
     DeployMode,
     classify_deployment,
     classify_paths,
@@ -16,16 +17,6 @@ from scripts.deploy_contract import (
 )
 from scripts.classify_deploy_change import classify_changed_files
 from scripts.deploy_support import CommandResult
-
-
-APPLICATION_SERVICES = (
-    "account-snapshot-scheduler",
-    "command-api",
-    "dingtalk-stream-bot",
-    "ipo-reminder-scheduler",
-    "mcp",
-    "weekly-review-web",
-)
 
 
 def ok(stdout: str) -> CommandResult:
@@ -119,17 +110,17 @@ class DeployContractTests(TestCase):
             (
                 ("investment_knowledge_mcp/command_router.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
             (
                 ("investment_knowledge_mcp/daily_market_brief.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
             (
                 ("investment_knowledge_mcp/weekly_review.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
             (("investment_knowledge_mcp/command_api.py",), DeployMode.TARGETED_QUICK, ("command-api",)),
             (("investment_knowledge_mcp/server.py",), DeployMode.TARGETED_QUICK, ("mcp",)),
@@ -154,6 +145,17 @@ class DeployContractTests(TestCase):
                 plan = classify_paths(paths, compose_image_changed=False)
                 self.assertEqual(mode, plan.mode)
                 self.assertEqual(targets, plan.targets)
+
+    def test_full_and_config_targets_cover_every_managed_app_image_service(self) -> None:
+        self.assertIn("dingtalk-api", APPLICATION_SERVICES)
+        for path, expected_mode in (
+            ("requirements.txt", DeployMode.FULL_IMAGE),
+            ("docker-compose.prod.yml", DeployMode.CONFIG_RESTART),
+        ):
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(expected_mode, plan.mode)
+                self.assertEqual(APPLICATION_SERVICES, plan.targets)
 
     def test_known_production_runtime_scripts_target_current_consumers(self) -> None:
         cases = (
