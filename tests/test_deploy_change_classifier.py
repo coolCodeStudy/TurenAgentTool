@@ -155,9 +155,27 @@ class DeployContractTests(TestCase):
                 self.assertEqual(mode, plan.mode)
                 self.assertEqual(targets, plan.targets)
 
+    def test_known_production_runtime_scripts_target_current_consumers(self) -> None:
+        cases = (
+            (
+                "scripts/dingtalk_stream_bot.py",
+                ("dingtalk-stream-bot",),
+            ),
+            (
+                "scripts/init_db.py",
+                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+            ),
+        )
+        for path, targets in cases:
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(targets, plan.targets)
+                self.assertNotIn("postgres", plan.targets)
+
     def test_unknown_deployment_control_file_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unclassified deployment-sensitive path"):
-            classify_paths(("scripts/new_deploy_switch.py",), compose_image_changed=False)
+            classify_paths(("scripts/new_control.py",), compose_image_changed=False)
 
     def test_compose_image_inputs_require_a_full_image_deploy(self) -> None:
         plan = classify_paths(("docker-compose.prod.yml",), compose_image_changed=True)

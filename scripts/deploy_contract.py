@@ -93,6 +93,18 @@ PATH_RULES = (
         ("investment-ops-api.service",),
         "ECS Ops API control plane",
     ),
+    PathRule(
+        "scripts/dingtalk_stream_bot.py",
+        DeployMode.TARGETED_QUICK,
+        ("dingtalk-stream-bot",),
+        "DingTalk stream bot runtime",
+    ),
+    PathRule(
+        "scripts/init_db.py",
+        DeployMode.TARGETED_QUICK,
+        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        "database initialization runtime",
+    ),
     PathRule("investment_knowledge_mcp/weekly_review_web.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "weekly review web"),
     PathRule(
         "investment_knowledge_mcp/command_workbench.py",
