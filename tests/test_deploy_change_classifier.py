@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest import TestCase
 
@@ -49,6 +51,17 @@ class FakeRunner:
 
 
 class DeployContractTests(TestCase):
+    def test_known_documentation_path_is_no_deploy(self) -> None:
+        plan = classify_paths(("docs/README.md",), compose_image_changed=False)
+
+        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
+
+    def test_unknown_documentation_and_workflow_paths_are_rejected(self) -> None:
+        for path in ("docs/unreviewed-deployment-notes.md", ".github/workflows/new-release.yml"):
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ValueError, "unclassified deployment-sensitive path"):
+                    classify_paths((path,), compose_image_changed=False)
+
     def test_legacy_classifier_keeps_docs_and_governance_no_deploy(self) -> None:
         result = classify_changed_files(
             (
@@ -165,8 +178,22 @@ class DeployContractTests(TestCase):
         runner = FakeRunner(
             ("docker-compose.prod.yml",),
             (
-                {"services": {"mcp": {"image": "app:base", "build": {"context": "."}}}},
-                {"services": {"mcp": {"image": "app:next", "build": {"context": "."}}}},
+                {"services": {"mcp": {"image": "app:stable", "build": {"context": "./base"}}}},
+                {"services": {"mcp": {"image": "app:stable", "build": {"context": "./next"}}}},
+            ),
+        )
+
+        plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+        self.assertEqual(("docker-compose.prod.yml",), plan.image_input_files)
+
+    def test_real_diff_uses_full_image_for_compose_platform_change(self) -> None:
+        runner = FakeRunner(
+            ("docker-compose.prod.yml",),
+            (
+                {"services": {"mcp": {"image": "app:stable", "platform": "linux/amd64"}}},
+                {"services": {"mcp": {"image": "app:stable", "platform": "linux/arm64"}}},
             ),
         )
 
@@ -229,6 +256,68 @@ class DeployContractTests(TestCase):
             },
             json.loads(completed.stdout),
         )
+
+    def test_cli_reference_mode_uses_normalized_compose_image_inputs(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts" / "classify_deploy_change.py"
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            self._run(("git", "init"), cwd=repo)
+            self._run(("git", "config", "user.email", "tests@example.com"), cwd=repo)
+            self._run(("git", "config", "user.name", "Deployment Tests"), cwd=repo)
+            compose = repo / "docker-compose.prod.yml"
+            compose.write_text("services:\n  mcp:\n    build: ./base\n", encoding="utf-8")
+            self._run(("git", "add", "docker-compose.prod.yml"), cwd=repo)
+            self._run(("git", "commit", "-m", "base compose"), cwd=repo)
+            base_sha = self._output(("git", "rev-parse", "HEAD"), cwd=repo).strip()
+
+            compose.write_text("services:\n  mcp:\n    build: ./next\n", encoding="utf-8")
+            self._run(("git", "commit", "-am", "change build input"), cwd=repo)
+            target_sha = self._output(("git", "rev-parse", "HEAD"), cwd=repo).strip()
+
+            bin_dir = Path(directory) / "bin"
+            bin_dir.mkdir()
+            docker = bin_dir / "docker"
+            docker.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "import sys\n"
+                "from pathlib import Path\n"
+                "compose = Path(sys.argv[3]).read_text(encoding='utf-8')\n"
+                "context = './next' if './next' in compose else './base'\n"
+                "print(json.dumps({'services': {'mcp': {'build': {'context': context}}}}))\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            environment = os.environ | {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--format",
+                    "json",
+                    "--repo",
+                    str(repo),
+                    "--base-sha",
+                    base_sha,
+                    "--target-sha",
+                    target_sha,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("full_image", json.loads(completed.stdout)["mode"])
+        self.assertEqual("full", json.loads(completed.stdout)["deploy_mode"])
+
+    def _run(self, command: tuple[str, ...], *, cwd: Path) -> None:
+        subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True)
+
+    def _output(self, command: tuple[str, ...], *, cwd: Path) -> str:
+        return subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True).stdout
 
 
 if __name__ == "__main__":

@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Iterable, Literal
 
 try:
-    from scripts.deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_paths, serialize_plan
+    from scripts.deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_deployment, classify_paths, serialize_plan
+    from scripts.deploy_support import SubprocessRunner
 except ModuleNotFoundError:  # Direct execution from the repository root.
-    from deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_paths, serialize_plan
+    from deploy_contract import APPLICATION_SERVICES, DeployMode, DeploymentPlan, classify_deployment, classify_paths, serialize_plan
+    from deploy_support import SubprocessRunner
 
 
 LegacyDeployMode = Literal["no_deploy", "quick", "full"]
@@ -62,6 +64,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Classify changed files for production deployment.")
     parser.add_argument("files", nargs="*", help="Changed files to classify.")
     parser.add_argument("--changed-files-file", type=Path, help="Read newline-delimited changed files from this file.")
+    parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Repository used with --base-sha and --target-sha.")
+    parser.add_argument("--base-sha", help="Base Git ref for automatic diff classification.")
+    parser.add_argument("--target-sha", help="Target Git ref for automatic diff classification.")
     parser.add_argument(
         "--manual-mode",
         choices=("auto", "no_deploy", "quick", "full", "targeted_quick", "config_restart", "full_image"),
@@ -74,11 +79,24 @@ def main() -> None:
     files = list(args.files)
     if args.changed_files_file:
         files.extend(args.changed_files_file.read_text(encoding="utf-8").splitlines())
-    result = classify_changed_files(files) if args.manual_mode == "auto" else ClassificationResult(
-        deploy_mode=_legacy_mode(_manual_plan(args.manual_mode).mode),
-        changed_files=(f"manual-{args.manual_mode}",),
-        plan=_manual_plan(args.manual_mode),
-    )
+    if bool(args.base_sha) != bool(args.target_sha):
+        parser.error("--base-sha and --target-sha must be provided together")
+    if args.manual_mode == "auto" and args.base_sha and args.target_sha:
+        plan = classify_deployment(args.repo, args.base_sha, args.target_sha, SubprocessRunner())
+        result = ClassificationResult(
+            deploy_mode=_legacy_mode(plan.mode),
+            changed_files=plan.changed_files,
+            plan=plan,
+        )
+    elif args.manual_mode == "auto":
+        result = classify_changed_files(files)
+    else:
+        plan = _manual_plan(args.manual_mode)
+        result = ClassificationResult(
+            deploy_mode=_legacy_mode(plan.mode),
+            changed_files=plan.changed_files,
+            plan=plan,
+        )
     print_result(result, args.format)
 
 
