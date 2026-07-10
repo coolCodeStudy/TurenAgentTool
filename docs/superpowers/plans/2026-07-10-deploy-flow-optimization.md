@@ -60,18 +60,19 @@ class DeployContractTests(TestCase):
     def test_classifies_known_paths_and_targets(self):
         cases = [
             (("docs/README.md",), DeployMode.NO_DEPLOY, ()),
-            (("src/weekly_review_web.py",), DeployMode.TARGETED_QUICK, ("weekly-review-web",)),
-            (("src/command_workbench.py",), DeployMode.TARGETED_QUICK, ("command-api", "weekly-review-web")),
-            (("src/command_router.py",), DeployMode.TARGETED_QUICK, ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web")),
-            (("src/daily_market_brief.py",), DeployMode.TARGETED_QUICK, ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web")),
-            (("src/weekly_review.py",), DeployMode.TARGETED_QUICK, ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web")),
-            (("src/command_api_transport.py",), DeployMode.TARGETED_QUICK, ("command-api",)),
-            (("src/mcp_server.py",), DeployMode.TARGETED_QUICK, ("mcp",)),
-            (("src/account_snapshot_scheduler.py",), DeployMode.TARGETED_QUICK, ("account-snapshot-scheduler",)),
-            (("src/new_runtime_module.py",), DeployMode.TARGETED_QUICK, ("account-snapshot-scheduler", "command-api", "dingtalk-stream-bot", "ipo-reminder-scheduler", "mcp", "weekly-review-web")),
+            (("investment_knowledge_mcp/weekly_review_web.py",), DeployMode.TARGETED_QUICK, ("weekly-review-web",)),
+            (("investment_knowledge_mcp/command_workbench.py",), DeployMode.TARGETED_QUICK, ("command-api", "weekly-review-web")),
+            (("investment_knowledge_mcp/command_router.py",), DeployMode.TARGETED_QUICK, ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web")),
+            (("investment_knowledge_mcp/daily_market_brief.py",), DeployMode.TARGETED_QUICK, ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web")),
+            (("investment_knowledge_mcp/weekly_review.py",), DeployMode.TARGETED_QUICK, ("command-api", "dingtalk-stream-bot", "mcp", "weekly-review-web")),
+            (("investment_knowledge_mcp/command_api.py",), DeployMode.TARGETED_QUICK, ("command-api",)),
+            (("investment_knowledge_mcp/server.py",), DeployMode.TARGETED_QUICK, ("mcp",)),
+            (("investment_knowledge_mcp/account_snapshots.py",), DeployMode.TARGETED_QUICK, ("account-snapshot-scheduler",)),
+            (("investment_knowledge_mcp/ipo_reminders.py",), DeployMode.TARGETED_QUICK, ("ipo-reminder-scheduler",)),
+            (("investment_knowledge_mcp/new_runtime_module.py",), DeployMode.TARGETED_QUICK, ("account-snapshot-scheduler", "command-api", "dingtalk-stream-bot", "ipo-reminder-scheduler", "mcp", "weekly-review-web")),
             (("scripts/ecs_ops_api.py",), DeployMode.TARGETED_QUICK, ("investment-ops-api.service",)),
             (("requirements.txt",), DeployMode.FULL_IMAGE, ("account-snapshot-scheduler", "command-api", "dingtalk-stream-bot", "ipo-reminder-scheduler", "mcp", "weekly-review-web")),
-            (("deploy/docker-compose.yml",), DeployMode.CONFIG_RESTART, ("account-snapshot-scheduler", "command-api", "dingtalk-stream-bot", "ipo-reminder-scheduler", "mcp", "weekly-review-web")),
+            (("docker-compose.prod.yml",), DeployMode.CONFIG_RESTART, ("account-snapshot-scheduler", "command-api", "dingtalk-stream-bot", "ipo-reminder-scheduler", "mcp", "weekly-review-web")),
         ]
         for paths, mode, targets in cases:
             with self.subTest(paths=paths):
@@ -123,7 +124,7 @@ def classify_deployment(
     """Read git diff and normalized Compose config at both SHAs, then classify."""
 ```
 
-For Compose comparison, run `docker compose config --format json` against temporary files checked out with `git show <sha>:deploy/docker-compose.yml`, parse JSON, and compare each service's `image`, `build`, and `platform`. If those keys differ, return `full_image`; otherwise a Compose-only change returns `config_restart`. Unknown Python runtime paths conservatively target all application services under `targeted_quick`; unknown image/package paths return `full_image`; unknown documentation or deployment-control paths raise until an explicit rule is added. Control-plane scripts target their matching host systemd unit and share the global lock. Keep the CLI backward-compatible but emit JSON containing `mode`, `targets`, `changed_files`, `image_input_files`, and `reasons`.
+For Compose comparison, run `docker compose config --format json` against temporary files checked out with `git show <sha>:docker-compose.prod.yml`, parse JSON, and compare each service's `image`, `build`, and `platform`. If those keys differ, return `full_image`; otherwise a Compose-only change returns `config_restart`. Unknown Python runtime paths conservatively target all application services under `targeted_quick`; unknown image/package paths return `full_image`; unknown documentation or deployment-control paths raise until an explicit rule is added. Control-plane scripts target their matching host systemd unit and share the global lock. Keep the CLI backward-compatible but emit JSON containing `mode`, `targets`, `changed_files`, `image_input_files`, and `reasons`.
 
 - [ ] **Step 4: Add real-diff and normalized-Compose tests**
 
@@ -536,8 +537,8 @@ git commit -m "feat: add transactional deployment engine"
 **Files:**
 - Modify: `scripts/ecs_ops_api.py`
 - Modify: `tests/test_ecs_ops_api.py`
-- Modify: `scripts/install_ecs_ops_api.sh`
-- Modify: `scripts/bootstrap_ecs_ops_api.sh`
+- Modify: `scripts/install_ops_api_on_ecs.sh`
+- Modify: `scripts/bootstrap_ops_api_v2_on_ecs.sh`
 
 **Interfaces:**
 - Consumes: `DeploymentEngine`, `DeployRequest`, `DeploymentPlan`, `serialize_plan`, and `ResourceSnapshot`.
@@ -584,7 +585,7 @@ Expected: all tests PASS.
 - [ ] **Step 7: Commit Ops API integration**
 
 ```bash
-git add scripts/ecs_ops_api.py tests/test_ecs_ops_api.py scripts/install_ecs_ops_api.sh scripts/bootstrap_ecs_ops_api.sh
+git add scripts/ecs_ops_api.py tests/test_ecs_ops_api.py scripts/install_ops_api_on_ecs.sh scripts/bootstrap_ops_api_v2_on_ecs.sh
 git commit -m "feat: route ops deploys through shared engine"
 ```
 
