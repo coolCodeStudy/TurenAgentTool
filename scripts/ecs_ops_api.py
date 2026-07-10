@@ -464,9 +464,19 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 sanitize_text(str(exc)),
             ) from exc
         if not outcome.ok:
+            status = (
+                HTTPStatus.CONFLICT
+                if _is_shared_lock_contention(outcome)
+                else HTTPStatus.UNPROCESSABLE_ENTITY
+            )
+            error_code = (
+                "deployment_busy"
+                if status is HTTPStatus.CONFLICT
+                else "deployment_rejected"
+            )
             raise DeployApiError(
-                HTTPStatus.UNPROCESSABLE_ENTITY,
-                "deployment_rejected",
+                status,
+                error_code,
                 outcome.message,
                 {"outcome": _deploy_outcome_payload(outcome)},
             )
@@ -902,6 +912,16 @@ def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:
             "cleanup_reclaimed_bytes": outcome.cleanup_reclaimed_bytes,
             "cleanup_status": outcome.cleanup_status,
         }
+    )
+
+
+def _is_shared_lock_contention(outcome: DeployOutcome) -> bool:
+    message = outcome.message.lower()
+    return (
+        outcome.archive_cleanup == "deferred_lock_unavailable"
+        or "deployment lock could not be acquired" in message
+        or "another deployment is active" in message
+        or "deployment is already running" in message
     )
 
 

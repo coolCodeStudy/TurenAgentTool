@@ -74,6 +74,71 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
         self.assertEqual(DeployMode.TARGETED_QUICK, engine.requests[0].requested_mode)
 
+    def test_canonical_modes_dispatch_to_shared_engine(self) -> None:
+        cases = (
+            ("no_deploy", DeployMode.NO_DEPLOY, []),
+            ("targeted_quick", DeployMode.TARGETED_QUICK, ["weekly-review-web"]),
+            ("config_restart", DeployMode.CONFIG_RESTART, ["weekly-review-web"]),
+            ("full_image", DeployMode.FULL_IMAGE, ["weekly-review-web"]),
+        )
+
+        for raw_mode, expected_mode, targets in cases:
+            with self.subTest(mode=raw_mode):
+                engine = FakeEngine(
+                    DeployOutcome(
+                        ok=True,
+                        target_sha=TARGET_SHA,
+                        mode=expected_mode,
+                        activated_services=tuple(targets),
+                        rolled_back_services=(),
+                        message="deployment completed and remained healthy",
+                    )
+                )
+                payload: dict[str, object] = {
+                    "ref": "main",
+                    "mode": raw_mode,
+                    "targets": targets,
+                }
+                if expected_mode is DeployMode.FULL_IMAGE:
+                    payload["archive_path"] = "/tmp/candidate-image.tar"
+
+                with (
+                    patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                ):
+                    result = ops.deploy_ref(payload)
+
+                self.assertEqual("completed", result["status"])
+                self.assertEqual(expected_mode, engine.requests[0].requested_mode)
+                self.assertEqual(tuple(targets), engine.requests[0].requested_targets)
+
+    def test_legacy_full_alias_maps_to_full_image_when_retained(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=True,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.FULL_IMAGE,
+                activated_services=("weekly-review-web",),
+                rolled_back_services=(),
+                message="deployment completed and remained healthy",
+            )
+        )
+
+        with (
+            patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            ops.deploy_ref(
+                {
+                    "ref": "main",
+                    "mode": "full",
+                    "targets": ["weekly-review-web"],
+                    "archive_path": "/tmp/candidate-image.tar",
+                }
+            )
+
+        self.assertEqual(DeployMode.FULL_IMAGE, engine.requests[0].requested_mode)
+
     def test_feature_ref_is_rejected_before_worker_dispatch(self) -> None:
         engine = FakeEngine()
 
@@ -109,6 +174,34 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual(409, status)
         self.assertEqual("deployment_busy", payload["error"])
         self.assertEqual([], engine.requests)
+
+    def test_shared_engine_lock_contention_returns_409(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment lock could not be acquired password=secret",
+                archive_cleanup="deferred_lock_unavailable",
+            )
+        )
+
+        with (
+            patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": "main", "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(409, status)
+        self.assertEqual("deployment_busy", payload["error"])
+        self.assertEqual(1, len(engine.requests))
+        text = json.dumps(payload)
+        self.assertNotIn("secret", text)
 
     def test_product_safe_engine_rejection_returns_422_and_sanitizes_message(self) -> None:
         engine = FakeEngine(
