@@ -119,11 +119,27 @@ jobs:
 
           echo "Server-authoritative deploy status is required for this plan."
 
+      - name: Install private tunnel dependency
+        if: steps.early_plan.outputs.mode != 'no_deploy'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+
+      - name: Open private Ops API SSH tunnel
+        if: steps.early_plan.outputs.mode != 'no_deploy'
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+          ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
+          ECS_PORT: ${{ secrets.ECS_PORT || '22' }}
+        run: bash scripts/open_ops_api_ssh_tunnel.sh
+
       - name: Build server-authoritative deployment plan
         id: plan
         if: steps.early_plan.outputs.mode != 'no_deploy'
         env:
-          OPS_API_URL: ${{ vars.OPS_API_URL }}
+          OPS_API_URL: http://127.0.0.1:18767
           OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
           REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
@@ -132,8 +148,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$OPS_API_URL" ] || [ -z "$OPS_API_TOKEN" ]; then
-            echo "::error::OPS_API_URL and OPS_API_TOKEN/COMMAND_API_TOKEN are required."
+          if [ -z "$OPS_API_TOKEN" ]; then
+            echo "::error::OPS_API_TOKEN or COMMAND_API_TOKEN is required."
             exit 1
           fi
 
@@ -236,9 +252,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install private tunnel dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+
+      - name: Open private Ops API SSH tunnel
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+          ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
+          ECS_PORT: ${{ secrets.ECS_PORT || '22' }}
+        run: bash scripts/open_ops_api_ssh_tunnel.sh
+
       - name: Delegate deployment to Ops API
         env:
-          OPS_API_URL: ${{ vars.OPS_API_URL }}
+          OPS_API_URL: http://127.0.0.1:18767
           OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           DEPLOY_MODE: ${{ needs.plan.outputs.mode }}
@@ -365,9 +398,23 @@ jobs:
           strip_components: 1
           overwrite: true
 
+      - name: Install private tunnel dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+
+      - name: Open private Ops API SSH tunnel
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
+          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+          ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
+          ECS_PORT: ${{ secrets.ECS_PORT || '22' }}
+        run: bash scripts/open_ops_api_ssh_tunnel.sh
+
       - name: Delegate full image deployment to Ops API
         env:
-          OPS_API_URL: ${{ vars.OPS_API_URL }}
+          OPS_API_URL: http://127.0.0.1:18767
           OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}

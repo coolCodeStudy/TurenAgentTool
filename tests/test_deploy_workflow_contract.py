@@ -36,6 +36,27 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("mode", self.workflow)
         self.assertIn("targets", self.workflow)
 
+    def test_uses_private_ssh_tunnel_instead_of_public_ops_api_variable(self) -> None:
+        self.assertNotIn("vars.OPS_API_URL", self.workflow)
+        self.assertNotIn("OPS_API_URL and OPS_API_TOKEN", self.workflow)
+        self.assertEqual(3, self.workflow.count("scripts/open_ops_api_ssh_tunnel.sh"))
+        self.assertEqual(3, self.workflow.count("ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}"))
+        self.assertIn("OPS_API_URL: http://127.0.0.1:18767", self.workflow)
+
+    def test_private_tunnel_precedes_every_ops_api_call(self) -> None:
+        plan_tunnel = self.workflow.index("Open private Ops API SSH tunnel")
+        plan_call = self.workflow.index("Build server-authoritative deployment plan")
+        shared_job = self.workflow.index("  shared_deploy:")
+        shared_tunnel = self.workflow.index("Open private Ops API SSH tunnel", shared_job)
+        shared_call = self.workflow.index("Delegate deployment to Ops API", shared_job)
+        full_job = self.workflow.index("  full_image:")
+        full_tunnel = self.workflow.index("Open private Ops API SSH tunnel", full_job)
+        full_call = self.workflow.index("Delegate full image deployment to Ops API", full_job)
+
+        self.assertLess(plan_tunnel, plan_call)
+        self.assertLess(shared_tunnel, shared_call)
+        self.assertLess(full_tunnel, full_call)
+
     def test_no_deploy_classification_runs_before_ops_credentials_or_status(self) -> None:
         early = self.workflow.index("Classify credential-free no_deploy plan")
         authoritative = self.workflow.index("Build server-authoritative deployment plan")

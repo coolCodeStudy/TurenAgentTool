@@ -39,14 +39,14 @@ jobs:
             fi
           done
 
-      - name: Upload Ops API files
+      - name: Upload Ops API bootstrap
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          source: "scripts/ecs_ops_api.py,scripts/install_ops_api_on_ecs.sh,scripts/get_deploy_event.py"
+          source: "scripts/bootstrap_ops_api_v2_on_ecs.sh"
           target: "/tmp/ops-api-${{ github.run_id }}"
           strip_components: 1
           overwrite: true
@@ -66,17 +66,12 @@ jobs:
             UPLOAD_DIR=/tmp/ops-api-${{ github.run_id }}
             MODE="${{ inputs.mode }}"
 
-            sudo mkdir -p "$APP_DIR/scripts"
-            sudo cp "$UPLOAD_DIR/ecs_ops_api.py" "$APP_DIR/scripts/ecs_ops_api.py"
-            sudo cp "$UPLOAD_DIR/install_ops_api_on_ecs.sh" "$APP_DIR/scripts/install_ops_api_on_ecs.sh"
-            sudo cp "$UPLOAD_DIR/get_deploy_event.py" "$APP_DIR/scripts/get_deploy_event.py"
-            sudo chmod +x "$APP_DIR/scripts/ecs_ops_api.py" "$APP_DIR/scripts/install_ops_api_on_ecs.sh" "$APP_DIR/scripts/get_deploy_event.py"
-
-            cd "$APP_DIR"
-
             case "$MODE" in
               install)
-                sudo bash scripts/install_ops_api_on_ecs.sh --start
+                sudo BOOTSTRAP_REF="${{ github.sha }}" \
+                  APP_ROOT="$APP_DIR" \
+                  OPS_HOME=/opt/investment-ops \
+                  bash "$UPLOAD_DIR/bootstrap_ops_api_v2_on_ecs.sh"
                 ;;
               start)
                 sudo systemctl restart investment-ops-api.service
@@ -136,7 +131,13 @@ jobs:
 
             sudo systemctl status investment-ops-api.service --no-pager || true
             sudo journalctl -u investment-ops-api.service -n 80 --no-pager || true
-            if [ -f /etc/investment-knowledge/ops-api.env ]; then
+
+            if [ "$MODE" != "stop" ]; then
+              echo "Verify private Ops API health"
+              sudo /bin/bash -c '
+              set -euo pipefail
               . /etc/investment-knowledge/ops-api.env
+              curl --connect-timeout 3 --max-time 5 --fail --silent --show-error \
+                "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health"
+              '
             fi
-            curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
