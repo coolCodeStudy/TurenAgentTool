@@ -91,6 +91,7 @@ class DeployStateTests(TestCase):
     def test_resolves_main_to_origin_main_sha(self) -> None:
         runner = FakeRunner(
             {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
                 ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("a" * 40),
                 (
                     "git",
@@ -110,13 +111,17 @@ class DeployStateTests(TestCase):
         sha = "b" * 40
         runner = FakeRunner(
             {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
                 ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"): ok("")
             }
         )
 
         self.assertEqual(sha, resolve_production_target(Path("/repo"), sha, runner))
         self.assertEqual(
-            [("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main")],
+            [
+                ("git", "-C", "/repo", "fetch", "origin", "main"),
+                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"),
+            ],
             runner.calls,
         )
 
@@ -128,6 +133,7 @@ class DeployStateTests(TestCase):
         sha = "c" * 40
         runner = FakeRunner(
             {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
                 ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"): CommandResult(
                     1, "", "not reachable"
                 )
@@ -139,6 +145,7 @@ class DeployStateTests(TestCase):
     def test_rejects_failed_or_malformed_origin_main_resolution(self) -> None:
         runner = FakeRunner(
             {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
                 ("git", "-C", "/repo", "rev-parse", "origin/main"): CommandResult(1, "", "missing ref")
             }
         )
@@ -146,9 +153,24 @@ class DeployStateTests(TestCase):
             resolve_production_target(Path("/repo"), "main", runner)
 
         runner = FakeRunner(
-            {("git", "-C", "/repo", "rev-parse", "origin/main"): ok("not-a-sha")}
+            {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("not-a-sha"),
+            }
         )
         with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main"):
+            resolve_production_target(Path("/repo"), "main", runner)
+
+    def test_rejects_target_when_origin_main_cannot_be_refreshed(self) -> None:
+        runner = FakeRunner(
+            {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): CommandResult(
+                    1, "", "network unavailable"
+                )
+            }
+        )
+
+        with self.assertRaisesRegex(SourcePolicyError, "refresh origin/main"):
             resolve_production_target(Path("/repo"), "main", runner)
 
     def test_state_round_trip_is_atomic_and_preserves_previous(self) -> None:

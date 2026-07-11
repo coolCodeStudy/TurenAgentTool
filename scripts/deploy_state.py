@@ -96,6 +96,13 @@ _BARE_CREDENTIAL = re.compile(
 
 def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRunner) -> str:
     """Resolve an approved production ref and prove it is reachable from origin/main."""
+    if requested_ref != "main" and not _SHA_PATTERN.fullmatch(requested_ref):
+        raise SourcePolicyError("production ref must be main or a 40-character SHA")
+
+    refreshed = runner.run(("git", "-C", str(repo), "fetch", "origin", "main"))
+    if refreshed.returncode != 0:
+        raise SourcePolicyError("failed to refresh origin/main")
+
     if requested_ref == "main":
         result = runner.run(("git", "-C", str(repo), "rev-parse", "origin/main"))
         if result.returncode != 0:
@@ -103,10 +110,8 @@ def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRun
         sha = result.stdout.strip()
         if not _SHA_PATTERN.fullmatch(sha):
             raise SourcePolicyError("failed to resolve origin/main to a 40-character SHA")
-    elif _SHA_PATTERN.fullmatch(requested_ref):
-        sha = requested_ref
     else:
-        raise SourcePolicyError("production ref must be main or a 40-character SHA")
+        sha = requested_ref
 
     result = runner.run(
         ("git", "-C", str(repo), "merge-base", "--is-ancestor", sha, "origin/main")
