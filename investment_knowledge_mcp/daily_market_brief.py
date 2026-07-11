@@ -614,6 +614,8 @@ def _akshare_hk_activity(ak: Any, market_date: date) -> dict[str, Any]:
         status_key="gainers",
         fallback_message="AKShare 未返回可用的港股主板涨幅榜。",
         loader=lambda: _akshare_stock_gainers(ak.stock_hk_main_board_spot_em(), market="HK", min_turnover=HK_MIN_TURNOVER),
+        fallback_provider=PUBLIC_HTTP_FALLBACK_PROVIDER,
+        fallback_loader=_hk_gainers_http_fallback,
     )
     activity = _empty_activity(market="HK", provider=AKSHARE_PROVIDER, status="not_available")
     activity["gainers"] = gainers
@@ -640,6 +642,8 @@ def _akshare_us_activity(ak: Any, market_date: date) -> dict[str, Any]:
         status_key="gainers",
         fallback_message="AKShare 未返回可用的美股涨幅榜。",
         loader=lambda: _akshare_stock_gainers(ak.stock_us_spot_em(), market="US", min_turnover=US_MIN_TURNOVER),
+        fallback_provider=PUBLIC_HTTP_FALLBACK_PROVIDER,
+        fallback_loader=_us_gainers_http_fallback,
     )
     activity = _empty_activity(market="US", provider=AKSHARE_PROVIDER, status="not_available")
     activity["gainers"] = gainers
@@ -790,6 +794,184 @@ def _eastmoney_cn_gainers() -> list[dict[str, Any]]:
     return _akshare_stock_gainers(normalized, market="CN", min_turnover=CN_MIN_TURNOVER)
 
 
+def _eastmoney_hk_gainers() -> list[dict[str, Any]]:
+    return _eastmoney_market_gainers(
+        market="HK",
+        market_filter="m:128 t:3",
+        min_turnover=HK_MIN_TURNOVER,
+    )
+
+
+def _eastmoney_us_gainers() -> list[dict[str, Any]]:
+    return _eastmoney_market_gainers(
+        market="US",
+        market_filter="m:105,m:106,m:107",
+        min_turnover=US_MIN_TURNOVER,
+    )
+
+
+def _hk_gainers_http_fallback() -> list[dict[str, Any]]:
+    try:
+        rows = _eastmoney_hk_gainers()
+    except Exception:
+        rows = []
+    return rows or _sina_hk_gainers()
+
+
+def _us_gainers_http_fallback() -> list[dict[str, Any]]:
+    try:
+        rows = _eastmoney_us_gainers()
+    except Exception:
+        rows = []
+    return rows or _sina_us_gainers()
+
+
+def _sina_hk_gainers() -> list[dict[str, Any]]:
+    import requests
+
+    response = requests.get(
+        "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHKStockData",
+        params={
+            "page": "1",
+            "num": "100",
+            "sort": "changepercent",
+            "asc": "0",
+            "node": "qbgg_hk",
+            "_s_r_a": "page",
+        },
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=12,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return _normalize_sina_hk_gainers(
+        [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, list)
+        else []
+    )
+
+
+def _sina_us_gainers() -> list[dict[str, Any]]:
+    import json
+    import requests
+    from akshare.stock.cons import (
+        js_hash_text,
+        us_sina_stock_dict_payload,
+        us_sina_stock_list_url,
+    )
+    from py_mini_racer import MiniRacer
+
+    query = "US_CategoryService.getList?page=1&num=20&sort=chg&asc=0&market=&id="
+    decoder = MiniRacer()
+    decoder.eval(js_hash_text)
+    callback_key = decoder.call("d", query)
+    params = dict(us_sina_stock_dict_payload)
+    params.update({"page": "1", "num": "20", "sort": "chg", "asc": "0"})
+    response = requests.get(
+        us_sina_stock_list_url.format(callback_key), params=params, timeout=12
+    )
+    response.raise_for_status()
+    start = response.text.find("({")
+    end = response.text.rfind(");")
+    if start < 0 or end <= start:
+        return []
+    payload = json.loads(response.text[start + 1 : end])
+    rows = payload.get("data") if isinstance(payload, dict) else []
+    return _normalize_sina_us_gainers(
+        [row for row in rows if isinstance(row, dict)]
+        if isinstance(rows, list)
+        else []
+    )
+
+
+def _normalize_sina_hk_gainers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = [
+        {
+            "代码": row.get("symbol") or row.get("code"),
+            "名称": row.get("name"),
+            "涨跌幅": row.get("changepercent"),
+            "成交额": row.get("amount"),
+        }
+        for row in rows
+    ]
+    return _with_gainer_provider(
+        _akshare_stock_gainers(
+            normalized, market="HK", min_turnover=HK_MIN_TURNOVER
+        ),
+        provider=SINA_FINANCE_PROVIDER,
+        min_turnover=HK_MIN_TURNOVER,
+    )
+
+
+def _normalize_sina_us_gainers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = []
+    for row in rows:
+        price = _number(row.get("price"))
+        volume = _number(row.get("volume"))
+        normalized.append(
+            {
+                "代码": row.get("symbol"),
+                "名称": row.get("cname") or row.get("name"),
+                "涨跌幅": row.get("chg"),
+                "成交额": price * volume if price is not None and volume is not None else None,
+            }
+        )
+    return _with_gainer_provider(
+        _akshare_stock_gainers(
+            normalized, market="US", min_turnover=US_MIN_TURNOVER
+        ),
+        provider=SINA_FINANCE_PROVIDER,
+        min_turnover=US_MIN_TURNOVER,
+    )
+
+
+def _with_gainer_provider(
+    rows: list[dict[str, Any]], *, provider: str, min_turnover: float
+) -> list[dict[str, Any]]:
+    for row in rows:
+        row["provider"] = provider
+        row["metric"] = (
+            f"{provider}_turnover_filtered_change_pct_min_{int(min_turnover)}"
+        )
+    return rows
+
+
+def _eastmoney_market_gainers(
+    *, market: str, market_filter: str, min_turnover: float
+) -> list[dict[str, Any]]:
+    rows = _eastmoney_clist(
+        {
+            "fid": "f3",
+            "po": "1",
+            "pz": "200",
+            "pn": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fs": market_filter,
+            "fields": "f12,f14,f3,f6",
+        }
+    )
+    normalized = [
+        {
+            "代码": row.get("f12"),
+            "名称": row.get("f14"),
+            "涨跌幅": row.get("f3"),
+            "成交额": row.get("f6"),
+        }
+        for row in rows
+    ]
+    gainers = _akshare_stock_gainers(
+        normalized, market=market, min_turnover=min_turnover
+    )
+    for row in gainers:
+        row["provider"] = EASTMONEY_HTTP_PROVIDER
+        row["metric"] = (
+            f"eastmoney_turnover_filtered_change_pct_min_{int(min_turnover)}"
+        )
+    return gainers
+
+
 def _cn_gainers_http_fallback() -> list[dict[str, Any]]:
     try:
         rows = _eastmoney_cn_gainers()
@@ -870,7 +1052,12 @@ def _eastmoney_clist(params: dict[str, str]) -> list[dict[str, Any]]:
         "Referer": "https://quote.eastmoney.com/",
     }
     last_exc: Exception | None = None
-    for host in ("https://82.push2.eastmoney.com/api/qt/clist/get", "https://push2.eastmoney.com/api/qt/clist/get"):
+    for host in (
+        "https://82.push2.eastmoney.com/api/qt/clist/get",
+        "https://81.push2.eastmoney.com/api/qt/clist/get",
+        "https://72.push2.eastmoney.com/api/qt/clist/get",
+        "https://push2.eastmoney.com/api/qt/clist/get",
+    ):
         try:
             response = requests.get(host, params={**base_params, **params}, headers=headers, timeout=12)
             response.raise_for_status()

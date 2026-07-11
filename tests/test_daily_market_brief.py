@@ -218,6 +218,92 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(result.context["source_status"]["capital_flow"]["status"], "ok")
         self.assertEqual(fake_ak.last_flow_args, {"indicator": "今日", "sector_type": "行业资金流"})
 
+    def test_hk_and_us_gainers_fall_back_to_direct_eastmoney_http(self) -> None:
+        class UnavailableAkshare:
+            def stock_hk_main_board_spot_em(self):
+                raise ConnectionError("AKShare HK unavailable")
+
+            def stock_us_spot_em(self):
+                raise ConnectionError("AKShare US unavailable")
+
+        fallback_rows = [
+            {
+                "rank": rank,
+                "code": f"SAMPLE{rank}",
+                "name": f"Sample {rank}",
+                "change_pct": 10 - rank,
+                "turnover": 100_000_000,
+                "provider": dmb.EASTMONEY_HTTP_PROVIDER,
+            }
+            for rank in range(1, 6)
+        ]
+        with (
+            mock.patch.object(dmb, "_hk_gainers_http_fallback", return_value=fallback_rows),
+            mock.patch.object(dmb, "_us_gainers_http_fallback", return_value=fallback_rows),
+        ):
+            hk = dmb._akshare_hk_activity(UnavailableAkshare(), date(2026, 7, 10))
+            us = dmb._akshare_us_activity(UnavailableAkshare(), date(2026, 7, 10))
+
+        for activity in (hk, us):
+            self.assertEqual(5, len(activity["gainers"]))
+            self.assertEqual(
+                dmb.PUBLIC_HTTP_FALLBACK_PROVIDER,
+                activity["source_status"]["gainers"]["provider"],
+            )
+            self.assertEqual(
+                dmb.AKSHARE_PROVIDER,
+                activity["source_status"]["gainers"]["fallback_from"],
+            )
+
+    def test_direct_eastmoney_hk_us_gainers_keep_liquid_common_equities(self) -> None:
+        hk_rows = [
+            {"f12": f"00{rank:03d}", "f14": f"港股样本{rank}", "f3": 12 - rank, "f6": 30_000_000}
+            for rank in range(1, 7)
+        ] + [{"f12": "00999", "f14": "低流动性", "f3": 99, "f6": 1_000}]
+        us_rows = [
+            {"f12": f"TEST{rank}", "f14": f"US Sample {rank}", "f3": 12 - rank, "f6": 20_000_000}
+            for rank in range(1, 7)
+        ] + [
+            {"f12": "TESTW", "f14": "Example Warrant", "f3": 99, "f6": 50_000_000},
+            {"f12": "LOW", "f14": "Low Turnover", "f3": 98, "f6": 1_000},
+        ]
+        with mock.patch.object(dmb, "_eastmoney_clist", side_effect=(hk_rows, us_rows)):
+            hk = dmb._eastmoney_hk_gainers()
+            us = dmb._eastmoney_us_gainers()
+
+        self.assertEqual(5, len(hk))
+        self.assertEqual(5, len(us))
+        self.assertNotIn("00999", {row["code"] for row in hk})
+        self.assertNotIn("TESTW", {row["code"] for row in us})
+        self.assertTrue(
+            all(row["provider"] == dmb.EASTMONEY_HTTP_PROVIDER for row in hk + us)
+        )
+
+    def test_sina_hk_us_rows_are_normalized_and_filtered(self) -> None:
+        hk = dmb._normalize_sina_hk_gainers(
+            [
+                {"symbol": f"00{rank:03d}", "name": f"港股样本{rank}", "changepercent": 20 - rank, "amount": 30_000_000}
+                for rank in range(1, 7)
+            ]
+            + [{"symbol": "00999", "name": "低流动性", "changepercent": 99, "amount": 1_000}]
+        )
+        us = dmb._normalize_sina_us_gainers(
+            [
+                {"symbol": f"TEST{rank}", "name": f"US Sample {rank}", "cname": f"美股样本{rank}", "chg": 20 - rank, "price": 10, "volume": 2_000_000}
+                for rank in range(1, 7)
+            ]
+            + [
+                {"symbol": "TESTW", "name": "Example Warrant", "cname": "Example Warrant", "chg": 99, "price": 1, "volume": 50_000_000},
+                {"symbol": "LOW", "name": "Low Turnover", "cname": "Low Turnover", "chg": 98, "price": 1, "volume": 1_000},
+            ]
+        )
+
+        self.assertEqual(5, len(hk))
+        self.assertEqual(5, len(us))
+        self.assertNotIn("00999", {row["code"] for row in hk})
+        self.assertNotIn("TESTW", {row["code"] for row in us})
+        self.assertTrue(all(row["provider"] == dmb.SINA_FINANCE_PROVIDER for row in hk + us))
+
     def test_akshare_missing_dependency_degrades_without_raw_error(self) -> None:
         sys.modules.pop("akshare", None)
         empty_activity = dmb._empty_activity(
