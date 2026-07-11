@@ -1632,6 +1632,10 @@ class DeploymentEngine:
     def _run_checked(self, command: tuple[str, ...], message: str) -> None:
         result = self.runner.run(command)
         if result.returncode != 0:
+            lines = [line.strip() for line in (result.stderr or result.stdout).splitlines() if line.strip()]
+            detail = re.sub(r"[\x00-\x1f\x7f]", " ", lines[-1])[:300] if lines else ""
+            if detail and not _SENSITIVE_REASON.search(detail):
+                raise DeploymentError(f"{message}: {detail}")
             raise DeploymentError(message)
 
     def _write_image_tag(self, image: str) -> None:

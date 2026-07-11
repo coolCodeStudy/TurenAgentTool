@@ -17,6 +17,7 @@ from scripts.deploy_release import (
     DeployRequest,
     DeploymentContext,
     DeploymentEngine,
+    DeploymentError,
     DeploymentHealthError,
     DockerHealthChecker,
     SelectorSnapshot,
@@ -298,6 +299,17 @@ class DeploymentEngineTests(TestCase):
             self.runner.commands,
         )
         self.assertNotIn("postgres", outcome.activated_services)
+
+    def test_command_failure_keeps_a_product_safe_diagnostic_line(self) -> None:
+        command = ("docker", "compose", "up", "service")
+        self.runner.results[command] = CommandResult(
+            1,
+            "",
+            'service "worker" depends on undefined service "postgres": invalid compose project\n',
+        )
+
+        with self.assertRaisesRegex(DeploymentError, "invalid compose project"):
+            self.engine._run_checked(command, "application service failed to activate")
 
     def test_baseline_image_identity_accepts_legacy_display_tag_with_matching_image_id(self) -> None:
         self.runner.results[
