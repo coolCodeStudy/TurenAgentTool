@@ -5,7 +5,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import os
 import re
+from threading import Lock
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
@@ -20,6 +23,11 @@ from investment_knowledge_mcp.command_workbench import (
     render_command_workbench_html,
 )
 from investment_knowledge_mcp.config import get_config
+from investment_knowledge_mcp.daily_market_brief import (
+    build_daily_market_brief,
+    get_daily_market_brief_report,
+    resolve_latest_completed_session_date,
+)
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
@@ -27,6 +35,43 @@ from investment_knowledge_mcp.weekly_review import build_weekly_review, save_wee
 
 MAX_BODY_BYTES = 64 * 1024
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+
+class _DailyBriefGenerationLease:
+    def __init__(self, gate: "_DailyBriefGenerationGate", key: tuple[str, str]) -> None:
+        self._gate = gate
+        self._key = key
+        self._released = False
+
+    def release(self) -> None:
+        if not self._released:
+            self._released = True
+            self._gate.release(self._key)
+
+
+class _DailyBriefGenerationGate:
+    def __init__(self, *, cooldown_seconds: int, clock: Any = time.monotonic) -> None:
+        self._cooldown_seconds = cooldown_seconds
+        self._clock = clock
+        self._lock = Lock()
+        self._active: set[tuple[str, str]] = set()
+        self._completed_at: dict[tuple[str, str], float] = {}
+
+    def try_acquire(self, key: tuple[str, str]) -> _DailyBriefGenerationLease | None:
+        with self._lock:
+            now = self._clock()
+            if key in self._active or now - self._completed_at.get(key, float("-inf")) < self._cooldown_seconds:
+                return None
+            self._active.add(key)
+        return _DailyBriefGenerationLease(self, key)
+
+    def release(self, key: tuple[str, str]) -> None:
+        with self._lock:
+            self._active.discard(key)
+            self._completed_at[key] = self._clock()
+
+
+_DAILY_BRIEF_GENERATION_GATE = _DailyBriefGenerationGate(cooldown_seconds=60)
 
 
 class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
@@ -37,8 +82,18 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         if parsed.path in {"/", "/weekly-review"}:
             self._write_html(HTTPStatus.OK, render_weekly_review_workbench_html())
             return
+        if parsed.path == "/daily-market-brief":
+            self._write_html(HTTPStatus.OK, render_daily_market_brief_html())
+            return
         if parsed.path == "/health":
-            self._write_json(HTTPStatus.OK, {"ok": True})
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "app_release_sha": os.getenv("APP_RELEASE_SHA") or "",
+                    "daily_market_brief_route": True,
+                },
+            )
             return
         if parsed.path == "/command":
             self._write_html(HTTPStatus.OK, render_command_workbench_html())
@@ -50,6 +105,9 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return
             self._handle_weekly_review_read(parse_qs(parsed.query))
+            return
+        if parsed.path == "/api/daily-market-brief":
+            self._handle_daily_market_brief_read(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
             if not self._authorized():
@@ -72,29 +130,41 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 self._handle_workbench_execute(payload)
             return
 
-        if not self._authorized():
-            return
         if parsed.path == "/api/weekly-review/generate":
+            if not self._authorized(require_configured=True):
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
             self._handle_weekly_review_generate(payload, force=False)
             return
         if parsed.path == "/api/weekly-review/refresh":
+            if not self._authorized(require_configured=True):
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
             self._handle_weekly_review_generate(payload, force=True)
             return
         if parsed.path == "/api/weekly-review/save":
+            if not self._authorized(require_configured=True):
+                return
             payload = self._read_json_body()
             if payload is None:
                 return
             self._handle_weekly_review_save(payload)
             return
+        if parsed.path == "/api/daily-market-brief/generate":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._handle_daily_market_brief_generate(payload)
+            return
 
         candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
         if candidate_match:
+            if not self._authorized(require_configured=True):
+                return
             self._handle_candidate_decision(candidate_id=int(candidate_match.group(1)), action=candidate_match.group(2))
             return
 
@@ -286,6 +356,75 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_daily_market_brief_read(self, payload: dict[str, Any]) -> None:
+        try:
+            market = _resolve_daily_market(payload)
+            market_date = _resolve_optional_date(payload)
+            report = get_daily_market_brief_report(market=market, market_date=market_date)
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_daily_market_brief_error(exc)})
+            return
+
+        if report:
+            self._write_json(HTTPStatus.OK, _daily_market_brief_response(report, status="existing"))
+            return
+
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "status": "missing",
+                "market": market,
+                "market_date": market_date.isoformat() if market_date else None,
+                "context": _empty_daily_market_brief_context(market, market_date),
+                "markdown": "",
+                "saved_report": None,
+            },
+        )
+
+    def _handle_daily_market_brief_generate(self, payload: dict[str, Any]) -> None:
+        lease: _DailyBriefGenerationLease | None = None
+        try:
+            market = _resolve_daily_market(payload)
+            market_date = _resolve_optional_date(payload)
+            use_fixture = _truthy(_first_query_value(payload, "fixture"))
+            if use_fixture:
+                raise ValueError("公开页面不支持 fixture 生成。")
+            market_date = _validate_public_daily_market_brief_date(market, market_date)
+            lease = _DAILY_BRIEF_GENERATION_GATE.try_acquire((market, market_date.isoformat()))
+            if lease is None:
+                self._write_json(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    {"ok": False, "error": "该市场简报正在生成或刚刚生成，请稍后再试。"},
+                )
+                return
+            result = build_daily_market_brief(market=market, market_date=market_date, save=True, use_fixture=False)
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_daily_market_brief_error(exc)})
+            return
+        finally:
+            if lease is not None:
+                lease.release()
+
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "status": "generated",
+                "market": result.context.get("market") or {},
+                "market_date": result.context.get("market_date"),
+                "context": result.context,
+                "markdown": result.markdown,
+                "saved_report": result.saved_report,
+            },
+        )
+
     def _handle_candidate_insights(self, query: dict[str, Any]) -> None:
         status = _first_query_value(query, "status") or "pending"
         if status == "all":
@@ -333,18 +472,25 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         self._write_json(HTTPStatus.UNAUTHORIZED, command_workbench_auth_error_payload())
         return False
 
-    def _authorized(self) -> bool:
-        token = get_config().weekly_review_web_token
-        if not token:
+    def _authorized(self, *, require_configured: bool = False) -> bool:
+        config = get_config()
+        tokens = [token for token in (config.weekly_review_web_token, config.command_api_token) if token]
+        if not tokens:
+            if require_configured:
+                self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "web write token is not configured"})
+                return False
             return True
         authorization = self.headers.get("Authorization")
         web_token = self.headers.get("X-Weekly-Review-Token")
+        command_token = self.headers.get("X-Command-Token")
         supplied = ""
         if authorization and authorization.startswith("Bearer "):
             supplied = authorization.removeprefix("Bearer ").strip()
         elif web_token:
             supplied = web_token.strip()
-        if hmac.compare_digest(supplied, token):
+        elif command_token:
+            supplied = command_token.strip()
+        if supplied and any(hmac.compare_digest(supplied, token) for token in tokens):
             return True
         self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
         return False
@@ -704,6 +850,7 @@ def render_weekly_review_workbench_html() -> str:
       <p class="brand">InvestmentKnowledge</p>
       <nav class="nav" aria-label="主导航">
         <a class="active" href="/weekly-review">本周复盘</a>
+        <a href="/daily-market-brief">每日市场简报</a>
         <a href="#holdings">当前持仓</a>
         <a href="#markdown">交易复盘</a>
         <a href="#candidates">心得确认</a>
@@ -1070,6 +1217,402 @@ def render_weekly_review_workbench_html() -> str:
 </html>"""
 
 
+def render_daily_market_brief_html() -> str:
+    today = ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InvestmentKnowledge 每日市场简报</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f5f7f9;
+      --panel: #ffffff;
+      --ink: #20242a;
+      --muted: #657180;
+      --line: #dce2ea;
+      --accent: #1769aa;
+      --good: #126a3a;
+      --bad: #a33a32;
+      --warn: #966200;
+      --chip: #eef3f8;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }}
+    .shell {{
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      min-height: 100vh;
+    }}
+    .sidebar {{
+      border-right: 1px solid var(--line);
+      background: #fff;
+      padding: 22px 16px;
+    }}
+    .brand {{
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 20px;
+    }}
+    .nav {{ display: grid; gap: 4px; }}
+    .nav a {{
+      color: var(--muted);
+      text-decoration: none;
+      padding: 9px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+    }}
+    .nav a.active {{
+      color: var(--accent);
+      background: #e8f1fa;
+      font-weight: 650;
+    }}
+    main {{
+      min-width: 0;
+      padding: 22px 24px 42px;
+    }}
+    .topbar {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+    }}
+    h1 {{
+      font-size: 26px;
+      margin: 0 0 8px;
+      letter-spacing: 0;
+    }}
+    .subtitle {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .controls {{
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }}
+    input, select, button {{
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }}
+    input, select {{ padding: 0 8px; }}
+    button {{
+      padding: 0 12px;
+      cursor: pointer;
+      font-weight: 650;
+    }}
+    button.primary {{
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }}
+    button:disabled {{ opacity: .55; cursor: not-allowed; }}
+    .tabs {{
+      display: flex;
+      gap: 6px;
+      margin: 0 0 14px;
+      flex-wrap: wrap;
+    }}
+    .tabs button {{
+      min-width: 72px;
+      background: #fff;
+    }}
+    .tabs button.active {{
+      border-color: var(--accent);
+      background: #e8f1fa;
+      color: var(--accent);
+    }}
+    .notice {{
+      border-left: 3px solid var(--warn);
+      background: #fff8e8;
+      color: #6b4b00;
+      padding: 10px 12px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }}
+    .summary-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }}
+    .summary-card, section {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }}
+    .summary-card {{
+      min-height: 72px;
+      padding: 11px;
+    }}
+    .summary-card strong {{
+      display: block;
+      font-size: 13px;
+      margin-bottom: 5px;
+    }}
+    .summary-card span {{
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }}
+    section {{
+      padding: 16px;
+      margin-bottom: 14px;
+    }}
+    section h2 {{
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }}
+    th, td {{
+      text-align: left;
+      padding: 9px 8px;
+      border-bottom: 1px solid #edf1f5;
+      vertical-align: top;
+    }}
+    th {{
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .money {{ text-align: right; white-space: nowrap; }}
+    .pos {{ color: var(--good); }}
+    .neg {{ color: var(--bad); }}
+    .empty {{
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .markdown {{
+      width: 100%;
+      min-height: 260px;
+      resize: vertical;
+      line-height: 1.5;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }}
+    @media (max-width: 900px) {{
+      .shell {{ display: block; }}
+      .sidebar {{ border-right: 0; border-bottom: 1px solid var(--line); }}
+      main {{ padding: 16px; }}
+      .topbar {{ grid-template-columns: 1fr; }}
+      .controls {{ justify-content: flex-start; }}
+      .summary-grid {{ grid-template-columns: 1fr 1fr; }}
+      table {{ display: block; overflow-x: auto; white-space: nowrap; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <p class="brand">InvestmentKnowledge</p>
+      <nav class="nav" aria-label="主导航">
+        <a href="/weekly-review">本周复盘</a>
+        <a class="active" href="/daily-market-brief">每日市场简报</a>
+        <a href="/command">Command</a>
+      </nav>
+    </aside>
+    <main>
+      <div class="topbar">
+        <div>
+          <h1>每日市场简报</h1>
+          <p class="subtitle">按市场查看收盘后的核心指数、领涨方向、个股、资金流和数据缺口。</p>
+        </div>
+        <div class="controls">
+          <input id="market-date" type="date" value="{today}" aria-label="市场日期">
+          <button id="read" type="button">读取</button>
+          <button id="generate" class="primary" type="button">生成</button>
+        </div>
+      </div>
+      <div class="tabs" aria-label="市场">
+        <button data-market="CN" class="active" type="button">A股</button>
+        <button data-market="HK" type="button">港股</button>
+        <button data-market="US" type="button">美股</button>
+      </div>
+      <div id="message" class="notice">正在读取每日市场简报。</div>
+      <div id="summary" class="summary-grid"></div>
+      <section><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
+      <section><h2>核心指数</h2><div id="indexes"></div></section>
+      <section><h2>领涨行业/板块</h2><div id="sectors"></div></section>
+      <section><h2>领涨个股</h2><div id="gainers"></div></section>
+      <section><h2>资金流</h2><div id="capital-flow"></div></section>
+      <section><h2>数据状态</h2><div id="source-status"></div></section>
+      <section><h2>Markdown 原文</h2><textarea id="markdown" class="markdown" spellcheck="false"></textarea></section>
+    </main>
+  </div>
+  <script>
+    const state = {{ market: "CN", context: null, markdown: "" }};
+    const $ = (selector) => document.querySelector(selector);
+    const message = $("#message");
+
+    document.querySelectorAll("[data-market]").forEach((button) => {{
+      button.addEventListener("click", () => {{
+        state.market = button.dataset.market;
+        $("#market-date").value = "";
+        document.querySelectorAll("[data-market]").forEach((item) => item.classList.toggle("active", item === button));
+        loadBrief("read");
+      }});
+    }});
+    $("#read").addEventListener("click", () => loadBrief("read"));
+    $("#generate").addEventListener("click", () => loadBrief("generate"));
+    $("#market-date").addEventListener("change", () => loadBrief("read"));
+    loadBrief("read");
+
+    async function loadBrief(action) {{
+      setBusy(true);
+      message.textContent = action === "read" ? "正在读取简报..." : "正在生成并保存简报...";
+      try {{
+        const date = $("#market-date").value;
+        let response;
+        if (action === "read") {{
+          const query = new URLSearchParams({{ market: state.market, date }});
+          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`);
+        }} else {{
+          response = await fetch("/api/daily-market-brief/generate", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ market: state.market, date }})
+          }});
+        }}
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || "处理失败");
+        if (data.market_date) $("#market-date").value = data.market_date;
+        state.context = data.context || null;
+        state.markdown = data.markdown || "";
+        renderAll(data);
+        message.textContent = statusMessage(action, data);
+      }} catch (error) {{
+        message.textContent = `处理失败：${{error.message}}`;
+      }} finally {{
+        setBusy(false);
+      }}
+    }}
+
+    function statusMessage(action, data) {{
+      if (data.status === "missing") return "当前市场和日期还没有简报，可以点击生成。";
+      if (action === "generate") return "简报已生成并保存，请检查数据状态和是否存在缺口。";
+      return "已读取每日市场简报。";
+    }}
+
+    function renderAll(data) {{
+      const context = state.context;
+      if (!context) {{
+        renderEmpty();
+        return;
+      }}
+      $("#market-date").value = context.market_date || $("#market-date").value;
+      $("#summary").innerHTML = [
+        ["市场", `${{context.market?.name || state.market}}（${{context.market?.code || state.market}}）`],
+        ["市场日期", context.market_date || "-"],
+        ["生成时间", context.generated_at?.asia_singapore || "-"],
+        ["模式", context.provider_mode === "fixture" ? "fixture 验收样例" : "live / degraded"]
+      ].map(([label, value]) => `<div class="summary-card"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(value)}}</span></div>`).join("");
+      $("#narrative").textContent = context.narrative || "暂无摘要。";
+      $("#indexes").innerHTML = indexTable(context.indexes || []);
+      $("#sectors").innerHTML = rankTable(context.sectors || [], "板块/行业");
+      $("#gainers").innerHTML = rankTable(context.gainers || [], "标的");
+      $("#capital-flow").innerHTML = rankTable(context.capital_flow || [], "名称/分组", true);
+      $("#source-status").innerHTML = statusTable(context.source_status || {{}});
+      $("#markdown").value = state.markdown;
+    }}
+
+    function renderEmpty() {{
+      $("#summary").innerHTML = "";
+      $("#narrative").textContent = "暂无简报。";
+      $("#indexes").innerHTML = `<div class="empty">暂无核心指数数据。</div>`;
+      $("#sectors").innerHTML = `<div class="empty">暂无行业/板块数据。</div>`;
+      $("#gainers").innerHTML = `<div class="empty">暂无个股数据。</div>`;
+      $("#capital-flow").innerHTML = `<div class="empty">暂无资金流数据。</div>`;
+      $("#source-status").innerHTML = "";
+      $("#markdown").value = "";
+    }}
+
+    function indexTable(rows) {{
+      if (!rows.length) return `<div class="empty">暂无核心指数数据。</div>`;
+      return `<table><thead><tr><th>指数</th><th>代码</th><th class="money">收盘</th><th class="money">涨跌幅</th><th class="money">较前日量能</th><th class="money">较5日均量</th><th class="money">较20日均量</th></tr></thead><tbody>
+        ${{rows.map((row) => {{
+          const previousVolume = relativePct(row.volume, row.baseline?.previous);
+          const avg5Volume = relativePct(row.volume, row.baseline?.avg_5);
+          const avg20Volume = relativePct(row.volume, row.baseline?.avg_20);
+          return `<tr><td>${{escapeHtml(row.name)}}</td><td>${{escapeHtml(row.code)}}</td><td class="money">${{fmt(row.close)}}</td><td class="money ${{numClass(row.change_pct)}}">${{pct(row.change_pct)}}</td><td class="money ${{numClass(previousVolume)}}">${{pct(previousVolume)}}</td><td class="money ${{numClass(avg5Volume)}}">${{pct(avg5Volume)}}</td><td class="money ${{numClass(avg20Volume)}}">${{pct(avg20Volume)}}</td></tr>`;
+        }}).join("")}}
+      </tbody></table>`;
+    }}
+
+    function rankTable(rows, firstLabel, flow = false) {{
+      if (!rows.length) return `<div class="empty">当前数据源未提供可用明细，见数据状态。</div>`;
+      return `<table><thead><tr><th>${{escapeHtml(firstLabel)}}</th><th>代码/提供方</th><th class="money">涨跌/数值</th><th class="money">成交额/说明</th></tr></thead><tbody>
+        ${{rows.map((row) => {{
+          const numericValue = row.flow_value ?? row.value ?? row.change_pct;
+          const valueText = flow ? fmt(numericValue) : pct(row.change_pct);
+          const noteText = row.turnover !== undefined ? fmt(row.turnover) : (row.message || row.metric || "-");
+          return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money">${{escapeHtml(noteText)}}</td></tr>`;
+        }}).join("")}}
+      </tbody></table>`;
+    }}
+
+    function statusTable(sourceStatus) {{
+      const rows = Object.entries(sourceStatus);
+      if (!rows.length) return `<div class="empty">暂无数据状态。</div>`;
+      return `<table><thead><tr><th>模块</th><th>状态</th><th>来源</th><th>说明</th></tr></thead><tbody>
+        ${{rows.map(([key, item]) => `<tr><td>${{escapeHtml(sourceLabel(key))}}</td><td>${{escapeHtml(statusLabel(item?.status))}}</td><td>${{escapeHtml(item?.provider || item?.taxonomy || "-")}}</td><td>${{escapeHtml(item?.message || item?.reason || "-")}}</td></tr>`).join("")}}
+      </tbody></table>`;
+    }}
+
+    function setBusy(busy) {{
+      $("#read").disabled = busy;
+      $("#generate").disabled = busy;
+    }}
+    function sourceLabel(key) {{
+      return {{ indexes: "核心指数", sectors: "行业/板块", gainers: "领涨个股", capital_flow: "资金流", session: "交易日" }}[key] || key;
+    }}
+    function statusLabel(status) {{
+      return {{ ok: "可用", partial: "部分可用", missing: "暂缺", provider_unavailable: "数据源暂不可用", not_available: "未提供", no_session: "无常规交易", unverified: "交易日未确认", historical_not_supported: "不支持历史榜单" }}[status] || status || "未知";
+    }}
+    function pct(value) {{
+      if (value === null || value === undefined || value === "") return "-";
+      const number = Number(value);
+      return `${{number >= 0 ? "+" : ""}}${{number.toFixed(2)}}%`;
+    }}
+    function fmt(value) {{
+      if (value === null || value === undefined || value === "") return "-";
+      return Number(value).toLocaleString(undefined, {{ maximumFractionDigits: 2 }});
+    }}
+    function relativePct(current, baseline) {{
+      if (!current || !baseline) return null;
+      return ((Number(current) - Number(baseline)) / Number(baseline)) * 100;
+    }}
+    function numClass(value) {{ return Number(value || 0) < 0 ? "neg" : "pos"; }}
+    function escapeHtml(value) {{
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }}[char]));
+    }}
+  </script>
+</body>
+</html>"""
+
+
 def _resolve_week_request(payload: dict[str, Any]) -> tuple[date, date]:
     week_text = _first_query_value(payload, "week")
     if week_text:
@@ -1097,6 +1640,87 @@ def _resolve_week_request(payload: dict[str, Any]) -> tuple[date, date]:
         start = selected - timedelta(days=selected.weekday())
         return start, start + timedelta(days=6)
     return _default_week_range()
+
+
+def _resolve_daily_market(payload: dict[str, Any]) -> str:
+    market = (_first_query_value(payload, "market") or "CN").upper()
+    if market not in {"CN", "HK", "US"}:
+        raise ValueError("市场只支持 CN、HK、US。")
+    return market
+
+
+def _resolve_optional_date(payload: dict[str, Any]) -> date | None:
+    date_text = _first_query_value(payload, "date") or _first_query_value(payload, "market_date")
+    if not date_text:
+        return None
+    try:
+        return date.fromisoformat(str(date_text).replace("/", "-"))
+    except ValueError as exc:
+        raise ValueError("日期格式应为 YYYY-MM-DD。") from exc
+
+
+def _validate_public_daily_market_brief_date(
+    market: str,
+    market_date: date | None,
+    *,
+    now: datetime | None = None,
+) -> date:
+    current = now or datetime.now(SHANGHAI_TZ)
+    current_date = current.astimezone(SHANGHAI_TZ).date()
+    resolved_date = market_date or resolve_latest_completed_session_date(market, now=current)
+    if resolved_date > current_date:
+        raise ValueError("不能生成未来日期的市场简报。")
+    if resolved_date < current_date - timedelta(days=31):
+        raise ValueError("公开页面仅支持生成最近 31 天的市场简报。")
+    latest_completed = resolve_latest_completed_session_date(market, now=current)
+    if resolved_date != latest_completed:
+        raise ValueError(f"公开页面仅支持生成最近一个已收盘交易日（{latest_completed.isoformat()}）的市场简报。")
+    return resolved_date
+
+
+def _daily_market_brief_response(report: dict[str, Any], *, status: str) -> dict[str, Any]:
+    context = report.get("portfolio_snapshot") if isinstance(report.get("portfolio_snapshot"), dict) else {}
+    return {
+        "ok": True,
+        "status": status,
+        "market": context.get("market") or {},
+        "market_date": context.get("market_date") or str(report.get("report_date") or ""),
+        "context": _normalize_daily_market_brief_context(context),
+        "markdown": report.get("summary") or "",
+        "saved_report": report,
+    }
+
+
+def _normalize_daily_market_brief_context(context: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(context)
+    normalized.setdefault("market", {})
+    normalized.setdefault("market_date", "")
+    normalized.setdefault("generated_at", {})
+    normalized.setdefault("source_status", {})
+    normalized.setdefault("indexes", [])
+    normalized.setdefault("sectors", [])
+    normalized.setdefault("gainers", [])
+    normalized.setdefault("capital_flow", [])
+    normalized.setdefault("warnings", [])
+    normalized.setdefault("narrative", "")
+    normalized.setdefault("provider_mode", "live")
+    return normalized
+
+
+def _empty_daily_market_brief_context(market: str, market_date: date | None) -> dict[str, Any]:
+    return {
+        "market": {"code": market, "name": {"CN": "A股", "HK": "港股", "US": "美股"}.get(market, market)},
+        "market_date": market_date.isoformat() if market_date else "",
+        "generated_at": {},
+        "source_status": {},
+        "indexes": [],
+        "sectors": [],
+        "gainers": [],
+        "capital_flow": [],
+        "warnings": [],
+        "narrative": "",
+        "provider_mode": "missing",
+    }
 
 
 def _resolve_request_range(payload: dict[str, Any]) -> tuple[date, date]:
@@ -1206,6 +1830,10 @@ def _public_weekly_error(exc: Exception, *, saving: bool = False) -> str:
     if saving:
         return "保存失败：数据库结构或连接暂时不可用，请稍后重试；维护者可查看服务日志定位具体原因。"
     return "周复盘处理失败：数据源或数据库暂时不可用，请稍后重试；维护者可查看服务日志定位具体原因。"
+
+
+def _public_daily_market_brief_error(exc: Exception) -> str:
+    return "每日市场简报处理失败：数据源或数据库暂时不可用，请稍后重试；维护者可查看服务日志定位具体原因。"
 
 
 def _default_week_range() -> tuple[date, date]:

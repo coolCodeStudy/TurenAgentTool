@@ -150,6 +150,7 @@ ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS story JSONB NOT NULL DEFAULT
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;
 ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS token_usage JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE review_reports ADD COLUMN IF NOT EXISTS report_key TEXT;
 
 DO $$
 BEGIN
@@ -159,16 +160,75 @@ BEGIN
     WHERE table_name = 'review_reports'
       AND column_name = 'report_key'
   ) THEN
-    UPDATE review_reports
-    SET report_key = COALESCE(
-      report_key,
-      report_type || ':' || COALESCE(period_start::text, report_date::text) || ':' || COALESCE(period_end::text, report_date::text)
-    )
-    WHERE report_key IS NULL;
-
+    ALTER TABLE review_reports ALTER COLUMN report_key DROP DEFAULT;
     ALTER TABLE review_reports ALTER COLUMN report_key DROP NOT NULL;
+
+    UPDATE review_reports AS reports
+    SET report_key = keyed.next_key
+    FROM (
+      SELECT
+        id,
+        CASE
+          WHEN row_number() OVER (
+            PARTITION BY report_type, market_code, start_date, end_date
+            ORDER BY id DESC
+          ) = 1
+          THEN base_key
+          ELSE base_key || ':legacy:' || id::text
+        END AS next_key
+      FROM (
+        SELECT
+          id,
+          report_type,
+          COALESCE(NULLIF(portfolio_snapshot->'market'->>'code', ''), 'UNKNOWN') AS market_code,
+          COALESCE(period_start::text, report_date::text) AS start_date,
+          COALESCE(period_end::text, report_date::text) AS end_date,
+          report_type || ':' ||
+            COALESCE(NULLIF(portfolio_snapshot->'market'->>'code', ''), 'UNKNOWN') || ':' ||
+            COALESCE(period_start::text, report_date::text) || ':' ||
+            COALESCE(period_end::text, report_date::text) AS base_key
+        FROM review_reports
+        WHERE report_type = 'daily_market_brief'
+      ) AS daily_keys
+    ) AS keyed
+    WHERE reports.id = keyed.id;
+
+    UPDATE review_reports AS reports
+    SET report_key = keyed.next_key
+    FROM (
+      SELECT
+        id,
+        CASE
+          WHEN row_number() OVER (
+            PARTITION BY report_type, start_date, end_date
+            ORDER BY id DESC
+          ) = 1
+          THEN base_key
+          ELSE base_key || ':legacy:' || id::text
+        END AS next_key
+      FROM (
+        SELECT
+          id,
+          report_type,
+          COALESCE(period_start::text, report_date::text) AS start_date,
+          COALESCE(period_end::text, report_date::text) AS end_date,
+          report_type || ':' ||
+            COALESCE(period_start::text, report_date::text) || ':' ||
+            COALESCE(period_end::text, report_date::text) AS base_key
+        FROM review_reports
+        WHERE report_type <> 'daily_market_brief'
+          AND report_key IS NULL
+      ) AS legacy_keys
+    ) AS keyed
+    WHERE reports.id = keyed.id;
   END IF;
 END $$;
+
+DROP INDEX IF EXISTS idx_review_reports_report_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reports_report_key
+  ON review_reports (report_key)
+  WHERE report_key IS NOT NULL;
 
 ALTER TABLE review_reports
   DROP CONSTRAINT IF EXISTS review_reports_report_date_key;
@@ -188,6 +248,10 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_review_reports_type_period
   ON review_reports (report_type, period_start, period_end);
+
+CREATE INDEX IF NOT EXISTS idx_review_reports_daily_market_brief_market_date
+  ON review_reports (report_date, ((portfolio_snapshot->'market'->>'code')))
+  WHERE report_type = 'daily_market_brief';
 
 CREATE TABLE IF NOT EXISTS account_snapshots (
   id BIGSERIAL PRIMARY KEY,

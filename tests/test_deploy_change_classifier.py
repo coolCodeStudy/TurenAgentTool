@@ -124,7 +124,14 @@ class DeployContractTests(TestCase):
             (
                 ("investment_knowledge_mcp/daily_market_brief.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                (
+                    "command-api",
+                    "daily-market-brief-scheduler",
+                    "dingtalk-api",
+                    "dingtalk-stream-bot",
+                    "mcp",
+                    "weekly-review-web",
+                ),
             ),
             (
                 ("investment_knowledge_mcp/weekly_review.py",),
@@ -157,6 +164,7 @@ class DeployContractTests(TestCase):
 
     def test_full_and_config_targets_cover_every_managed_app_image_service(self) -> None:
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
+        self.assertIn("daily-market-brief-scheduler", APPLICATION_SERVICES)
         for path, expected_mode in (
             ("requirements.txt", DeployMode.FULL_IMAGE),
             ("docker-compose.prod.yml", DeployMode.CONFIG_RESTART),
