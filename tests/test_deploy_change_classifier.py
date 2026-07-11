@@ -135,7 +135,7 @@ class DeployContractTests(TestCase):
                 ("ipo-reminder-scheduler",),
             ),
             (("investment_knowledge_mcp/new_runtime_module.py",), DeployMode.TARGETED_QUICK, APPLICATION_SERVICES),
-            (("scripts/ecs_ops_api.py",), DeployMode.TARGETED_QUICK, ("investment-ops-api.service",)),
+            (("scripts/ecs_ops_api.py",), DeployMode.NO_DEPLOY, ()),
             (("requirements.txt",), DeployMode.FULL_IMAGE, APPLICATION_SERVICES),
             (("docker-compose.prod.yml",), DeployMode.CONFIG_RESTART, APPLICATION_SERVICES),
         ]
@@ -178,6 +178,25 @@ class DeployContractTests(TestCase):
     def test_unknown_deployment_control_file_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unclassified deployment-sensitive path"):
             classify_paths(("scripts/new_control.py",), compose_image_changed=False)
+
+    def test_known_control_plane_modules_do_not_restart_business_services(self) -> None:
+        paths = (
+            "scripts/bootstrap_deploy_baseline.py",
+            "scripts/bootstrap_ops_api_v2_on_ecs.sh",
+            "scripts/deploy_contract.py",
+            "scripts/deploy_preflight.py",
+            "scripts/deploy_release.py",
+            "scripts/deploy_retention.py",
+            "scripts/deploy_state.py",
+            "scripts/deploy_support.py",
+            "scripts/ecs_ops_api.py",
+            "scripts/install_ops_api_on_ecs.sh",
+        )
+
+        plan = classify_paths(paths, compose_image_changed=False)
+
+        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
+        self.assertEqual((), plan.targets)
 
     def test_compose_image_inputs_require_a_full_image_deploy(self) -> None:
         plan = classify_paths(("docker-compose.prod.yml",), compose_image_changed=True)

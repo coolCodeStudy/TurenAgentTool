@@ -62,6 +62,7 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 ## Cloud Deploy Bootstrap
 
 - Before asking the user to SSH into ECS for one-time setup, check whether the existing GitHub Actions deployment path can bootstrap the same state through its already-configured SSH credentials.
+- A new deployment control plane must migrate the existing production baseline before any status endpoint or classifier assumes durable state exists. Derive the deployed SHA from the legacy checkout, verify it against `origin/main`, bind the active Docker image by image ID to an immutable SHA tag, and write state atomically; never label the target commit as already deployed merely to break a bootstrap cycle.
 - For a public repository, ECS can maintain a read-only HTTPS checkout such as `/opt/investment-knowledge-repo` without any GitHub token or deploy key; only use a deploy key if the repository becomes private.
 - When adding a cloud pull-deploy path, ensure the deployment workflow creates or refreshes the remote checkout and writes the checkout path into the Ops API systemd environment. Otherwise the new `/ops/deploy` endpoint may be deployed but unable to fetch refs.
 - If `/ops/deploy` fails before fetch/checkout while recording `deploy_events`, treat that as deployment-control-plane debt, not a business deploy failure. Capture the failing stage, preserve the user-requested release path, and record a follow-up to make Ops API return actionable tracebacks or degrade deploy event recording.

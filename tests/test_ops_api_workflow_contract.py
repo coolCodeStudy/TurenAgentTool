@@ -14,6 +14,17 @@ class OpsApiWorkflowContractTests(TestCase):
         self.assertIn('BOOTSTRAP_REF="${{ github.sha }}"', self.workflow)
         self.assertIn("/opt/investment-ops", self.workflow)
 
+    def test_control_plane_install_is_explicit_to_avoid_business_deploy_races(self) -> None:
+        self.assertNotIn("push:", self.workflow)
+        self.assertIn("workflow_dispatch:", self.workflow)
+        self.assertIn('MODE="${{ inputs.mode }}"', self.workflow)
+
+    def test_bootstrap_initializes_deploy_baseline_before_ops_api_install(self) -> None:
+        bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(encoding="utf-8")
+        initialize_position = bootstrap.index("bootstrap_deploy_baseline.py")
+        install_position = bootstrap.index("install_ops_api_on_ecs.sh")
+        self.assertLess(initialize_position, install_position)
+
     def test_does_not_copy_single_ops_module_into_application_directory(self) -> None:
         self.assertNotIn('sudo cp "$UPLOAD_DIR/ecs_ops_api.py"', self.workflow)
         self.assertNotIn('source: "scripts/ecs_ops_api.py', self.workflow)

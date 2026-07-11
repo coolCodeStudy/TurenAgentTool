@@ -299,6 +299,37 @@ class DeploymentEngineTests(TestCase):
         )
         self.assertNotIn("postgres", outcome.activated_services)
 
+    def test_baseline_image_identity_accepts_legacy_display_tag_with_matching_image_id(self) -> None:
+        self.runner.results[
+            (
+                "docker",
+                "ps",
+                "--filter",
+                "label=com.docker.compose.project=turenagenttool_prod",
+                "--format",
+                "{{json .}}",
+            )
+        ] = CommandResult(
+            0,
+            json.dumps(
+                {
+                    "ID": "legacy-container",
+                    "Image": "investment-knowledge-app:prod",
+                }
+            )
+            + "\n",
+            "",
+        )
+
+        self.engine._verify_baseline_image_identity(
+            load_state(self.state_path),
+            SelectorSnapshot(
+                current_release=self.old_release,
+                previous_release=self.older_release,
+                env_contents=f"APP_IMAGE_TAG={OLD_SHA}\n".encode(),
+            ),
+        )
+
     def test_health_failure_rolls_back_activated_services_in_reverse_order(self) -> None:
         self.health.fail_for("weekly-review-web")
 
@@ -556,6 +587,7 @@ class DeploymentEngineTests(TestCase):
             0,
             json.dumps(
                 {
+                    "ID": "mismatched-container",
                     "Image": f"investment-knowledge-app:{TARGET_SHA}",
                     "Names": "app-command-api-1",
                 }
@@ -563,6 +595,9 @@ class DeploymentEngineTests(TestCase):
             + "\n",
             "",
         )
+        self.runner.results[
+            ("docker", "inspect", "--format", "{{.Image}}", "mismatched-container")
+        ] = CommandResult(0, "sha256:target-image\n", "")
 
         outcome = self.engine.deploy(self.targeted_request)
 
