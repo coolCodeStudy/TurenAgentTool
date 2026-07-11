@@ -103,6 +103,27 @@ class RecordingRunner:
             return CommandResult(0, image_id + "\n", "")
         if command[:4] == ("docker", "inspect", "--format", "{{.Image}}"):
             return CommandResult(0, "sha256:old-image\n", "")
+        if (
+            command[:3] == ("docker", "compose", "-f")
+            and command[-2:] == ("config", "--services")
+        ):
+            return CommandResult(
+                0,
+                "\n".join(
+                    (
+                        "postgres",
+                        "mcp",
+                        "dingtalk-api",
+                        "account-snapshot-scheduler",
+                        "command-api",
+                        "weekly-review-web",
+                        "dingtalk-stream-bot",
+                        "ipo-reminder-scheduler",
+                    )
+                )
+                + "\n",
+                "",
+            )
         return CommandResult(0, "", "")
 
 
@@ -379,6 +400,34 @@ class DeploymentEngineTests(TestCase):
                 "ps",
                 "--format",
                 "json",
+            ),
+            self.runner.commands,
+        )
+
+    def test_rollback_removes_a_service_missing_from_the_previous_release(self) -> None:
+        self.plan = replace(self.plan, targets=("daily-market-brief-scheduler",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("daily-market-brief-scheduler",),
+        )
+        self.health.fail_for("daily-market-brief-scheduler")
+
+        outcome = self.engine.deploy(request)
+
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.assertFalse(outcome.ok)
+        self.assertEqual(("daily-market-brief-scheduler",), outcome.rolled_back_services)
+        self.assertEqual((), outcome.rollback_failures)
+        self.assertIn(
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(target_compose),
+                "rm",
+                "--force",
+                "--stop",
+                "daily-market-brief-scheduler",
             ),
             self.runner.commands,
         )
@@ -1888,6 +1937,23 @@ class DockerHealthCheckerTests(TestCase):
                 for command in rendered
             )
         )
+
+    def test_dingtalk_webhook_accepts_bad_request_as_a_safe_rejection(self) -> None:
+        command = (
+            "curl",
+            "--silent",
+            "--show-error",
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code}",
+            "--request",
+            "POST",
+            "http://127.0.0.1:8002/dingtalk/webhook",
+        )
+        self.runner.results[command] = CommandResult(0, "400", "")
+
+        self.health.check_service("dingtalk-api", ())
 
     def test_http_health_retries_a_transient_startup_failure(self) -> None:
         class FlakyHttpRunner(HealthRunner):

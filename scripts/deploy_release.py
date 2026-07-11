@@ -209,8 +209,8 @@ class DockerHealthChecker:
     def _dingtalk_negative_check(self) -> None:
         self._http_response(
             "http://127.0.0.1:8002/dingtalk/webhook",
-            {401, 403},
-            "DingTalk webhook signature boundary is unavailable",
+            {400, 401, 403},
+            "DingTalk webhook rejection boundary is unavailable",
             method="POST",
         )
 
@@ -1211,6 +1211,38 @@ class DeploymentEngine:
                 f"application service {target} failed to activate",
             )
 
+    def _compose_services(self, release: Path) -> set[str]:
+        with _compose_environment(self.compose_project_name):
+            result = self.runner.run(
+                (
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(release / "docker-compose.prod.yml"),
+                    "config",
+                    "--services",
+                )
+            )
+        if result.returncode != 0:
+            raise DeploymentError("previous release services could not be read")
+        return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+    def _remove_target(self, target: str, release: Path) -> None:
+        with _compose_environment(self.compose_project_name):
+            self._run_checked(
+                (
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(release / "docker-compose.prod.yml"),
+                    "rm",
+                    "--force",
+                    "--stop",
+                    target,
+                ),
+                f"new application service {target} failed to roll back",
+            )
+
     def _rollback(self, context: DeploymentContext) -> RollbackResult:
         if context.selectors is None or context.previous_state is None:
             return RollbackResult((), (), ("snapshot",), True, True)
@@ -1238,11 +1270,29 @@ class DeploymentEngine:
 
         successful_services: list[str] = []
         service_failures: list[str] = []
+        previous_services: set[str] | None = None
+        if context.selectors.current_release is None:
+            selector_failures.append("previous_services")
+        else:
+            try:
+                previous_services = self._compose_services(
+                    context.selectors.current_release
+                )
+            except Exception:
+                selector_failures.append("previous_services")
         for target in reversed(context.touched_services):
+            if previous_services is None:
+                service_failures.append(target)
+                continue
             try:
                 if context.selectors.current_release is None:
                     raise DeploymentError("previous release is unavailable")
-                self._activate_target(target, context.selectors.current_release)
+                if target.endswith(".service") or target in previous_services:
+                    self._activate_target(target, context.selectors.current_release)
+                else:
+                    self._remove_target(
+                        target, self.releases_dir / context.target_sha
+                    )
                 successful_services.append(target)
             except Exception:
                 service_failures.append(target)

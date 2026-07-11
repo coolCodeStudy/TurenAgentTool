@@ -75,6 +75,43 @@ class BaselineRunner:
         return CommandResult(0, "", "")
 
 
+class ResidualServiceRunner(BaselineRunner):
+    def __init__(self, repo: Path) -> None:
+        super().__init__(repo, immutable_tag_exists=True)
+        self.residual_present = True
+
+    def run(self, command: tuple[str, ...], timeout: int | None = None) -> CommandResult:
+        if command[:2] == ("docker", "compose") and command[-2:] == (
+            "config",
+            "--services",
+        ):
+            self.commands.append(command)
+            return CommandResult(0, "postgres\nweekly-review-web\n", "")
+        if command[:2] == ("docker", "compose") and "ps" in command:
+            self.commands.append(command)
+            services = [
+                {"Service": "postgres", "State": "running"},
+                {"Service": "weekly-review-web", "State": "running"},
+            ]
+            if self.residual_present:
+                services.append(
+                    {"Service": "daily-market-brief-scheduler", "State": "running"}
+                )
+            return CommandResult(0, json.dumps(services), "")
+        if command[:3] == ("docker", "ps", "--all"):
+            self.commands.append(command)
+            return CommandResult(
+                0,
+                "residual-daily-scheduler\n" if self.residual_present else "",
+                "",
+            )
+        if command[:3] == ("docker", "rm", "--force"):
+            self.commands.append(command)
+            self.residual_present = False
+            return CommandResult(0, "residual-daily-scheduler\n", "")
+        return super().run(command, timeout)
+
+
 class FixedClock:
     def now(self) -> datetime:
         return datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc)
@@ -358,3 +395,60 @@ class BootstrapDeployBaselineTests(TestCase):
 
             self.assertEqual(("postgres", "weekly-review-web"), recovered)
             self.assertFalse(lockout_path.exists())
+
+    def test_recover_lockout_removes_only_services_absent_from_baseline_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            app_root = root / "app"
+            release = app_root / "releases" / BASELINE_SHA
+            repo.mkdir()
+            release.mkdir(parents=True)
+            (release / "docker-compose.prod.yml").write_text(
+                "services: {}\n", encoding="utf-8"
+            )
+            (app_root / "current").symlink_to(release, target_is_directory=True)
+            (app_root / ".env").write_text("APP_IMAGE_TAG=prod\n", encoding="utf-8")
+            initialize_baseline(
+                repo=repo,
+                app_root=app_root,
+                runner=BaselineRunner(repo),
+                clock=FixedClock(),
+                compose_project_name="turenagenttool_prod",
+                release_stager=lambda sha: release,
+                runtime_validator=lambda runner, compose: (),
+            )
+            lockout_path = app_root / "shared" / "deploy.lockout"
+            lockout_path.write_text(
+                json.dumps(
+                    {
+                        "container_status": json.dumps(
+                            [
+                                {"Service": "postgres", "State": "running"},
+                                {"Service": "weekly-review-web", "State": "running"},
+                                {
+                                    "Service": "daily-market-brief-scheduler",
+                                    "State": "running",
+                                },
+                            ]
+                        )
+                    }
+                ),
+                encoding="ascii",
+            )
+            runner = ResidualServiceRunner(repo)
+
+            recovered = recover_lockout(
+                repo=repo,
+                app_root=app_root,
+                runner=runner,
+                compose_project_name="turenagenttool_prod",
+                runtime_validator=lambda runner, compose: (),
+            )
+
+            self.assertEqual(("postgres", "weekly-review-web"), recovered)
+            self.assertFalse(lockout_path.exists())
+            self.assertIn(
+                ("docker", "rm", "--force", "residual-daily-scheduler"),
+                runner.commands,
+            )
