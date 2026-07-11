@@ -52,10 +52,17 @@ fi
 resolved_commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
 echo "Bootstrapping Ops API from $resolved_commit"
 
-PYTHONPATH="$REPO_DIR" python3 "$REPO_DIR/scripts/bootstrap_deploy_baseline.py" \
-  --repo "$REPO_DIR" \
-  --app-root "$APP_ROOT" \
+baseline_args=(
+  --repo "$REPO_DIR"
+  --app-root "$APP_ROOT"
   --compose-project-name "${COMPOSE_PROJECT_NAME:-turenagenttool_prod}"
+)
+if [ "${RECOVER_DEPLOY_LOCKOUT:-false}" = "true" ]; then
+  PYTHONPATH="$REPO_DIR" python3 "$REPO_DIR/scripts/bootstrap_deploy_baseline.py" \
+    "${baseline_args[@]}" --recover-lockout
+fi
+PYTHONPATH="$REPO_DIR" python3 "$REPO_DIR/scripts/bootstrap_deploy_baseline.py" \
+  "${baseline_args[@]}"
 
 INVESTMENT_APP_ROOT="$APP_ROOT" \
 INVESTMENT_DIR="$APP_ROOT/current" \

@@ -25,6 +25,12 @@ class OpsApiWorkflowContractTests(TestCase):
         install_position = bootstrap.index("install_ops_api_on_ecs.sh")
         self.assertLess(initialize_position, install_position)
 
+    def test_lockout_recovery_is_an_explicit_bootstrap_mode(self) -> None:
+        self.assertIn("recover-lockout", self.workflow)
+        self.assertIn("RECOVER_DEPLOY_LOCKOUT=true", self.workflow)
+        bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(encoding="utf-8")
+        self.assertIn("--recover-lockout", bootstrap)
+
     def test_does_not_copy_single_ops_module_into_application_directory(self) -> None:
         self.assertNotIn('sudo cp "$UPLOAD_DIR/ecs_ops_api.py"', self.workflow)
         self.assertNotIn('source: "scripts/ecs_ops_api.py', self.workflow)

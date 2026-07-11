@@ -82,6 +82,15 @@ class DeployContractTests(TestCase):
 
         self.assertEqual("quick", result.deploy_mode)
 
+    def test_deploy_runner_alone_is_control_plane_only(self) -> None:
+        plan = classify_paths(
+            ("scripts/deploy_from_local_checkout.sh",),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
+        self.assertEqual((), plan.targets)
+
     def test_legacy_classifier_keeps_dependency_changes_full(self) -> None:
         self.assertEqual("full", classify_changed_files(("requirements.txt",)).deploy_mode)
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import TestCase
 
-from scripts.bootstrap_deploy_baseline import initialize_baseline
+from scripts.bootstrap_deploy_baseline import initialize_baseline, recover_lockout
 from scripts.deploy_release import DeploymentError
 from scripts.deploy_state import load_state
 from scripts.deploy_support import CommandResult
@@ -301,3 +301,60 @@ class BootstrapDeployBaselineTests(TestCase):
                 ("docker", "image", "rm", f"investment-knowledge-app:{BASELINE_SHA}"),
                 runner.commands,
             )
+
+    def test_recover_lockout_requires_and_verifies_all_previously_running_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            app_root = root / "app"
+            release = app_root / "releases" / BASELINE_SHA
+            repo.mkdir()
+            release.mkdir(parents=True)
+            (release / "docker-compose.prod.yml").write_text("services: {}\n", encoding="utf-8")
+            (app_root / "current").symlink_to(release, target_is_directory=True)
+            (app_root / ".env").write_text("APP_IMAGE_TAG=prod\n", encoding="utf-8")
+            initialize_baseline(
+                repo=repo,
+                app_root=app_root,
+                runner=BaselineRunner(repo),
+                clock=FixedClock(),
+                compose_project_name="turenagenttool_prod",
+                release_stager=lambda sha: release,
+                runtime_validator=lambda runner, compose: (
+                    "docker_health",
+                    "compose_valid",
+                    "postgresql_health",
+                ),
+            )
+            lockout_path = app_root / "shared" / "deploy.lockout"
+            lockout_path.write_text(
+                json.dumps(
+                    {
+                        "container_status": json.dumps(
+                            [
+                                {"Service": "postgres", "State": "running"},
+                                {"Service": "weekly-review-web", "State": "running"},
+                            ]
+                        )
+                    }
+                ),
+                encoding="ascii",
+            )
+
+            recovered = recover_lockout(
+                repo=repo,
+                app_root=app_root,
+                runner=BaselineRunner(repo, immutable_tag_exists=True),
+                compose_project_name="turenagenttool_prod",
+                runtime_validator=lambda runner, compose: (
+                    "docker_health",
+                    "compose_valid",
+                    "postgresql_health",
+                ),
+                running_services_provider=lambda: frozenset(
+                    {"postgres", "weekly-review-web"}
+                ),
+            )
+
+            self.assertEqual(("postgres", "weekly-review-web"), recovered)
+            self.assertFalse(lockout_path.exists())

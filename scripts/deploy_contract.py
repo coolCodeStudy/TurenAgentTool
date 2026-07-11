@@ -93,9 +93,9 @@ PATH_RULES = (
     PathRule("scripts/install_ops_api_on_ecs.sh", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
     PathRule(
         "scripts/deploy_from_local_checkout.sh",
-        DeployMode.TARGETED_QUICK,
-        APPLICATION_SERVICES,
-        "application deployment runner",
+        DeployMode.NO_DEPLOY,
+        (),
+        "ECS deployment control plane",
     ),
     PathRule("scripts/ecs_ops_api.py", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
     PathRule(

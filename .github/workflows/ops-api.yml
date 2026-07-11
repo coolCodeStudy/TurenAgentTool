@@ -14,6 +14,7 @@ on:
           - status
           - stop
           - verify-deploy-events
+          - recover-lockout
           - remove-legacy-gateway
 
 jobs:
@@ -112,6 +113,13 @@ jobs:
                   --summary "verify deploy event recorder succeeded" >/dev/null
                 echo "verify deploy event finish id: $event_id"
                 '
+                ;;
+              recover-lockout)
+                sudo BOOTSTRAP_REF="${{ github.sha }}" \
+                  APP_ROOT="$APP_DIR" \
+                  OPS_HOME=/opt/investment-ops \
+                  RECOVER_DEPLOY_LOCKOUT=true \
+                  bash "$UPLOAD_DIR/bootstrap_ops_api_v2_on_ecs.sh"
                 ;;
               remove-legacy-gateway)
                 sudo systemctl disable --now hermes-gateway.service || true
