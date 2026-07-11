@@ -170,8 +170,6 @@ class DockerHealthChecker:
             self._http_success(f"http://127.0.0.1:8010{route}", "aggregate weekly review route is unavailable")
         self._http_success("http://127.0.0.1:8001/health", "aggregate command API route is unavailable")
         self._authenticated_negative_check()
-        self._http_success("http://127.0.0.1:8002/health", "aggregate DingTalk API route is unavailable")
-        self._dingtalk_negative_check()
         self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "aggregate MCP route is unavailable")
 
     def _check_running(self, service: str) -> None:

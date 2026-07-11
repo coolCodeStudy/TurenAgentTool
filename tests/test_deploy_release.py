@@ -1865,6 +1865,28 @@ class DockerHealthCheckerTests(TestCase):
             )
         )
 
+    def test_aggregate_health_does_not_require_the_optional_dingtalk_api(self) -> None:
+        self.health.check_aggregate(())
+
+        rendered = [" ".join(command) for command in self.runner.commands]
+        self.assertFalse(
+            any("http://127.0.0.1:8002" in command for command in rendered)
+        )
+
+    def test_dingtalk_target_health_still_checks_its_http_boundaries(self) -> None:
+        self.health.check_service("dingtalk-api", ())
+
+        rendered = [" ".join(command) for command in self.runner.commands]
+        self.assertTrue(
+            any("http://127.0.0.1:8002/health" in command for command in rendered)
+        )
+        self.assertTrue(
+            any(
+                "http://127.0.0.1:8002/dingtalk/webhook" in command
+                for command in rendered
+            )
+        )
+
     def test_scheduler_health_rejects_startup_traceback(self) -> None:
         logs = (
             "docker",
