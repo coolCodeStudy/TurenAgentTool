@@ -24,10 +24,12 @@ class BaselineRunner:
         *,
         immutable_tag_exists: bool = False,
         immutable_image_id: str = IMAGE_ID,
+        running_image: str = "investment-knowledge-app:prod",
     ) -> None:
         self.repo = repo
         self.immutable_tag_exists = immutable_tag_exists
         self.immutable_image_id = immutable_image_id
+        self.running_image = running_image
         self.commands: list[tuple[str, ...]] = []
 
     def run(self, command: tuple[str, ...], timeout: int | None = None) -> CommandResult:
@@ -48,7 +50,13 @@ class BaselineRunner:
         if command[:2] == ("docker", "ps"):
             return CommandResult(
                 0,
-                json.dumps({"ID": "container-1", "Image": "investment-knowledge-app:prod"})
+                json.dumps(
+                    {
+                        "ID": "container-1",
+                        "Image": self.running_image,
+                        "Labels": "com.docker.compose.service=weekly-review-web",
+                    }
+                )
                 + "\n",
                 "",
             )
@@ -147,6 +155,35 @@ class BootstrapDeployBaselineTests(TestCase):
 
             self.assertEqual(BASELINE_SHA, state.current_sha)
             self.assertFalse(any("rev-parse" in command for command in runner.commands))
+
+    def test_identifies_application_container_by_compose_service_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            app_root = root / "app"
+            release = app_root / "releases" / BASELINE_SHA
+            repo.mkdir()
+            release.mkdir(parents=True)
+            (release / "docker-compose.prod.yml").write_text("services: {}\n", encoding="utf-8")
+            (app_root / "current").symlink_to(release, target_is_directory=True)
+            (app_root / ".env").write_text("APP_IMAGE_TAG=prod\n", encoding="utf-8")
+            runner = BaselineRunner(repo, running_image="turenagenttool_prod-weekly-review-web")
+
+            state = initialize_baseline(
+                repo=repo,
+                app_root=app_root,
+                runner=runner,
+                clock=FixedClock(),
+                compose_project_name="turenagenttool_prod",
+                release_stager=lambda sha: release,
+                runtime_validator=lambda runner, compose: (
+                    "docker_health",
+                    "compose_valid",
+                    "postgresql_health",
+                ),
+            )
+
+            self.assertEqual(BASELINE_SHA, state.current_sha)
 
     def test_existing_state_is_idempotent_and_does_not_touch_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
