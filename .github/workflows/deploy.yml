@@ -5,6 +5,11 @@ on:
     branches: ["main"]
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: "Production source ref: main or a 40-character SHA"
+        required: false
+        default: "main"
+        type: string
       deploy_mode:
         description: "Deployment mode"
         required: false
@@ -13,19 +18,29 @@ on:
         options:
           - auto
           - no_deploy
-          - quick
-          - full
+          - targeted_quick
+          - config_restart
+          - full_image
+      emergency_reason:
+        description: "Optional emergency reason for a manually requested full deployment"
+        required: false
+        type: string
 
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
 jobs:
-  detect_changes:
+  plan:
     runs-on: ubuntu-latest
     outputs:
-      deploy_mode: ${{ steps.pick.outputs.deploy_mode }}
-      changed_files: ${{ steps.pick.outputs.changed_files }}
+      target_sha: ${{ steps.early_plan.outputs.target_sha || steps.plan.outputs.target_sha }}
+      base_sha: ${{ steps.early_plan.outputs.base_sha || steps.plan.outputs.base_sha }}
+      mode: ${{ steps.early_plan.outputs.mode || steps.plan.outputs.mode }}
+      targets: ${{ steps.early_plan.outputs.targets || steps.plan.outputs.targets }}
+      targets_csv: ${{ steps.early_plan.outputs.targets_csv || steps.plan.outputs.targets_csv }}
+      plan_json: ${{ steps.early_plan.outputs.plan_json || steps.plan.outputs.plan_json }}
+      emergency_reason: ${{ steps.early_plan.outputs.emergency_reason || steps.plan.outputs.emergency_reason }}
 
     steps:
       - name: Checkout code
@@ -33,484 +48,279 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pick deployment mode
-        id: pick
+      - name: Classify credential-free no_deploy plan
+        id: early_plan
+        env:
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
+          REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
+          EMERGENCY_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.emergency_reason || '' }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
-          set -e
+          set -euo pipefail
 
-          requested="${{ inputs.deploy_mode || 'auto' }}"
-          base="${{ github.event.before }}"
-          head="${{ github.sha }}"
-          zero_sha="0000000000000000000000000000000000000000"
+          if ! printf '%s' "$REQUESTED_REF" | grep -Eq '^(main|[0-9a-f]{40})$'; then
+            echo "::error::Manual target_ref must be main or a 40-character SHA."
+            exit 1
+          fi
 
-          if [ -z "$base" ] || [ "$base" = "$zero_sha" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-            if git rev-parse "${head}^" >/dev/null 2>&1; then
-              base="$(git rev-parse "${head}^")"
-            else
-              base="$head"
+          git fetch --prune origin main
+          if [ "$REQUESTED_REF" = "main" ]; then
+            target_sha="$WORKFLOW_SHA"
+          else
+            target_sha="$REQUESTED_REF"
+            if [ "$target_sha" != "$WORKFLOW_SHA" ]; then
+              echo "::error::Manual SHA dispatch must run from the same 40-character SHA."
+              exit 1
             fi
           fi
 
-          changed_files="$(git -c core.quotePath=false diff --name-only "$base" "$head" || true)"
-          printf 'Changed files:\n%s\n' "$changed_files"
+          if ! git cat-file -e "$target_sha^{commit}" 2>/dev/null; then
+            echo "::error::Target SHA is not present in the checked-out repository."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+            echo "::error::Target SHA is not reachable from origin/main."
+            exit 1
+          fi
 
-          changed_file_list="$(mktemp)"
-          printf '%s\n' "$changed_files" > "$changed_file_list"
+          emit_no_deploy_outputs() {
+            local plan_path="$1"
+            local base_sha="$2"
+            python3 - "$plan_path" "$target_sha" "$base_sha" "$EMERGENCY_REASON" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
 
-          python3 scripts/classify_deploy_change.py \
-            --manual-mode "$requested" \
-            --changed-files-file "$changed_file_list" \
-            --format text
-          python3 scripts/classify_deploy_change.py \
-            --manual-mode "$requested" \
-            --changed-files-file "$changed_file_list" \
-            --format github-output >> "$GITHUB_OUTPUT"
+          plan_path, target_sha, base_sha, emergency_reason = sys.argv[1:5]
+          with open(plan_path, encoding="utf-8") as handle:
+              plan = json.load(handle)
+          targets = plan.get("targets") or []
+          print(f"target_sha={target_sha}")
+          print(f"base_sha={base_sha}")
+          print(f"mode={plan['mode']}")
+          print(f"targets={json.dumps(targets, separators=(',', ':'))}")
+          print(f"targets_csv={','.join(targets)}")
+          print(f"emergency_reason={emergency_reason}")
+          print("plan_json<<EOF")
+          print(json.dumps(plan, ensure_ascii=False, indent=2))
+          print("EOF")
+          PY
+          }
+
+          plan_json="$(mktemp)"
+          if [ "$REQUESTED_MODE" = "no_deploy" ]; then
+            python3 scripts/classify_deploy_change.py \
+              --manual-mode no_deploy \
+              --format json > "$plan_json"
+            emit_no_deploy_outputs "$plan_json" "$target_sha"
+            echo "Credential-free manual no_deploy plan:"
+            cat "$plan_json"
+            exit 0
+          fi
+
+          echo "Server-authoritative deploy status is required for this plan."
+
+      - name: Build server-authoritative deployment plan
+        id: plan
+        if: steps.early_plan.outputs.mode != 'no_deploy'
+        env:
+          OPS_API_URL: ${{ vars.OPS_API_URL }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
+          REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
+          EMERGENCY_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.emergency_reason || '' }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$OPS_API_URL" ] || [ -z "$OPS_API_TOKEN" ]; then
+            echo "::error::OPS_API_URL and OPS_API_TOKEN/COMMAND_API_TOKEN are required."
+            exit 1
+          fi
+
+          if ! printf '%s' "$REQUESTED_REF" | grep -Eq '^(main|[0-9a-f]{40})$'; then
+            echo "::error::Manual target_ref must be main or a 40-character SHA."
+            exit 1
+          fi
+
+          git fetch --prune origin main
+          if [ "$REQUESTED_REF" = "main" ]; then
+            target_sha="$WORKFLOW_SHA"
+          else
+            target_sha="$REQUESTED_REF"
+            if [ "$target_sha" != "$WORKFLOW_SHA" ]; then
+              echo "::error::Manual SHA dispatch must run from the same 40-character SHA."
+              exit 1
+            fi
+          fi
+
+          if ! git cat-file -e "$target_sha^{commit}" 2>/dev/null; then
+            echo "::error::Target SHA is not present in the checked-out repository."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+            echo "::error::Target SHA is not reachable from origin/main."
+            exit 1
+          fi
+
+          status_json="$(mktemp)"
+          curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $OPS_API_TOKEN" \
+            "$OPS_API_URL/deploy/status" > "$status_json"
+
+          base_sha="$(
+            python3 - "$status_json" <<'PY'
+          import json
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          current_sha = (payload.get("data") or {}).get("current_sha")
+          if not isinstance(current_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", current_sha):
+              raise SystemExit("deploy status did not return a 40-character current_sha")
+          print(current_sha)
+          PY
+          )"
+
+          plan_json="$(mktemp)"
+          if [ "$REQUESTED_MODE" = "auto" ]; then
+            python3 scripts/classify_deploy_change.py \
+              --repo . \
+              --base-sha "$base_sha" \
+              --target-sha "$target_sha" \
+              --format json > "$plan_json"
+          else
+            python3 scripts/classify_deploy_change.py \
+              --manual-mode "$REQUESTED_MODE" \
+              --format json > "$plan_json"
+          fi
+
+          python3 - "$plan_json" "$target_sha" "$base_sha" "$EMERGENCY_REASON" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          plan_path, target_sha, base_sha, emergency_reason = sys.argv[1:5]
+          with open(plan_path, encoding="utf-8") as handle:
+              plan = json.load(handle)
+          targets = plan.get("targets") or []
+          print(f"target_sha={target_sha}")
+          print(f"base_sha={base_sha}")
+          print(f"mode={plan['mode']}")
+          print(f"targets={json.dumps(targets, separators=(',', ':'))}")
+          print(f"targets_csv={','.join(targets)}")
+          print(f"emergency_reason={emergency_reason}")
+          print("plan_json<<EOF")
+          print(json.dumps(plan, ensure_ascii=False, indent=2))
+          print("EOF")
+          PY
+
+          echo "Deployment plan:"
+          cat "$plan_json"
 
   no_deploy:
-    needs: detect_changes
-    if: needs.detect_changes.outputs.deploy_mode == 'no_deploy'
+    needs: plan
+    if: needs.plan.outputs.mode == 'no_deploy'
     runs-on: ubuntu-latest
 
     steps:
       - name: Confirm no deployment needed
         run: |
-          echo "No production deployment needed for these changes."
-          echo "Changed files:"
+          echo "No production deployment needed."
           cat <<'EOF'
-          ${{ needs.detect_changes.outputs.changed_files }}
+          ${{ needs.plan.outputs.plan_json }}
           EOF
 
-  quick_deploy:
-    needs: detect_changes
-    if: needs.detect_changes.outputs.deploy_mode == 'quick'
+  shared_deploy:
+    needs: plan
+    if: needs.plan.outputs.mode == 'targeted_quick' || needs.plan.outputs.mode == 'config_restart'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delegate deployment to Ops API
+        env:
+          OPS_API_URL: ${{ vars.OPS_API_URL }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
+          DEPLOY_MODE: ${{ needs.plan.outputs.mode }}
+          TARGETS_JSON: ${{ needs.plan.outputs.targets }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY' > deploy-payload.json
+          import json
+          import os
+
+          payload = {
+              "ref": os.environ["TARGET_SHA"],
+              "mode": os.environ["DEPLOY_MODE"],
+              "targets": json.loads(os.environ["TARGETS_JSON"]),
+          }
+          print(json.dumps(payload, separators=(",", ":")))
+          PY
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $OPS_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data @deploy-payload.json \
+            "$OPS_API_URL/deploy"
+
+  full_image:
+    needs: plan
+    if: needs.plan.outputs.mode == 'full_image'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Validate quick deployment secrets
-        env:
-          ECS_HOST: ${{ secrets.ECS_HOST }}
-          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
-          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
-        run: |
-          set -e
-          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD
-          do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing required GitHub secret: $name"
-              exit 1
-            fi
-          done
-          echo "Required quick deployment secrets are present."
-
-      - name: Create quick deployment bundle
-        run: |
-          set -e
-          mkdir -p dist
-          tar \
-            --exclude='./.git' \
-            --exclude='./.venv' \
-            --exclude='./dist' \
-            --exclude='./.env' \
-            --exclude='./.env.test' \
-            --exclude='./.env.production' \
-            --exclude='./drafts' \
-            --exclude='./drafts/*' \
-            --exclude='./__pycache__' \
-            --exclude='*/__pycache__' \
-            --exclude='*.pyc' \
-            -czf dist/investment-knowledge-release.tar.gz .
-          ls -lh dist/investment-knowledge-release.tar.gz
-
-      - name: Prepare ECS base tools
-        uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USERNAME }}
-          password: ${{ secrets.ECS_PASSWORD }}
-          port: ${{ secrets.ECS_PORT || '22' }}
-          command_timeout: 10m
-          script: |
-            set -e
-            sudo rm -f /tmp/investment-knowledge-release.tar.gz /tmp/investment-knowledge-images.tar.gz
-            if command -v tar >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
-              echo "ECS base tools are ready."
-              exit 0
-            fi
-            if command -v apt-get >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y tar git
-            elif command -v yum >/dev/null 2>&1; then
-              sudo yum install -y tar git
-            elif command -v dnf >/dev/null 2>&1; then
-              sudo dnf install -y tar git
-            else
-              echo "Unsupported Linux distribution: cannot install tar/git automatically."
-              exit 1
-            fi
+          fetch-depth: 0
+          ref: ${{ github.sha }}
 
-      - name: Upload quick deployment bundle
-        uses: appleboy/scp-action@v0.1.7
+      - name: Build immutable application image
+        uses: docker/build-push-action@v6
         with:
-          host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USERNAME }}
-          password: ${{ secrets.ECS_PASSWORD }}
-          port: ${{ secrets.ECS_PORT || '22' }}
-          source: "dist/investment-knowledge-release.tar.gz"
-          target: "/tmp"
-          strip_components: 1
-          overwrite: true
-
-      - name: Quick deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USERNAME }}
-          password: ${{ secrets.ECS_PASSWORD }}
-          port: ${{ secrets.ECS_PORT || '22' }}
-          command_timeout: 10m
-          script: |
-            set -e
-
-            APP_ROOT=/opt/investment-knowledge
-            APP_DIR="$APP_ROOT/current"
-            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
-            DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
-            RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
-
-            test -f "$RELEASE_TAR"
-            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
-
-            if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-              DOCKER_COMPOSE="docker compose"
-            elif sudo docker compose version >/dev/null 2>&1; then
-              DOCKER_COMPOSE="sudo docker compose"
-            else
-              DOCKER_COMPOSE=""
-            fi
-
-            if [ -n "$DOCKER_COMPOSE" ]; then
-              if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
-                git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
-                git -C "$DEPLOY_REPO_DIR" fetch --prune origin
-              else
-                rm -rf "$DEPLOY_REPO_DIR"
-                git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
-              fi
-              git -C "$DEPLOY_REPO_DIR" checkout --detach "${{ github.sha }}"
-              git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
-
-              SOURCE_DIR="$DEPLOY_REPO_DIR" \
-                APP_ROOT="$APP_ROOT" \
-                BUILD_IMAGE=false \
-                bash "$DEPLOY_REPO_DIR/scripts/deploy_from_local_checkout.sh"
-
-              sudo \
-                INVESTMENT_APP_ROOT="$APP_ROOT" \
-                OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
-                OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
-                OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
-                bash "$DEPLOY_REPO_DIR/scripts/install_ops_api_on_ecs.sh" --start
-              systemctl status investment-ops-api.service --no-pager || true
-              if [ -f /etc/investment-knowledge/ops-api.env ]; then
-                . /etc/investment-knowledge/ops-api.env
-                curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
-              fi
-              if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-                sudo INVESTMENT_DIR="$APP_DIR" bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
-                systemctl status investment-research-agent-worker.service --no-pager || true
-              fi
-            else
-              echo "Docker Compose unavailable; files were synced without service restart."
-            fi
-
-            echo "Quick deploy completed. Docker image was not rebuilt."
-            echo "Changed files:"
-            cat <<'EOF'
-            ${{ needs.detect_changes.outputs.changed_files }}
-            EOF
-
-  full_deploy:
-    needs: detect_changes
-    if: needs.detect_changes.outputs.deploy_mode == 'full'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Validate deployment secrets
-        env:
-          ECS_HOST: ${{ secrets.ECS_HOST }}
-          ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
-          ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          COMMAND_API_TOKEN: ${{ secrets.COMMAND_API_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          DINGTALK_STREAM_CLIENT_ID: ${{ secrets.DINGTALK_STREAM_CLIENT_ID }}
-          DINGTALK_STREAM_CLIENT_SECRET: ${{ secrets.DINGTALK_STREAM_CLIENT_SECRET }}
-        run: |
-          set -e
-          for name in \
-            ECS_HOST \
-            ECS_USERNAME \
-            ECS_PASSWORD \
-            POSTGRES_PASSWORD \
-            COMMAND_API_TOKEN \
-            OPENAI_API_KEY \
-            DINGTALK_STREAM_CLIENT_ID \
-            DINGTALK_STREAM_CLIENT_SECRET
-          do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing required GitHub secret: $name"
-              exit 1
-            fi
-          done
-          echo "Required deployment secrets are present."
-
-      - name: Create deployment bundle
-        run: |
-          set -e
-          mkdir -p dist
-          tar \
-            --exclude='./.git' \
-            --exclude='./.venv' \
-            --exclude='./dist' \
-            --exclude='./.env' \
-            --exclude='./.env.test' \
-            --exclude='./.env.production' \
-            --exclude='./drafts' \
-            --exclude='./drafts/*' \
-            --exclude='./__pycache__' \
-            --exclude='*/__pycache__' \
-            --exclude='*.pyc' \
-            -czf dist/investment-knowledge-release.tar.gz .
-
-      - name: Build deployment images
-        run: |
-          set -e
-          docker build \
-            --build-arg PIP_INDEX_URL="${{ vars.PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple/' }}" \
-            -t investment-knowledge-app:prod \
-            .
-          docker pull pgvector/pgvector:pg16
-          docker save investment-knowledge-app:prod pgvector/pgvector:pg16 | gzip > dist/investment-knowledge-images.tar.gz
-          ls -lh dist/investment-knowledge-release.tar.gz dist/investment-knowledge-images.tar.gz
-
-      - name: Prepare ECS dependencies
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USERNAME }}
-          password: ${{ secrets.ECS_PASSWORD }}
-          port: ${{ secrets.ECS_PORT || '22' }}
-          command_timeout: 40m
-          script: |
-            set -e
-
-            install_base_tools() {
-              if command -v tar >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
-                return
-              fi
-
-              echo "Installing base tools: tar, curl, git, ca-certificates"
-              if command -v apt-get >/dev/null 2>&1; then
-                sudo apt-get update
-                sudo apt-get install -y tar curl git ca-certificates
-              elif command -v yum >/dev/null 2>&1; then
-                sudo yum install -y tar curl git ca-certificates
-              elif command -v dnf >/dev/null 2>&1; then
-                sudo dnf install -y tar curl git ca-certificates
-              else
-                echo "Unsupported Linux distribution: cannot install base tools automatically."
-                exit 1
-              fi
-            }
-
-            install_docker() {
-              if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-                return
-              fi
-              if command -v docker >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1; then
-                return
-              fi
-
-              echo "Installing Docker Engine and Docker Compose plugin"
-              if command -v apt-get >/dev/null 2>&1; then
-                . /etc/os-release
-                sudo apt-get update
-                sudo apt-get install -y ca-certificates curl
-                sudo install -m 0755 -d /etc/apt/keyrings
-                curl -fsSL "https://download.docker.com/linux/${ID}/gpg" | sudo tee /etc/apt/keyrings/docker.asc >/dev/null
-                sudo chmod a+r /etc/apt/keyrings/docker.asc
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-                sudo apt-get update
-                sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              elif command -v yum >/dev/null 2>&1; then
-                sudo yum install -y yum-utils
-                sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-                sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              elif command -v dnf >/dev/null 2>&1; then
-                sudo dnf install -y dnf-plugins-core
-                sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-                sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              else
-                echo "Unsupported Linux distribution: cannot install Docker automatically."
-                exit 1
-              fi
-            }
-
-            start_docker() {
-              sudo systemctl enable docker >/dev/null 2>&1 || true
-              sudo systemctl start docker >/dev/null 2>&1 || sudo service docker start
-            }
-
-            resolve_compose_command() {
-              if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-                DOCKER="docker"
-                DOCKER_COMPOSE="docker compose"
-              elif sudo docker compose version >/dev/null 2>&1; then
-                DOCKER="sudo docker"
-                DOCKER_COMPOSE="sudo docker compose"
-              else
-                echo "Docker Compose plugin is not available after installation."
-                exit 1
-              fi
-            }
-
-            install_base_tools
-            install_docker
-            start_docker
-            resolve_compose_command
-            sudo rm -f /tmp/investment-knowledge-release.tar.gz /tmp/investment-knowledge-images.tar.gz
-
-            echo "ECS dependencies are ready."
-
-      - name: Upload deployment bundle
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USERNAME }}
-          password: ${{ secrets.ECS_PASSWORD }}
-          port: ${{ secrets.ECS_PORT || '22' }}
-          source: "dist/investment-knowledge-release.tar.gz,dist/investment-knowledge-images.tar.gz"
-          target: "/tmp"
-          strip_components: 1
-          overwrite: true
-
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USERNAME }}
-          password: ${{ secrets.ECS_PASSWORD }}
-          port: ${{ secrets.ECS_PORT || '22' }}
-          command_timeout: 60m
-          script: |
-            set -e
-
-            resolve_compose_command() {
-              if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-                DOCKER="docker"
-                DOCKER_COMPOSE="docker compose"
-              elif sudo docker compose version >/dev/null 2>&1; then
-                DOCKER="sudo docker"
-                DOCKER_COMPOSE="sudo docker compose"
-              else
-                echo "Docker Compose plugin is not available."
-                exit 1
-              fi
-            }
-
-            resolve_compose_command
-
-            APP_ROOT=/opt/investment-knowledge
-            APP_DIR="$APP_ROOT/current"
-            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
-            DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
-            RELEASE_TAR=/tmp/investment-knowledge-release.tar.gz
-            IMAGE_TAR=/tmp/investment-knowledge-images.tar.gz
-            RELEASE_DIR=/tmp/investment-knowledge-release
-
-            test -f "$RELEASE_TAR"
-            test -f "$IMAGE_TAR"
-            rm -rf "$RELEASE_DIR"
-            mkdir -p "$RELEASE_DIR"
-            tar -xzf "$RELEASE_TAR" -C "$RELEASE_DIR"
-
-            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
-
-            cat > "$APP_ROOT/.env" <<'ENV'
-            COMPOSE_PROJECT_NAME=turenagenttool_prod
-            COMPOSE_PROFILES=stream
-            APP_IMAGE_TAG=prod
+          context: .
+          load: true
+          tags: investment-knowledge-app:${{ github.sha }}
+          build-args: |
             PIP_INDEX_URL=${{ vars.PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple/' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-            POSTGRES_USER=postgres
-            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-            POSTGRES_DB=investment_kg
-            POSTGRES_HOST_PORT=${{ vars.POSTGRES_HOST_PORT || '55432' }}
+      - name: Save immutable application image archive
+        id: archive
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          archive="dist/investment-knowledge-app-${{ github.sha }}.tar.gz"
+          docker save investment-knowledge-app:${{ github.sha }} | gzip > "$archive"
+          archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "archive_bytes=$archive_bytes" >> "$GITHUB_OUTPUT"
+          ls -lh "$archive"
 
-            MCP_TRANSPORT=streamable-http
-            MCP_HOST=0.0.0.0
-            MCP_PORT=8000
-            MCP_HOST_PORT=8000
-            MCP_PATH=/mcp
+      - name: Remote deploy_preflight.py resource gate
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ARCHIVE_BYTES: ${{ steps.archive.outputs.archive_bytes }}
+          TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 15m
+          envs: ARCHIVE_BYTES,TARGET_SHA
+          script: |
+            set -euo pipefail
 
-            COMMAND_API_HOST=0.0.0.0
-            COMMAND_API_PORT=8001
-            COMMAND_API_HOST_PORT=8001
-            COMMAND_API_TOKEN=${{ secrets.COMMAND_API_TOKEN }}
+            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
+            DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
+            APP_ROOT=/opt/investment-knowledge
 
-            WEEKLY_REVIEW_WEB_HOST=0.0.0.0
-            WEEKLY_REVIEW_WEB_PORT=8010
-            WEEKLY_REVIEW_WEB_HOST_PORT=${{ vars.WEEKLY_REVIEW_WEB_HOST_PORT || '8010' }}
-            WEEKLY_REVIEW_WEB_TOKEN=${{ secrets.WEEKLY_REVIEW_WEB_TOKEN }}
-
-            DINGTALK_API_HOST=0.0.0.0
-            DINGTALK_API_PORT=8002
-            DINGTALK_API_HOST_PORT=8002
-            DINGTALK_OUTGOING_SECRET=${{ secrets.DINGTALK_OUTGOING_SECRET }}
-            DINGTALK_ALLOW_WRITE_COMMANDS=false
-            DINGTALK_SEND_WEBHOOK=${{ secrets.DINGTALK_SEND_WEBHOOK }}
-            DINGTALK_SEND_SECRET=${{ secrets.DINGTALK_SEND_SECRET }}
-            DINGTALK_STREAM_CLIENT_ID=${{ secrets.DINGTALK_STREAM_CLIENT_ID }}
-            DINGTALK_STREAM_CLIENT_SECRET=${{ secrets.DINGTALK_STREAM_CLIENT_SECRET }}
-            DINGTALK_STREAM_ALLOW_WRITE=${{ vars.DINGTALK_STREAM_ALLOW_WRITE || 'false' }}
-            DINGTALK_STREAM_WRITE_ALLOWED_SENDERS=${{ secrets.DINGTALK_STREAM_WRITE_ALLOWED_SENDERS || '0140522255091257971' }}
-            DINGTALK_COMMAND_TIMEOUT_SECONDS=${{ vars.DINGTALK_COMMAND_TIMEOUT_SECONDS || '25' }}
-            DINGTALK_IPO_REMINDERS_ENABLED=${{ vars.DINGTALK_IPO_REMINDERS_ENABLED || 'true' }}
-            DINGTALK_IPO_REMINDER_INTERVAL_SECONDS=${{ vars.DINGTALK_IPO_REMINDER_INTERVAL_SECONDS || '300' }}
-
-            FUTU_OPEND_HOST=${{ vars.FUTU_OPEND_HOST || 'host.docker.internal' }}
-            FUTU_OPEND_PORT=${{ vars.FUTU_OPEND_PORT || '11112' }}
-            FUTU_OPEND_TELNET_HOST=${{ vars.FUTU_OPEND_TELNET_HOST || 'host.docker.internal' }}
-            FUTU_OPEND_TELNET_PORT=${{ vars.FUTU_OPEND_TELNET_PORT || '22222' }}
-            FUTU_SECURITY_FIRM=${{ vars.FUTU_SECURITY_FIRM || 'FUTUSECURITIES' }}
-            FUTU_TRADE_MARKET=${{ vars.FUTU_TRADE_MARKET || 'HK' }}
-            FUTU_TRADE_ENV=${{ vars.FUTU_TRADE_ENV || 'REAL' }}
-            FUTU_ACCOUNT_ID=${{ vars.FUTU_ACCOUNT_ID || '0' }}
-            FUTU_ACCOUNT_INDEX=${{ vars.FUTU_ACCOUNT_INDEX || '0' }}
-            FUTU_POSITION_CACHE_SECONDS=${{ vars.FUTU_POSITION_CACHE_SECONDS || '20' }}
-            FUTU_POSITION_REFRESH_CACHE=${{ vars.FUTU_POSITION_REFRESH_CACHE || 'true' }}
-
-            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-            OPENAI_MODEL=${{ vars.OPENAI_MODEL || 'gpt-5.2' }}
-            OPENAI_ANALYSIS_ENABLED=true
-
-            OPS_API_URL=${{ vars.OPS_API_URL || 'http://host.docker.internal:8767' }}
-            OPS_API_TOKEN=${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
-            OPS_API_TIMEOUT_SECONDS=${{ vars.OPS_API_TIMEOUT_SECONDS || '8' }}
-            OPS_API_DEPLOY_TIMEOUT_SECONDS=${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}
-            ENV
-
-            sed -i 's/^            //' "$APP_ROOT/.env"
-            chmod 600 "$APP_ROOT/.env"
-
+            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
             if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
               git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
               git -C "$DEPLOY_REPO_DIR" fetch --prune origin
@@ -518,39 +328,73 @@ jobs:
               rm -rf "$DEPLOY_REPO_DIR"
               git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
             fi
-            git -C "$DEPLOY_REPO_DIR" checkout --detach "${{ github.sha }}"
-            git -C "$DEPLOY_REPO_DIR" rev-parse HEAD
+            git -C "$DEPLOY_REPO_DIR" checkout --detach "$TARGET_SHA"
 
-            sudo \
-              INVESTMENT_APP_ROOT="$APP_ROOT" \
-              OPS_DEPLOY_REPO_DIR="$DEPLOY_REPO_DIR" \
-              OPS_API_DEPLOY_TIMEOUT_SECONDS="${{ vars.OPS_API_DEPLOY_TIMEOUT_SECONDS || '600' }}" \
-              OPS_DEPLOY_ALLOWED_REFS="${{ vars.OPS_DEPLOY_ALLOWED_REFS || 'main' }}" \
-              bash "$DEPLOY_REPO_DIR/scripts/install_ops_api_on_ecs.sh" --start
-            if [ -f /etc/investment-knowledge/ops-api.env ]; then
-              . /etc/investment-knowledge/ops-api.env
-              curl -s "http://${OPS_API_HOST:-127.0.0.1}:${OPS_API_PORT:-8767}/health" || true
-            fi
-            if [ -f "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" ] && [ -f /etc/investment-knowledge/codex-worker.env ]; then
-              sudo INVESTMENT_DIR="$APP_DIR" bash "$DEPLOY_REPO_DIR/scripts/install_research_agent_worker_on_ecs.sh" --start || true
-              systemctl status investment-research-agent-worker.service --no-pager || true
-            fi
+            echo "Running deploy_preflight.py before image archive upload."
+            python3 - "$DEPLOY_REPO_DIR" "$ARCHIVE_BYTES" <<'PY'
+            from pathlib import Path
+            import sys
 
-            gzip -dc "$IMAGE_TAR" | $DOCKER load
+            repo = Path(sys.argv[1])
+            archive_bytes = int(sys.argv[2])
+            sys.path.insert(0, str(repo))
 
-            SOURCE_DIR="$DEPLOY_REPO_DIR" \
-              APP_ROOT="$APP_ROOT" \
-              BUILD_IMAGE=false \
-              bash "$DEPLOY_REPO_DIR/scripts/deploy_from_local_checkout.sh"
+            from scripts.deploy_contract import DeployMode
+            from scripts.deploy_preflight import collect_resources, evaluate_preflight, validate_runtime
+            from scripts.deploy_support import SubprocessRunner
 
-            cd "$APP_DIR"
-            $DOCKER_COMPOSE -f docker-compose.prod.yml config
-            $DOCKER_COMPOSE -f docker-compose.prod.yml ps
-            sleep 20
-            $DOCKER_COMPOSE -f docker-compose.prod.yml ps
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 account-snapshot-scheduler || true
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 ipo-reminder-scheduler || true
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 dingtalk-stream-bot || true
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=120 weekly-review-web || true
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=200 mcp || true
-            $DOCKER_COMPOSE -f docker-compose.prod.yml logs --tail=80 postgres || true
+            runner = SubprocessRunner()
+            snapshot = collect_resources(runner)
+            result = evaluate_preflight(snapshot, DeployMode.FULL_IMAGE, archive_bytes)
+            if not result.ok:
+                raise SystemExit("deployment resource preflight failed: " + "; ".join(result.errors))
+            compose_file = Path("/opt/investment-knowledge/current/docker-compose.prod.yml")
+            labels = validate_runtime(runner, compose_file)
+            print("remote preflight labels:", ",".join(labels))
+            PY
+
+      - name: Upload immutable application image archive
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          source: "dist/investment-knowledge-app-${{ github.sha }}.tar.gz"
+          target: "/tmp"
+          strip_components: 1
+          overwrite: true
+
+      - name: Delegate full image deployment to Ops API
+        env:
+          OPS_API_URL: ${{ vars.OPS_API_URL }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
+          TARGETS_JSON: ${{ needs.plan.outputs.targets }}
+          EMERGENCY_REASON: ${{ needs.plan.outputs.emergency_reason }}
+          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}.tar.gz
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY' > deploy-payload.json
+          import json
+          import os
+
+          payload = {
+              "ref": os.environ["TARGET_SHA"],
+              "mode": "full_image",
+              "targets": json.loads(os.environ["TARGETS_JSON"]),
+              "archive_path": os.environ["REMOTE_ARCHIVE"],
+          }
+          reason = os.environ.get("EMERGENCY_REASON", "").strip()
+          if reason:
+              payload["emergency_reason"] = reason
+          print(json.dumps(payload, separators=(",", ":")))
+          PY
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $OPS_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data @deploy-payload.json \
+            "$OPS_API_URL/deploy"

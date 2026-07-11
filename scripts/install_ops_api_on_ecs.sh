@@ -7,6 +7,11 @@ OPS_HOME=${OPS_HOME:-/opt/investment-ops}
 OPS_API_PORT=${OPS_API_PORT:-8767}
 OPS_API_VENV=${OPS_API_VENV:-$OPS_HOME/.venv}
 OPS_DEPLOY_REPO_DIR=${OPS_DEPLOY_REPO_DIR:-/opt/investment-knowledge-repo}
+OPS_DEPLOY_STATE_PATH=${OPS_DEPLOY_STATE_PATH:-/opt/investment-knowledge/shared/deploy-state.json}
+OPS_DEPLOY_LOCK_PATH=${OPS_DEPLOY_LOCK_PATH:-/opt/investment-knowledge/shared/deploy.lock}
+OPS_DEPLOY_RELEASE_ROOT=${OPS_DEPLOY_RELEASE_ROOT:-/opt/investment-knowledge/releases}
+OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-1800}
+OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-turenagenttool_prod}
 COMPOSE_ENV_FILE=${COMPOSE_ENV_FILE:-$APP_ROOT/.env}
 START_OPS=false
@@ -27,7 +32,10 @@ Environment:
   OPS_API_PORT=8767
   OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
   OPS_DEPLOY_REPO_DIR=...       Optional; defaults to /opt/investment-knowledge-repo.
-  OPS_API_DEPLOY_TIMEOUT_SECONDS=600
+  OPS_DEPLOY_STATE_PATH=/opt/investment-knowledge/shared/deploy-state.json
+  OPS_DEPLOY_LOCK_PATH=/opt/investment-knowledge/shared/deploy.lock
+  OPS_DEPLOY_RELEASE_ROOT=/opt/investment-knowledge/releases
+  OPS_API_DEPLOY_TIMEOUT_SECONDS=1800
   OPS_DEPLOY_ALLOWED_REFS=main
 EOF
 }
@@ -56,11 +64,21 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_OPS_API="$SCRIPT_DIR/ecs_ops_api.py"
-if [ ! -f "$SOURCE_OPS_API" ]; then
-  echo "Missing $SOURCE_OPS_API. Run this script from a full repo checkout." >&2
-  exit 1
-fi
+OPS_API_MODULES=(
+  "ecs_ops_api.py"
+  "deploy_contract.py"
+  "deploy_preflight.py"
+  "deploy_release.py"
+  "deploy_retention.py"
+  "deploy_state.py"
+  "deploy_support.py"
+)
+for module in "${OPS_API_MODULES[@]}"; do
+  if [ ! -f "$SCRIPT_DIR/$module" ]; then
+    echo "Missing $SCRIPT_DIR/$module. Run this script from a full repo checkout." >&2
+    exit 1
+  fi
+done
 
 if [ -f "$COMPOSE_ENV_FILE" ]; then
   set -a
@@ -96,7 +114,9 @@ if [ -z "$OPS_API_TOKEN" ]; then
 fi
 
 mkdir -p "$OPS_HOME"
-cp -a "$SOURCE_OPS_API" "$OPS_HOME/ecs_ops_api.py"
+for module in "${OPS_API_MODULES[@]}"; do
+  cp -a "$SCRIPT_DIR/$module" "$OPS_HOME/$module"
+done
 chmod +x "$OPS_HOME/ecs_ops_api.py"
 
 if [ ! -x "$OPS_API_VENV/bin/python" ]; then
@@ -130,8 +150,11 @@ WEEKLY_REVIEW_WEB_HOST_PORT=${WEEKLY_REVIEW_WEB_HOST_PORT:-8010}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-turenagenttool_prod}
 COMPOSE_ENV_FILE=$COMPOSE_ENV_FILE
 OPS_DEPLOY_REPO_DIR=$OPS_DEPLOY_REPO_DIR
-OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-600}
-OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
+OPS_DEPLOY_STATE_PATH=$OPS_DEPLOY_STATE_PATH
+OPS_DEPLOY_LOCK_PATH=$OPS_DEPLOY_LOCK_PATH
+OPS_DEPLOY_RELEASE_ROOT=$OPS_DEPLOY_RELEASE_ROOT
+OPS_API_DEPLOY_TIMEOUT_SECONDS=$OPS_API_DEPLOY_TIMEOUT_SECONDS
+OPS_DEPLOY_ALLOWED_REFS=$OPS_DEPLOY_ALLOWED_REFS
 EOF
 chmod 600 /etc/investment-knowledge/ops-api.env
 
