@@ -536,7 +536,7 @@ class DeploymentEngineTests(TestCase):
             f"health:{label}:{lock_state['held']}"
         )
         self.health.fail_for("weekly-review-web")
-        self.health.fail_aggregate_after = 1
+        self.health.fail_aggregate_after = 0
         engine = DeploymentEngine(
             repo=self.repo,
             app_root=self.app_root,
@@ -617,7 +617,7 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(outcome.ok)
         self.assertEqual(("weekly-review-web",), outcome.rolled_back_services)
         self.assertEqual(("command-api",), outcome.rollback_failures)
-        self.assertEqual(2, self.health.aggregate_checks)
+        self.assertEqual(1, self.health.aggregate_checks)
 
     def test_no_deploy_recomputes_plan_without_mutating_runtime_or_filesystem(self) -> None:
         self.plan = DeploymentPlan(
@@ -1200,7 +1200,26 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(
             {"command-api", "weekly-review-web"}, set(event["target_durations_ms"])
         )
-        self.assertGreaterEqual(self.health.aggregate_checks, 3)
+        self.assertEqual(2, self.health.aggregate_checks)
+
+    def test_aggregate_health_runs_only_after_all_targets_are_activated(self) -> None:
+        observations: list[str] = []
+        self.health.on_check = observations.append
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(
+            [
+                "service:command-api",
+                "service:weekly-review-web",
+                "aggregate",
+                "service:command-api",
+                "service:weekly-review-web",
+                "aggregate",
+            ],
+            observations,
+        )
 
     def test_archive_is_removed_when_full_preflight_fails(self) -> None:
         from scripts.deploy_preflight import ResourceSnapshot
@@ -1226,7 +1245,7 @@ class DeploymentEngineTests(TestCase):
 
     def test_rollback_failure_persists_lockout_and_blocks_next_attempt(self) -> None:
         self.health.fail_for("weekly-review-web")
-        self.health.fail_aggregate_after = 1
+        self.health.fail_aggregate_after = 0
 
         outcome = self.engine.deploy(self.targeted_request)
 
@@ -1651,7 +1670,7 @@ class DeploymentEngineTests(TestCase):
 
     def test_lockout_primary_write_failure_uses_durable_fallback(self) -> None:
         self.health.fail_for("weekly-review-web")
-        self.health.fail_aggregate_after = 1
+        self.health.fail_aggregate_after = 0
         self.engine._persist_lockout = lambda *args: (_ for _ in ()).throw(
             OSError("PASSWORD=lockout-secret")
         )
