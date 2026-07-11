@@ -215,6 +215,23 @@ The state file records:
 State is written through a temporary file and atomic rename. Secrets are never
 written to this file.
 
+### Legacy Baseline Migration
+
+The first V2 control-plane bootstrap initializes the durable state before the
+Ops API starts. It resolves the commit from the existing production checkout,
+proves that commit is reachable from `origin/main`, stages the matching
+immutable release, tags the single running application image by that commit,
+updates the image selector, and creates the `current` release symlink. The
+migration is idempotent and does not recreate application containers or
+PostgreSQL. Container verification uses Docker image IDs, so containers that
+were originally created with the legacy mutable `prod` display tag remain a
+valid baseline when the underlying image ID matches the immutable SHA tag.
+
+Changes to the independent Ops control plane are classified as `no_deploy` for
+the business stack. Release coordination must run the dedicated Ops API install
+workflow and wait for it to finish before starting a business deployment; this
+updates `/opt/investment-ops` without racing or restarting application services.
+
 ## Resource Preflight
 
 Every mode that touches ECS runs preflight before release activation. The

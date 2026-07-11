@@ -804,9 +804,7 @@ class DeploymentEngine:
             for row in _json_rows(result.stdout)
             if str(row.get("Image") or "").startswith("investment-knowledge-app:")
         )
-        if not app_rows or {
-            str(row.get("Image") or "") for row in app_rows
-        } != {state.current_image}:
+        if not app_rows:
             raise DeploymentError("running application image identity does not match state")
         for row in app_rows:
             container_id = str(row.get("ID") or "")
@@ -828,7 +826,8 @@ class DeploymentEngine:
                 or container_result.stdout.strip() != selected_image_id
             ):
                 raise DeploymentError(
-                    "running application immutable image identity does not match state"
+                    "running application image identity does not match state: "
+                    "immutable image identity mismatch"
                 )
 
     def _verify_release_baseline(
