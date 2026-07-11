@@ -219,15 +219,40 @@ def recover_lockout(
                 if running_services_provider is not None
                 else _running_compose_services(runner, engine.current_link)
             )
+            expected_baseline_services = expected_services
+            if running_services_provider is None:
+                baseline_services = frozenset(
+                    engine._compose_services(selectors.current_release)
+                )
+                residual_services = frozenset(
+                    (expected_services & running_services) - baseline_services
+                )
+                unsafe_residuals = residual_services - _APPLICATION_SERVICES
+                if unsafe_residuals:
+                    raise DeploymentError(
+                        "deployment lockout recovery found non-application residual "
+                        "services: " + ", ".join(sorted(unsafe_residuals))
+                    )
+                for service in sorted(residual_services):
+                    _remove_residual_service(
+                        runner,
+                        compose_project_name=compose_project_name,
+                        service=service,
+                    )
+                if residual_services:
+                    running_services = _running_compose_services(
+                        runner, engine.current_link
+                    )
+                expected_baseline_services = expected_services & baseline_services
         engine._verify_baseline_image_identity(state, selectors)
-        missing = sorted(set(expected_services) - set(running_services))
+        missing = sorted(set(expected_baseline_services) - set(running_services))
         if missing:
             raise DeploymentError(
                 "deployment lockout recovery is blocked by missing services: "
                 + ", ".join(missing)
             )
         lockout_path.unlink()
-        return tuple(sorted(expected_services))
+        return tuple(sorted(expected_baseline_services))
 
 
 def _deployed_sha(app_root: Path, runner: CommandRunner) -> str:
@@ -425,6 +450,33 @@ def _running_compose_services(
         str(row.get("Service") or "")
         for row in _json_rows(result.stdout)
         if str(row.get("Service") or "")
+    )
+
+
+def _remove_residual_service(
+    runner: CommandRunner, *, compose_project_name: str, service: str
+) -> None:
+    result = runner.run(
+        (
+            "docker",
+            "ps",
+            "--all",
+            "--quiet",
+            "--filter",
+            f"label=com.docker.compose.project={compose_project_name}",
+            "--filter",
+            f"label=com.docker.compose.service={service}",
+        )
+    )
+    container_ids = tuple(result.stdout.split())
+    if result.returncode != 0 or not container_ids:
+        raise DeploymentError(
+            f"residual application service {service} could not be identified"
+        )
+    _run_checked(
+        runner,
+        ("docker", "rm", "--force", *container_ids),
+        f"residual application service {service} could not be removed",
     )
 
 
