@@ -8,23 +8,27 @@ from pathlib import Path
 from typing import Callable, ContextManager, Protocol
 
 try:
+    from scripts.deploy_contract import APPLICATION_SERVICES
     from scripts.deploy_preflight import deployment_lock, validate_runtime
     from scripts.deploy_release import (
         DeploymentEngine,
         DeploymentError,
         SelectorSnapshot,
         SystemClock,
+        _compose_service_from_row,
         _compose_environment,
     )
     from scripts.deploy_state import DeploymentState, load_state, resolve_production_target, write_state
     from scripts.deploy_support import CommandRunner, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/bootstrap_deploy_baseline.py.
+    from deploy_contract import APPLICATION_SERVICES
     from deploy_preflight import deployment_lock, validate_runtime
     from deploy_release import (
         DeploymentEngine,
         DeploymentError,
         SelectorSnapshot,
         SystemClock,
+        _compose_service_from_row,
         _compose_environment,
     )
     from deploy_state import DeploymentState, load_state, resolve_production_target, write_state
@@ -39,6 +43,7 @@ ReleaseStager = Callable[[str], Path]
 RuntimeValidator = Callable[[CommandRunner, Path], tuple[str, ...]]
 LockFactory = Callable[[Path], ContextManager[None]]
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+_APPLICATION_SERVICES = frozenset(APPLICATION_SERVICES)
 
 
 class _UnusedHealth:
@@ -244,7 +249,10 @@ def _running_application_image_id(
             row = json.loads(line)
         except json.JSONDecodeError as error:
             raise DeploymentError("running application container metadata is invalid") from error
-        if str(row.get("Image") or "").startswith("investment-knowledge-app:"):
+        if (
+            str(row.get("Image") or "").startswith("investment-knowledge-app:")
+            or _compose_service_from_row(row) in _APPLICATION_SERVICES
+        ):
             rows.append(row)
     if not rows:
         raise DeploymentError("running application image baseline is unavailable")

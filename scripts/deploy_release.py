@@ -802,7 +802,10 @@ class DeploymentEngine:
         app_rows = tuple(
             row
             for row in _json_rows(result.stdout)
-            if str(row.get("Image") or "").startswith("investment-knowledge-app:")
+            if (
+                str(row.get("Image") or "").startswith("investment-knowledge-app:")
+                or _compose_service_from_row(row) in _APPLICATION_TARGETS
+            )
         )
         if not app_rows:
             raise DeploymentError("running application image identity does not match state")
@@ -1755,6 +1758,15 @@ def _json_rows(output: str) -> tuple[dict[str, object], ...]:
         except json.JSONDecodeError:
             return ()
     return tuple(value for value in values if isinstance(value, dict))
+
+
+def _compose_service_from_row(row: dict[str, object]) -> str | None:
+    labels = str(row.get("Labels") or "")
+    prefix = "com.docker.compose.service="
+    for label in labels.split(","):
+        if label.startswith(prefix):
+            return label.removeprefix(prefix)
+    return None
 
 
 def _csv_values(value: str | None) -> tuple[str, ...]:

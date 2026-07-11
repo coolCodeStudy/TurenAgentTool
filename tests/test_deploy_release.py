@@ -330,6 +330,38 @@ class DeploymentEngineTests(TestCase):
             ),
         )
 
+    def test_baseline_image_identity_accepts_compose_service_label_with_custom_image_name(self) -> None:
+        self.runner.results[
+            (
+                "docker",
+                "ps",
+                "--filter",
+                "label=com.docker.compose.project=turenagenttool_prod",
+                "--format",
+                "{{json .}}",
+            )
+        ] = CommandResult(
+            0,
+            json.dumps(
+                {
+                    "ID": "legacy-container",
+                    "Image": "turenagenttool_prod-weekly-review-web",
+                    "Labels": "com.docker.compose.service=weekly-review-web",
+                }
+            )
+            + "\n",
+            "",
+        )
+
+        self.engine._verify_baseline_image_identity(
+            load_state(self.state_path),
+            SelectorSnapshot(
+                current_release=self.old_release,
+                previous_release=self.older_release,
+                env_contents=f"APP_IMAGE_TAG={OLD_SHA}\n".encode(),
+            ),
+        )
+
     def test_health_failure_rolls_back_activated_services_in_reverse_order(self) -> None:
         self.health.fail_for("weekly-review-web")
 
