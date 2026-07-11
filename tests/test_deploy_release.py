@@ -1913,7 +1913,8 @@ class DockerHealthCheckerTests(TestCase):
             self.assertTrue(any(url in command for command in rendered), url)
         self.assertTrue(
             any(
-                "POST http://127.0.0.1:8002/dingtalk/webhook" in command
+                "--request POST" in command
+                and "http://127.0.0.1:8002/dingtalk/webhook" in command
                 for command in rendered
             )
         )
@@ -1968,11 +1969,15 @@ class DockerHealthCheckerTests(TestCase):
             "%{http_code}",
             "--request",
             "POST",
+            "--data-binary",
+            "{",
             "http://127.0.0.1:8002/dingtalk/webhook",
         )
         self.runner.results[command] = CommandResult(0, "400", "")
 
         self.health.check_service("dingtalk-api", ())
+
+        self.assertIn(command, self.runner.commands)
 
     def test_http_health_retries_a_transient_startup_failure(self) -> None:
         class FlakyHttpRunner(HealthRunner):

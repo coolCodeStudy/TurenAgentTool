@@ -212,6 +212,7 @@ class DockerHealthChecker:
             {400, 401, 403},
             "DingTalk webhook rejection boundary is unavailable",
             method="POST",
+            body="{",
         )
 
     def _http_success(self, url: str, message: str) -> None:
@@ -224,6 +225,7 @@ class DockerHealthChecker:
         message: str,
         *,
         method: str | None = None,
+        body: str | None = None,
     ) -> None:
         command = [
             "curl",
@@ -236,6 +238,8 @@ class DockerHealthChecker:
         ]
         if method:
             command.extend(("--request", method))
+        if body is not None:
+            command.extend(("--data-binary", body))
         command.append(url)
         for attempt in range(20):
             result = self._run(tuple(command))
