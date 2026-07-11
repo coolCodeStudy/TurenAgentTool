@@ -32,6 +32,12 @@ TARGET_SHA = "b" * 40
 OLDER_SHA = "0" * 40
 
 
+def _without_compose_file(command: tuple[str, ...]) -> tuple[str, ...]:
+    if command[:3] == ("docker", "compose", "-f") and len(command) >= 5:
+        return (*command[:2], *command[4:])
+    return command
+
+
 class RecordingRunner:
     def __init__(self) -> None:
         self.commands: list[tuple[str, ...]] = []
@@ -51,8 +57,13 @@ class RecordingRunner:
                 for name in ("COMPOSE_PROJECT_NAME", "POSTGRES_HOST", "POSTGRES_PORT")
             }
         )
-        sequence = self.sequences.get(command)
-        configured = sequence.pop(0) if sequence else self.results.get(command)
+        lookup_command = _without_compose_file(command)
+        sequence = self.sequences.get(command) or self.sequences.get(lookup_command)
+        configured = (
+            sequence.pop(0)
+            if sequence
+            else self.results.get(command, self.results.get(lookup_command))
+        )
         if isinstance(configured, BaseException):
             raise configured
         if configured is not None:
@@ -147,12 +158,13 @@ class HealthRunner(RecordingRunner):
     def run(self, command: tuple[str, ...], timeout: int | None = None) -> CommandResult:
         del timeout
         self.commands.append(command)
-        configured = self.results.get(command)
+        lookup_command = _without_compose_file(command)
+        configured = self.results.get(command, self.results.get(lookup_command))
         if isinstance(configured, BaseException):
             raise configured
         if configured is not None:
             return configured
-        if command[:3] == ("docker", "compose", "ps"):
+        if lookup_command[:3] == ("docker", "compose", "ps"):
             service = command[-1]
             return CommandResult(
                 0,
@@ -166,7 +178,7 @@ class HealthRunner(RecordingRunner):
                 + "\n",
                 "",
             )
-        if command[:3] == ("docker", "compose", "logs"):
+        if lookup_command[:3] == ("docker", "compose", "logs"):
             return CommandResult(0, "service started normally\n", "")
         if command[:2] == ("curl", "--silent"):
             if "http://127.0.0.1:8001/command" in command:
@@ -283,12 +295,25 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(self.targeted_request)
 
         self.assertTrue(outcome.ok)
+        staged_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.assertSubsequence(
             [
-                ("docker", "compose", "up", "-d", "--no-deps", "--force-recreate", "command-api"),
                 (
                     "docker",
                     "compose",
+                    "-f",
+                    str(staged_compose),
+                    "up",
+                    "-d",
+                    "--no-deps",
+                    "--force-recreate",
+                    "command-api",
+                ),
+                (
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(staged_compose),
                     "up",
                     "-d",
                     "--no-deps",
@@ -299,6 +324,64 @@ class DeploymentEngineTests(TestCase):
             self.runner.commands,
         )
         self.assertNotIn("postgres", outcome.activated_services)
+
+    def test_activation_uses_the_staged_release_compose_file_explicitly(self) -> None:
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertTrue(outcome.ok)
+        staged_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.assertIn(
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(staged_compose),
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "command-api",
+            ),
+            self.runner.commands,
+        )
+
+    def test_rollback_uses_the_previous_release_compose_file_explicitly(self) -> None:
+        self.health.fail_for("weekly-review-web")
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertFalse(outcome.ok)
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        self.assertIn(
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(previous_compose),
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "command-api",
+            ),
+            self.runner.commands,
+        )
+
+    def test_manual_recovery_uses_the_current_release_compose_file_explicitly(self) -> None:
+        self.engine._manual_recovery(load_state(self.state_path))
+
+        self.assertIn(
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(self.engine.current_link / "docker-compose.prod.yml"),
+                "ps",
+                "--format",
+                "json",
+            ),
+            self.runner.commands,
+        )
 
     def test_command_failure_keeps_a_product_safe_diagnostic_line(self) -> None:
         command = ("docker", "compose", "up", "service")
@@ -1345,7 +1428,13 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual((self.releases_dir / TARGET_SHA).resolve(), self.engine.current_link.resolve())
         self.assertTrue(self.old_release.exists())
         for command in activation_commands:
-            self.assertEqual(1, self.runner.commands.count(command))
+            self.assertEqual(
+                1,
+                sum(
+                    _without_compose_file(candidate) == command
+                    for candidate in self.runner.commands
+                ),
+            )
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertIn("release_failed", event["rollback_status"])
 
@@ -1710,7 +1799,7 @@ class DeploymentEngineTests(TestCase):
         activate_indexes = [
             index
             for index, command in enumerate(self.runner.commands)
-            if command[:3] == ("docker", "compose", "up")
+            if _without_compose_file(command)[:3] == ("docker", "compose", "up")
         ]
         self.assertTrue(activate_indexes)
         for index in activate_indexes:
@@ -1759,6 +1848,22 @@ class DockerHealthCheckerTests(TestCase):
             )
         )
         self.assertTrue(any("exec -T postgres pg_isready" in command for command in rendered))
+
+    def test_compose_health_checks_use_the_release_file_explicitly(self) -> None:
+        self.health.check_service("weekly-review-web", ())
+
+        self.assertTrue(
+            any(
+                command[:4]
+                == (
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(self.current / "docker-compose.prod.yml"),
+                )
+                for command in self.runner.commands
+            )
+        )
 
     def test_scheduler_health_rejects_startup_traceback(self) -> None:
         logs = (
