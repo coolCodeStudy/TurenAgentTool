@@ -250,9 +250,15 @@ class DockerHealthChecker:
             raise DeploymentHealthError(message)
 
     def _run(self, command: tuple[str, ...]):
-        with _working_directory(self.current_release), _compose_environment(
-            self.compose_project_name
-        ):
+        if command[:2] == ("docker", "compose"):
+            command = (
+                "docker",
+                "compose",
+                "-f",
+                str(self.current_release / "docker-compose.prod.yml"),
+                *command[2:],
+            )
+        with _compose_environment(self.compose_project_name):
             return self.runner.run(command)
 
 
@@ -542,7 +548,7 @@ class DeploymentEngine:
         for target in context.plan.targets:
             started = self.clock.monotonic()
             context.touched_services.append(target)
-            self._activate_target(target)
+            self._activate_target(target, release)
             self.health.check_service(target, request.feature_routes)
             self.health.check_aggregate(request.feature_routes)
             context.target_durations_ms[target] = round(
@@ -1181,17 +1187,17 @@ class DeploymentEngine:
             context.selector_journal.image_attempted = True
             self._write_image_tag(selected_image)
 
-    def _activate_target(self, target: str) -> None:
+    def _activate_target(self, target: str, release: Path) -> None:
         if target.endswith(".service"):
             self._run_checked(("systemctl", "restart", target), f"host unit {target} failed to restart")
             return
-        with _working_directory(self.current_link), _compose_environment(
-            self.compose_project_name
-        ):
+        with _compose_environment(self.compose_project_name):
             self._run_checked(
                 (
                     "docker",
                     "compose",
+                    "-f",
+                    str(release / "docker-compose.prod.yml"),
                     "up",
                     "-d",
                     "--no-deps",
@@ -1230,7 +1236,9 @@ class DeploymentEngine:
         service_failures: list[str] = []
         for target in reversed(context.touched_services):
             try:
-                self._activate_target(target)
+                if context.selectors.current_release is None:
+                    raise DeploymentError("previous release is unavailable")
+                self._activate_target(target, context.selectors.current_release)
                 successful_services.append(target)
             except Exception:
                 service_failures.append(target)
@@ -1555,10 +1563,18 @@ class DeploymentEngine:
         self, state: DeploymentState | None
     ) -> dict[str, str]:
         try:
-            with _working_directory(self.current_link), _compose_environment(
-                self.compose_project_name
-            ):
-                result = self.runner.run(("docker", "compose", "ps", "--format", "json"))
+            with _compose_environment(self.compose_project_name):
+                result = self.runner.run(
+                    (
+                        "docker",
+                        "compose",
+                        "-f",
+                        str(self.current_link / "docker-compose.prod.yml"),
+                        "ps",
+                        "--format",
+                        "json",
+                    )
+                )
             rows = _json_rows(result.stdout) if result.returncode == 0 else ()
             containers = [
                 {
@@ -1719,16 +1735,6 @@ class DeploymentEngine:
         if isinstance(error, DeploymentError):
             return str(error)
         return "deployment failed; inspect the product-safe deployment event"
-
-
-@contextmanager
-def _working_directory(path: Path):
-    previous = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(previous)
 
 
 @contextmanager
