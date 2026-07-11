@@ -1,17 +1,26 @@
 # Daily Market Brief Technical Plan
 
-Status: partially_implemented
-Owner: Development Agent
+Status: deployed_pending_user_acceptance
+Owner: Daily Market Brief Feature Coordinator
 Source PRD: `docs/product/PRD-Daily-Market-Brief.md`
 Feature Registry row: `Daily market brief`
-Acceptance Queue rows: `AT-2026-06-30-002`, `AT-2026-07-01-001`
-Last updated: 2026-06-30
+Acceptance Queue rows: `AT-2026-06-30-002`, `AT-2026-07-01-002`, `AT-2026-07-10-001`
+Last updated: 2026-07-11
 
 ## Scope
 
 Implement P0 as a Web-reviewable, command-retrievable, scheduler-ready daily close report for CN, HK, and US markets. The report persists as `review_reports.report_type = daily_market_brief`, is idempotent by market and market date, renders Simplified Chinese Markdown, and records source/degraded states for unavailable provider coverage.
 
-Out of scope for this pass: DingTalk push, paid data providers, cross-market sector taxonomy normalization, cloud deployment, and user acceptance.
+Out of scope for this pass: DingTalk push, paid data providers, cross-market sector taxonomy normalization, and user acceptance.
+
+## Production Verification
+
+- Integrated release: `main` commit `254e38ff430c8bc75ef176d8119fe3fc4ebc83c7`; full-image deploy run `29148635683` succeeded.
+- HK/US bounded Sina gainer fallback: `main` commit `027b9228a2658fb3aebc78afcc9a72f4d6db1764`; quick deploy run `29149263462` succeeded after the Ops API source-refresh fix in `main` commit `ff750055a3c214230162116dde39c07925f6e559`.
+- Cloud page: `http://47.84.190.191:8010/daily-market-brief` returned the tokenless CN/HK/US review surface. Browser verification found CN with 5 indexes, 5 sectors, and 5 gainers; HK with 3 indexes and 5 gainers; US with 4 indexes and 5 gainers. Unsupported HK/US sectors and unsupported capital-flow coverage are shown as product-language degraded states.
+- Persisted 2026-07-10 reports coexist as CN `#19`, HK `#20`, and US `#21`. A fresh US rerun updated report `#21`, confirming same-market/date idempotency.
+- Older and future public generation requests were rejected with HTTP 400. Cloud system status showed `daily-market-brief-scheduler` running alongside healthy Web, database, and control-plane services.
+- `AT-2026-07-10-001` passed independent cloud acceptance on 2026-07-11. User acceptance remains pending.
 
 ## Touched Modules
 
@@ -95,19 +104,19 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 | CN brief includes required P0 indexes, sectors/industries, gainers, flow/degraded state, volume baselines, source labels, date, timestamp | verified | `tests.test_daily_market_brief`; fake-AKShare unit coverage; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-30 fixture` | CN command fixture still uses deterministic index bars. Live mode now attempts AKShare/Eastmoney industry-board rankings, liquidity-filtered A-share gainers, and industry fund-flow ranking before degrading. |
 | HK brief includes required P0 indexes, sectors/industries when supported, gainers, flow/degraded state, turnover baselines | verified | `tests.test_daily_market_brief`; fake-AKShare and direct HTTP fallback coverage; live HK fallback probe; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 HK 2026-06-30 fixture` | HK command fixture renders all three P0 indexes. Live mode attempts AKShare Hong Kong main-board gainers, then bounded direct Eastmoney/Sina rankings; HK sector and fund-flow rows remain explicit degraded states. |
 | US brief includes required P0 indexes, sectors/industries when supported, common-stock gainers, explicit flow degraded state, volume baselines | verified | `tests.test_daily_market_brief`; fake-AKShare and direct HTTP fallback coverage; live US fallback probe; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 US 2026-06-30 fixture` | US command fixture renders all four P0 indexes. Live mode attempts AKShare US gainers, then bounded direct Eastmoney/Sina rankings after turnover and warrant/right-like filtering; US sector and fund-flow rows remain explicit degraded states. |
-| Independent market scheduler and rerun semantics | local_verified | `run_daily_market_brief_scheduler_forever`, `run_daily_market_brief_once`; scheduler timezone unit test; `daily-market-brief-scheduler` Compose service and deploy target | Production wiring now starts one scheduler process that tracks CN/HK/US independently and is covered by deploy process health checks. Cloud runtime verification remains required. |
+| Independent market scheduler and rerun semantics | deploy_verified | `run_daily_market_brief_scheduler_forever`, `run_daily_market_brief_once`; scheduler timezone unit test; cloud system status on 2026-07-11 | Production runs one `daily-market-brief-scheduler` process that tracks CN/HK/US independently; controlled cloud status reported it running with healthy dependencies. |
 | Idempotent storage by report type, market, market date | verified | `repository.upsert_daily_market_brief_report`; `db/schema.sql`; DB smoke on `POSTGRES_PORT=55433` | Market-aware `report_key` values are protected by a unique partial index and transaction-scoped advisory lock, preventing concurrent public/scheduler inserts for the same market/date. |
 | Missing provider coverage visible in user language | verified | Renderer and degraded-state unit test; forced command-router provider failure | Source status is explicit for sectors/gainers/flow; raw provider/SSL/internal exception text is not rendered in user-facing Markdown. |
 | Command surface retrieves latest and specified market/date | verified | `command_router.py`; command retrieval unit test | HTTP command API is not required for local verification. |
-| Web surface lets the user review latest/specified market/date briefs | local_verified | `weekly_review_web.py`; `tests.test_daily_market_brief` Web render/response, latest-session, single-flight, holiday/incomplete-session, and historical-spot-safety tests; `AT-2026-07-01-001` | The public page has CN/HK/US read/generate controls without a token or fixture control. Public generation is limited to the market's latest completed session; historical reads remain available without mixing current spot rankings into past dates. Cloud deployment and black-box retest remain required before asking for final user acceptance. |
+| Web surface lets the user review latest/specified market/date briefs | deploy_verified | `weekly_review_web.py`; `tests.test_daily_market_brief`; `AT-2026-07-01-002`; `AT-2026-07-10-001`; cloud browser/API verification on 2026-07-11 | The deployed public page has CN/HK/US read/generate controls without token or fixture controls. Latest-session generation, historical reads, date bounds, useful rankings, and safe degraded states passed black-box cloud verification. |
 | Stored report includes structured context and source status | verified | `repository.upsert_daily_market_brief_report`; DB smoke on `POSTGRES_PORT=55433` | Context is stored in `portfolio_snapshot`; status in `source_status`; saved rows were retrieved through the command surface. |
 | Narrative is understandable and has no buy/sell recommendations | verified | Markdown assertions in `tests/test_daily_market_brief.py` | Renderer describes market breadth/leadership/liquidity/data gaps only. |
 | Holiday/no-session runs produce explicit skipped/no-session state | verified | Weekend no-session unit test; `POSTGRES_PORT=55433 .venv/bin/python scripts/ikg.py 生成每日市场简报 CN 2026-06-27 fixture` | Weekend command saved `review_reports #133` with explicit no-session copy. Full holiday calendars remain a future provider enhancement. |
-| Independent acceptance testing before user acceptance | verified | `AT-2026-06-30-002` passed for command surface; `AT-2026-07-01-001` passed for the Web surface | User acceptance remains pending and must happen through the Web page, not CLI commands. |
+| Independent acceptance testing before user acceptance | verified | `AT-2026-06-30-002`, `AT-2026-07-01-002`, and `AT-2026-07-10-001` passed | User acceptance remains pending and must happen through the deployed Web page, not CLI commands. |
 
 ## Risks And Blockers
 
 - AKShare/Eastmoney data can be source-limited or temporarily unavailable. Live generation must degrade in product language and keep indexes/other available sections rather than exposing raw provider exceptions.
 - Full exchange holiday detection is unavailable locally. Weekend no-session is implemented; exchange-holiday calendars are a future provider/data-source task.
-- Cloud deployment is coordinator-owned. Because `requirements.txt` adds AKShare, the initial integrated release requires the classified full-image path; subsequent code-only changes should use the normal quick path.
-- The scheduler is also included in the independent Ops API service catalog, recent-error collection, and deploy health. Because `scripts/ecs_ops_api.py` and `scripts/deploy_contract.py` changed, `/opt/investment-ops` must be bootstrapped before the first business full-image deployment so the server-side classifier recognizes the new target.
+- The initial AKShare dependency release required and completed a full-image deployment. Subsequent code-only releases should use the normal quick path unless the deploy classifier requires a rebuild.
+- The scheduler is included in the independent Ops API service catalog, recent-error collection, and deploy health. The control plane was bootstrapped before the final quick deployment, and source resolution now fetches `origin/main` before reachability validation.
