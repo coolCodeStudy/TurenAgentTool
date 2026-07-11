@@ -28,11 +28,10 @@ closure under `/opt/investment-ops`, restarts only
 
 ## Components
 
-- `scripts/open_ops_api_ssh_tunnel.sh` validates ECS credentials, opens the
-  tunnel with password supplied through `SSHPASS`, retries transient SSH
-  failures, verifies `/health`, and exports `OPS_API_URL` through
-  `GITHUB_ENV`.
-- `.github/workflows/deploy.yml` opens the tunnel only for plans that require
+- `.github/workflows/deploy.yml` validates ECS credentials, opens the tunnel
+  with password supplied through `SSHPASS`, retries transient SSH failures,
+  verifies `/health`, and exports `OPS_API_URL` through `GITHUB_ENV`. It opens
+  the tunnel only for plans that require
   server state and for deployment jobs that delegate to Ops API. Explicit
   manual `no_deploy` remains credential-free.
 - `.github/workflows/ops-api.yml` bootstraps the control plane from the exact

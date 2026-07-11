@@ -21,7 +21,6 @@
 ### Task 1: Private tunnel contract
 
 **Files:**
-- Create: `scripts/open_ops_api_ssh_tunnel.sh`
 - Modify: `.github/workflows/deploy.yml`
 - Test: `tests/test_deploy_workflow_contract.py`
 
@@ -31,7 +30,7 @@
 
 - [x] **Step 1: Add failing workflow contract tests**
 
-Assert that the workflow invokes `scripts/open_ops_api_ssh_tunnel.sh` before
+Assert that the workflow opens a pinned, time-bounded SSH tunnel before
 server-authoritative planning and in both deployment jobs, and that it does not
 read `vars.OPS_API_URL`.
 

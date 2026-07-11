@@ -81,9 +81,7 @@ PATH_RULES = (
     PathRule("scripts/audit_delivery_state.py", DeployMode.NO_DEPLOY, (), "local audit"),
     PathRule("scripts/audit_prd_status.py", DeployMode.NO_DEPLOY, (), "local audit"),
     PathRule("scripts/classify_deploy_change.py", DeployMode.NO_DEPLOY, (), "local deploy classifier"),
-    PathRule("scripts/deploy_contract.py", DeployMode.NO_DEPLOY, (), "deployment contract"),
     PathRule("scripts/evaluate_agent_flow_cases.py", DeployMode.NO_DEPLOY, (), "local evaluation"),
-    PathRule("scripts/open_ops_api_ssh_tunnel.sh", DeployMode.NO_DEPLOY, (), "GitHub runner transport"),
     PathRule(
         "scripts/deploy_from_local_checkout.sh",
         DeployMode.TARGETED_QUICK,

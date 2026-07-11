@@ -54,15 +54,6 @@ class DeployContractTests(TestCase):
                 plan = classify_paths((path,), compose_image_changed=False)
                 self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
 
-    def test_runner_only_ops_tunnel_is_no_deploy(self) -> None:
-        plan = classify_paths(
-            ("scripts/deploy_contract.py", "scripts/open_ops_api_ssh_tunnel.sh"),
-            compose_image_changed=False,
-        )
-
-        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
-        self.assertEqual((), plan.targets)
-
     def test_unknown_markdown_and_workflow_paths_are_rejected(self) -> None:
         for path in ("new_area/notes.md", "UNKNOWN.md", ".github/workflows/new-release.yml"):
             with self.subTest(path=path):
@@ -76,7 +67,6 @@ class DeployContractTests(TestCase):
                 "docs/project-management/Agent-Operating-Model-Roadmap.md",
                 "scripts/evaluate_agent_flow_cases.py",
                 ".github/workflows/deploy.yml",
-                "scripts/open_ops_api_ssh_tunnel.sh",
             )
         )
 

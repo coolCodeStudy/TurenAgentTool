@@ -133,7 +133,61 @@ jobs:
           ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
           ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
           ECS_PORT: ${{ secrets.ECS_PORT || '22' }}
-        run: bash scripts/open_ops_api_ssh_tunnel.sh
+        run: |
+          set -euo pipefail
+
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD ECS_SSH_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required tunnel setting: $name"
+              exit 1
+            fi
+          done
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$ECS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          export SSHPASS="$ECS_PASSWORD"
+          tunnel_open=false
+          for attempt in 1 2 3; do
+            if sshpass -e ssh \
+              -p "$ECS_PORT" \
+              -o ConnectTimeout=10 \
+              -o ExitOnForwardFailure=yes \
+              -o LogLevel=ERROR \
+              -o ServerAliveCountMax=3 \
+              -o ServerAliveInterval=15 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -fNT \
+              -L "127.0.0.1:18767:172.17.0.1:8767" \
+              "${ECS_USERNAME}@${ECS_HOST}"; then
+              tunnel_open=true
+              break
+            fi
+            [ "$attempt" -ge 3 ] || sleep 3
+          done
+          unset SSHPASS
+
+          if [ "$tunnel_open" != "true" ]; then
+            echo "::error::Unable to establish the private Ops API SSH tunnel after 3 attempts."
+            exit 1
+          fi
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --connect-timeout 3 --max-time 5 --fail --silent --show-error \
+              http://127.0.0.1:18767/health >/dev/null; then
+              echo "OPS_API_URL=http://127.0.0.1:18767" >> "$GITHUB_ENV"
+              echo "Private Ops API tunnel is healthy."
+              break
+            fi
+            if [ "$attempt" -ge 10 ]; then
+              echo "::error::The SSH tunnel opened, but Ops API health failed."
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Build server-authoritative deployment plan
         id: plan
@@ -267,7 +321,61 @@ jobs:
           ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
           ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
           ECS_PORT: ${{ secrets.ECS_PORT || '22' }}
-        run: bash scripts/open_ops_api_ssh_tunnel.sh
+        run: |
+          set -euo pipefail
+
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD ECS_SSH_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required tunnel setting: $name"
+              exit 1
+            fi
+          done
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$ECS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          export SSHPASS="$ECS_PASSWORD"
+          tunnel_open=false
+          for attempt in 1 2 3; do
+            if sshpass -e ssh \
+              -p "$ECS_PORT" \
+              -o ConnectTimeout=10 \
+              -o ExitOnForwardFailure=yes \
+              -o LogLevel=ERROR \
+              -o ServerAliveCountMax=3 \
+              -o ServerAliveInterval=15 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -fNT \
+              -L "127.0.0.1:18767:172.17.0.1:8767" \
+              "${ECS_USERNAME}@${ECS_HOST}"; then
+              tunnel_open=true
+              break
+            fi
+            [ "$attempt" -ge 3 ] || sleep 3
+          done
+          unset SSHPASS
+
+          if [ "$tunnel_open" != "true" ]; then
+            echo "::error::Unable to establish the private Ops API SSH tunnel after 3 attempts."
+            exit 1
+          fi
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --connect-timeout 3 --max-time 5 --fail --silent --show-error \
+              http://127.0.0.1:18767/health >/dev/null; then
+              echo "OPS_API_URL=http://127.0.0.1:18767" >> "$GITHUB_ENV"
+              echo "Private Ops API tunnel is healthy."
+              break
+            fi
+            if [ "$attempt" -ge 10 ]; then
+              echo "::error::The SSH tunnel opened, but Ops API health failed."
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Delegate deployment to Ops API
         env:
@@ -410,7 +518,61 @@ jobs:
           ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
           ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
           ECS_PORT: ${{ secrets.ECS_PORT || '22' }}
-        run: bash scripts/open_ops_api_ssh_tunnel.sh
+        run: |
+          set -euo pipefail
+
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD ECS_SSH_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required tunnel setting: $name"
+              exit 1
+            fi
+          done
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$ECS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          export SSHPASS="$ECS_PASSWORD"
+          tunnel_open=false
+          for attempt in 1 2 3; do
+            if sshpass -e ssh \
+              -p "$ECS_PORT" \
+              -o ConnectTimeout=10 \
+              -o ExitOnForwardFailure=yes \
+              -o LogLevel=ERROR \
+              -o ServerAliveCountMax=3 \
+              -o ServerAliveInterval=15 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -fNT \
+              -L "127.0.0.1:18767:172.17.0.1:8767" \
+              "${ECS_USERNAME}@${ECS_HOST}"; then
+              tunnel_open=true
+              break
+            fi
+            [ "$attempt" -ge 3 ] || sleep 3
+          done
+          unset SSHPASS
+
+          if [ "$tunnel_open" != "true" ]; then
+            echo "::error::Unable to establish the private Ops API SSH tunnel after 3 attempts."
+            exit 1
+          fi
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --connect-timeout 3 --max-time 5 --fail --silent --show-error \
+              http://127.0.0.1:18767/health >/dev/null; then
+              echo "OPS_API_URL=http://127.0.0.1:18767" >> "$GITHUB_ENV"
+              echo "Private Ops API tunnel is healthy."
+              break
+            fi
+            if [ "$attempt" -ge 10 ]; then
+              echo "::error::The SSH tunnel opened, but Ops API health failed."
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Delegate full image deployment to Ops API
         env:
