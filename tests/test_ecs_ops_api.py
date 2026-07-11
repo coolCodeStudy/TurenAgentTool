@@ -28,6 +28,12 @@ PREVIOUS_SHA = "a" * 40
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_daily_market_brief_scheduler_is_in_ops_health_and_diagnostics(self) -> None:
+        source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
+
+        self.assertEqual("daily-market-brief-scheduler", ops.COMPOSE_SERVICES["daily-market-brief-scheduler"])
+        self.assertGreaterEqual(source.count('"daily-market-brief-scheduler"'), 3)
+
     def test_installed_ops_home_contains_runtime_import_closure(self) -> None:
         installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
         match = re.search(r"OPS_API_MODULES=\((?P<body>.*?)\)", installer, re.DOTALL)

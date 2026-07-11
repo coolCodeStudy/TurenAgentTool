@@ -74,6 +74,7 @@ DEPLOY_MUTEX = threading.Lock()
 COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
+    "daily-market-brief-scheduler": "daily-market-brief-scheduler",
     "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
     "account-snapshot-scheduler": "account-snapshot-scheduler",
@@ -283,6 +284,7 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
         "mcp",
         "dingtalk-stream-bot",
         "account-snapshot-scheduler",
+        "daily-market-brief-scheduler",
         "ipo-reminder-scheduler",
         "command-api",
         "postgres",
@@ -655,7 +657,13 @@ def build_deploy_health() -> dict[str, Any]:
         _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
         _check_socket("weekly-review-web", "127.0.0.1", int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010"))),
     ]
-    for service in ("weekly-review-web", "dingtalk-stream-bot", "account-snapshot-scheduler", "ipo-reminder-scheduler"):
+    for service in (
+        "weekly-review-web",
+        "dingtalk-stream-bot",
+        "account-snapshot-scheduler",
+        "daily-market-brief-scheduler",
+        "ipo-reminder-scheduler",
+    ):
         checks.append(_check_compose_service_running(service))
     return {
         "ok": all(bool(check.get("ok")) for check in checks),

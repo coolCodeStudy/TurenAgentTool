@@ -41,13 +41,16 @@ Use `docs/lesson-capture-protocol.md` to decide whether a lesson belongs here or
 - A Delivery Coordinator dispatch is not closed when a child role/session pushes a branch or posts a final message. The coordinator must apply the Return Gate: inspect the returned result, integrate or reject it, update `Delivery-Queue.md`, and dispatch the next owner or record the blocker.
 - Passive waiting breaks multi-session delivery. After dispatching a child role/thread, the feature coordinator must establish its own active watch path such as a feature-scoped heartbeat/monitor, explicit child-thread polling, or a recorded `Monitoring not active` blocker with the exact resume action.
 - The Global Project Manager should not become the default watcher for every feature's child threads. Use the Global PM for portfolio health, escalation, stale-coordinator recovery, cross-feature conflict resolution, and user decisions; normal child-thread Return Gate ownership stays with the feature coordinator.
+- In feature-level coordinator delegations, `Return to Global Project Manager` is a milestone or escalation report after dispatching the next role, recording a blocker, or needing escalation; it is not a stopping point before applying the Coordinator Return Gate and continuing Product -> Engineering -> Acceptance flow.
 - Production deploy/restart is a shared global resource, even when individual developers or feature coordinators are allowed to request it. Always use the shared deploy workflow or Ops API deploy path, record Deploy Intent, and avoid ad hoc parallel deploy channels that can restart the same cloud services concurrently.
 
 ## Secrets And HTTP Entrypoints
 
 - `COMMAND_API_TOKEN` is required only when running the HTTP command API.
+- A deliberately tokenless generation endpoint must still bound work at every layer: restrict the semantic scope, use per-key single-flight/rate protection, keep schema migration out of requests, and enforce database uniqueness for concurrent callers.
 - Use strong tokens for command-api. Do not write temporary tokens, secrets, or credentials into docs, commits, logs, or summaries.
 - If HTTP auth or gateway integration is not part of the task, prefer CLI/MCP verification over command-api verification.
+- CLI verification can prove backend command behavior, but it is not a humane user-acceptance surface for a product feature. When the user is expected to accept a report/workbench feature, provide or route a Web/cloud page for acceptance instead of asking the user to run `scripts/ikg.py` commands.
 
 ## Git Trust Boundary
 

@@ -25,11 +25,16 @@ class MarketBarSnapshot:
 
 YAHOO_SYMBOLS: dict[str, list[str]] = {
     "US.SPX": ["^GSPC"],
+    "US.IXIC": ["^IXIC"],
+    "US.DJI": ["^DJI"],
+    "US.RUT": ["^RUT"],
     "US.NDX": ["^NDX"],
     "US.SOX": ["^SOX"],
     "HK.HSI": ["^HSI"],
     "HK.HSTECH": ["^HSTECH", "3032.HK"],
     "HK.HSCEI": ["^HSCE", "^HSCEI"],
+    "SH.000001": ["000001.SS"],
+    "SZ.399001": ["399001.SZ"],
     "SH.000300": ["000300.SS"],
     "SZ.399006": ["399006.SZ"],
     "SH.000688": ["000688.SS"],

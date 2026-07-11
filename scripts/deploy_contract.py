@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/classify_deploy_
 APPLICATION_SERVICES = (
     "account-snapshot-scheduler",
     "command-api",
+    "daily-market-brief-scheduler",
     "dingtalk-api",
     "dingtalk-stream-bot",
     "ipo-reminder-scheduler",
@@ -126,7 +127,7 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/daily_market_brief.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        ("command-api", "daily-market-brief-scheduler", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
         "shared command logic",
     ),
     PathRule(
