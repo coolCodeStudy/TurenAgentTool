@@ -236,6 +236,9 @@ class DeployContractTests(TestCase):
         self.assertEqual(APPLICATION_SERVICES, plan.targets)
         self.assertEqual(("docker-compose.prod.yml",), plan.changed_files)
         self.assertEqual((), plan.image_input_files)
+        compose_commands = [command for command in runner.commands if command[:3] == ("docker", "compose", "-f")]
+        self.assertTrue(compose_commands)
+        self.assertTrue(all("--no-interpolate" in command for command in compose_commands))
 
     def test_real_diff_uses_full_image_for_compose_build_change(self) -> None:
         runner = FakeRunner(

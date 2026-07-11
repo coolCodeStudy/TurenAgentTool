@@ -260,7 +260,9 @@ def _git_show(repo: Path, sha: str, runner: CommandRunner) -> str:
 
 
 def _compose_config(path: Path, runner: CommandRunner) -> dict[str, object]:
-    result = runner.run(("docker", "compose", "-f", str(path), "config", "--format", "json"))
+    result = runner.run(
+        ("docker", "compose", "-f", str(path), "config", "--no-interpolate", "--format", "json")
+    )
     if result.returncode != 0:
         raise RuntimeError(f"docker compose config failed: {result.stderr.strip()}")
     try:
