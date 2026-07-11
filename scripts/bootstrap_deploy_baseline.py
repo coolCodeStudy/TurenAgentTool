@@ -17,6 +17,7 @@ try:
         SystemClock,
         _compose_service_from_row,
         _compose_environment,
+        _json_rows,
     )
     from scripts.deploy_state import DeploymentState, load_state, resolve_production_target, write_state
     from scripts.deploy_support import CommandRunner, SubprocessRunner
@@ -30,6 +31,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/bootstrap_deploy
         SystemClock,
         _compose_service_from_row,
         _compose_environment,
+        _json_rows,
     )
     from deploy_state import DeploymentState, load_state, resolve_production_target, write_state
     from deploy_support import CommandRunner, SubprocessRunner
@@ -42,6 +44,7 @@ class BaselineClock(Protocol):
 ReleaseStager = Callable[[str], Path]
 RuntimeValidator = Callable[[CommandRunner, Path], tuple[str, ...]]
 LockFactory = Callable[[Path], ContextManager[None]]
+RunningServicesProvider = Callable[[], frozenset[str]]
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 _APPLICATION_SERVICES = frozenset(APPLICATION_SERVICES)
 
@@ -176,6 +179,55 @@ def _initialize_locked(
                 "baseline initialization failed and rollback was incomplete"
             ) from error
         raise
+
+
+def recover_lockout(
+    *,
+    repo: Path,
+    app_root: Path,
+    runner: CommandRunner,
+    compose_project_name: str,
+    runtime_validator: RuntimeValidator = validate_runtime,
+    lock_factory: LockFactory = deployment_lock,
+    running_services_provider: RunningServicesProvider | None = None,
+) -> tuple[str, ...]:
+    shared_dir = app_root / "shared"
+    lockout_path = shared_dir / "deploy.lockout"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    with lock_factory(shared_dir / "deploy.lock"):
+        expected_services = _lockout_services(lockout_path)
+        state = load_state(shared_dir / "deploy-state.json")
+        engine = DeploymentEngine(
+            repo=repo,
+            app_root=app_root,
+            runner=runner,
+            health=_UnusedHealth(),
+            clock=SystemClock(),
+            compose_project_name=compose_project_name,
+        )
+        _validate_existing_baseline(app_root, state)
+        selectors = SelectorSnapshot(
+            current_release=engine._resolved_link(engine.current_link),
+            previous_release=engine._resolved_link(engine.previous_link),
+            env_contents=engine.env_file.read_bytes() if engine.env_file.exists() else None,
+        )
+        engine._verify_release_baseline(state, selectors)
+        with _compose_environment(compose_project_name):
+            runtime_validator(runner, engine.current_link / "docker-compose.prod.yml")
+            running_services = (
+                running_services_provider()
+                if running_services_provider is not None
+                else _running_compose_services(runner, engine.current_link)
+            )
+        engine._verify_baseline_image_identity(state, selectors)
+        missing = sorted(set(expected_services) - set(running_services))
+        if missing:
+            raise DeploymentError(
+                "deployment lockout recovery is blocked by missing services: "
+                + ", ".join(missing)
+            )
+        lockout_path.unlink()
+        return tuple(sorted(expected_services))
 
 
 def _deployed_sha(app_root: Path, runner: CommandRunner) -> str:
@@ -332,6 +384,50 @@ def _write_lockout(
     )
 
 
+def _lockout_services(lockout_path: Path) -> frozenset[str]:
+    try:
+        payload = json.loads(lockout_path.read_text(encoding="ascii"))
+        rows = json.loads(payload["container_status"])
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise DeploymentError("deployment lockout recovery evidence is unavailable") from error
+    if not isinstance(rows, list):
+        raise DeploymentError("deployment lockout recovery evidence is invalid")
+    services = {
+        str(row.get("Service") or "")
+        for row in rows
+        if isinstance(row, dict) and str(row.get("State") or "") == "running"
+    }
+    services.discard("")
+    if "postgres" not in services or not (services & _APPLICATION_SERVICES):
+        raise DeploymentError("deployment lockout recovery evidence is incomplete")
+    return frozenset(services)
+
+
+def _running_compose_services(
+    runner: CommandRunner, current_link: Path
+) -> frozenset[str]:
+    result = runner.run(
+        (
+            "docker",
+            "compose",
+            "-f",
+            str(current_link / "docker-compose.prod.yml"),
+            "ps",
+            "--status",
+            "running",
+            "--format",
+            "json",
+        )
+    )
+    if result.returncode != 0:
+        raise DeploymentError("running service recovery state could not be read")
+    return frozenset(
+        str(row.get("Service") or "")
+        for row in _json_rows(result.stdout)
+        if str(row.get("Service") or "")
+    )
+
+
 def _run_checked(
     runner: CommandRunner, command: tuple[str, ...], message: str
 ) -> None:
@@ -345,7 +441,17 @@ def main() -> int:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--app-root", type=Path, required=True)
     parser.add_argument("--compose-project-name", default="turenagenttool_prod")
+    parser.add_argument("--recover-lockout", action="store_true")
     args = parser.parse_args()
+    if args.recover_lockout:
+        services = recover_lockout(
+            repo=args.repo,
+            app_root=args.app_root,
+            runner=SubprocessRunner(),
+            compose_project_name=args.compose_project_name,
+        )
+        print(json.dumps({"ok": True, "recovered_services": list(services)}))
+        return 0
     state = initialize_baseline(
         repo=args.repo,
         app_root=args.app_root,
