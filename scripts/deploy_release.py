@@ -554,10 +554,10 @@ class DeploymentEngine:
             context.touched_services.append(target)
             self._activate_target(target, release)
             self.health.check_service(target, request.feature_routes)
-            self.health.check_aggregate(request.feature_routes)
             context.target_durations_ms[target] = round(
                 (self.clock.monotonic() - started) * 1000
             )
+        self.health.check_aggregate(request.feature_routes)
 
         stability_seconds = 60 if context.plan.mode is DeployMode.FULL_IMAGE else 30
         self.clock.sleep(stability_seconds)
