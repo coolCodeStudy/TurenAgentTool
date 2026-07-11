@@ -1816,7 +1816,9 @@ class DockerHealthCheckerTests(TestCase):
         self.current = Path(self.tempdir.name) / "current"
         self.current.mkdir()
         self.runner = HealthRunner()
-        self.health = DockerHealthChecker(self.runner, self.current)
+        self.health = DockerHealthChecker(
+            self.runner, self.current, sleeper=lambda seconds: None
+        )
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
@@ -1886,6 +1888,32 @@ class DockerHealthCheckerTests(TestCase):
                 for command in rendered
             )
         )
+
+    def test_http_health_retries_a_transient_startup_failure(self) -> None:
+        class FlakyHttpRunner(HealthRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.health_attempts = 0
+
+            def run(
+                self, command: tuple[str, ...], timeout: int | None = None
+            ) -> CommandResult:
+                if "http://127.0.0.1:8001/health" in command:
+                    self.commands.append(command)
+                    self.health_attempts += 1
+                    if self.health_attempts == 1:
+                        return CommandResult(7, "000", "connection refused")
+                    return CommandResult(0, "200", "")
+                return super().run(command, timeout)
+
+        runner = FlakyHttpRunner()
+        sleeps: list[float] = []
+        health = DockerHealthChecker(runner, self.current, sleeper=sleeps.append)
+
+        health.check_service("command-api", ())
+
+        self.assertEqual(2, runner.health_attempts)
+        self.assertEqual([1.0], sleeps)
 
     def test_scheduler_health_rejects_startup_traceback(self) -> None:
         logs = (

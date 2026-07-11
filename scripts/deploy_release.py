@@ -129,10 +129,12 @@ class DockerHealthChecker:
         runner: CommandRunner,
         current_release: Path,
         compose_project_name: str = "turenagenttool_prod",
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.runner = runner
         self.current_release = current_release
         self.compose_project_name = compose_project_name
+        self.sleeper = sleeper
 
     def check_service(self, service: str, feature_routes: tuple[str, ...]) -> None:
         if service.endswith(".service"):
@@ -235,13 +237,17 @@ class DockerHealthChecker:
         if method:
             command.extend(("--request", method))
         command.append(url)
-        result = self._run(tuple(command))
-        try:
-            status = int(result.stdout.strip())
-        except ValueError as error:
-            raise DeploymentHealthError(message) from error
-        if result.returncode != 0 or status not in accepted:
-            raise DeploymentHealthError(message)
+        for attempt in range(20):
+            result = self._run(tuple(command))
+            try:
+                status = int(result.stdout.strip())
+            except ValueError:
+                status = 0
+            if result.returncode == 0 and status in accepted:
+                return
+            if attempt < 19:
+                self.sleeper(1.0)
+        raise DeploymentHealthError(message)
 
     def _checked(self, command: tuple[str, ...], message: str) -> None:
         if self._run(command).returncode != 0:
