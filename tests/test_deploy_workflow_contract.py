@@ -13,6 +13,9 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("investment-knowledge-app:${{ github.sha }}", self.workflow)
         self.assertIn("cache-from: type=gha", self.workflow)
         self.assertIn("cache-to: type=gha,mode=max", self.workflow)
+        setup = self.workflow.index("docker/setup-buildx-action@v3")
+        build = self.workflow.index("docker/build-push-action@v6")
+        self.assertLess(setup, build)
 
     def test_does_not_bundle_pgvector_or_use_broad_prune(self) -> None:
         self.assertNotIn("docker save pgvector", self.workflow)
