@@ -406,21 +406,15 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     def _handle_daily_market_brief_generate(self, payload: dict[str, Any]) -> None:
         lease: _DailyBriefGenerationLease | None = None
         historical_lease: _DailyBriefGenerationLease | None = None
+        request_now = datetime.now(SHANGHAI_TZ)
         try:
             market = _resolve_daily_market(payload)
             market_date = _resolve_optional_date(payload)
             use_fixture = _truthy(_first_query_value(payload, "fixture"))
             if use_fixture:
                 raise ValueError("公开页面不支持 fixture 生成。")
-            market_date = _validate_public_daily_market_brief_date(market, market_date)
-            lease = _DAILY_BRIEF_GENERATION_GATE.try_acquire((market, market_date.isoformat()))
-            if lease is None:
-                self._write_json(
-                    HTTPStatus.TOO_MANY_REQUESTS,
-                    {"ok": False, "error": "该市场简报正在生成或刚刚生成，请稍后再试。"},
-                )
-                return
-            latest_completed = resolve_latest_completed_session_date(market)
+            market_date = _validate_public_daily_market_brief_date(market, market_date, now=request_now)
+            latest_completed = resolve_latest_completed_session_date(market, now=request_now)
             if market_date < latest_completed:
                 historical_lease = _HISTORICAL_DAILY_BRIEF_GENERATION_GATE.try_acquire(("historical", "global"))
                 if historical_lease is None:
@@ -429,7 +423,20 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                         {"ok": False, "error": "正在重建历史简报，请稍后再试。"},
                     )
                     return
-            result = build_daily_market_brief(market=market, market_date=market_date, save=True, use_fixture=False)
+            lease = _DAILY_BRIEF_GENERATION_GATE.try_acquire((market, market_date.isoformat()))
+            if lease is None:
+                self._write_json(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    {"ok": False, "error": "该市场简报正在生成或刚刚生成，请稍后再试。"},
+                )
+                return
+            result = build_daily_market_brief(
+                market=market,
+                market_date=market_date,
+                save=True,
+                now=request_now,
+                use_fixture=False,
+            )
         except ValueError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
@@ -1540,7 +1547,7 @@ def render_daily_market_brief_html() -> str:
     async function loadBrief(action) {{
       setBusy(true);
       const date = $("#market-date").value;
-      message.textContent = action === "read" ? "正在读取简报..." : (date ? "正在重建历史简报..." : "正在生成并保存简报...");
+      message.textContent = action === "read" ? "正在读取简报..." : "正在生成并保存简报...";
       try {{
         let response;
         if (action === "read") {{
@@ -1576,6 +1583,10 @@ def render_daily_market_brief_html() -> str:
 
     function renderAll(data) {{
       const context = state.context;
+      if (data.status === "missing") {{
+        renderEmpty("尚未生成");
+        return;
+      }}
       if (!context) {{
         renderEmpty();
         return;
@@ -1586,7 +1597,7 @@ def render_daily_market_brief_html() -> str:
         ["市场日期", context.market_date || "-"],
         ["生成时间", context.generated_at?.asia_singapore || "-"],
         ["模式", context.provider_mode === "fixture" ? "fixture 验收样例" : "live / degraded"],
-        ["生成类型", context.generation_kind === "historical_reconstruction" ? "历史重建" : "收盘生成"]
+        ["生成类型", context.generation_kind === "historical_reconstruction" ? "历史重建" : (context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成")]
       ].map(([label, value]) => `<div class="summary-card"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(value)}}</span></div>`).join("");
       $("#narrative").textContent = context.narrative || "暂无摘要。";
       $("#indexes").innerHTML = indexTable(context.indexes || []);
@@ -1597,8 +1608,10 @@ def render_daily_market_brief_html() -> str:
       $("#markdown").value = state.markdown;
     }}
 
-    function renderEmpty() {{
-      $("#summary").innerHTML = "";
+    function renderEmpty(stateLabel = "") {{
+      $("#summary").innerHTML = stateLabel
+        ? `<div class="summary-card"><strong>状态</strong><span>${{escapeHtml(stateLabel)}}</span></div>`
+        : "";
       $("#narrative").textContent = "暂无简报。";
       $("#indexes").innerHTML = `<div class="empty">暂无核心指数数据。</div>`;
       $("#sectors").innerHTML = `<div class="empty">暂无行业/板块数据。</div>`;
@@ -1743,10 +1756,8 @@ def _validate_public_daily_market_brief_date(
     resolved_date = market_date or resolve_latest_completed_session_date(market, now=current)
     if resolved_date > current_date:
         raise ValueError("不能生成未来日期的市场简报。")
-    if resolved_date < current_date - timedelta(days=31):
-        raise ValueError("公开页面仅支持生成最近 31 天的市场简报。")
     latest_completed = resolve_latest_completed_session_date(market, now=current)
-    if resolved_date > latest_completed:
+    if resolved_date > latest_completed and resolved_date.weekday() < 5:
         raise ValueError(f"不能生成未来日期的市场简报；最近已收盘交易日为 {latest_completed.isoformat()}。")
     return resolved_date
 
@@ -1793,6 +1804,7 @@ def _empty_daily_market_brief_context(market: str, market_date: date | None) -> 
         "warnings": [],
         "narrative": "",
         "provider_mode": "missing",
+        "generation_kind": "missing",
     }
 
 

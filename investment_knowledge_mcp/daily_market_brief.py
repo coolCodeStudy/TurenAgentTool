@@ -200,6 +200,7 @@ def build_daily_market_brief_context(
             source_status=source_status,
             warnings=warnings,
             market_bar_loader=index_loader,
+            require_exact_date=generation_kind == "historical_reconstruction",
         )
         has_requested_session = any(row.get("date") == resolved_date.isoformat() for row in indexes)
         if indexes and not has_requested_session:
@@ -425,6 +426,7 @@ def _load_index_rows(
     source_status: dict[str, Any],
     warnings: list[str],
     market_bar_loader: MarketBarLoader,
+    require_exact_date: bool = False,
 ) -> list[dict[str, Any]]:
     codes = [item["code"] for item in config.index_configs]
     start = (market_date - timedelta(days=45)).isoformat()
@@ -456,7 +458,7 @@ def _load_index_rows(
     for index_config in config.index_configs:
         bars = sorted(snapshot.bars_by_code.get(index_config["code"], []), key=lambda item: str(item.get("date") or ""))
         row = _index_row(index_config=index_config, bars=bars, market_date=market_date, metric_label=config.index_metric_label)
-        if row is not None:
+        if row is not None and (not require_exact_date or row.get("date") == market_date.isoformat()):
             rows.append(row)
     source_status["indexes"] = {
         "status": "ok" if len(rows) == len(config.index_configs) else ("partial" if rows else "missing"),
@@ -536,7 +538,9 @@ def _build_narrative(
     gap_keys = [
         key
         for key, status in source_status.items()
-        if isinstance(status, dict) and status.get("status") in {"provider_unavailable", "not_available", "missing", "partial"}
+        if isinstance(status, dict)
+        and status.get("status")
+        in {"provider_unavailable", "not_available", "missing", "partial", "historical_not_supported", "timed_out"}
     ]
     gap_text = f"需要注意的数据缺口：{', '.join(gap_keys)}。" if gap_keys else "主要数据源状态正常。"
     return " ".join([move_text, leadership, gainer_text, liquidity_text, flow_text, gap_text])
@@ -621,9 +625,9 @@ def _validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> No
 
     expected_session_date = str(context.get("market_date") or "")
     source_status = context.get("source_status") or {}
-    gainers_status = source_status.get("gainers") if isinstance(source_status, dict) else {}
-    if isinstance(gainers_status, dict) and gainers_status.get("status") in {"timed_out", "provider_unavailable"}:
-        raise ValueError("历史市场活动数据暂不可用，未保存空白历史简报。")
+    indexes = context.get("indexes") or []
+    if any(str(row.get("date") or "") != expected_session_date for row in indexes if isinstance(row, dict)):
+        raise ValueError("历史指数日期未通过校验，未保存简报。")
 
     for section in ("sectors", "gainers", "capital_flow"):
         rows = context.get(section) or []
@@ -634,6 +638,14 @@ def _validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> No
             raise ValueError("历史数据日期未通过校验，未保存简报。")
         if any(str(row.get("session_date") or "") != expected_session_date for row in rows if isinstance(row, dict)):
             raise ValueError("历史数据日期未通过校验，未保存简报。")
+
+    gainers_status = source_status.get("gainers") if isinstance(source_status, dict) else {}
+    if not isinstance(gainers_status, dict):
+        return
+    status = gainers_status.get("status")
+    useful_activity = any(context.get(section) for section in ("sectors", "gainers", "capital_flow"))
+    if status == "provider_unavailable" or (status == "timed_out" and not useful_activity):
+        raise ValueError("历史市场活动数据暂不可用，未保存空白历史简报。")
 
 
 def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]:
