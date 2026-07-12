@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FutureTimeoutError, wait
 from dataclasses import dataclass
 from datetime import date, timedelta
 import importlib
 import json
-from threading import BoundedSemaphore, Lock
+import math
+from queue import Full, Queue
+from threading import BoundedSemaphore, Lock, Thread
 from time import monotonic, sleep
 from typing import Any, Callable
 
@@ -14,7 +16,55 @@ AKSHARE_PROVIDER = "akshare_eastmoney"
 MAX_WORKERS = 4
 MAX_EASTMONEY_HOST_REQUESTS = 2
 MAX_ATTEMPTS = 2
+MAX_PENDING_TASKS = 16
+HISTORY_LOOKBACK_DAYS = 35
 TURNOVER_THRESHOLDS = {"CN": 50_000_000, "HK": 20_000_000, "US": 10_000_000}
+
+
+class _DeadlineExpired(Exception):
+    pass
+
+
+class _DaemonWorkerPool:
+    def __init__(self, *, worker_count: int, queue_size: int) -> None:
+        self._queue: Queue[tuple[Future[Any], Callable[[], Any], float]] = Queue(maxsize=queue_size)
+        self._threads = [
+            Thread(target=self._run, name=f"daily-market-history-{index + 1}", daemon=True)
+            for index in range(worker_count)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def submit(self, operation: Callable[[], Any], *, deadline: float) -> Future[Any] | None:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return None
+        future: Future[Any] = Future()
+        try:
+            self._queue.put((future, operation, deadline), timeout=remaining)
+        except Full:
+            return None
+        return future
+
+    def _run(self) -> None:
+        while True:
+            future, operation, deadline = self._queue.get()
+            try:
+                if not future.set_running_or_notify_cancel():
+                    continue
+                if monotonic() >= deadline:
+                    future.set_exception(_DeadlineExpired())
+                    continue
+                try:
+                    future.set_result(operation())
+                except BaseException as exc:
+                    future.set_exception(exc)
+            finally:
+                self._queue.task_done()
+
+
+_WORKER_POOL = _DaemonWorkerPool(worker_count=MAX_WORKERS, queue_size=MAX_PENDING_TASKS)
+_EASTMONEY_HOST_GATE = BoundedSemaphore(MAX_EASTMONEY_HOST_REQUESTS)
 
 
 @dataclass(frozen=True)
@@ -36,6 +86,20 @@ class HistoricalActivityResult:
 HistoricalActivityProvider = Callable[[str, date], HistoricalActivityResult]
 
 
+class _QueryCoverage:
+    def __init__(self) -> None:
+        self._queried: set[str] = set()
+        self._lock = Lock()
+
+    def mark_queried(self, symbol: str) -> None:
+        with self._lock:
+            self._queried.add(symbol)
+
+    def queried_count(self) -> int:
+        with self._lock:
+            return len(self._queried)
+
+
 def load_historical_market_activity(
     market: str,
     market_date: date,
@@ -46,70 +110,121 @@ def load_historical_market_activity(
     timeout_seconds: float = 90.0,
 ) -> HistoricalActivityResult:
     market_code = _normalize_market(market)
-    deadline = monotonic() + max(0.1, timeout_seconds)
+    deadline = monotonic() + max(0.001, float(timeout_seconds))
     try:
-        ak = akshare_module or importlib.import_module("akshare")
-        universe = _build_universe(ak, market_code, max(1, min(universe_limit, 200)))
+        ak = akshare_module if akshare_module is not None else importlib.import_module("akshare")
     except Exception as exc:
-        return _unavailable_result(market_code, detail_code=type(exc).__name__)
+        return _unavailable_result(detail_code=type(exc).__name__)
 
-    gate = BoundedSemaphore(MAX_EASTMONEY_HOST_REQUESTS)
-    queried = 0
-    queried_lock = Lock()
-
-    def load_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
-        nonlocal queried
-        with queried_lock:
-            queried += 1
-        rows = _load_history_with_retry(
+    universe_future = _WORKER_POOL.submit(
+        lambda: _load_universe(
             ak=ak,
             market=market_code,
-            symbol=candidate["provider_symbol"],
-            market_date=market_date,
+            limit=max(1, min(int(universe_limit), 200)),
             deadline=deadline,
-            gate=gate,
-        )
-        rank = _rank_exact_date_history(rows, market_date)
-        if rank is None or rank.get("turnover") is None or rank["turnover"] < TURNOVER_THRESHOLDS[market_code]:
-            return None
-        return {
-            "code": candidate["code"],
-            "name": candidate["name"],
-            "change_pct": rank["change_pct"],
-            "turnover": rank["turnover"],
-            "session_date": rank["session_date"],
-            "provider": AKSHARE_PROVIDER,
-            "metric": f"exact_date_turnover_filtered_change_pct_min_{int(TURNOVER_THRESHOLDS[market_code])}",
-        }
-
-    rows: list[dict[str, Any]] = []
-    workers = max(1, min(int(max_workers), MAX_WORKERS))
-    executor = ThreadPoolExecutor(max_workers=workers)
-    futures = [executor.submit(load_candidate, candidate) for candidate in universe]
+        ),
+        deadline=deadline,
+    )
+    if universe_future is None:
+        return _unavailable_result(detail_code="deadline_exceeded", timed_out=True)
     try:
-        for future in as_completed(futures, timeout=max(0, deadline - monotonic())):
-            try:
-                row = future.result()
-            except Exception:
-                row = None
-            if row is not None:
-                rows.append(row)
-    except TimeoutError:
-        pass
-    finally:
-        for future in futures:
-            future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
+        universe = universe_future.result(timeout=_remaining(deadline))
+    except (FutureTimeoutError, _DeadlineExpired):
+        universe_future.cancel()
+        return _unavailable_result(detail_code="deadline_exceeded", timed_out=True)
+    except Exception as exc:
+        return _unavailable_result(detail_code=type(exc).__name__)
 
-    ranked = _ranked_top(sorted(rows, key=lambda row: row["change_pct"], reverse=True)[:5])
+    requested = len(universe)
+    coverage = _QueryCoverage()
+    rows: list[dict[str, Any]] = []
+    completed = 0
+    deadline_hit = False
+    workers = max(1, min(int(max_workers), MAX_WORKERS))
+    candidates = iter(universe)
+    pending: set[Future[Any]] = set()
+
+    def submit_next() -> bool:
+        nonlocal deadline_hit
+        try:
+            candidate = next(candidates)
+        except StopIteration:
+            return False
+        future = _WORKER_POOL.submit(
+            lambda candidate=candidate: _load_candidate(
+                ak=ak,
+                market=market_code,
+                market_date=market_date,
+                candidate=candidate,
+                coverage=coverage,
+                deadline=deadline,
+            ),
+            deadline=deadline,
+        )
+        if future is None:
+            deadline_hit = True
+            return False
+        pending.add(future)
+        return True
+
+    for _ in range(workers):
+        if not submit_next():
+            break
+
+    try:
+        while pending:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                deadline_hit = True
+                break
+            done, _ = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
+            if not done:
+                deadline_hit = True
+                break
+            for future in done:
+                pending.remove(future)
+                completed += 1
+                try:
+                    row, candidate_timed_out = future.result()
+                except _DeadlineExpired:
+                    deadline_hit = True
+                    row = None
+                    candidate_timed_out = True
+                except Exception:
+                    row = None
+                    candidate_timed_out = False
+                deadline_hit = deadline_hit or candidate_timed_out
+                if row is not None:
+                    rows.append(row)
+            while len(pending) < workers and submit_next():
+                pass
+    finally:
+        for future in pending:
+            future.cancel()
+
+    queried = coverage.queried_count()
     usable = len(rows)
+    incomplete = completed < requested
+    timed_out = deadline_hit or (incomplete and monotonic() >= deadline)
+    ranked = _ranked_top(sorted(rows, key=lambda row: row["change_pct"], reverse=True)[:5])
+    if timed_out:
+        status = "timed_out"
+    elif usable == queried == requested and usable:
+        status = "ok"
+    elif usable:
+        status = "partial"
+    else:
+        status = "missing"
     gainers_status: dict[str, Any] = {
-        "status": "ok" if usable == queried and usable else ("partial" if usable else "missing"),
+        "status": status,
         "provider": AKSHARE_PROVIDER,
         "count": len(ranked),
+        "requested": requested,
         "queried": queried,
         "usable": usable,
-        "universe_size": len(universe),
+        "incomplete": incomplete,
+        "timed_out": timed_out,
+        "universe_size": requested,
         "universe_basis": "current_liquid_top_200",
         "message": "Current liquid universe is used only to select candidates; historical rankings use exact-date daily bars and may have survivorship bias.",
     }
@@ -125,17 +240,18 @@ def load_historical_market_activity(
     )
 
 
-def _build_universe(ak: Any, market: str, limit: int) -> list[dict[str, str]]:
+def _load_universe(*, ak: Any, market: str, limit: int, deadline: float) -> list[dict[str, Any]]:
     loader_name = {
         "CN": "stock_zh_a_spot_em",
         "HK": "stock_hk_main_board_spot_em",
         "US": "stock_us_spot_em",
     }[market]
+    frame = _call_under_host_gate(getattr(ak, loader_name), deadline=deadline)
     candidates: list[dict[str, Any]] = []
-    for row in _frame_records(getattr(ak, loader_name)()):
+    for row in _frame_records(frame):
         provider_symbol = _text(_first_value(row, "代码", "symbol", "Symbol"))
         name = _text(_first_value(row, "名称", "股票简称", "name", "Name"))
-        if not provider_symbol or not name or _excluded_security(market, provider_symbol, name):
+        if not provider_symbol or not name or _excluded_security(market, provider_symbol, name, row):
             continue
         candidates.append(
             {
@@ -149,31 +265,102 @@ def _build_universe(ak: Any, market: str, limit: int) -> list[dict[str, str]]:
     return candidates[:limit]
 
 
+def _load_candidate(
+    *,
+    ak: Any,
+    market: str,
+    market_date: date,
+    candidate: dict[str, Any],
+    coverage: _QueryCoverage,
+    deadline: float,
+) -> tuple[dict[str, Any] | None, bool]:
+    rows, timed_out = _load_history_with_retry(
+        ak=ak,
+        market=market,
+        symbol=candidate["provider_symbol"],
+        market_date=market_date,
+        deadline=deadline,
+        on_first_request=lambda: coverage.mark_queried(candidate["provider_symbol"]),
+    )
+    rank = _rank_exact_date_history(rows, market_date)
+    if rank is None or rank.get("turnover") is None or rank["turnover"] < TURNOVER_THRESHOLDS[market]:
+        return None, timed_out
+    return (
+        {
+            "code": candidate["code"],
+            "name": candidate["name"],
+            "change_pct": rank["change_pct"],
+            "turnover": rank["turnover"],
+            "session_date": rank["session_date"],
+            "provider": AKSHARE_PROVIDER,
+            "metric": f"exact_date_turnover_filtered_change_pct_min_{int(TURNOVER_THRESHOLDS[market])}",
+        },
+        timed_out,
+    )
+
+
 def _load_history_with_retry(
-    *, ak: Any, market: str, symbol: str, market_date: date, deadline: float, gate: BoundedSemaphore
-) -> list[dict[str, Any]]:
-    start_date = (market_date - timedelta(days=7)).strftime("%Y%m%d")
+    *,
+    ak: Any,
+    market: str,
+    symbol: str,
+    market_date: date,
+    deadline: float,
+    on_first_request: Callable[[], None],
+) -> tuple[list[dict[str, Any]], bool]:
+    start_date = (market_date - timedelta(days=HISTORY_LOOKBACK_DAYS)).strftime("%Y%m%d")
     end_date = market_date.strftime("%Y%m%d")
     loader_name = {"CN": "stock_zh_a_hist", "HK": "stock_hk_hist", "US": "stock_us_hist"}[market]
     loader = getattr(ak, loader_name)
-    last_error: Exception | None = None
+    request_started = False
+
+    def load_once() -> Any:
+        nonlocal request_started
+        remaining = _remaining(deadline)
+        if not request_started:
+            on_first_request()
+            request_started = True
+        if market == "CN":
+            return loader(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="",
+                timeout=remaining,
+            )
+        return loader(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
+
     for attempt in range(MAX_ATTEMPTS):
         if monotonic() >= deadline:
-            break
+            return [], True
         try:
-            with gate:
-                frame = loader(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
-            rows = _frame_records(frame)
+            rows = _frame_records(_call_under_host_gate(load_once, deadline=deadline))
             if rows:
-                return rows
-            last_error = ValueError("empty response")
+                return rows, False
+        except _DeadlineExpired:
+            return [], True
         except Exception as exc:
             if not _retryable_error(exc):
-                return []
-            last_error = exc
-        if attempt + 1 < MAX_ATTEMPTS and monotonic() < deadline:
-            sleep(min(0.1, max(0, deadline - monotonic())))
-    return [] if last_error else []
+                return [], False
+        if attempt + 1 < MAX_ATTEMPTS:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return [], True
+            sleep(min(0.1, remaining))
+    return [], monotonic() >= deadline
+
+
+def _call_under_host_gate(operation: Callable[[], Any], *, deadline: float) -> Any:
+    remaining = deadline - monotonic()
+    if remaining <= 0 or not _EASTMONEY_HOST_GATE.acquire(timeout=max(0, remaining)):
+        raise _DeadlineExpired()
+    try:
+        if monotonic() >= deadline:
+            raise _DeadlineExpired()
+        return operation()
+    finally:
+        _EASTMONEY_HOST_GATE.release()
 
 
 def _rank_exact_date_history(rows: list[dict[str, Any]], target: date) -> dict[str, Any] | None:
@@ -184,8 +371,11 @@ def _rank_exact_date_history(rows: list[dict[str, Any]], target: date) -> dict[s
     current, previous = normalized[position], normalized[position - 1]
     if previous["close"] is None or previous["close"] == 0 or current["close"] is None:
         return None
+    change_pct = (current["close"] - previous["close"]) / previous["close"] * 100
+    if not math.isfinite(change_pct):
+        return None
     return {
-        "change_pct": (current["close"] - previous["close"]) / previous["close"] * 100,
+        "change_pct": change_pct,
         "turnover": current.get("turnover"),
         "session_date": current["date"],
     }
@@ -204,15 +394,18 @@ def _normalize_history_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _unavailable_result(market: str, *, detail_code: str) -> HistoricalActivityResult:
+def _unavailable_result(*, detail_code: str, timed_out: bool = False) -> HistoricalActivityResult:
     source_status = {
         "sectors": _unsupported_section_status("sectors"),
         "gainers": {
-            "status": "provider_unavailable",
+            "status": "timed_out" if timed_out else "provider_unavailable",
             "provider": AKSHARE_PROVIDER,
             "count": 0,
+            "requested": 0,
             "queried": 0,
             "usable": 0,
+            "incomplete": timed_out,
+            "timed_out": timed_out,
             "universe_basis": "current_liquid_top_200",
             "detail_code": detail_code,
             "message": "Historical exact-date gainer reconstruction is unavailable from the configured provider.",
@@ -232,13 +425,15 @@ def _unsupported_section_status(section: str) -> dict[str, Any]:
     }
 
 
-def _excluded_security(market: str, code: str, name: str) -> bool:
+def _excluded_security(market: str, code: str, name: str, row: dict[str, Any]) -> bool:
     if market == "CN":
         return "ST" in name.upper() or "退" in name
     if market == "US":
-        symbol = code.split(".")[-1].upper()
         upper_name = name.upper()
-        return symbol.endswith(("W", "WS", "WT")) or any(word in upper_name for word in (" WARRANT", " WT", " RIGHT"))
+        security_type = _text(_first_value(row, "证券类型", "类型", "type", "Type")).upper()
+        return any(word in upper_name for word in ("WARRANT", " WT", "RIGHT")) or any(
+            word in security_type for word in ("WARRANT", "RIGHT")
+        )
     return False
 
 
@@ -274,9 +469,17 @@ def _number(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(str(value).replace(",", ""))
+        number = float(str(value).replace(",", ""))
     except (TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
+
+
+def _remaining(deadline: float) -> float:
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise _DeadlineExpired()
+    return remaining
 
 
 def _normalize_market(market: str) -> str:
