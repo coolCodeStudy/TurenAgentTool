@@ -1857,7 +1857,7 @@ def render_daily_market_brief_html() -> str:
         ${{rows.map((row) => {{
           const numericValue = row.flow_value ?? row.value ?? row.change_pct;
           const valueText = flow ? fmt(numericValue) : pct(row.change_pct);
-          const noteText = row.turnover !== undefined ? formatMarketAmount(row.turnover, context.market?.code || state.market) : (row.message || row.metric || "-");
+          const noteText = row.turnover !== undefined ? formatMarketAmount(row.turnover, state.context?.market?.code || state.market) : (row.message || row.metric || "-");
           return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money">${{escapeHtml(noteText)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`;
