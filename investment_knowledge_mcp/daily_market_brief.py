@@ -10,6 +10,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
+from investment_knowledge_mcp.daily_market_history import HistoricalActivityProvider, load_historical_market_activity
 from investment_knowledge_mcp.market_data_provider import (
     MarketBarSnapshot,
     MarketDataProviderError,
@@ -210,7 +211,7 @@ def build_daily_market_brief_context(
             }
             activity = _empty_activity(config.code)
         elif not use_fixture and resolved_date != latest_completed_session:
-            activity = _historical_activity(config.code)
+            activity = _historical_activity(config.code, resolved_date)
             _merge_activity_status(source_status, activity)
         else:
             provider = activity_provider or (_fixture_activity_provider if use_fixture else _akshare_activity_provider)
@@ -549,12 +550,8 @@ def _empty_activity_provider(market: str, market_date: date) -> dict[str, Any]:
     return _empty_activity(market)
 
 
-def _historical_activity(market: str) -> dict[str, Any]:
-    activity = _empty_activity(market, provider="spot_rankings", status="historical_not_supported")
-    message = "配置的数据源仅提供当前实时榜单，不能用于回填历史榜单；核心指数历史行情仍按所选日期生成。"
-    for key in ("sectors", "gainers", "capital_flow"):
-        activity["source_status"][key]["message"] = message
-    return activity
+def _historical_activity(market: str, market_date: date, provider: HistoricalActivityProvider = load_historical_market_activity) -> dict[str, Any]:
+    return provider(market, market_date).as_dict()
 
 
 def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]:
