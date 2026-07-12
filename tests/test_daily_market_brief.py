@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp import daily_market_brief as dmb
+from investment_knowledge_mcp import repository as real_repository
 from investment_knowledge_mcp import weekly_review_web as web
 from investment_knowledge_mcp.daily_market_history import HistoricalActivityResult
 from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
@@ -1070,9 +1071,33 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual("historical_reconstruction", result.context["generation_kind"])
         historical_provider.assert_not_called()
 
-    def test_historical_provider_timeout_does_not_save_empty_report(self) -> None:
+    def test_historical_provider_timeout_saves_index_only_partial_report(self) -> None:
         def timeout_provider(market: str, market_date: date) -> HistoricalActivityResult:
             raise TimeoutError("upstream timed out")
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=timeout_provider,
+        )
+
+        self.assertTrue(result.context["indexes"])
+        self.assertEqual([], result.context["gainers"])
+        self.assertEqual("timed_out", result.context["source_status"]["gainers"]["status"])
+        self.assertIsNotNone(result.saved_report)
+
+    def test_historical_save_rejects_report_without_indexes_or_activity(self) -> None:
+        def empty_index_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+            return MarketBarSnapshot(
+                bars_by_code={code: [] for code in codes},
+                fetched_at=datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc),
+                start=start,
+                end=end,
+                source="empty_fixture",
+            )
 
         with self.assertRaisesRegex(ValueError, "历史市场活动数据暂不可用"):
             dmb.build_daily_market_brief(
@@ -1080,8 +1105,7 @@ class DailyMarketBriefTests(unittest.TestCase):
                 date(2026, 7, 9),
                 save=True,
                 now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
-                market_bar_loader=fake_market_bar_loader,
-                historical_activity_provider=timeout_provider,
+                market_bar_loader=empty_index_loader,
             )
 
         self.assertEqual({}, self.fake_repository.rows)
@@ -1160,6 +1184,60 @@ class DailyMarketBriefTests(unittest.TestCase):
         saved = self.fake_repository.get_daily_market_brief_report(market="CN", market_date="2026-06-30")
         self.assertEqual(original.saved_report["id"], saved["id"])
         self.assertEqual(5, len(saved["portfolio_snapshot"]["sectors"]))
+
+    def test_historical_missing_activity_cannot_overwrite_saved_rankings(self) -> None:
+        existing = {
+            "portfolio_snapshot": {
+                "sectors": [{"name": "Banking"}],
+                "gainers": [],
+                "capital_flow": [],
+            }
+        }
+        context = {
+            "generation_kind": "historical_reconstruction",
+            "no_session": False,
+            "indexes": [{"name": "Shanghai Composite", "change_pct": 1.0}],
+            "sectors": [],
+            "gainers": [],
+            "capital_flow": [],
+            "source_status": {"gainers": {"status": "missing"}},
+        }
+
+        with self.assertRaisesRegex(ValueError, "未覆盖已有完整简报"):
+            dmb.validate_daily_market_brief_context_for_save(
+                context, existing_report=existing
+            )
+
+    def test_repository_atomically_rejects_historical_activity_downgrade(self) -> None:
+        class LockOnlyConnection:
+            def execute(self, query: str, params: tuple | None = None):
+                if "pg_advisory_xact_lock" not in query:
+                    raise AssertionError("report update must not run")
+                return self
+
+        existing = {
+            "id": 42,
+            "portfolio_snapshot": {"gainers": [{"name": "Existing winner"}]},
+        }
+        context = {
+            "generation_kind": "historical_reconstruction",
+            "indexes": [{"name": "Shanghai Composite", "change_pct": 1.0}],
+            "sectors": [],
+            "gainers": [],
+            "capital_flow": [],
+        }
+
+        with mock.patch.object(
+            real_repository, "_find_daily_market_brief_row", return_value=existing
+        ):
+            with self.assertRaisesRegex(ValueError, "未覆盖已有完整简报"):
+                real_repository.upsert_daily_market_brief_report_in_transaction(
+                    LockOnlyConnection(),
+                    market="CN",
+                    market_date="2026-06-30",
+                    summary="partial",
+                    context=context,
+                )
 
     def test_missing_requested_index_session_is_recorded_as_no_session(self) -> None:
         def prior_session_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:

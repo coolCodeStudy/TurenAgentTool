@@ -44,7 +44,17 @@ def _result(
         "source_status": source_status or {"gainers": {"status": "ok"}},
         "no_session": no_session,
         "generation_kind": "historical_reconstruction",
+        "indexes": [
+            {
+                "name": "Shanghai Composite",
+                "code": "SH.000001",
+                "date": "2026-07-09",
+                "change_pct": 0.5,
+            }
+        ],
+        "sectors": [],
         "gainers": gainers or [],
+        "capital_flow": [],
     }
     return DailyMarketBriefResult(
         context=context,
@@ -138,6 +148,46 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
         ):
             outcome = worker.run_worker_once(worker_name="fixture-worker")
         self.assertEqual(20, outcome["report_id"])
+
+    def test_force_refresh_cannot_downgrade_existing_activity_report(self) -> None:
+        existing = {
+            "id": 17,
+            "portfolio_snapshot": {
+                "sectors": [{"name": "Existing sector"}],
+                "gainers": [],
+                "capital_flow": [],
+            },
+        }
+        with (
+            mock.patch.object(
+                worker,
+                "claim_next_history_item",
+                return_value=_claimed_item(force_refresh=True),
+            ),
+            mock.patch.object(
+                worker,
+                "heartbeat_history_item",
+                return_value={"cancel_requested": False},
+            ),
+            mock.patch.object(
+                worker, "get_daily_market_brief_report", return_value=existing
+            ),
+            mock.patch.object(
+                worker, "build_daily_market_brief", return_value=_result()
+            ),
+            mock.patch.object(worker, "finalize_history_item_report") as finalize,
+            mock.patch.object(
+                worker, "finish_history_item", return_value={"status": "failed"}
+            ) as finish,
+        ):
+            outcome = worker.run_worker_once(worker_name="fixture-worker")
+
+        self.assertEqual("failed", outcome["status"])
+        self.assertEqual("historical_data_unavailable", outcome["error_code"])
+        finalize.assert_not_called()
+        self.assertEqual(
+            "historical_data_unavailable", finish.call_args.kwargs["error_code"]
+        )
 
     def test_cancellation_wins_before_existing_report_skip_finalization(self) -> None:
         heartbeats = iter(({"cancel_requested": False}, {"cancel_requested": True}))

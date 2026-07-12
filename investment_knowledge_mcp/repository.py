@@ -1070,6 +1070,15 @@ def upsert_daily_market_brief_report_in_transaction(
     report_key = _daily_market_brief_report_key(normalized_market, market_date)
     conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (report_key,))
     existing = _find_daily_market_brief_row(conn, market=normalized_market, market_date=market_date)
+    existing_context = (existing or {}).get("portfolio_snapshot") or {}
+    is_historical = context.get("generation_kind") == "historical_reconstruction"
+    activity_sections = ("sectors", "gainers", "capital_flow")
+    existing_has_activity = isinstance(existing_context, dict) and any(
+        existing_context.get(section) for section in activity_sections
+    )
+    incoming_has_activity = any(context.get(section) for section in activity_sections)
+    if existing and is_historical and existing_has_activity and not incoming_has_activity:
+        raise ValueError("历史市场活动数据暂不可用，未覆盖已有完整简报。")
     has_report_key = _review_reports_has_column(conn, "report_key")
     values = (
         market_date,

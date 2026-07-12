@@ -130,7 +130,9 @@ def _process_claimed_item(
         if lease_lost.is_set():
             LOGGER.warning("history item lease lost before finalization: item_id=%s", item_id)
             return {"item_id": item_id, "status": "lease_lost"}
-        validate_daily_market_brief_context_for_save(result.context)
+        validate_daily_market_brief_context_for_save(
+            result.context, existing_report=existing
+        )
         finalized = finalize_history_item_report(
             item_id,
             context=result.context,
