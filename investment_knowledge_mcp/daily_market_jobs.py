@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
+from uuid import uuid4
 
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.serialization import to_jsonable
@@ -13,6 +14,12 @@ TERMINAL_ITEM_STATUSES = {"completed", "skipped", "failed", "cancelled"}
 REQUEST_TYPES = {"single", "batch"}
 SOURCES = {"web", "command", "scheduler_recovery", "agent"}
 MAX_HISTORY_ITEMS = 120
+PUBLIC_ERROR_SUMMARIES = {
+    "generation_failed": "历史市场简报生成失败，请稍后重试。",
+    "provider_timeout": "历史数据源响应超时，请稍后重试。",
+    "provider_unavailable": "历史数据源暂时不可用，请稍后重试。",
+    "historical_data_unavailable": "未找到该市场日期的可用历史数据。",
+}
 
 
 def create_history_job(
@@ -29,6 +36,10 @@ def create_history_job(
     request_type = _normalize_choice(request_type, REQUEST_TYPES, "request_type")
     source = _normalize_choice(source, SOURCES, "source")
     pairs = [(market, market_date) for market in normalized_markets for market_date in normalized_dates]
+    if request_type == "single" and len(pairs) != 1:
+        raise ValueError("single request_type requires exactly one market/date pair")
+    if source == "web" and force_refresh:
+        raise ValueError("web source cannot request force_refresh")
     item_limit = min(max(1, int(max_items)), MAX_HISTORY_ITEMS)
     if len(pairs) > item_limit:
         raise ValueError(f"一次最多 {item_limit} 个市场/日期项目")
@@ -37,31 +48,14 @@ def create_history_job(
         active_items: list[dict[str, Any]] = []
         pending_pairs: list[tuple[str, date]] = []
         for market, market_date in pairs:
-            active = conn.execute(
-                """
-                SELECT item.id, item.job_id, item.market, item.market_date
-                FROM daily_market_brief_job_items AS item
-                JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
-                WHERE item.market = %s
-                  AND item.market_date = %s
-                  AND item.status IN ('queued', 'running')
-                  AND job.status IN ('queued', 'running')
-                LIMIT 1
-                """,
-                (market, market_date),
-            ).fetchone()
+            active = _find_active_item(conn, market, market_date)
             if active is None:
                 pending_pairs.append((market, market_date))
             else:
                 active_items.append(to_jsonable(active))
 
         if not pending_pairs:
-            if active_items:
-                existing = _get_history_job(conn, int(active_items[0]["job_id"]))
-                if existing is not None:
-                    existing["deduplicated_items"] = _deduplicated_items(active_items)
-                    return existing
-            return {"status": "deduplicated", "total_count": 0, "items": [], "deduplicated_items": []}
+            return _deduplicated_job(conn, active_items)
 
         item_specs: list[tuple[str, date, str, int | None, str | None]] = []
         for market, market_date in pending_pairs:
@@ -71,38 +65,52 @@ def create_history_job(
             else:
                 item_specs.append((market, market_date, "skipped", int(report["id"]), "existing_report"))
 
-        initial_status = "completed" if all(spec[2] == "skipped" for spec in item_specs) else "queued"
         job = conn.execute(
             """
-            INSERT INTO daily_market_brief_jobs (request_type, source, status, force_refresh, total_count, completed_count, skipped_count, summary, completed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s = 'completed' THEN now() ELSE NULL END)
+            INSERT INTO daily_market_brief_jobs (request_type, source, status, force_refresh)
+            VALUES (%s, %s, 'queued', %s)
             RETURNING *
             """,
-            (
-                request_type,
-                source,
-                initial_status,
-                bool(force_refresh),
-                len(item_specs),
-                sum(spec[2] == "skipped" for spec in item_specs),
-                sum(spec[2] == "skipped" for spec in item_specs),
-                "existing reports skipped" if initial_status == "completed" else None,
-                initial_status,
-            ),
+            (request_type, source, bool(force_refresh)),
         ).fetchone()
         if job is None:
             raise RuntimeError("unable to create daily market brief history job")
 
+        inserted_count = 0
         for market, market_date, status, report_id, skip_reason in item_specs:
-            conn.execute(
+            inserted = conn.execute(
                 """
-                INSERT INTO daily_market_brief_job_items (job_id, market, market_date, status, report_id, skip_reason, finished_at)
+                INSERT INTO daily_market_brief_job_items (
+                  job_id, market, market_date, status, report_id, skip_reason, finished_at
+                )
                 VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s = 'skipped' THEN now() ELSE NULL END)
+                ON CONFLICT (market, market_date)
+                  WHERE status IN ('queued', 'running')
+                  DO NOTHING
                 RETURNING *
                 """,
                 (job["id"], market, market_date, status, report_id, skip_reason, status),
             ).fetchone()
+            if inserted is not None:
+                inserted_count += 1
+                continue
+            raced_active = _find_active_item(conn, market, market_date)
+            if raced_active is None:
+                raise RuntimeError("active daily market brief item conflict could not be resolved")
+            active_items.append(to_jsonable(raced_active))
 
+        if inserted_count == 0:
+            conn.execute(
+                """
+                DELETE FROM daily_market_brief_jobs
+                WHERE id = %s
+                RETURNING id
+                """,
+                (job["id"],),
+            ).fetchone()
+            return _deduplicated_job(conn, active_items)
+
+        _recompute_history_jobs(conn, [int(job["id"])])
         created = _get_history_job(conn, int(job["id"])) or to_jsonable(job)
         created["deduplicated_items"] = _deduplicated_items(active_items)
         return created
@@ -125,6 +133,7 @@ def list_history_jobs(limit: int = 10) -> list[dict[str, Any]]:
 
 def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
     cleaned_worker_name = (worker_name or "history-worker").strip() or "history-worker"
+    lease_token = uuid4().hex
     with transaction() as conn:
         row = conn.execute(
             """
@@ -143,6 +152,7 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
                 status = 'running',
                 attempt_count = item.attempt_count + 1,
                 worker_name = %s,
+                lease_token = %s,
                 claimed_at = now(),
                 heartbeat_at = now(),
                 updated_at = now()
@@ -160,7 +170,7 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
             WHERE job.id = claimed.job_id
             RETURNING claimed.*
             """,
-            (cleaned_worker_name,),
+            (cleaned_worker_name, lease_token),
         ).fetchone()
     return to_jsonable(row) if row else None
 
@@ -169,142 +179,174 @@ def finish_history_item(
     item_id: int,
     *,
     status: str,
+    worker_name: str,
+    lease_token: str,
+    attempt_count: int,
     report_id: int | None = None,
+    error_code: str | None = None,
     error_summary: str | None = None,
 ) -> dict[str, Any]:
     if status not in TERMINAL_ITEM_STATUSES:
         raise ValueError("history item status must be completed, skipped, failed, or cancelled")
-    safe_error = _sanitize_error_summary(error_summary)
+    cleaned_worker_name = (worker_name or "").strip()
+    cleaned_lease_token = (lease_token or "").strip()
+    if not cleaned_worker_name or not cleaned_lease_token or int(attempt_count) < 1:
+        raise ValueError("worker_name, lease_token, and positive attempt_count are required")
+    public_error_code, public_error_summary = _resolve_public_error(status, error_code, error_summary)
     with transaction() as conn:
         row = conn.execute(
             """
-            WITH finished AS (
-              UPDATE daily_market_brief_job_items AS item SET
-                status = %s,
-                report_id = COALESCE(%s, item.report_id),
-                error_summary = %s,
-                heartbeat_at = now(),
-                finished_at = now(),
-                updated_at = now()
-              WHERE item.id = %s
-                AND item.status IN ('queued', 'running')
-              RETURNING item.*
-            ), counts AS (
-              SELECT
-                finished.job_id,
-                count(item.id)::integer AS total_count,
-                count(item.id) FILTER (WHERE item.status IN ('completed', 'skipped', 'failed', 'cancelled'))::integer AS completed_count,
-                count(item.id) FILTER (WHERE item.status = 'completed')::integer AS succeeded_count,
-                count(item.id) FILTER (WHERE item.status = 'skipped')::integer AS skipped_count,
-                count(item.id) FILTER (WHERE item.status = 'failed')::integer AS failed_count,
-                count(item.id) FILTER (WHERE item.status = 'running')::integer AS running_count,
-                count(item.id) FILTER (WHERE item.status = 'queued')::integer AS queued_count
-              FROM finished
-              JOIN daily_market_brief_job_items AS item ON item.job_id = finished.job_id
-              GROUP BY finished.job_id
-            ), updated_job AS (
-              UPDATE daily_market_brief_jobs AS job SET
-                total_count = counts.total_count,
-                completed_count = counts.completed_count,
-                succeeded_count = counts.succeeded_count,
-                skipped_count = counts.skipped_count,
-                failed_count = counts.failed_count,
-                status = CASE
-                  WHEN counts.running_count > 0 OR counts.queued_count > 0 THEN 'running'
-                  WHEN job.cancel_requested_at IS NOT NULL THEN 'cancelled'
-                  WHEN counts.failed_count = 0 THEN 'completed'
-                  WHEN counts.succeeded_count + counts.skipped_count = 0 THEN 'failed'
-                  ELSE 'partial'
-                END,
-                current_market = NULL,
-                current_market_date = NULL,
-                worker_heartbeat_at = now(),
-                completed_at = CASE WHEN counts.running_count = 0 AND counts.queued_count = 0 THEN now() ELSE NULL END,
-                updated_at = now()
-              FROM counts
-              WHERE job.id = counts.job_id
-              RETURNING job.id
-            )
-            SELECT finished.*
-            FROM finished
-            JOIN updated_job ON updated_job.id = finished.job_id
+            UPDATE daily_market_brief_job_items AS item SET
+              status = %s,
+              report_id = COALESCE(%s, item.report_id),
+              error_code = %s,
+              error_summary = %s,
+              worker_name = NULL,
+              lease_token = NULL,
+              heartbeat_at = NULL,
+              finished_at = now(),
+              updated_at = now()
+            WHERE item.id = %s
+              AND item.status = 'running'
+              AND item.worker_name = %s
+              AND item.lease_token = %s
+              AND item.attempt_count = %s
+            RETURNING item.*
             """,
-            (status, report_id, safe_error, item_id),
+            (
+                status,
+                report_id,
+                public_error_code,
+                public_error_summary,
+                item_id,
+                cleaned_worker_name,
+                cleaned_lease_token,
+                int(attempt_count),
+            ),
         ).fetchone()
-    if row is None:
-        raise ValueError(f"daily market brief history item not found or not active: {item_id}")
+        if row is None:
+            raise ValueError(f"daily market brief history item lease is no longer active: {item_id}")
+        _recompute_history_jobs(conn, [int(row["job_id"])])
     return to_jsonable(row)
 
 
 def request_history_job_cancel(job_id: int) -> dict[str, Any] | None:
     with transaction() as conn:
-        row = conn.execute(
+        requested = conn.execute(
             """
-            WITH requested AS (
-              UPDATE daily_market_brief_jobs AS job SET
-                cancel_requested_at = COALESCE(job.cancel_requested_at, now()),
-                updated_at = now()
-              WHERE job.id = %s
-                AND job.status IN ('queued', 'running')
-              RETURNING job.id
-            ), cancelled_items AS (
-              UPDATE daily_market_brief_job_items AS item SET
-                status = 'cancelled',
-                finished_at = now(),
-                updated_at = now()
-              FROM requested
-              WHERE item.job_id = requested.id
-                AND item.status = 'queued'
-              RETURNING item.job_id
-            )
             UPDATE daily_market_brief_jobs AS job SET
-              status = CASE
-                WHEN EXISTS (
-                  SELECT 1 FROM daily_market_brief_job_items AS item
-                  WHERE item.job_id = job.id AND item.status = 'running'
-                ) THEN job.status
-                ELSE 'cancelled'
-              END,
-              completed_count = (
-                SELECT count(*)::integer FROM daily_market_brief_job_items AS item
-                WHERE item.job_id = job.id AND item.status IN ('completed', 'skipped', 'failed', 'cancelled')
-              ),
-              completed_at = CASE WHEN NOT EXISTS (
-                SELECT 1 FROM daily_market_brief_job_items AS item
-                WHERE item.job_id = job.id AND item.status = 'running'
-              ) THEN now() ELSE NULL END,
+              cancel_requested_at = COALESCE(job.cancel_requested_at, now()),
               updated_at = now()
-            FROM requested
-            WHERE job.id = requested.id
+            WHERE job.id = %s
+              AND job.status IN ('queued', 'running')
             RETURNING job.*
             """,
             (job_id,),
         ).fetchone()
-    return to_jsonable(row) if row else None
+        if requested is None:
+            return None
+        conn.execute(
+            """
+            UPDATE daily_market_brief_job_items AS item SET
+              status = 'cancelled',
+              worker_name = NULL,
+              lease_token = NULL,
+              heartbeat_at = NULL,
+              finished_at = now(),
+              updated_at = now()
+            WHERE item.job_id = %s
+              AND item.status = 'queued'
+            RETURNING item.job_id
+            """,
+            (job_id,),
+        ).fetchall()
+        refreshed = _recompute_history_jobs(conn, [job_id])
+    return refreshed[0] if refreshed else to_jsonable(requested)
 
 
 def requeue_stale_history_items(stale_before: datetime) -> int:
     with transaction() as conn:
-        result = conn.execute(
+        rows = conn.execute(
             """
-            UPDATE daily_market_brief_job_items
-            SET
+            UPDATE daily_market_brief_job_items AS item SET
               status = 'queued',
               worker_name = NULL,
+              lease_token = NULL,
               claimed_at = NULL,
               heartbeat_at = NULL,
               updated_at = now()
-            WHERE status = 'running'
-              AND heartbeat_at < %s
+            WHERE item.status = 'running'
+              AND item.heartbeat_at < %s
               AND EXISTS (
                 SELECT 1 FROM daily_market_brief_jobs AS job
-                WHERE job.id = daily_market_brief_job_items.job_id
+                WHERE job.id = item.job_id
                   AND job.cancel_requested_at IS NULL
               )
+            RETURNING item.job_id
             """,
             (stale_before,),
+        ).fetchall()
+        job_ids = sorted({int(row["job_id"]) for row in rows})
+        if job_ids:
+            _recompute_history_jobs(conn, job_ids)
+    return len(rows)
+
+
+def _recompute_history_jobs(conn: Any, job_ids: list[int]) -> list[dict[str, Any]]:
+    if not job_ids:
+        return []
+    rows = conn.execute(
+        """
+        WITH aggregates AS (
+          SELECT
+            item.job_id,
+            count(*)::integer AS total_count,
+            count(*) FILTER (WHERE item.status IN ('completed', 'skipped', 'failed', 'cancelled'))::integer AS completed_count,
+            count(*) FILTER (WHERE item.status = 'completed')::integer AS succeeded_count,
+            count(*) FILTER (WHERE item.status = 'skipped')::integer AS skipped_count,
+            count(*) FILTER (WHERE item.status = 'failed')::integer AS failed_count,
+            count(*) FILTER (WHERE item.status = 'cancelled')::integer AS cancelled_count,
+            count(*) FILTER (WHERE item.status = 'running')::integer AS running_count,
+            count(*) FILTER (WHERE item.status = 'queued')::integer AS queued_count,
+            (array_agg(item.market ORDER BY item.claimed_at DESC NULLS LAST, item.id DESC)
+              FILTER (WHERE item.status = 'running'))[1] AS current_market,
+            (array_agg(item.market_date ORDER BY item.claimed_at DESC NULLS LAST, item.id DESC)
+              FILTER (WHERE item.status = 'running'))[1] AS current_market_date,
+            max(item.heartbeat_at) FILTER (WHERE item.status = 'running') AS worker_heartbeat_at
+          FROM daily_market_brief_job_items AS item
+          WHERE item.job_id = ANY(%s)
+          GROUP BY item.job_id
         )
-    return int(result.rowcount)
+        UPDATE daily_market_brief_jobs AS job SET
+          total_count = aggregates.total_count,
+          completed_count = aggregates.completed_count,
+          succeeded_count = aggregates.succeeded_count,
+          skipped_count = aggregates.skipped_count,
+          failed_count = aggregates.failed_count,
+          cancelled_count = aggregates.cancelled_count,
+          status = CASE
+            WHEN aggregates.running_count > 0 THEN 'running'
+            WHEN job.cancel_requested_at IS NOT NULL THEN 'cancelled'
+            WHEN aggregates.queued_count > 0 THEN 'queued'
+            WHEN aggregates.failed_count = 0 THEN 'completed'
+            WHEN aggregates.succeeded_count + aggregates.skipped_count = 0 THEN 'failed'
+            ELSE 'partial'
+          END,
+          current_market = aggregates.current_market,
+          current_market_date = aggregates.current_market_date,
+          worker_heartbeat_at = aggregates.worker_heartbeat_at,
+          completed_at = CASE
+            WHEN aggregates.running_count = 0 AND aggregates.queued_count = 0 THEN COALESCE(job.completed_at, now())
+            ELSE NULL
+          END,
+          updated_at = now()
+        FROM aggregates
+        WHERE job.id = aggregates.job_id
+        RETURNING job.*
+        """,
+        (job_ids,),
+    ).fetchall()
+    return to_jsonable(rows)
 
 
 def _get_history_job(conn: Any, job_id: int) -> dict[str, Any] | None:
@@ -332,6 +374,7 @@ def _history_job_select_sql(*, where: str, order_by: str, limit: bool) -> str:
               'attempt_count', item.attempt_count,
               'report_id', item.report_id,
               'skip_reason', item.skip_reason,
+              'error_code', item.error_code,
               'error_summary', item.error_summary,
               'worker_name', item.worker_name,
               'claimed_at', item.claimed_at,
@@ -346,6 +389,22 @@ def _history_job_select_sql(*, where: str, order_by: str, limit: bool) -> str:
         {order_by}
         {limit_clause}
         """
+
+
+def _find_active_item(conn: Any, market: str, market_date: date) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT item.id, item.job_id, item.market, item.market_date
+        FROM daily_market_brief_job_items AS item
+        JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
+        WHERE item.market = %s
+          AND item.market_date = %s
+          AND item.status IN ('queued', 'running')
+          AND job.status IN ('queued', 'running')
+        LIMIT 1
+        """,
+        (market, market_date),
+    ).fetchone()
 
 
 def _find_existing_report(conn: Any, market: str, market_date: date) -> dict[str, Any] | None:
@@ -372,10 +431,9 @@ def _normalize_markets(markets: list[str]) -> list[str]:
 
 
 def _normalize_dates(dates: list[date]) -> list[date]:
-    normalized = sorted(set(dates))
-    if not normalized or any(not isinstance(value, date) for value in normalized):
+    if not dates or any(type(value) is not date for value in dates):
         raise ValueError("dates must contain one or more date values")
-    return normalized
+    return sorted(set(dates))
 
 
 def _normalize_choice(value: str, allowed: set[str], label: str) -> str:
@@ -383,6 +441,16 @@ def _normalize_choice(value: str, allowed: set[str], label: str) -> str:
     if cleaned not in allowed:
         raise ValueError(f"{label} must be one of {', '.join(sorted(allowed))}")
     return cleaned
+
+
+def _deduplicated_job(conn: Any, active_items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not active_items:
+        return {"status": "deduplicated", "total_count": 0, "items": [], "deduplicated_items": []}
+    existing = _get_history_job(conn, int(active_items[0]["job_id"]))
+    if existing is None:
+        raise RuntimeError("active daily market brief job disappeared during deduplication")
+    existing["deduplicated_items"] = _deduplicated_items(active_items)
+    return existing
 
 
 def _deduplicated_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -396,11 +464,18 @@ def _deduplicated_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _sanitize_error_summary(error_summary: str | None) -> str | None:
-    if not error_summary:
-        return None
-    cleaned = " ".join(str(error_summary).split())
-    unsafe_markers = ("traceback", "password", "token", "secret", "api_key", "/", "\\\\")
-    if any(marker in cleaned.lower() for marker in unsafe_markers):
-        return "历史市场简报生成失败，请稍后重试。"
-    return cleaned[:240]
+def _resolve_public_error(
+    status: str,
+    error_code: str | None,
+    error_summary: str | None,
+) -> tuple[str | None, str | None]:
+    if status != "failed":
+        return None, None
+    cleaned_code = (error_code or "").strip().lower()
+    if cleaned_code and cleaned_code not in PUBLIC_ERROR_SUMMARIES:
+        raise ValueError("unsupported public history error code")
+    if not cleaned_code and error_summary in PUBLIC_ERROR_SUMMARIES.values():
+        cleaned_code = next(code for code, summary in PUBLIC_ERROR_SUMMARIES.items() if summary == error_summary)
+    if not cleaned_code:
+        cleaned_code = "generation_failed"
+    return cleaned_code, PUBLIC_ERROR_SUMMARIES[cleaned_code]
