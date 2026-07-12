@@ -54,6 +54,8 @@ class FakeConnection:
         compact = " ".join(query.split())
         if compact.startswith("SELECT pg_advisory_xact_lock"):
             return FakeCursor({"pg_advisory_xact_lock": None})
+        if compact.startswith("SELECT count(*)::integer AS active_count"):
+            return FakeCursor({"active_count": 0})
         if "FOR UPDATE OF job" in compact and "WHERE item.id = %s" in compact:
             job_id = (self.finished_item or {}).get("job_id", 41)
             return FakeCursor({"id": job_id})
@@ -972,6 +974,16 @@ class DailyMarketJobsPostgresConcurrencyTests(unittest.TestCase):
             terminalizer.close()
             connection.close()
 
+    @contextmanager
+    def _plain_transaction(self):
+        connection = self._connect()
+        try:
+            connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema_name)))
+            with connection.transaction():
+                yield connection
+        finally:
+            connection.close()
+
     def test_two_concurrent_finishes_preserve_final_parent_aggregate(self) -> None:
         job_id = self.admin.execute(
             """
@@ -1068,6 +1080,93 @@ class DailyMarketJobsPostgresConcurrencyTests(unittest.TestCase):
             [(existing_job_id, "completed"), (created["id"], "queued")],
             [(row["job_id"], row["status"]) for row in rows],
         )
+
+    def test_concurrent_web_admission_never_creates_a_fourth_active_job(self) -> None:
+        for market, market_date in (("CN", "2026-07-01"), ("HK", "2026-07-01")):
+            job_id = self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+                VALUES ('single', 'web', 'queued', 1)
+                RETURNING id
+                """
+            ).fetchone()["id"]
+            self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_job_items (job_id, market, market_date, status)
+                VALUES (%s, %s, %s, 'queued')
+                """,
+                (job_id, market, market_date),
+            )
+
+        start = threading.Barrier(2)
+        created: list[dict] = []
+        errors: list[BaseException] = []
+
+        def admit(market: str, market_date: date) -> None:
+            start.wait(timeout=5)
+            try:
+                created.append(jobs.create_web_history_job(market, market_date))
+            except BaseException as exc:
+                errors.append(exc)
+
+        with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+            threads = [
+                threading.Thread(target=admit, args=("US", date(2026, 7, 1))),
+                threading.Thread(target=admit, args=("CN", date(2026, 7, 2))),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=15)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(1, len(created))
+        self.assertEqual(1, len(errors))
+        self.assertIsInstance(errors[0], jobs.WebHistoryJobCapacityError)
+        active_count = self.admin.execute(
+            """
+            SELECT count(*) AS count
+            FROM daily_market_brief_jobs
+            WHERE source = 'web' AND status IN ('queued', 'running')
+            """
+        ).fetchone()["count"]
+        self.assertEqual(3, active_count)
+
+    def test_web_admission_counts_all_active_rows_and_deduplicates_before_capacity(self) -> None:
+        active_job_ids = []
+        for market, market_date in (("CN", "2026-07-01"), ("HK", "2026-07-01"), ("US", "2026-07-01")):
+            job_id = self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_jobs (
+                  request_type, source, status, total_count, created_at
+                ) VALUES ('single', 'web', 'queued', 1, now() - interval '2 days')
+                RETURNING id
+                """
+            ).fetchone()["id"]
+            active_job_ids.append(job_id)
+            self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_job_items (job_id, market, market_date, status)
+                VALUES (%s, %s, %s, 'queued')
+                """,
+                (job_id, market, market_date),
+            )
+        for offset in range(150):
+            self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_jobs (
+                  request_type, source, status, total_count, completed_count, succeeded_count, completed_at
+                ) VALUES ('single', 'web', 'completed', 1, 1, 1, now())
+                """
+            )
+
+        with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+            duplicate = jobs.create_web_history_job("CN", date(2026, 7, 1))
+            with self.assertRaises(jobs.WebHistoryJobCapacityError) as raised:
+                jobs.create_web_history_job("CN", date(2026, 7, 2))
+
+        self.assertEqual(active_job_ids[0], duplicate["id"])
+        self.assertEqual(jobs.WEB_HISTORY_JOB_CAPACITY_MESSAGE, str(raised.exception))
 
 
 if __name__ == "__main__":

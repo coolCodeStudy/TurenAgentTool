@@ -15,12 +15,18 @@ REQUEST_TYPES = {"single", "batch"}
 SOURCES = {"web", "command", "scheduler_recovery", "agent"}
 MAX_HISTORY_ITEMS = 120
 MAX_DEDUP_RETRIES = 3
+DEFAULT_MAX_ACTIVE_WEB_JOBS = 3
+WEB_HISTORY_JOB_CAPACITY_MESSAGE = "当前历史简报任务较多，请等待已有任务完成后再试。"
 PUBLIC_ERROR_SUMMARIES = {
     "generation_failed": "历史市场简报生成失败，请稍后重试。",
     "provider_timeout": "历史数据源响应超时，请稍后重试。",
     "provider_unavailable": "历史数据源暂时不可用，请稍后重试。",
     "historical_data_unavailable": "未找到该市场日期的可用历史数据。",
 }
+
+
+class WebHistoryJobCapacityError(ValueError):
+    pass
 
 
 def create_history_job(
@@ -45,88 +51,154 @@ def create_history_job(
     if len(pairs) > item_limit:
         raise ValueError(f"一次最多 {item_limit} 个市场/日期项目")
 
+    if source == "web":
+        market, market_date = pairs[0]
+        return create_web_history_job(market, market_date)
+
     with transaction() as conn:
-        _lock_market_date_keys(conn, pairs)
-        active_items: list[dict[str, Any]] = []
-        pending_pairs: list[tuple[str, date]] = []
-        for market, market_date in pairs:
-            active = _find_active_item(conn, market, market_date)
-            if active is None:
-                pending_pairs.append((market, market_date))
-            else:
-                active_items.append(to_jsonable(active))
+        return _create_history_job_in_transaction(
+            conn,
+            pairs=pairs,
+            request_type=request_type,
+            source=source,
+            force_refresh=bool(force_refresh),
+        )
 
-        if not pending_pairs:
-            return _deduplicated_job(conn, active_items)
 
-        item_specs: list[tuple[str, date, str, int | None, str | None]] = []
-        for market, market_date in pending_pairs:
-            report = None if force_refresh else _find_existing_report(conn, market, market_date)
-            if report is None:
-                item_specs.append((market, market_date, "queued", None, None))
-            else:
-                item_specs.append((market, market_date, "skipped", int(report["id"]), "existing_report"))
+def create_web_history_job(
+    market: str,
+    market_date: date,
+    *,
+    max_active_jobs: int = DEFAULT_MAX_ACTIVE_WEB_JOBS,
+) -> dict[str, Any]:
+    normalized_markets = _normalize_markets([market])
+    normalized_dates = _normalize_dates([market_date])
+    active_limit = int(max_active_jobs)
+    if active_limit < 1:
+        raise ValueError("max_active_jobs must be positive")
+    pair = (normalized_markets[0], normalized_dates[0])
 
-        job = conn.execute(
-            """
-            INSERT INTO daily_market_brief_jobs (request_type, source, status, force_refresh)
-            VALUES (%s, %s, 'queued', %s)
-            RETURNING *
-            """,
-            (request_type, source, bool(force_refresh)),
+    with transaction() as conn:
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ("daily-market-brief:web-admission",),
         ).fetchone()
-        if job is None:
-            raise RuntimeError("unable to create daily market brief history job")
+        _lock_market_date_keys(conn, [pair])
+        active = _find_active_item(conn, *pair)
+        if active is not None:
+            return _deduplicated_job(conn, [to_jsonable(active)])
 
-        inserted_count = 0
-        for market, market_date, status, report_id, skip_reason in item_specs:
-            for _ in range(MAX_DEDUP_RETRIES):
-                inserted = _insert_history_item(
-                    conn,
-                    job_id=int(job["id"]),
-                    market=market,
-                    market_date=market_date,
-                    status=status,
-                    report_id=report_id,
-                    skip_reason=skip_reason,
-                )
-                if inserted is not None:
-                    inserted_count += 1
-                    break
-                raced_active = _find_active_item(conn, market, market_date)
-                if raced_active is not None:
-                    active_items.append(to_jsonable(raced_active))
-                    break
+        active_count = conn.execute(
+            """
+            SELECT count(*)::integer AS active_count
+            FROM daily_market_brief_jobs
+            WHERE source = 'web'
+              AND status IN ('queued', 'running')
+            """
+        ).fetchone()
+        if int((active_count or {}).get("active_count") or 0) >= active_limit:
+            raise WebHistoryJobCapacityError(WEB_HISTORY_JOB_CAPACITY_MESSAGE)
+        return _create_history_job_in_transaction(
+            conn,
+            pairs=[pair],
+            request_type="single",
+            source="web",
+            force_refresh=False,
+            market_date_keys_locked=True,
+        )
+
+
+def _create_history_job_in_transaction(
+    conn: Any,
+    *,
+    pairs: list[tuple[str, date]],
+    request_type: str,
+    source: str,
+    force_refresh: bool,
+    market_date_keys_locked: bool = False,
+) -> dict[str, Any]:
+    if not market_date_keys_locked:
+        _lock_market_date_keys(conn, pairs)
+    active_items: list[dict[str, Any]] = []
+    pending_pairs: list[tuple[str, date]] = []
+    for market, market_date in pairs:
+        active = _find_active_item(conn, market, market_date)
+        if active is None:
+            pending_pairs.append((market, market_date))
+        else:
+            active_items.append(to_jsonable(active))
+
+    if not pending_pairs:
+        return _deduplicated_job(conn, active_items)
+
+    item_specs: list[tuple[str, date, str, int | None, str | None]] = []
+    for market, market_date in pending_pairs:
+        report = None if force_refresh else _find_existing_report(conn, market, market_date)
+        if report is None:
+            item_specs.append((market, market_date, "queued", None, None))
+        else:
+            item_specs.append((market, market_date, "skipped", int(report["id"]), "existing_report"))
+
+    job = conn.execute(
+        """
+        INSERT INTO daily_market_brief_jobs (request_type, source, status, force_refresh)
+        VALUES (%s, %s, 'queued', %s)
+        RETURNING *
+        """,
+        (request_type, source, bool(force_refresh)),
+    ).fetchone()
+    if job is None:
+        raise RuntimeError("unable to create daily market brief history job")
+
+    inserted_count = 0
+    for market, market_date, status, report_id, skip_reason in item_specs:
+        for _ in range(MAX_DEDUP_RETRIES):
+            inserted = _insert_history_item(
+                conn,
+                job_id=int(job["id"]),
+                market=market,
+                market_date=market_date,
+                status=status,
+                report_id=report_id,
+                skip_reason=skip_reason,
+            )
+            if inserted is not None:
+                inserted_count += 1
+                break
+            raced_active = _find_active_item(conn, market, market_date)
+            if raced_active is not None:
+                active_items.append(to_jsonable(raced_active))
+                break
+        else:
+            resolved = _resolve_history_item_conflict(
+                conn,
+                job_id=int(job["id"]),
+                market=market,
+                market_date=market_date,
+                status=status,
+                report_id=report_id,
+                skip_reason=skip_reason,
+            )
+            if int(resolved["job_id"]) == int(job["id"]):
+                inserted_count += 1
             else:
-                resolved = _resolve_history_item_conflict(
-                    conn,
-                    job_id=int(job["id"]),
-                    market=market,
-                    market_date=market_date,
-                    status=status,
-                    report_id=report_id,
-                    skip_reason=skip_reason,
-                )
-                if int(resolved["job_id"]) == int(job["id"]):
-                    inserted_count += 1
-                else:
-                    active_items.append(to_jsonable(resolved))
+                active_items.append(to_jsonable(resolved))
 
-        if inserted_count == 0:
-            conn.execute(
-                """
-                DELETE FROM daily_market_brief_jobs
-                WHERE id = %s
-                RETURNING id
-                """,
-                (job["id"],),
-            ).fetchone()
-            return _deduplicated_job(conn, active_items)
+    if inserted_count == 0:
+        conn.execute(
+            """
+            DELETE FROM daily_market_brief_jobs
+            WHERE id = %s
+            RETURNING id
+            """,
+            (job["id"],),
+        ).fetchone()
+        return _deduplicated_job(conn, active_items)
 
-        _recompute_history_jobs(conn, [int(job["id"])])
-        created = _get_history_job(conn, int(job["id"])) or to_jsonable(job)
-        created["deduplicated_items"] = _deduplicated_items(active_items)
-        return created
+    _recompute_history_jobs(conn, [int(job["id"])])
+    created = _get_history_job(conn, int(job["id"])) or to_jsonable(job)
+    created["deduplicated_items"] = _deduplicated_items(active_items)
+    return created
 
 
 def get_history_job(job_id: int) -> dict[str, Any] | None:
@@ -150,7 +222,7 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
     with transaction() as conn:
         candidate = conn.execute(
             """
-            SELECT item.id, item.job_id, item.market, item.market_date
+            SELECT item.id, item.job_id, item.market, item.market_date, job.force_refresh
             FROM daily_market_brief_job_items AS item
             JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
             WHERE item.status = 'queued'
@@ -193,7 +265,71 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
             """,
             (row["market"], row["market_date"], row["job_id"]),
         )
-    return to_jsonable(row) if row else None
+    claimed = to_jsonable(row) if row else None
+    if claimed is not None:
+        claimed["force_refresh"] = bool(candidate.get("force_refresh"))
+    return claimed
+
+
+def heartbeat_history_item(
+    item_id: int,
+    *,
+    worker_name: str,
+    lease_token: str,
+    attempt_count: int,
+) -> dict[str, Any] | None:
+    """Renew an active lease and report whether its parent requested cancellation."""
+    cleaned_worker_name = (worker_name or "").strip()
+    cleaned_lease_token = (lease_token or "").strip()
+    if not cleaned_worker_name or not cleaned_lease_token or int(attempt_count) < 1:
+        raise ValueError("worker_name, lease_token, and positive attempt_count are required")
+    with transaction() as conn:
+        job = conn.execute(
+            """
+            SELECT
+              job.id,
+              (job.cancel_requested_at IS NOT NULL) AS cancel_requested
+            FROM daily_market_brief_jobs AS job
+            JOIN daily_market_brief_job_items AS item ON item.job_id = job.id
+            WHERE item.id = %s
+              AND item.status = 'running'
+              AND item.worker_name = %s
+              AND item.lease_token = %s
+              AND item.attempt_count = %s
+            FOR UPDATE OF job
+            """,
+            (item_id, cleaned_worker_name, cleaned_lease_token, int(attempt_count)),
+        ).fetchone()
+        if job is None:
+            return None
+        row = conn.execute(
+            """
+            UPDATE daily_market_brief_job_items AS item SET
+              heartbeat_at = now(),
+              updated_at = now()
+            WHERE item.id = %s
+              AND item.status = 'running'
+              AND item.worker_name = %s
+              AND item.lease_token = %s
+              AND item.attempt_count = %s
+            RETURNING item.id, item.job_id, item.heartbeat_at
+            """,
+            (item_id, cleaned_worker_name, cleaned_lease_token, int(attempt_count)),
+        ).fetchone()
+        if row is not None:
+            conn.execute(
+                """
+                UPDATE daily_market_brief_jobs
+                SET worker_heartbeat_at = %s, updated_at = now()
+                WHERE id = %s
+                """,
+                (row["heartbeat_at"], row["job_id"]),
+            )
+    if row is None:
+        return None
+    result = to_jsonable(row)
+    result["cancel_requested"] = bool(job["cancel_requested"])
+    return result
 
 
 def finish_history_item(
