@@ -45,11 +45,11 @@ MARKET_CONFIGS: dict[str, MarketConfig] = {
         close_time=time(hour=15, minute=30),
         index_metric_label="成交量",
         index_configs=(
-            {"code": "SH.000001", "name": "Shanghai Composite"},
-            {"code": "SZ.399001", "name": "Shenzhen Component"},
-            {"code": "SH.000300", "name": "CSI 300"},
-            {"code": "SZ.399006", "name": "ChiNext Index"},
-            {"code": "SH.000688", "name": "STAR 50"},
+            {"code": "SH.000001", "name": "上证指数"},
+            {"code": "SZ.399001", "name": "深证成指"},
+            {"code": "SH.000300", "name": "沪深300"},
+            {"code": "SZ.399006", "name": "创业板指"},
+            {"code": "SH.000688", "name": "科创50"},
         ),
     ),
     "HK": MarketConfig(
@@ -377,13 +377,13 @@ def render_daily_market_brief_markdown(context: dict[str, Any]) -> str:
     lines.extend(["", "## 核心指数"])
     lines.extend(_render_index_table(context.get("indexes") or []))
     lines.extend(["", "## 行业/板块涨幅榜"])
-    lines.extend(_render_rank_table(context.get("sectors") or [], empty="配置的数据源暂不支持本市场行业/板块涨幅榜。"))
+    lines.extend(_render_rank_table(context.get("sectors") or [], market=market["code"], empty="配置的数据源暂不支持本市场行业/板块涨幅榜。"))
     lines.extend(["", "## 个股涨幅榜"])
-    lines.extend(_render_rank_table(context.get("gainers") or [], empty="配置的数据源暂不支持本市场普通股流动性筛选后的涨幅榜。"))
+    lines.extend(_render_rank_table(context.get("gainers") or [], market=market["code"], empty="配置的数据源暂不支持本市场普通股流动性筛选后的涨幅榜。"))
     lines.extend(["", "## 资金流"])
     flow = context.get("capital_flow") or []
     if flow:
-        lines.extend(_render_rank_table(flow, empty=CAPITAL_FLOW_DEGRADED_COPY))
+        lines.extend(_render_rank_table(flow, market=market["code"], empty=CAPITAL_FLOW_DEGRADED_COPY))
     else:
         lines.append(f"- {CAPITAL_FLOW_DEGRADED_COPY}")
     lines.extend(["", "## 数据状态"])
@@ -1300,7 +1300,7 @@ def _render_index_table(indexes: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def _render_rank_table(items: list[dict[str, Any]], *, empty: str) -> list[str]:
+def _render_rank_table(items: list[dict[str, Any]], *, market: str, empty: str) -> list[str]:
     if not items:
         return [f"- {empty}"]
     lines = ["| 排名 | 名称 | 代码/指标 | 涨跌幅/数值 | 来源 |", "| ---: | --- | --- | ---: | --- |"]
@@ -1308,7 +1308,7 @@ def _render_rank_table(items: list[dict[str, Any]], *, empty: str) -> list[str]:
         metric = item.get("change_pct")
         if metric is None:
             metric = item.get("flow_value") or item.get("turnover")
-            metric_text = _fmt_number(metric)
+            metric_text = format_market_amount(metric, market) if item.get("turnover") is not None else _fmt_number(metric)
         else:
             metric_text = _fmt_pct(metric)
         lines.append(
@@ -1365,6 +1365,26 @@ def _number(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+MARKET_CURRENCIES = {
+    "CN": {"code": "CNY", "unit": "元"},
+    "HK": {"code": "HKD", "unit": "港元"},
+    "US": {"code": "USD", "unit": "美元"},
+}
+
+
+def format_market_amount(value: Any, market: str) -> str:
+    number = _number(value)
+    if number is None:
+        return "-"
+    currency = MARKET_CURRENCIES[_normalize_market(market)]
+    absolute = abs(number)
+    if absolute >= 100_000_000:
+        return f"{number / 100_000_000:.2f} 亿{currency['unit']} {currency['code']}"
+    if absolute >= 10_000:
+        return f"{number / 10_000:.2f} 万{currency['unit']} {currency['code']}"
+    return f"{number:.2f} {currency['unit']} {currency['code']}"
 
 
 def _average(values: list[float | None]) -> float | None:

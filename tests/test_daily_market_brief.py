@@ -177,8 +177,28 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(len(second.context["sectors"]), 5)
         self.assertEqual(len(second.context["gainers"]), 5)
         self.assertEqual(second.context["source_status"]["capital_flow"]["status"], "ok")
-        self.assertIn("Shanghai Composite", second.markdown)
+        self.assertIn("上证指数", second.markdown)
         self.assertIn("不构成买卖建议", second.markdown)
+
+    def test_cn_indexes_use_chinese_display_names(self) -> None:
+        result = dmb.build_daily_market_brief(
+            market="CN", market_date=date(2026, 7, 9), save=False,
+            market_bar_loader=fake_market_bar_loader, use_fixture=True,
+            now=datetime(2026, 7, 9, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertEqual(
+            ["上证指数", "深证成指", "沪深300", "创业板指", "科创50"],
+            [row["name"] for row in result.context["indexes"]],
+        )
+        self.assertIn("上证指数", result.markdown)
+        self.assertNotIn("Shanghai Composite", result.markdown)
+
+    def test_format_market_amount_uses_currency_and_chinese_units(self) -> None:
+        self.assertEqual("50.93 亿元 CNY", dmb.format_market_amount(5_093_000_000, "CN"))
+        self.assertEqual("6310.44 万港元 HKD", dmb.format_market_amount(63_104_400, "HK"))
+        self.assertEqual("6.33 亿美元 USD", dmb.format_market_amount(633_303_877.53, "US"))
+        self.assertEqual("-", dmb.format_market_amount(None, "US"))
 
     def test_live_us_defaults_to_explicit_capital_flow_degraded_state(self) -> None:
         result = dmb.build_daily_market_brief(
@@ -352,18 +372,18 @@ class DailyMarketBriefTests(unittest.TestCase):
 
         self.assertTrue(generated.ok)
         self.assertTrue(rerun.ok)
-        self.assertIn("Shanghai Composite", generated.message)
-        self.assertIn("Shenzhen Component", generated.message)
-        self.assertIn("CSI 300", generated.message)
-        self.assertIn("ChiNext Index", generated.message)
-        self.assertIn("STAR 50", generated.message)
+        self.assertIn("上证指数", generated.message)
+        self.assertIn("深证成指", generated.message)
+        self.assertIn("沪深300", generated.message)
+        self.assertIn("创业板指", generated.message)
+        self.assertIn("科创50", generated.message)
         self.assertNotIn("暂无可用核心指数数据", generated.message)
         self.assertIn("review_reports #1", generated.message)
         self.assertIn("review_reports #1", rerun.message)
 
     def test_cross_market_fixture_generation_coexists_for_same_date(self) -> None:
         for market, required_index in (
-            ("CN", "Shanghai Composite"),
+            ("CN", "上证指数"),
             ("HK", "Hang Seng Index"),
             ("US", "S&P 500"),
         ):
