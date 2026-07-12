@@ -192,6 +192,8 @@ class HealthRunner(RecordingRunner):
                 0,
                 json.dumps(
                     {
+                        "ID": f"{service}-container",
+                        "Name": f"turenagenttool_prod-{service}-1",
                         "Service": service,
                         "State": "running",
                         "Status": "Up 2 minutes (healthy)" if service == "postgres" else "Up 2 minutes",
@@ -200,6 +202,8 @@ class HealthRunner(RecordingRunner):
                 + "\n",
                 "",
             )
+        if command[:3] == ("docker", "inspect", "--format"):
+            return CommandResult(0, "0\n", "")
         if lookup_command[:3] == ("docker", "compose", "logs"):
             return CommandResult(0, "service started normally\n", "")
         if command[:2] == ("curl", "--silent"):
@@ -2058,7 +2062,7 @@ class DockerHealthCheckerTests(TestCase):
         self.assertEqual(2, runner.health_attempts)
         self.assertEqual([1.0], sleeps)
 
-    def test_scheduler_health_rejects_startup_traceback(self) -> None:
+    def test_running_scheduler_ignores_handled_task_traceback(self) -> None:
         logs = (
             "docker",
             "compose",
@@ -2072,10 +2076,11 @@ class DockerHealthCheckerTests(TestCase):
             0, "Traceback (most recent call last):\nRuntimeError: boom\n", ""
         )
 
-        with self.assertRaisesRegex(DeploymentHealthError, "startup failure"):
-            self.health.check_service("account-snapshot-scheduler", ())
+        self.health.check_service("account-snapshot-scheduler", ())
 
-    def test_history_worker_health_checks_running_state_and_startup_logs(self) -> None:
+        self.assertNotIn(logs, self.runner.commands)
+
+    def test_history_worker_health_uses_running_state_without_log_scan(self) -> None:
         self.health.check_service("daily-market-brief-history-worker", ())
 
         rendered = [" ".join(command) for command in self.runner.commands]
@@ -2085,12 +2090,22 @@ class DockerHealthCheckerTests(TestCase):
                 for command in rendered
             )
         )
-        self.assertTrue(
-            any(
-                "logs --no-color --tail 200 daily-market-brief-history-worker" in command
-                for command in rendered
-            )
+        self.assertFalse(
+            any("logs --no-color" in command for command in rendered)
         )
+
+    def test_scheduler_health_rejects_restart_count(self) -> None:
+        inspect = (
+            "docker",
+            "inspect",
+            "--format",
+            "{{.RestartCount}}",
+            "account-snapshot-scheduler-container",
+        )
+        self.runner.results[inspect] = CommandResult(0, "1\n", "")
+
+        with self.assertRaisesRegex(DeploymentHealthError, "restarted during startup"):
+            self.health.check_service("account-snapshot-scheduler", ())
 
     def test_not_running_service_reports_safe_startup_log_detail(self) -> None:
         ps = (

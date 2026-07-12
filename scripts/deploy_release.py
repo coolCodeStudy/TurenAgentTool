@@ -153,15 +153,6 @@ class DockerHealthChecker:
             self._dingtalk_negative_check()
         elif service == "mcp":
             self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "MCP transport is unavailable")
-        elif service in self._PROCESS_SERVICES:
-            result = self._run(
-                ("docker", "compose", "logs", "--no-color", "--tail", "200", service)
-            )
-            if result.returncode != 0:
-                raise DeploymentHealthError(f"{service} logs could not be inspected")
-            logs = result.stdout.lower()
-            if any(signal in logs for signal in ("traceback (most recent call last)", "crashloop", "restart loop")):
-                raise DeploymentHealthError(f"{service} reported a startup failure")
 
     def check_aggregate(self, feature_routes: tuple[str, ...]) -> None:
         self._check_running("postgres")
@@ -198,6 +189,26 @@ class DockerHealthChecker:
             for row in matching
         ):
             self._raise_not_running(service)
+        if service in self._PROCESS_SERVICES:
+            for row in matching:
+                container = str(row.get("ID") or row.get("Name") or "").strip()
+                if not container:
+                    continue
+                restart_count = self._run(
+                    ("docker", "inspect", "--format", "{{.RestartCount}}", container)
+                )
+                if restart_count.returncode != 0:
+                    raise DeploymentHealthError(
+                        f"{service} restart state could not be inspected"
+                    )
+                try:
+                    restarted = int(restart_count.stdout.strip())
+                except ValueError as exc:
+                    raise DeploymentHealthError(
+                        f"{service} restart state could not be inspected"
+                    ) from exc
+                if restarted:
+                    raise DeploymentHealthError(f"{service} restarted during startup")
 
     def _raise_not_running(self, service: str) -> None:
         logs = self._run(("docker", "compose", "logs", "--no-color", "--tail", "200", service))
