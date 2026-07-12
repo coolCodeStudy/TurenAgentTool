@@ -1,6 +1,9 @@
 from pathlib import Path
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -86,6 +89,59 @@ SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy c
 SMOKE_ROUTER_NATURAL_MEMORY = "我觉得 Smoke Test 的组合管理成本需要被系统识别并沉淀。"
 SMOKE_JOB_SYMBOL = "SMOKEJOB"
 SMOKE_JOB_MARKET = "TEST"
+
+
+class _RenderedAssetParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._current_tag: str | None = None
+        self.scripts: list[str] = []
+        self.styles: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "script":
+            self._current_tag = tag
+            self.scripts.append("")
+        elif tag == "style":
+            self._current_tag = tag
+            self.styles.append("")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self._current_tag:
+            self._current_tag = None
+
+    def handle_data(self, data: str) -> None:
+        if self._current_tag == "script":
+            self.scripts[-1] += data
+        elif self._current_tag == "style":
+            self.styles[-1] += data
+
+
+def _rendered_assets(html: str) -> _RenderedAssetParser:
+    parser = _RenderedAssetParser()
+    parser.feed(html)
+    return parser
+
+
+def assert_rendered_js_parses(html: str, *, page_name: str) -> None:
+    node = shutil.which("node")
+    assert node is not None, "node is required for rendered JavaScript parser smoke checks"
+    scripts = _rendered_assets(html).scripts
+    assert scripts, f"{page_name} rendered no script blocks"
+    with tempfile.TemporaryDirectory(prefix=f"{page_name}-js-") as tmp_dir:
+        for index, script in enumerate(scripts):
+            script_path = Path(tmp_dir) / f"script-{index}.js"
+            script_path.write_text(script, encoding="utf-8")
+            result = subprocess.run([node, "--check", str(script_path)], text=True, capture_output=True)
+            assert result.returncode == 0, f"{page_name} script {index} failed parser check: {result.stderr}"
+
+
+def assert_rendered_css_has_no_doubled_braces(html: str, *, page_name: str) -> None:
+    styles = _rendered_assets(html).styles
+    assert styles, f"{page_name} rendered no style blocks"
+    for index, style in enumerate(styles):
+        assert "{{" not in style, f"{page_name} style {index} contains literal doubled opening braces"
+        assert "}}" not in style, f"{page_name} style {index} contains literal doubled closing braces"
 
 
 def cleanup_smoke_data() -> None:
@@ -253,6 +309,19 @@ def main() -> None:
             confidence=0.8,
             confirmed_by_user=True,
         )
+        valuation_knowledge = add_knowledge_item(
+            target_type="stock",
+            target_id=stock["id"],
+            knowledge_type="valuation_facts",
+            content=(
+                "P0 valuation fixture: revenue=1000, net income=120, operating cash flow=180, "
+                "capex=40, cash=300, debt=100, price=20, shares outstanding=100, EBITDA=200, "
+                "revenue growth=18%, TAM=5000. The stock has AI growth and cash flow valuation context."
+            ),
+            source_id=source["id"],
+            confidence=0.9,
+            confirmed_by_user=True,
+        )
         insight = add_user_insight(
             target_type="stock",
             target_id=stock["id"],
@@ -326,7 +395,23 @@ def main() -> None:
             assert decision_alias_result.ok
             assert "Smoke Test Stock" in decision_alias_result.message
 
+            valuation_result = handle_command(
+                f"valuation {SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                output_dir=Path(tmp_dir),
+            )
+            latest_valuation_result = handle_command(
+                f"查看估值 {SMOKE_MARKET}.{SMOKE_SYMBOL}",
+                output_dir=Path(tmp_dir),
+            )
+            assert valuation_result.ok
+            assert latest_valuation_result.ok
+            assert "估值研究卡" in valuation_result.message
+            assert "Deterministic calculations" in valuation_result.message
+            assert (Path(tmp_dir) / "valuation").exists()
+
             workbench_decision = parse_workbench_command("决策 Smoke Test Stock", allow_llm=False)
+            workbench_valuation = parse_workbench_command("估值 Smoke Test Stock", allow_llm=False)
+            workbench_valuation_methods = parse_workbench_command("估值方法", allow_llm=False)
             workbench_intel = parse_workbench_command("决策 英特尔", allow_llm=False)
             workbench_alibaba = parse_workbench_command("决策 阿里", allow_llm=False)
             workbench_form = parse_workbench_command(
@@ -343,6 +428,27 @@ def main() -> None:
             workbench_bootstrap = parse_workbench_command("创建股票档案 TSTZZ US", allow_llm=False)
             workbench_unknown = parse_workbench_command("乱买英特尔", allow_llm=False)
             workbench_html = render_command_workbench_html()
+            assert "Command Workbench" in workbench_html
+            assert "/api/command-workbench/actions" in workbench_html
+            assert "/api/command-workbench/parse" in workbench_html
+            assert "/api/command-workbench/execute" in workbench_html
+            assert "command_workbench_token" in workbench_html
+            assert "command_workbench_recent" in workbench_html
+            assert "command_workbench_pinned" in workbench_html
+            assert 'id="main-content"' in workbench_html
+            assert 'class="skip-link"' in workbench_html
+            assert 'aria-label="Primary"' in workbench_html
+            assert 'href="/weekly-review"' in workbench_html
+            assert 'href="/command"' in workbench_html
+            assert 'aria-current="page"' in workbench_html
+            assert "Daily Market Brief" not in workbench_html
+            assert "Thesis:" in workbench_html
+            assert "Drivers:" in workbench_html
+            assert "Risks:" in workbench_html
+            assert "Watch:" in workbench_html
+            assert "Freshness:" in workbench_html
+            assert "Evidence:" in workbench_html
+            assert_rendered_js_parses(workbench_html, page_name="command-workbench")
 
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
@@ -416,6 +522,7 @@ def main() -> None:
 
         assert repeated_source["id"] == source["id"]
         assert repeated_knowledge["id"] == knowledge["id"]
+        assert valuation_knowledge["knowledge_type"] == "valuation_facts"
         assert repeated_insight["id"] == insight["id"]
         assert sector_insight["target_type"] == "sector"
         assert portfolio_insight["target_type"] == "portfolio"
@@ -427,6 +534,10 @@ def main() -> None:
         assert resolve_stock_reference("Smoke Test Stock")[0]["id"] == stock["id"]
         assert workbench_decision["status"] == "parsed"
         assert workbench_decision["exact_command"] == f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert workbench_valuation["status"] == "parsed"
+        assert workbench_valuation["exact_command"] == f"valuation {SMOKE_MARKET}.{SMOKE_SYMBOL}"
+        assert workbench_valuation_methods["status"] == "parsed"
+        assert workbench_valuation_methods["exact_command"] == "估值方法"
         assert workbench_intel["status"] == "parsed"
         assert workbench_intel["target"]["canonical"] == "US.INTC"
         assert workbench_alibaba["status"] == "ambiguous_entity"
@@ -485,6 +596,9 @@ def main() -> None:
         assert is_query_command("复盘 2020-01-06 2020-01-12")
         assert is_query_command("查看下周节奏")
         assert is_query_command(f"决策 {SMOKE_MARKET}.{SMOKE_SYMBOL}")
+        assert is_query_command(f"valuation {SMOKE_MARKET}.{SMOKE_SYMBOL}")
+        assert is_query_command(f"查看估值 {SMOKE_MARKET}.{SMOKE_SYMBOL}")
+        assert is_query_command("估值方法")
         assert _extract_time_range_text("5月收益") == "5月"
         assert _extract_time_range_text("五月份收益") == "五月份"
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
@@ -730,12 +844,23 @@ def main() -> None:
         assert "/api/weekly-review/save" in weekly_web_html
         assert "/api/weekly-review/generate" in weekly_web_html
         assert "/api/weekly-review/refresh" in weekly_web_html
+        assert "/api/candidate-insights?status=pending" in weekly_web_html
+        assert "weekly_review_web_token" in weekly_web_html
+        assert 'id="main-content"' in weekly_web_html
+        assert 'class="skip-link"' in weekly_web_html
+        assert 'aria-label="Primary"' in weekly_web_html
+        assert 'href="/weekly-review"' in weekly_web_html
+        assert 'href="/command"' in weekly_web_html
+        assert 'aria-current="page"' in weekly_web_html
+        assert "Daily Market Brief" not in weekly_web_html
         assert "week-date" in weekly_web_html
         assert "id=\"start\"" not in weekly_web_html
         assert "id=\"end\"" not in weekly_web_html
         assert "index provider not configured" not in weekly_web_html
         assert "external event provider not implemented" not in weekly_web_html
         assert "data-slot=\"holdings\"" in weekly_web_html
+        assert_rendered_js_parses(weekly_web_html, page_name="weekly-review")
+        assert_rendered_css_has_no_doubled_braces(weekly_web_html, page_name="weekly-review")
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end

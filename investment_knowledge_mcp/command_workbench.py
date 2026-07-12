@@ -16,6 +16,9 @@ from investment_knowledge_mcp.command_router import (
     WEEKLY_REVIEW_COMMANDS,
     WORKER_STATUS_COMMANDS,
 )
+from investment_knowledge_mcp.frontend_shell import ShellPage, render_app_shell
+from investment_knowledge_mcp.kline_agent import parse_kline_command
+from investment_knowledge_mcp.valuation_data_provider import normalize_provider_target, provider_target_resolution
 
 COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
     "Enter the private Command Workbench access token and preview again. "
@@ -131,6 +134,71 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=("stock profile", "knowledge base", "research jobs"),
         expected_output="Detailed stock context and a path to the generated context artifact.",
     ),
+    "stock_valuation": CommandAction(
+        id="stock_valuation",
+        action_family="Valuation",
+        label="Stock valuation",
+        description="Build a single-stock valuation research card and save a valuation packet artifact.",
+        aliases=("估值", "valuation", "value"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="valuation {market}.{symbol}",
+        safety_level="writes_artifact",
+        confirmation_required=False,
+        result_type="stock_valuation_card",
+        side_effects="Writes a local valuation artifact. Does not trade and does not write formal user insights.",
+        data_sources=("stock profile", "knowledge base", "source metadata", "valuation artifact"),
+        expected_output="Concise valuation card with selected frames, deterministic calculations, source coverage, and data gaps.",
+        pinned=True,
+    ),
+    "stock_valuation_latest": CommandAction(
+        id="stock_valuation_latest",
+        action_family="Valuation",
+        label="Latest valuation",
+        description="Read the latest saved valuation packet for one stock.",
+        aliases=("查看估值", "latest valuation"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="查看估值 {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="stock_valuation_card",
+        side_effects="Reads the latest local valuation artifact only.",
+        data_sources=("valuation artifact",),
+        expected_output="Latest saved valuation card or a recovery message if no artifact exists.",
+    ),
+    "stock_valuation_artifact_evidence": CommandAction(
+        id="stock_valuation_artifact_evidence",
+        action_family="Valuation",
+        label="Valuation artifact evidence",
+        description="Read a bounded evidence summary from the latest saved valuation artifact for one stock.",
+        aliases=("valuation evidence", "valuation artifact evidence", "估值证据"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="valuation artifact evidence {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="stock_valuation_artifact_evidence",
+        side_effects="Reads only the latest valuation artifact for the selected stock and omits local paths and raw provider errors.",
+        data_sources=("valuation artifact",),
+        expected_output="JSON evidence summary with raw numeric valuation fields, display values, meaningfulness, and frame-fit bridge fields.",
+    ),
+    "valuation_methods": CommandAction(
+        id="valuation_methods",
+        action_family="Valuation",
+        label="Valuation methods",
+        description="List the five P0 internal valuation frames.",
+        aliases=("估值方法", "valuation methods"),
+        required_fields=(),
+        optional_fields=(),
+        template="估值方法",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="valuation_methods",
+        side_effects="Reads the static P0 valuation method library.",
+        data_sources=("valuation method library",),
+        expected_output="Five internal core valuation frames and their core questions.",
+    ),
     "decision_refresh": CommandAction(
         id="decision_refresh",
         action_family="Decision",
@@ -213,6 +281,22 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=("Futu OpenD", "knowledge base"),
         expected_output="Portfolio structure, risks, and follow-up analysis.",
         pinned=True,
+    ),
+    "kline_investigation": CommandAction(
+        id="kline_investigation",
+        action_family="Market Behavior",
+        label="Kline investigation",
+        description="Investigate daily, weekly, and monthly Kline behavior for one stock.",
+        aliases=("K线", "K线调查", "Kline", "kline"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="K线调查 {target} 5年 前复权",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="kline_investigation",
+        side_effects="No trade and no durable write. Reads configured Kline provider data when available.",
+        data_sources=("Kline provider", "deterministic pattern library"),
+        expected_output="Read-only Kline report with source metadata, sample statistics, warnings, and evidence limits.",
     ),
     "weekly_current": CommandAction(
         id="weekly_current",
@@ -478,48 +562,25 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
 
 
 def render_command_workbench_html() -> str:
-    return """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Command Workbench</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f7f8fa;
-      --panel: #ffffff;
-      --ink: #1f252d;
-      --muted: #637083;
-      --line: #d8e0e8;
-      --accent: #146c74;
-      --accent-soft: #e7f4f3;
-      --warn: #8a5a00;
-      --warn-bg: #fff7df;
-      --bad: #a33b35;
-      --good: #176b43;
-      --chip: #edf2f6;
+    page_css = """
+    .command-page {
+      --bg: var(--app-bg);
+      --panel: var(--app-surface);
+      --ink: var(--app-ink);
+      --muted: var(--app-muted);
+      --line: var(--app-line);
+      --accent: var(--app-accent);
+      --accent-soft: var(--app-accent-soft);
+      --warn: var(--app-warn);
+      --warn-bg: var(--app-warn-bg);
+      --bad: var(--app-bad);
+      --good: var(--app-good);
+      --chip: var(--app-surface-muted);
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--ink);
-    }
-    .shell {
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 340px;
-    }
-    main {
+    .command-page {
       min-width: 0;
-      padding: 24px;
     }
-    aside {
-      border-left: 1px solid var(--line);
-      background: #fff;
-      padding: 24px 18px;
+    .command-side {
       min-width: 0;
     }
     h1 {
@@ -744,48 +805,43 @@ def render_command_workbench_html() -> str:
       margin-bottom: 8px;
     }
     @media (max-width: 980px) {
-      .shell { display: block; }
-      aside { border-left: 0; border-top: 1px solid var(--line); }
+      .command-side { border-top: 1px solid var(--line); }
     }
     @media (max-width: 680px) {
-      main, aside { padding: 16px; }
       .input-row { grid-template-columns: 1fr; }
       .preview-grid { grid-template-columns: 1fr; }
     }
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <main>
-      <h1>Command Workbench</h1>
-      <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
+    """
+    main_html = """
       <div class="input-row">
         <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
         <input id="api-token" type="password" autocomplete="off" placeholder="Access token">
-        <button id="parse" class="primary">Preview</button>
+        <button id="parse" class="app-button primary">Preview</button>
       </div>
-      <section id="preview-section">
+      <section id="preview-section" class="app-panel">
         <h2>Parsed Preview</h2>
-        <div id="preview"><div class="notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
+        <div id="preview" class="app-status-region" aria-live="polite"><div class="app-notice notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
       </section>
-      <section id="form-section" hidden>
+      <section id="form-section" class="app-panel" hidden>
         <h2 id="form-title">Action</h2>
         <div id="form" class="form-grid"></div>
       </section>
-      <section>
+      <section class="app-panel">
         <h2>Execution Result / 执行结果</h2>
-        <div id="result"><span class="label">No command has run in this session.</span></div>
+        <div id="result" class="app-status-region" aria-live="polite"><span class="label">No command has run in this session.</span></div>
       </section>
-    </main>
-    <aside>
+    """
+    aside_html = """
+      <div class="app-panel command-side">
       <h2>Action Catalog</h2>
       <div id="catalog" class="actions"></div>
       <h3>Pinned</h3>
       <div id="pinned" class="history"></div>
       <h3>Recent</h3>
       <div id="recent" class="history"></div>
-    </aside>
-  </div>
+      </div>
+    """
+    page_js = """
   <script>
     const $ = (selector) => document.querySelector(selector);
     const state = { actions: [], preview: null, activeAction: null, selectedTarget: null };
@@ -795,6 +851,7 @@ def render_command_workbench_html() -> str:
       token: "command_workbench_token"
     };
 
+    bootstrapTokenFromFragment();
     $("#api-token").value = localStorage.getItem(storage.token) || "";
     $("#parse").addEventListener("click", () => parseSmartInput());
     $("#smart-input").addEventListener("keydown", (event) => {
@@ -941,7 +998,7 @@ def render_command_workbench_html() -> str:
         </div>` : "";
       const runButton = runnable ? `<button class="primary" onclick="runPreview()">${preview.confirmation_required ? "Confirm and Run" : "Run"}</button>` : "";
       $("#preview").innerHTML = `
-        ${preview.recovery_message ? `<div class="notice">${escapeHtml(preview.recovery_message)}</div>` : ""}
+        ${preview.recovery_message ? `<div class="app-notice notice">${escapeHtml(preview.recovery_message)}</div>` : ""}
         <div class="preview-grid">
           <div class="item"><span class="label">Action</span><strong>${escapeHtml(actionLine)}</strong></div>
           <div class="item"><span class="label">Target</span>${escapeHtml(targetText)}</div>
@@ -985,7 +1042,7 @@ def render_command_workbench_html() -> str:
 
     function formatResultMessage(message) {
       if (!message) {
-        return `<div class="notice">No result body returned. / 没有返回结果正文。</div>`;
+        return `<div class="app-notice notice">No result body returned. / 没有返回结果正文。</div>`;
       }
       const decisionCard = parseDecisionCard(message);
       if (decisionCard) return renderDecisionResult(decisionCard, message);
@@ -1000,7 +1057,7 @@ def render_command_workbench_html() -> str:
     }
 
     function parseDecisionCard(message) {
-      const lines = String(message || "").split(/\r?\n/).map((line) => line.trimEnd());
+      const lines = String(message || "").split(/\\r?\\n/).map((line) => line.trimEnd());
       const title = (lines[0] || "").trim();
       const thesisIndex = lines.findIndex((line) => line.startsWith("Thesis:"));
       const driversIndex = lines.findIndex((line) => line === "Drivers:");
@@ -1117,6 +1174,20 @@ def render_command_workbench_html() -> str:
       const token = $("#api-token").value.trim();
       if (token) localStorage.setItem(storage.token, token);
     }
+    function bootstrapTokenFromFragment() {
+      const rawHash = window.location.hash || "";
+      if (!rawHash || rawHash.length <= 1) return;
+      const params = new URLSearchParams(rawHash.slice(1));
+      const token = params.get("access_token") || params.get("token") || params.get("command_workbench_token");
+      if (!token) return;
+      localStorage.setItem(storage.token, token);
+      params.delete("access_token");
+      params.delete("token");
+      params.delete("command_workbench_token");
+      const cleanHash = params.toString();
+      const cleanUrl = `${window.location.pathname}${window.location.search}${cleanHash ? `#${cleanHash}` : ""}`;
+      window.history.replaceState(null, "", cleanUrl);
+    }
     function setBusy(busy) {
       $("#parse").disabled = busy;
     }
@@ -1130,8 +1201,24 @@ def render_command_workbench_html() -> str:
       return escapeHtml(value).replace(/`/g, "&#96;");
     }
   </script>
-</body>
-</html>"""
+"""
+    return render_app_shell(
+        ShellPage(
+            title="Command Workbench",
+            lang="en",
+            active_nav="command",
+            page_class="command-page",
+            heading="Command Workbench",
+            subtitle=(
+                "Type a stock name, symbol, or supported command. The workbench resolves "
+                "the target and shows the exact command before running it."
+            ),
+            main_html=main_html,
+            aside_html=aside_html,
+            page_css=page_css,
+            page_js=page_js,
+        )
+    )
 
 
 def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
@@ -1259,6 +1346,68 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    valuation_latest_target = _match_first(
+        text,
+        [
+            r"^查看估值\s+(.+)$",
+            r"^最新估值\s+(.+)$",
+            r"^latest valuation\s+(.+)$",
+            r"^valuation latest\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation_latest",
+                "deterministic_alias",
+                0.96,
+                fields={"stock": valuation_latest_target},
+            )
+        )
+
+    valuation_evidence_target = _match_first(
+        text,
+        [
+            r"^valuation artifact evidence\s+(.+)$",
+            r"^valuation evidence\s+(.+)$",
+            r"^估值artifact证据\s+(.+)$",
+            r"^估值证据\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation_artifact_evidence",
+                "deterministic_alias",
+                0.98,
+                fields={"stock": valuation_evidence_target},
+            )
+        )
+
+    valuation_target = _match_first(
+        text,
+        [
+            r"^估值\s*(.+)$",
+            r"^valuation\s+(.+)$",
+            r"^value\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation",
+                "deterministic_alias",
+                0.96,
+                fields={"stock": valuation_target},
+            )
+        )
+
     decision_target = _match_first(
         text,
         [
@@ -1290,6 +1439,80 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
+    valuation_evidence_exact = _match_first(
+        text,
+        [r"^(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_exact:
+        parsed = _parse_stock_target(valuation_evidence_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="stock_valuation_artifact_evidence",
+                    fields={"stock": valuation_evidence_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
+    kline_request = parse_kline_command(text)
+    if kline_request is not None:
+        canonical = f"{kline_request.market}.{kline_request.symbol}"
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="kline_investigation",
+                fields={"exact_command": text},
+                selected_target=_candidate(
+                    symbol=kline_request.symbol,
+                    market=kline_request.market,
+                    name=canonical,
+                    confidence=1.0,
+                    source="symbol",
+                ),
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
+    valuation_exact = _match_first(
+        text,
+        [r"^(?:估值|valuation|value)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_exact:
+        parsed = _parse_stock_target(valuation_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="stock_valuation",
+                    fields={"stock": valuation_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
+    valuation_latest_exact = _match_first(
+        text,
+        [r"^(?:查看估值|最新估值|latest valuation|valuation latest|value latest)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_exact:
+        parsed = _parse_stock_target(valuation_latest_exact)
+        if parsed is not None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=text,
+                    action_id="stock_valuation_latest",
+                    fields={"stock": valuation_latest_exact},
+                    parse_source="exact_command",
+                    confidence=1.0,
+                )
+            )
+
     stock_exact = _match_first(
         text,
         [
@@ -1392,6 +1615,10 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
         "status": "system_status",
         "最近错误": "recent_errors",
         "worker状态": "worker_status",
+        "估值方法": "valuation_methods",
+        "估值框架": "valuation_methods",
+        "valuation methods": "valuation_methods",
+        "value methods": "valuation_methods",
     }
     action_id = simple_exact.get(text) or simple_exact.get(text.lower())
     if action_id:
@@ -1409,6 +1636,10 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
             )
         )
     return None
+
+
+def _looks_path_like_query(value: str) -> bool:
+    return "/" in value or "\\" in value or ".." in value
 
 
 def _preview_from_action(context: ParseContext) -> dict[str, Any]:
@@ -1429,24 +1660,36 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     confidence = context.confidence or 0.9
 
     needs_stock = any(field.get("type") == "stock" for field in action.required_fields)
+    has_exact_kline_command = action.id == "kline_investigation" and bool(str(fields.get("exact_command") or "").strip())
+    if has_exact_kline_command:
+        needs_stock = False
+    valuation_allows_fixture_target = action.id in {
+        "stock_valuation",
+        "stock_valuation_latest",
+        "stock_valuation_artifact_evidence",
+    }
     if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
-        resolved_target = _candidate_with_stock_profile(target)
-        if resolved_target is None:
-            return _preview_from_action(
-                ParseContext(
-                    raw_input=context.raw_input,
-                    action_id="bootstrap_stock_profile",
-                    fields={"stock": f"{target['market']}.{target['symbol']}"},
-                    selected_target=target,
-                    parse_source=context.parse_source,
-                    confidence=min(confidence, float(target.get("confidence") or confidence)),
-                    recovery_message=(
-                        f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
-                        "Initialize a minimal stock profile, then preview the decision command again."
-                    ),
+        fixture_target = _provider_fixture_candidate(target) if valuation_allows_fixture_target else None
+        if fixture_target is not None:
+            target = fixture_target
+        else:
+            resolved_target = _candidate_with_stock_profile(target)
+            if resolved_target is None:
+                return _preview_from_action(
+                    ParseContext(
+                        raw_input=context.raw_input,
+                        action_id="bootstrap_stock_profile",
+                        fields={"stock": f"{target['market']}.{target['symbol']}"},
+                        selected_target=target,
+                        parse_source=context.parse_source,
+                        confidence=min(confidence, float(target.get("confidence") or confidence)),
+                        recovery_message=(
+                            f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
+                            "Initialize a minimal stock profile, then preview the decision command again."
+                        ),
+                    )
                 )
-            )
-        target = resolved_target
+            target = resolved_target
 
     if action.id == "decision_card" and target is not None and _target_needs_research(target):
         return _preview_from_action(
@@ -1480,36 +1723,47 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             else:
                 confidence = min(confidence, float(target.get("confidence") or confidence))
         else:
-            candidates = resolve_stock_candidates(stock_query)
-            if not candidates:
-                bootstrap_target = _symbol_candidate_from_query(stock_query)
-                if bootstrap_target is not None:
-                    return _preview_from_action(
-                        ParseContext(
-                            raw_input=context.raw_input,
-                            action_id="bootstrap_stock_profile",
-                            fields={"stock": f"{bootstrap_target['market']}.{bootstrap_target['symbol']}"},
-                            selected_target=bootstrap_target,
-                            parse_source=context.parse_source,
-                            confidence=min(confidence, float(bootstrap_target.get("confidence") or confidence)),
-                            recovery_message=(
-                                f'I recognized {action.label}, but {bootstrap_target["market"]}.'
-                                f'{bootstrap_target["symbol"]} is not in the stock profile database yet. '
-                                "Initialize a minimal stock profile, then preview the decision command again."
-                            ),
-                        )
-                    )
-                status = "needs_entity"
-                recovery_message = (
-                    f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
-                    "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
-                )
-            elif len(candidates) == 1:
-                target = candidates[0]
+            fixture_target = _provider_fixture_candidate_from_query(stock_query) if valuation_allows_fixture_target else None
+            if fixture_target is not None:
+                target = fixture_target
                 confidence = min(confidence, float(target.get("confidence") or confidence))
             else:
-                status = "ambiguous_entity"
-                recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
+                candidates = resolve_stock_candidates(stock_query)
+                if not candidates:
+                    bootstrap_target = _symbol_candidate_from_query(stock_query)
+                    if bootstrap_target is not None:
+                        return _preview_from_action(
+                            ParseContext(
+                                raw_input=context.raw_input,
+                                action_id="bootstrap_stock_profile",
+                                fields={"stock": f"{bootstrap_target['market']}.{bootstrap_target['symbol']}"},
+                                selected_target=bootstrap_target,
+                                parse_source=context.parse_source,
+                                confidence=min(confidence, float(bootstrap_target.get("confidence") or confidence)),
+                                recovery_message=(
+                                    f'I recognized {action.label}, but {bootstrap_target["market"]}.'
+                                    f'{bootstrap_target["symbol"]} is not in the stock profile database yet. '
+                                    "Initialize a minimal stock profile, then preview the decision command again."
+                                ),
+                            )
+                        )
+                    status = "needs_entity"
+                    if _looks_path_like_query(stock_query):
+                        recovery_message = (
+                            f"I recognized {action.label}, but the target does not look like a stock symbol. "
+                            "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                        )
+                    else:
+                        recovery_message = (
+                            f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
+                            "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                        )
+                elif len(candidates) == 1:
+                    target = candidates[0]
+                    confidence = min(confidence, float(target.get("confidence") or confidence))
+                else:
+                    status = "ambiguous_entity"
+                    recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
 
     if status == "parsed" and action.id == "decision_card" and target is not None and _target_needs_research(target):
         return _preview_from_action(
@@ -1634,6 +1888,27 @@ def _symbol_candidate_from_query(query: str) -> dict[str, Any] | None:
         name=f"{market.upper()}.{symbol.upper()}",
         confidence=1.0,
         source="symbol",
+    )
+
+
+def _provider_fixture_candidate_from_query(query: str) -> dict[str, Any] | None:
+    parsed = _parse_stock_target(query)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    return _provider_fixture_candidate(_candidate(symbol=symbol, market=market, name="", confidence=1.0, source="provider_fixture"))
+
+
+def _provider_fixture_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    resolution = provider_target_resolution(str(candidate.get("symbol") or ""), str(candidate.get("market") or ""))
+    if not resolution:
+        return None
+    return _candidate(
+        symbol=str(resolution.get("normalized_symbol") or ""),
+        market=str(resolution.get("normalized_market") or ""),
+        name=str(resolution.get("company_name") or ""),
+        confidence=float(candidate.get("confidence") or 1.0),
+        source="provider_fixture",
     )
 
 
@@ -1780,6 +2055,8 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _build_exact_command(action: CommandAction, *, target: dict[str, Any] | None, fields: dict[str, Any]) -> str:
+    if action.id == "kline_investigation" and fields.get("exact_command"):
+        return str(fields["exact_command"]).strip()
     if target:
         values = {
             "symbol": str(target.get("symbol") or "").upper(),
@@ -1801,12 +2078,18 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     market_symbol_match = re.fullmatch(r"([A-Za-z]{1,5})\.([A-Za-z0-9._-]+)", cleaned)
     if market_symbol_match:
         market, symbol = market_symbol_match.groups()
-        return symbol.upper(), market.upper()
+        return normalize_provider_target(symbol, market)
     symbol_market_match = re.fullmatch(r"(\S+)\s+(\S+)", cleaned)
     if symbol_market_match:
         symbol, market = symbol_market_match.groups()
         if re.fullmatch(r"[A-Za-z]{1,5}", market):
-            return symbol.upper(), market.upper()
+            return normalize_provider_target(symbol, market)
+    multi_word_symbol_market = re.fullmatch(r"(.+)\s+([A-Za-z]{1,5})", cleaned)
+    if multi_word_symbol_market:
+        symbol, market = multi_word_symbol_market.groups()
+        normalized = normalize_provider_target(symbol, market)
+        if provider_target_resolution(*normalized):
+            return normalized
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None

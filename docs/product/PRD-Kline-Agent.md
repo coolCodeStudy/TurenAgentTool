@@ -252,6 +252,10 @@ V1 default:
 2. Use AkShare only as explicit fallback, prototype mode, or cross-check source.
 3. If Futu and AkShare cannot provide the requested symbol, return a clear provider limitation instead of fabricating an answer.
 
+Local acceptance constraint:
+
+- As of 2026-07-03, local user acceptance must not install, launch, or depend on FutuD/OpenD. Local review may accept only deterministic fixture/degraded-provider behavior unless a non-Futu live provider path or an approved remote provider environment is added.
+
 Future provider routing:
 
 | Market / Use Case | Preferred Provider | Fallback |

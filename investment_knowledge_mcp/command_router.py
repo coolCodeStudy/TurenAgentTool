@@ -32,6 +32,7 @@ from investment_knowledge_mcp.futu_opend_control import (
     request_phone_verify_code,
     submit_phone_verify_code,
 )
+from investment_knowledge_mcp.kline_agent import DisabledHistoricalBarProvider, investigate_kline_behavior, parse_kline_command
 from investment_knowledge_mcp.ops_client import (
     render_cloud_service_control,
     render_cloud_coding_status,
@@ -65,6 +66,18 @@ from investment_knowledge_mcp.research.source_facts import extract_source_facts
 from investment_knowledge_mcp.research.validation import validate_research_draft
 from investment_knowledge_mcp.system_status import render_ipo_reminder_status, render_system_status
 from investment_knowledge_mcp.system_overview import render_system_overview
+from investment_knowledge_mcp.stock_valuation import (
+    build_valuation_artifact,
+    build_valuation_artifact_evidence,
+    load_latest_valuation_artifact,
+    render_valuation_card,
+    render_valuation_methods,
+)
+from investment_knowledge_mcp.valuation_data_provider import (
+    fetch_provider_snapshot,
+    normalize_provider_target,
+    provider_target_resolution,
+)
 from investment_knowledge_mcp.weekly_review import build_weekly_review
 from scripts.build_analysis_context import render_stock_context
 from scripts.review_research_draft import build_review_markdown
@@ -349,6 +362,7 @@ def handle_command(
     command: str,
     output_dir: Path | None = None,
     include_artifact_path: bool = True,
+    disable_kline_live_provider: bool = False,
 ) -> CommandResult:
     cleaned = command.strip()
     if not cleaned:
@@ -362,11 +376,17 @@ def handle_command(
             normalized,
             output_dir=output_dir,
             include_artifact_path=include_artifact_path,
+            disable_kline_live_provider=disable_kline_live_provider,
         )
 
     ambiguous_match = re.fullmatch(r"__AMBIGUOUS_STOCK__\s+(.+)", cleaned)
     if ambiguous_match:
         return CommandResult(ok=False, message=f"匹配到多个股票，请说得更具体一点：{ambiguous_match.group(1)}")
+
+    kline_request = parse_kline_command(cleaned)
+    if kline_request is not None:
+        provider = DisabledHistoricalBarProvider() if disable_kline_live_provider else None
+        return CommandResult(ok=True, message=investigate_kline_behavior(kline_request, provider=provider))
 
     stock_detail_match = re.fullmatch(
         r"(?:分析详情|查看详情|股票详情|inspect detail|analyze detail)\s+(\S+)\s+(\S+)",
@@ -408,6 +428,56 @@ def handle_command(
             return CommandResult(ok=False, message="决策指令需要股票标的，例如：决策 US.INTC 或 决策 000660 KR")
         symbol, market = target
         return _handle_stock_decision_card(symbol=symbol, market=market)
+
+    if cleaned.lower() in {"valuation methods", "value methods", "估值方法", "估值框架"}:
+        return CommandResult(ok=True, message=render_valuation_methods())
+
+    valuation_evidence_match = re.fullmatch(
+        r"(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_match:
+        target = _parse_safe_stock_target(valuation_evidence_match.group(1))
+        if target is None:
+            return CommandResult(ok=False, message="估值 artifact 证据需要股票标的，例如：valuation artifact evidence US.INTC")
+        symbol, market = target
+        return _handle_stock_valuation_artifact_evidence(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+        )
+
+    valuation_latest_match = re.fullmatch(
+        r"(?:latest valuation|valuation latest|value latest|查看估值|最新估值)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_match:
+        target = _parse_stock_target(valuation_latest_match.group(1))
+        if target is None:
+            return CommandResult(ok=False, message="估值指令需要股票标的，例如：valuation US.INTC 或 估值 000660 KR")
+        symbol, market = target
+        return _handle_stock_valuation_latest(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            include_artifact_path=include_artifact_path,
+        )
+
+    valuation_match = re.fullmatch(r"(?:估值|valuation|value)\s+(.+)", cleaned, flags=re.IGNORECASE)
+    if valuation_match:
+        target = _parse_stock_target(valuation_match.group(1))
+        if target is None:
+            return CommandResult(ok=False, message="估值指令需要股票标的，例如：valuation US.INTC 或 估值 000660 KR")
+        symbol, market = target
+        return _handle_stock_valuation(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            command=cleaned,
+            include_artifact_path=include_artifact_path,
+        )
 
     stock_match = re.fullmatch(r"(?:分析|analyze)\s+(\S+)\s+(\S+)", cleaned, flags=re.IGNORECASE)
     if stock_match:
@@ -670,7 +740,23 @@ def is_query_command(command: str) -> bool:
     heuristic_intent = _heuristic_route_intent(normalized)
     return bool(
         re.fullmatch(r"(?:分析|analyze)\s+\S+\s+\S+", normalized, flags=re.IGNORECASE)
+        or parse_kline_command(normalized) is not None
         or re.fullmatch(r"(?:决策|decision)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|\S+\s+\S+)", normalized, flags=re.IGNORECASE)
+        or re.fullmatch(
+            r"(?:估值|valuation|value)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|\S+\s+\S+)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
+            r"(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\s+[A-Za-z]{1,5})",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(
+            r"(?:latest valuation|valuation latest|value latest|查看估值|最新估值)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|\S+\s+\S+)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
         or re.fullmatch(
             r"(?:查看股票|inspect|stock inspect)\s+\S+\s+\S+",
             normalized,
@@ -691,6 +777,10 @@ def is_query_command(command: str) -> bool:
             "帮助",
             "help",
             "?",
+            "valuation methods",
+            "value methods",
+            "估值方法",
+            "估值框架",
             *SYSTEM_STATUS_COMMANDS,
             *FUTU_MAINTENANCE_QUERY_COMMANDS,
             *IPO_REMINDER_STATUS_COMMANDS,
@@ -857,6 +947,89 @@ def _handle_stock_decision_card(symbol: str, market: str) -> CommandResult:
         )
     card = build_stock_decision_card(context, latest_research_job=_latest_research_job(symbol, market))
     return CommandResult(ok=True, message=render_stock_decision_card(card))
+
+
+def _handle_stock_valuation(
+    symbol: str,
+    market: str,
+    output_dir: Path,
+    command: str,
+    include_artifact_path: bool,
+) -> CommandResult:
+    context = repository.get_stock_context(symbol=symbol, market=market)
+    if not context.get("stock"):
+        target_resolution = provider_target_resolution(symbol, market, input_target=command)
+        if not target_resolution:
+            return CommandResult(ok=False, message=f"未找到股票：{symbol} {market}")
+        context = _p0_3_minimal_valuation_context(target_resolution)
+    provider_snapshot = fetch_provider_snapshot(symbol, market)
+    packet, _ = build_valuation_artifact(
+        context,
+        symbol=symbol,
+        market=market,
+        output_dir=output_dir,
+        command=command,
+        provider_snapshot=provider_snapshot,
+    )
+    return CommandResult(ok=True, message=render_valuation_card(packet, include_artifact_path=include_artifact_path))
+
+
+def _p0_3_minimal_valuation_context(target_resolution: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(target_resolution.get("normalized_symbol") or "")
+    market = str(target_resolution.get("normalized_market") or "")
+    company_name = str(target_resolution.get("company_name") or f"{market}.{symbol}")
+    if market == "KR":
+        core_business = "Memory semiconductor company with HBM and memory-cycle valuation exposure."
+        stock_character = "Cyclical AI infrastructure memory beta; profile initialized from P0.3 fixture mapping."
+    elif market == "HK":
+        core_business = "Copper clad laminate and PCB material supplier with cyclical electronics supply-chain exposure."
+        stock_character = "Cyclical materials and PCB supply-chain company; profile initialized from P0.3 fixture mapping."
+    else:
+        core_business = "Supported P0.3 valuation fixture."
+        stock_character = "Needs full research import."
+    return {
+        "stock": {
+            "id": None,
+            "symbol": symbol,
+            "market": market,
+            "name": company_name,
+            "core_business": core_business,
+            "stock_character": stock_character,
+        },
+        "stock_knowledge": [],
+        "stock_insights": [],
+        "sources": [],
+        "sectors": [],
+    }
+
+
+def _handle_stock_valuation_latest(
+    symbol: str,
+    market: str,
+    output_dir: Path,
+    include_artifact_path: bool,
+) -> CommandResult:
+    result = load_latest_valuation_artifact(symbol=symbol, market=market, output_dir=output_dir)
+    if result is None:
+        return CommandResult(
+            ok=False,
+            message=f"未找到已保存的估值 artifact：{market.strip().upper()}.{symbol.strip().upper()}。请先运行：valuation {market.strip().upper()}.{symbol.strip().upper()}",
+        )
+    packet, path = result
+    packet["artifact_path"] = packet.get("artifact_path") or str(path)
+    return CommandResult(ok=True, message=render_valuation_card(packet, include_artifact_path=include_artifact_path))
+
+
+def _handle_stock_valuation_artifact_evidence(symbol: str, market: str, output_dir: Path) -> CommandResult:
+    result = load_latest_valuation_artifact(symbol=symbol, market=market, output_dir=output_dir)
+    if result is None:
+        return CommandResult(
+            ok=False,
+            message=f"未找到已保存的估值 artifact：{market.strip().upper()}.{symbol.strip().upper()}。请先运行：valuation {market.strip().upper()}.{symbol.strip().upper()}",
+        )
+    packet, _ = result
+    evidence = build_valuation_artifact_evidence(packet, artifact_kind="latest")
+    return CommandResult(ok=True, message=json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def _handle_bootstrap_stock_profile(symbol: str, market: str) -> CommandResult:
@@ -2033,14 +2206,32 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     market_symbol_match = re.fullmatch(r"([A-Za-z]{1,5})\.([A-Za-z0-9._-]+)", cleaned)
     if market_symbol_match:
         market, symbol = market_symbol_match.groups()
-        return symbol.upper(), market.upper()
+        return normalize_provider_target(symbol, market)
     symbol_market_match = re.fullmatch(r"(\S+)\s+(\S+)", cleaned)
     if symbol_market_match:
         symbol, market = symbol_market_match.groups()
-        return symbol.upper(), market.upper()
+        return normalize_provider_target(symbol, market)
+    multi_word_symbol_market = re.fullmatch(r"(.+)\s+([A-Za-z]{1,5})", cleaned)
+    if multi_word_symbol_market:
+        symbol, market = multi_word_symbol_market.groups()
+        normalized = normalize_provider_target(symbol, market)
+        if provider_target_resolution(*normalized):
+            return normalized
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None
+
+
+def _parse_safe_stock_target(value: str) -> tuple[str, str] | None:
+    parsed = _parse_stock_target(value)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", symbol):
+        return None
+    if not re.fullmatch(r"[A-Za-z]{1,5}", market):
+        return None
+    return symbol.upper(), market.upper()
 
 
 def _strip_trailing_punctuation(value: str) -> str:
@@ -3437,6 +3628,9 @@ def _help_text() -> str:
 - worker日志
 - mcp日志
 - IPO提醒状态
+- 估值方法
+- valuation US.INTC
+- 查看估值 US.INTC
 - 决策 US.INTC
 - 决策 000660 KR
 - 分析 000660 KR

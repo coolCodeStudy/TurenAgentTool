@@ -29,6 +29,7 @@ from investment_knowledge_mcp.daily_market_brief import (
     resolve_latest_completed_session_date,
 )
 from investment_knowledge_mcp.db import run_schema
+from investment_knowledge_mcp.frontend_shell import ShellPage, render_app_shell
 from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 
@@ -539,37 +540,18 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
 def render_weekly_review_workbench_html() -> str:
     start, end = _default_week_range()
-    return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>InvestmentKnowledge 周复盘</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --ink: #20242a;
-      --muted: #657180;
-      --line: #dce2ea;
-      --accent: #1769aa;
-      --good: #126a3a;
-      --bad: #a33a32;
-      --warn: #966200;
-      --chip: #eef3f8;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--ink);
-    }}
-    .shell {{
-      display: grid;
-      grid-template-columns: 232px minmax(0, 1fr) 220px;
-      min-height: 100vh;
+    page_css = """
+    .weekly-page {
+      --bg: var(--app-bg);
+      --panel: var(--app-surface);
+      --ink: var(--app-ink);
+      --muted: var(--app-muted);
+      --line: var(--app-line);
+      --accent: var(--app-accent);
+      --good: var(--app-good);
+      --bad: var(--app-bad);
+      --warn: var(--app-warn);
+      --chip: var(--app-surface-muted);
     }}
     .sidebar {{
       border-right: 1px solid var(--line);
@@ -600,8 +582,7 @@ def render_weekly_review_workbench_html() -> str:
       background: #e8f1fa;
       font-weight: 650;
     }}
-    main {{
-      padding: 22px 24px 42px;
+    .weekly-page {{
       min-width: 0;
     }}
     .topbar {{
@@ -802,12 +783,7 @@ def render_weekly_review_workbench_html() -> str:
       font-size: 12px;
     }}
     .aside {{
-      border-left: 1px solid var(--line);
       background: #ffffff;
-      padding: 22px 16px;
-      position: sticky;
-      top: 0;
-      height: 100vh;
     }}
     .aside a {{
       display: block;
@@ -829,41 +805,19 @@ def render_weekly_review_workbench_html() -> str:
       font-size: 13px;
     }}
     @media (max-width: 1100px) {{
-      .shell {{ grid-template-columns: 180px minmax(0, 1fr); }}
       .aside {{ display: none; }}
       .status-grid {{ grid-template-columns: repeat(3, minmax(110px, 1fr)); }}
     }}
     @media (max-width: 760px) {{
-      .shell {{ display: block; }}
       .sidebar {{ position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }}
-      main {{ padding: 16px; }}
       .topbar {{ grid-template-columns: 1fr; }}
       .controls {{ justify-content: flex-start; }}
       .status-grid {{ grid-template-columns: 1fr 1fr; }}
       table {{ display: block; overflow-x: auto; white-space: nowrap; }}
     }}
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <aside class="sidebar">
-      <p class="brand">InvestmentKnowledge</p>
-      <nav class="nav" aria-label="主导航">
-        <a class="active" href="/weekly-review">本周复盘</a>
-        <a href="/daily-market-brief">每日市场简报</a>
-        <a href="#holdings">当前持仓</a>
-        <a href="#markdown">交易复盘</a>
-        <a href="#candidates">心得确认</a>
-        <a href="#markdown">研究队列</a>
-        <a href="#source-status">数据源状态</a>
-      </nav>
-    </aside>
-    <main>
+    """
+    main_html = f"""
       <div class="topbar">
-        <div>
-          <h1>本周复盘</h1>
-          <p class="subtitle">基于交易记录、账户快照、当前持仓、IPO 和知识库生成草稿。</p>
-        </div>
         <div class="controls">
           <button id="prev-week" type="button">上一周</button>
           <button id="this-week" type="button">本周</button>
@@ -874,7 +828,7 @@ def render_weekly_review_workbench_html() -> str:
           <button id="save">保存报告</button>
         </div>
       </div>
-      <div id="message" class="notice">正在读取本周复盘状态。</div>
+      <div id="message" class="app-notice notice" role="status" aria-live="polite">正在读取本周复盘状态。</div>
       <div id="source-status" class="status-grid" aria-live="polite"></div>
       <section id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
       <section id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
@@ -885,8 +839,9 @@ def render_weekly_review_workbench_html() -> str:
       <section id="attribution"><h2>7. 持仓归因卡</h2><div data-slot="attribution"></div></section>
       <section id="markdown"><h2>报告草稿</h2><textarea id="markdown-text" class="markdown" spellcheck="false"></textarea></section>
       <section id="candidates"><h2>候选心得</h2><div data-slot="candidates" class="empty">保存报告后可在这里确认或拒绝候选心得。</div></section>
-    </main>
-    <aside class="aside" aria-label="复盘目录">
+    """
+    aside_html = """
+    <div class="app-panel aside" aria-label="复盘目录">
       <a href="#highlights">1. 高光时刻</a>
       <a href="#blowups">2. 炸裂时刻</a>
       <a href="#indexes">3. 指数</a>
@@ -895,8 +850,9 @@ def render_weekly_review_workbench_html() -> str:
       <a href="#holdings">6. 当前持仓分析</a>
       <a href="#attribution">7. 持仓归因卡</a>
       <a href="#source-status">数据源状态</a>
-    </aside>
-  </div>
+    </div>
+    """
+    page_js = """
   <script>
     const state = {{ context: null, markdown: "", holdings: [], week: null, reportStatus: "loading" }};
     const $ = (selector) => document.querySelector(selector);
@@ -1213,8 +1169,23 @@ def render_weekly_review_workbench_html() -> str:
     }}
     function escapeAttr(value) {{ return escapeHtml(value).replace(/`/g, "&#96;"); }}
   </script>
-</body>
-</html>"""
+"""
+    page_css = page_css.replace("{{", "{").replace("}}", "}")
+    page_js = page_js.replace("{{", "{").replace("}}", "}")
+    return render_app_shell(
+        ShellPage(
+            title="InvestmentKnowledge 周复盘",
+            lang="zh-CN",
+            active_nav="weekly-review",
+            page_class="weekly-page",
+            heading="本周复盘",
+            subtitle="基于交易记录、账户快照、当前持仓、IPO 和知识库生成草稿。",
+            main_html=main_html,
+            aside_html=aside_html,
+            page_css=page_css,
+            page_js=page_js,
+        )
+    )
 
 
 def render_daily_market_brief_html() -> str:
