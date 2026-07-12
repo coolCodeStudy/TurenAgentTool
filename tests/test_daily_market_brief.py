@@ -646,6 +646,35 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(4, len(result.context["source_status"]["indexes"]["missing"]))
         self.assertIsNotNone(result.saved_report)
 
+    def test_historical_weekday_holiday_with_only_prior_index_bars_saves_no_session(self) -> None:
+        def holiday_index_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+            snapshot = fake_market_bar_loader(codes, start, end)
+            for code in codes:
+                snapshot.bars_by_code[code] = [row for row in snapshot.bars_by_code[code] if row["date"] < end]
+            return snapshot
+
+        historical_provider = mock.Mock(side_effect=AssertionError("activity provider must not run for a holiday"))
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=holiday_index_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertTrue(result.context["no_session"])
+        self.assertEqual([], result.context["indexes"])
+        self.assertEqual("no_session", result.context["source_status"]["session"]["status"])
+        self.assertEqual("provider_calendar", result.context["source_status"]["session"]["reason"])
+        self.assertIn("无常规交易日", result.context["narrative"])
+        self.assertNotIn("主要数据源状态正常", result.context["narrative"])
+        self.assertNotIn("无法形成完整涨跌判断", result.context["narrative"])
+        self.assertIn("休市状态", result.markdown)
+        self.assertIsNotNone(result.saved_report)
+        historical_provider.assert_not_called()
+
     def test_historical_save_validation_rejects_nonempty_stale_index(self) -> None:
         result = dmb.build_daily_market_brief(
             "CN",
@@ -695,6 +724,10 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual("timed_out", result.context["source_status"]["gainers"]["status"])
         self.assertEqual("2026-07-09", result.context["gainers"][0]["session_date"])
         self.assertIsNotNone(result.saved_report)
+        self.assertIn("历史数据获取超时，已保留可用结果", result.markdown)
+        self.assertNotIn("timed_out", result.markdown)
+        html = render_daily_market_brief_html()
+        self.assertIn('timed_out: "历史数据获取超时，已保留可用结果"', html)
 
     def test_historical_gap_statuses_are_named_in_narrative(self) -> None:
         def partial_provider(market: str, market_date: date) -> HistoricalActivityResult:

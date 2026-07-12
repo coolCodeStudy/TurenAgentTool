@@ -1661,7 +1661,7 @@ def render_daily_market_brief_html() -> str:
       return {{ indexes: "核心指数", sectors: "行业/板块", gainers: "领涨个股", capital_flow: "资金流", session: "交易日" }}[key] || key;
     }}
     function statusLabel(status) {{
-      return {{ ok: "可用", partial: "部分可用", missing: "暂缺", provider_unavailable: "数据源暂不可用", not_available: "未提供", no_session: "无常规交易", unverified: "交易日未确认", historical_not_supported: "不支持历史榜单" }}[status] || status || "未知";
+      return {{ ok: "可用", partial: "部分可用", missing: "暂缺", provider_unavailable: "数据源暂不可用", not_available: "未提供", no_session: "无常规交易", unverified: "交易日未确认", historical_not_supported: "不支持历史榜单", timed_out: "历史数据获取超时，已保留可用结果" }}[status] || status || "未知";
     }}
     function pct(value) {{
       if (value === null || value === undefined || value === "") return "-";

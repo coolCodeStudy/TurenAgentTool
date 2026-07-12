@@ -203,7 +203,10 @@ def build_daily_market_brief_context(
             require_exact_date=generation_kind == "historical_reconstruction",
         )
         has_requested_session = any(row.get("date") == resolved_date.isoformat() for row in indexes)
-        if indexes and not has_requested_session:
+        has_prior_session_evidence = bool(source_status.get("indexes", {}).get("prior_session_count"))
+        if (indexes and not has_requested_session) or (
+            generation_kind == "historical_reconstruction" and not indexes and has_prior_session_evidence
+        ):
             no_session = True
             indexes = []
             source_status["session"] = {
@@ -454,18 +457,22 @@ def _load_index_rows(
         warnings.append(INDEX_DEGRADED_COPY)
         return []
 
-    rows: list[dict[str, Any]] = []
+    candidate_rows: list[dict[str, Any]] = []
     for index_config in config.index_configs:
         bars = sorted(snapshot.bars_by_code.get(index_config["code"], []), key=lambda item: str(item.get("date") or ""))
         row = _index_row(index_config=index_config, bars=bars, market_date=market_date, metric_label=config.index_metric_label)
-        if row is not None and (not require_exact_date or row.get("date") == market_date.isoformat()):
-            rows.append(row)
+        if row is not None:
+            candidate_rows.append(row)
+    rows = [
+        row for row in candidate_rows if not require_exact_date or row.get("date") == market_date.isoformat()
+    ]
     source_status["indexes"] = {
         "status": "ok" if len(rows) == len(config.index_configs) else ("partial" if rows else "missing"),
         "provider": snapshot.source,
         "count": len(rows),
         "fetched_at": snapshot.fetched_at.isoformat(),
         "missing": [item["code"] for item in config.index_configs if item["code"] not in {row["code"] for row in rows}],
+        "prior_session_count": sum(row.get("date") != market_date.isoformat() for row in candidate_rows),
     }
     return rows
 
@@ -1529,6 +1536,7 @@ def _status_text(status: Any) -> str:
         "provider_unavailable": "数据源暂不可用",
         "not_available": "未提供",
         "historical_not_supported": "不支持历史榜单",
+        "timed_out": "历史数据获取超时，已保留可用结果",
         "unverified": "交易日未确认",
         "no_session": "无常规交易",
         "unknown": "状态未知",
