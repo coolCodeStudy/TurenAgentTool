@@ -1154,6 +1154,26 @@ def get_latest_daily_market_brief_report(market: str) -> dict[str, Any] | None:
     return to_jsonable(row) if row else None
 
 
+def list_daily_market_brief_dates(market: str, limit: int = 120) -> list[str]:
+    normalized_market = market.strip().upper()
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT report_date
+            FROM review_reports
+            WHERE report_type = 'daily_market_brief'
+              AND portfolio_snapshot->'market'->>'code' = %s
+            ORDER BY report_date DESC
+            LIMIT %s
+            """,
+            (normalized_market, max(1, min(int(limit), 366))),
+        ).fetchall()
+    return [
+        row["report_date"].isoformat() if hasattr(row["report_date"], "isoformat") else str(row["report_date"])
+        for row in rows
+    ]
+
+
 def _find_daily_market_brief_row(conn: Connection, *, market: str, market_date: str) -> dict[str, Any] | None:
     return conn.execute(
         """

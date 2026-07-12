@@ -27,6 +27,10 @@ class DailyMarketBriefResult:
     saved_report: dict[str, Any] | None = None
 
 
+def list_daily_market_brief_dates(market: str, limit: int = 120) -> list[str]:
+    return repository.list_daily_market_brief_dates(market=market.strip().upper(), limit=limit)
+
+
 @dataclass(frozen=True)
 class MarketConfig:
     code: str

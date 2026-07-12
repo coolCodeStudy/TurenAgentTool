@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from http import HTTPStatus
 from pathlib import Path
 import inspect
 import sys
@@ -59,6 +60,10 @@ class FakeDailyBriefRepository:
     def get_latest_daily_market_brief_report(self, *, market: str) -> dict | None:
         rows = [row for (row_market, _), row in self.rows.items() if row_market == market]
         return sorted(rows, key=lambda item: item["report_date"], reverse=True)[0] if rows else None
+
+    def list_daily_market_brief_dates(self, *, market: str, limit: int = 120) -> list[str]:
+        dates = sorted((day for row_market, day in self.rows if row_market == market), reverse=True)
+        return dates[:limit]
 
 
 def fake_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
@@ -179,6 +184,25 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(second.context["source_status"]["capital_flow"]["status"], "ok")
         self.assertIn("上证指数", second.markdown)
         self.assertIn("不构成买卖建议", second.markdown)
+
+    def test_saved_dates_are_market_scoped_and_newest_first(self) -> None:
+        self.fake_repository.rows[("CN", "2026-07-09")] = {"id": 1, "report_date": "2026-07-09"}
+        self.fake_repository.rows[("CN", "2026-07-10")] = {"id": 2, "report_date": "2026-07-10"}
+        self.fake_repository.rows[("HK", "2026-07-10")] = {"id": 3, "report_date": "2026-07-10"}
+
+        self.assertEqual(["2026-07-10", "2026-07-09"], dmb.list_daily_market_brief_dates("CN"))
+
+    def test_saved_dates_endpoint_returns_market_scoped_response(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(web, "list_daily_market_brief_dates", return_value=["2026-07-10", "2026-07-09"]):
+            handler._handle_daily_market_brief_dates({"market": ["CN"]})
+
+        handler._write_json.assert_called_once_with(
+            HTTPStatus.OK,
+            {"ok": True, "market": "CN", "dates": ["2026-07-10", "2026-07-09"]},
+        )
 
     def test_cn_indexes_use_chinese_display_names(self) -> None:
         result = dmb.build_daily_market_brief(
@@ -465,6 +489,11 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertNotIn("生成 fixture", html)
         self.assertIn('$("#market-date").value = "";', html)
         self.assertIn('if (data.market_date) $("#market-date").value = data.market_date;', html)
+        self.assertIn("/api/daily-market-brief/dates", html)
+        self.assertIn("saved-date", html)
+        self.assertIn("已保存", html)
+        self.assertIn("尚未生成", html)
+        self.assertIn('if (action === "generate") loadSavedDates();', html)
 
     def test_public_generation_date_window_is_bounded(self) -> None:
         now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))

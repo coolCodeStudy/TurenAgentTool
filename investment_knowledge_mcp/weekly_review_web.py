@@ -26,6 +26,7 @@ from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.daily_market_brief import (
     build_daily_market_brief,
     get_daily_market_brief_report,
+    list_daily_market_brief_dates,
     resolve_latest_completed_session_date,
 )
 from investment_knowledge_mcp.db import run_schema
@@ -108,6 +109,9 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/daily-market-brief":
             self._handle_daily_market_brief_read(parse_qs(parsed.query))
+            return
+        if parsed.path == "/api/daily-market-brief/dates":
+            self._handle_daily_market_brief_dates(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
             if not self._authorized():
@@ -384,6 +388,19 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 "saved_report": None,
             },
         )
+
+    def _handle_daily_market_brief_dates(self, payload: dict[str, Any]) -> None:
+        try:
+            market = _resolve_daily_market(payload)
+            dates = list_daily_market_brief_dates(market)
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_daily_market_brief_error(exc)})
+            return
+
+        self._write_json(HTTPStatus.OK, {"ok": True, "market": market, "dates": dates})
 
     def _handle_daily_market_brief_generate(self, payload: dict[str, Any]) -> None:
         lease: _DailyBriefGenerationLease | None = None
@@ -1442,6 +1459,7 @@ def render_daily_market_brief_html() -> str:
         </div>
         <div class="controls">
           <input id="market-date" type="date" value="{today}" aria-label="市场日期">
+          <select id="saved-date" aria-label="已保存日期"><option value="">已保存日期</option></select>
           <button id="read" type="button">读取</button>
           <button id="generate" class="primary" type="button">生成</button>
         </div>
@@ -1472,13 +1490,39 @@ def render_daily_market_brief_html() -> str:
         state.market = button.dataset.market;
         $("#market-date").value = "";
         document.querySelectorAll("[data-market]").forEach((item) => item.classList.toggle("active", item === button));
+        loadSavedDates();
         loadBrief("read");
       }});
     }});
     $("#read").addEventListener("click", () => loadBrief("read"));
     $("#generate").addEventListener("click", () => loadBrief("generate"));
     $("#market-date").addEventListener("change", () => loadBrief("read"));
+    $("#saved-date").addEventListener("change", (event) => {{
+      if (!event.target.value) return;
+      $("#market-date").value = event.target.value;
+      loadBrief("read");
+    }});
+    loadSavedDates();
     loadBrief("read");
+
+    async function loadSavedDates() {{
+      const savedDate = $("#saved-date");
+      savedDate.innerHTML = '<option value="">已保存日期</option>';
+      try {{
+        const response = await fetch(`/api/daily-market-brief/dates?market=${{encodeURIComponent(state.market)}}`);
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || "读取已保存日期失败");
+        (data.dates || []).forEach((value) => {{
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = `已保存 ${{value}}`;
+          savedDate.appendChild(option);
+        }});
+        if (!(data.dates || []).length) savedDate.options[0].textContent = "尚未生成";
+      }} catch (error) {{
+        savedDate.options[0].textContent = "尚未生成";
+      }}
+    }}
 
     async function loadBrief(action) {{
       setBusy(true);
@@ -1502,6 +1546,7 @@ def render_daily_market_brief_html() -> str:
         state.context = data.context || null;
         state.markdown = data.markdown || "";
         renderAll(data);
+        if (action === "generate") loadSavedDates();
         message.textContent = statusMessage(action, data);
       }} catch (error) {{
         message.textContent = `处理失败：${{error.message}}`;
@@ -1513,7 +1558,7 @@ def render_daily_market_brief_html() -> str:
     function statusMessage(action, data) {{
       if (data.status === "missing") return "当前市场和日期还没有简报，可以点击生成。";
       if (action === "generate") return "简报已生成并保存，请检查数据状态和是否存在缺口。";
-      return "已读取每日市场简报。";
+      return "已读取已保存的每日市场简报。";
     }}
 
     function renderAll(data) {{
