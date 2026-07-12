@@ -100,6 +100,20 @@ class _QueryCoverage:
             return len(self._queried)
 
 
+class _AttemptCounter:
+    def __init__(self) -> None:
+        self._count = 0
+        self._lock = Lock()
+
+    def increment(self) -> None:
+        with self._lock:
+            self._count += 1
+
+    def count(self) -> int:
+        with self._lock:
+            return self._count
+
+
 def load_historical_market_activity(
     market: str,
     market_date: date,
@@ -116,24 +130,37 @@ def load_historical_market_activity(
     except Exception as exc:
         return _unavailable_result(detail_code=type(exc).__name__)
 
+    universe_attempts = _AttemptCounter()
     universe_future = _WORKER_POOL.submit(
         lambda: _load_universe(
             ak=ak,
             market=market_code,
             limit=max(1, min(int(universe_limit), 200)),
             deadline=deadline,
+            attempts=universe_attempts,
         ),
         deadline=deadline,
     )
     if universe_future is None:
-        return _unavailable_result(detail_code="deadline_exceeded", timed_out=True)
+        return _unavailable_result(
+            detail_code="deadline_exceeded",
+            timed_out=True,
+            universe_attempts=universe_attempts.count(),
+        )
     try:
         universe = universe_future.result(timeout=_remaining(deadline))
     except (FutureTimeoutError, _DeadlineExpired):
         universe_future.cancel()
-        return _unavailable_result(detail_code="deadline_exceeded", timed_out=True)
+        return _unavailable_result(
+            detail_code="deadline_exceeded",
+            timed_out=True,
+            universe_attempts=universe_attempts.count(),
+        )
     except Exception as exc:
-        return _unavailable_result(detail_code=type(exc).__name__)
+        return _unavailable_result(
+            detail_code=type(exc).__name__,
+            universe_attempts=universe_attempts.count(),
+        )
 
     requested = len(universe)
     coverage = _QueryCoverage()
@@ -224,6 +251,7 @@ def load_historical_market_activity(
         "usable": usable,
         "incomplete": incomplete,
         "timed_out": timed_out,
+        "universe_attempts": universe_attempts.count(),
         "universe_size": requested,
         "universe_basis": "current_liquid_top_200",
         "message": "Current liquid universe is used only to select candidates; historical rankings use exact-date daily bars and may have survivorship bias.",
@@ -240,15 +268,52 @@ def load_historical_market_activity(
     )
 
 
-def _load_universe(*, ak: Any, market: str, limit: int, deadline: float) -> list[dict[str, Any]]:
+def _load_universe(
+    *,
+    ak: Any,
+    market: str,
+    limit: int,
+    deadline: float,
+    attempts: _AttemptCounter,
+) -> list[dict[str, Any]]:
     loader_name = {
         "CN": "stock_zh_a_spot_em",
         "HK": "stock_hk_main_board_spot_em",
         "US": "stock_us_spot_em",
     }[market]
-    frame = _call_under_host_gate(getattr(ak, loader_name), deadline=deadline)
+    loader = getattr(ak, loader_name)
+    records: list[dict[str, Any]] = []
+    last_error: Exception | None = None
+
+    def load_once() -> Any:
+        attempts.increment()
+        return loader()
+
+    for attempt in range(MAX_ATTEMPTS):
+        if monotonic() >= deadline:
+            raise _DeadlineExpired()
+        try:
+            records = _frame_records(_call_under_host_gate(load_once, deadline=deadline))
+            if records:
+                break
+            last_error = ValueError("empty response")
+        except _DeadlineExpired:
+            raise
+        except Exception as exc:
+            if not _retryable_error(exc):
+                raise
+            last_error = exc
+        if attempt + 1 < MAX_ATTEMPTS:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise _DeadlineExpired()
+            sleep(min(0.1, remaining))
+    else:
+        if last_error is not None:
+            raise last_error
+
     candidates: list[dict[str, Any]] = []
-    for row in _frame_records(frame):
+    for row in records:
         provider_symbol = _text(_first_value(row, "代码", "symbol", "Symbol"))
         name = _text(_first_value(row, "名称", "股票简称", "name", "Name"))
         if not provider_symbol or not name or _excluded_security(market, provider_symbol, name, row):
@@ -394,7 +459,9 @@ def _normalize_history_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _unavailable_result(*, detail_code: str, timed_out: bool = False) -> HistoricalActivityResult:
+def _unavailable_result(
+    *, detail_code: str, timed_out: bool = False, universe_attempts: int = 0
+) -> HistoricalActivityResult:
     source_status = {
         "sectors": _unsupported_section_status("sectors"),
         "gainers": {
@@ -406,6 +473,7 @@ def _unavailable_result(*, detail_code: str, timed_out: bool = False) -> Histori
             "usable": 0,
             "incomplete": timed_out,
             "timed_out": timed_out,
+            "universe_attempts": universe_attempts,
             "universe_basis": "current_liquid_top_200",
             "detail_code": detail_code,
             "message": "Historical exact-date gainer reconstruction is unavailable from the configured provider.",

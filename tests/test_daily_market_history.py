@@ -91,6 +91,21 @@ def history_rows(
     ]
 
 
+class SequencedUniverseAkshare(FakeHistoricalAkshare):
+    def __init__(self, *, outcomes: list[object]) -> None:
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        super().__init__(universe=universe, histories={"000001": history_rows()})
+        self.outcomes = list(outcomes)
+        self.universe_calls = 0
+
+    def stock_zh_a_spot_em(self) -> FakeFrame:
+        self.universe_calls += 1
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return FakeFrame(outcome)
+
+
 class HistoricalActivityProviderTests(unittest.TestCase):
     def test_cn_historical_gainers_rank_exact_date_bars(self) -> None:
         fake = FakeHistoricalAkshare(
@@ -187,6 +202,149 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual(1, result.source_status["gainers"]["usable"])
         self.assertEqual("partial", result.source_status["gainers"]["status"])
         self.assertEqual(["000001"], [row["code"] for row in result.gainers])
+
+    def test_transient_universe_connection_error_succeeds_on_retry(self) -> None:
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        fake = SequencedUniverseAkshare(outcomes=[ConnectionError("transient"), universe])
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual(2, fake.universe_calls)
+        self.assertEqual(2, result.source_status["gainers"]["universe_attempts"])
+        self.assertEqual("ok", result.source_status["gainers"]["status"])
+
+    def test_transient_universe_json_decode_error_succeeds_on_retry(self) -> None:
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        decode_error = json.JSONDecodeError("invalid response", "", 0)
+        fake = SequencedUniverseAkshare(outcomes=[decode_error, universe])
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual(2, fake.universe_calls)
+        self.assertEqual(2, result.source_status["gainers"]["universe_attempts"])
+        self.assertEqual("ok", result.source_status["gainers"]["status"])
+
+    def test_empty_universe_response_succeeds_on_retry(self) -> None:
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        fake = SequencedUniverseAkshare(outcomes=[[], universe])
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual(2, fake.universe_calls)
+        self.assertEqual(2, result.source_status["gainers"]["universe_attempts"])
+        self.assertEqual("ok", result.source_status["gainers"]["status"])
+
+    def test_rate_limited_universe_succeeds_on_retry(self) -> None:
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        fake = SequencedUniverseAkshare(outcomes=[RuntimeError("429 too many requests"), universe])
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual(2, fake.universe_calls)
+        self.assertEqual(2, result.source_status["gainers"]["universe_attempts"])
+        self.assertEqual("ok", result.source_status["gainers"]["status"])
+
+    def test_exhausted_universe_retries_return_safe_unavailable_status(self) -> None:
+        fake = SequencedUniverseAkshare(
+            outcomes=[ConnectionError("private first error"), ConnectionError("private second error")]
+        )
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        status = result.source_status["gainers"]
+        self.assertEqual(2, fake.universe_calls)
+        self.assertEqual(2, status["universe_attempts"])
+        self.assertEqual("provider_unavailable", status["status"])
+        self.assertEqual(0, status["requested"])
+        self.assertEqual(0, status["queried"])
+        self.assertEqual(0, status["usable"])
+        self.assertNotIn("private", status["message"])
+
+    def test_universe_retry_does_not_start_after_deadline(self) -> None:
+        release = threading.Event()
+        finished = threading.Event()
+
+        class SlowFailingUniverse(FakeHistoricalAkshare):
+            def __init__(self) -> None:
+                super().__init__(universe=[], histories={})
+                self.universe_calls = 0
+
+            def stock_zh_a_spot_em(self) -> FakeFrame:
+                self.universe_calls += 1
+                release.wait(1)
+                finished.set()
+                raise ConnectionError("late transient failure")
+
+        fake = SlowFailingUniverse()
+        timer = threading.Timer(0.2, release.set)
+        timer.daemon = True
+        timer.start()
+        result = load_historical_market_activity(
+            "CN", date(2026, 7, 9), akshare_module=fake, timeout_seconds=0.05
+        )
+
+        self.assertEqual("timed_out", result.source_status["gainers"]["status"])
+        self.assertEqual(1, result.source_status["gainers"]["universe_attempts"])
+        release.set()
+        self.assertTrue(finished.wait(1))
+        time.sleep(0.05)
+        self.assertEqual(1, fake.universe_calls)
+
+    def test_universe_retries_share_global_host_gate(self) -> None:
+        lock = threading.Lock()
+
+        class SharedTracker:
+            def __init__(self) -> None:
+                self.active = 0
+                self.maximum = 0
+
+            def enter(self) -> None:
+                with lock:
+                    self.active += 1
+                    self.maximum = max(self.maximum, self.active)
+
+            def leave(self) -> None:
+                with lock:
+                    self.active -= 1
+
+        tracker = SharedTracker()
+
+        class RetryingTrackedUniverse(FakeHistoricalAkshare):
+            def __init__(self) -> None:
+                super().__init__(
+                    universe=[{"代码": "000001", "名称": "甲", "成交额": 100_000_000}],
+                    histories={"000001": history_rows()},
+                )
+                self.universe_calls = 0
+
+            def stock_zh_a_spot_em(self) -> FakeFrame:
+                tracker.enter()
+                try:
+                    time.sleep(0.02)
+                    self.universe_calls += 1
+                    if self.universe_calls == 1:
+                        raise ConnectionError("transient")
+                    return FakeFrame(self.universe)
+                finally:
+                    tracker.leave()
+
+        fakes = [RetryingTrackedUniverse() for _ in range(4)]
+        threads = [
+            threading.Thread(
+                target=load_historical_market_activity,
+                args=("CN", date(2026, 7, 9)),
+                kwargs={"akshare_module": fake},
+            )
+            for fake in fakes
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(2)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(fake.universe_calls == 2 for fake in fakes))
+        self.assertLessEqual(tracker.maximum, 2)
 
     def test_universe_load_returns_at_deadline(self) -> None:
         release = threading.Event()
