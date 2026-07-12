@@ -2092,6 +2092,80 @@ class DockerHealthCheckerTests(TestCase):
             )
         )
 
+    def test_not_running_service_reports_safe_startup_log_detail(self) -> None:
+        ps = (
+            "docker",
+            "compose",
+            "ps",
+            "--status",
+            "running",
+            "--format",
+            "json",
+            "daily-market-brief-history-worker",
+        )
+        logs = (
+            "docker",
+            "compose",
+            "logs",
+            "--no-color",
+            "--tail",
+            "200",
+            "daily-market-brief-history-worker",
+        )
+        self.runner.results[ps] = CommandResult(0, "", "")
+        self.runner.results[logs] = CommandResult(
+            0,
+            (
+                "PASSWORD=must-not-leak\n"
+                "psycopg.OperationalError: db.internal:5432 unavailable\n"
+                "RuntimeError: sk-proj-example-value\n"
+                "ModuleNotFoundError: No module named 'investment_knowledge_mcp'\n"
+            ),
+            "",
+        )
+
+        with self.assertRaises(DeploymentHealthError) as raised:
+            self.health.check_service("daily-market-brief-history-worker", ())
+
+        message = str(raised.exception)
+        self.assertIn("Python module import failed", message)
+        self.assertNotIn("must-not-leak", message)
+        self.assertNotIn("db.internal", message)
+        self.assertNotIn("sk-proj", message)
+        self.assertNotIn("investment_knowledge_mcp", message)
+
+    def test_startup_diagnostic_prefers_latest_recognized_failure(self) -> None:
+        ps = (
+            "docker",
+            "compose",
+            "ps",
+            "--status",
+            "running",
+            "--format",
+            "json",
+            "daily-market-brief-history-worker",
+        )
+        logs = (
+            "docker",
+            "compose",
+            "logs",
+            "--no-color",
+            "--tail",
+            "200",
+            "daily-market-brief-history-worker",
+        )
+        self.runner.results[ps] = CommandResult(0, "", "")
+        self.runner.results[logs] = CommandResult(
+            0,
+            "ModuleNotFoundError: old failure\nPermission denied: current failure\n",
+            "",
+        )
+
+        with self.assertRaisesRegex(
+            DeploymentHealthError, "startup permission check failed"
+        ):
+            self.health.check_service("daily-market-brief-history-worker", ())
+
     def test_mcp_target_rejects_not_found_transport(self) -> None:
         command = (
             "curl",

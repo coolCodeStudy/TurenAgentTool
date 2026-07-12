@@ -80,7 +80,7 @@ Live operational reruns are also limited to the latest completed session. Histor
 
 ## Historical Jobs
 
-Status: implemented_pending_deploy
+Status: startup_fix_verified_pending_deploy
 Last updated: 2026-07-12
 
 - Public Web historical generation accepts exactly one `market` and one `date`, rejects future dates and workload-control fields, and enqueues through `daily_market_brief_jobs` / `daily_market_brief_job_items`.
@@ -91,6 +91,7 @@ Last updated: 2026-07-12
 - Recent-trading-day batch expansion stops before each market's latest completed session, leaving that date for the realtime close generator.
 - MCP is still a trusted internal/control-plane surface. The production Compose default binds the MCP host port to `127.0.0.1` via `MCP_BIND_HOST`, so the unauthenticated MCP transport is not publicly exposed by default.
 - Workbench and MCP command failures use sanitized public messages when failed `CommandResult` values contain connection strings, SQL, tracebacks, filesystem paths, SSL/provider internals, tokens, or credentials.
+- Direct worker execution bootstraps the repository root before importing project packages. This matches the production Compose command even when the process working directory is not relied upon. Deployment health failures capture one bounded non-sensitive startup-log line so an exited process reports an actionable cause instead of only `is not running`.
 
 ## Scheduler-Ready Entry Points
 
@@ -134,3 +135,4 @@ The scheduler loop tracks CN/HK/US independently, only runs after each market's 
 - Full exchange holiday detection is unavailable locally. Weekend no-session is implemented; exchange-holiday calendars are a future provider/data-source task.
 - The initial AKShare dependency release required and completed a full-image deployment. Subsequent code-only releases should use the normal quick path unless the deploy classifier requires a rebuild.
 - The scheduler is included in the independent Ops API service catalog, recent-error collection, and deploy health. The control plane was bootstrapped before the final quick deployment, and source resolution now fetches `origin/main` before reachability validation.
+- Process-service entrypoints must be tested as direct scripts from outside the repository working directory when Compose invokes them by path. The history-worker release failure demonstrated that import success from unit-test discovery does not prove the production entrypoint can resolve the project package.
