@@ -4,8 +4,8 @@ Status: deployed_pending_user_acceptance
 Owner: Daily Market Brief Feature Coordinator
 Source PRD: `docs/product/PRD-Daily-Market-Brief.md`
 Feature Registry row: `Daily market brief`
-Acceptance Queue rows: `AT-2026-06-30-002`, `AT-2026-07-01-002`, `AT-2026-07-10-001`
-Last updated: 2026-07-11
+Acceptance Queue rows: `AT-2026-06-30-002`, `AT-2026-07-01-002`, `AT-2026-07-10-001`, `AT-2026-07-12-001`
+Last updated: 2026-07-12
 
 ## Scope
 
@@ -21,6 +21,7 @@ Out of scope for this pass: DingTalk push, paid data providers, cross-market sec
 - Persisted 2026-07-10 reports coexist as CN `#19`, HK `#20`, and US `#21`. A fresh US rerun updated report `#21`, confirming same-market/date idempotency.
 - At the 2026-07-10 acceptance point, older and future public generation requests were rejected with HTTP 400. The later Historical Jobs section supersedes the older-date behavior: older dates now enqueue durable single-date history jobs and future dates remain rejected. Cloud system status showed `daily-market-brief-scheduler` running alongside healthy Web, database, and control-plane services.
 - `AT-2026-07-10-001` passed independent cloud acceptance on 2026-07-11. User acceptance remains pending.
+- Historical access passed cloud acceptance on 2026-07-12. Full-image run `29197568201` established the worker image, Ops recovery run `29200084414` refreshed the independent control plane, targeted quick run `29200024657` attempt 2 deployed the index-only persistence and process-health fixes, and quick run `29200497990` deployed the turnover rendering fix. Saved 2025-07-09 reports coexist as CN `#22`, HK `#23`, and US `#24`.
 
 ## Touched Modules
 
@@ -80,7 +81,7 @@ Live operational reruns are also limited to the latest completed session. Histor
 
 ## Historical Jobs
 
-Status: startup_fix_verified_pending_deploy
+Status: deployed_verified_pending_user_acceptance
 Last updated: 2026-07-12
 
 - Public Web historical generation accepts exactly one `market` and one `date`, rejects future dates and workload-control fields, and enqueues through `daily_market_brief_jobs` / `daily_market_brief_job_items`.
@@ -91,7 +92,8 @@ Last updated: 2026-07-12
 - Recent-trading-day batch expansion stops before each market's latest completed session, leaving that date for the realtime close generator.
 - MCP is still a trusted internal/control-plane surface. The production Compose default binds the MCP host port to `127.0.0.1` via `MCP_BIND_HOST`, so the unauthenticated MCP transport is not publicly exposed by default.
 - Workbench and MCP command failures use sanitized public messages when failed `CommandResult` values contain connection strings, SQL, tracebacks, filesystem paths, SSL/provider internals, tokens, or credentials.
-- Direct worker execution bootstraps the repository root before importing project packages. This matches the production Compose command even when the process working directory is not relied upon. Deployment health failures capture one bounded non-sensitive startup-log line so an exited process reports an actionable cause instead of only `is not running`.
+- Direct worker execution bootstraps the repository root before importing project packages. Exact-date index evidence may save a partial historical report, but a report with no index or activity evidence is rejected. A transaction-locked quality guard prevents an index-only force refresh from overwriting richer activity already stored for the same market/date.
+- Deployment process health uses Docker running/restarting state and restart count across the stability window. Historical handled task tracebacks no longer trigger false startup rollbacks; logs are inspected only when a service is not running and are reduced to bounded non-sensitive diagnostics.
 
 ## Scheduler-Ready Entry Points
 
