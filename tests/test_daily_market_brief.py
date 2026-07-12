@@ -502,6 +502,14 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("job.completed_count", html)
         self.assertIn("job.current_market_date", html)
         self.assertNotIn("cancelHistoryJob", html)
+        self.assertIn(
+            "formatMarketAmount(row.turnover, state.context?.market?.code || state.market)",
+            html,
+        )
+        self.assertNotIn(
+            "formatMarketAmount(row.turnover, context.market?.code || state.market)",
+            html,
+        )
         self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
 
     def test_page_generation_progress_supports_background_history_jobs(self) -> None:
