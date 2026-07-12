@@ -14,6 +14,7 @@ TERMINAL_ITEM_STATUSES = {"completed", "skipped", "failed", "cancelled"}
 REQUEST_TYPES = {"single", "batch"}
 SOURCES = {"web", "command", "scheduler_recovery", "agent"}
 MAX_HISTORY_ITEMS = 120
+MAX_DEDUP_RETRIES = 3
 PUBLIC_ERROR_SUMMARIES = {
     "generation_failed": "历史市场简报生成失败，请稍后重试。",
     "provider_timeout": "历史数据源响应超时，请稍后重试。",
@@ -45,6 +46,7 @@ def create_history_job(
         raise ValueError(f"一次最多 {item_limit} 个市场/日期项目")
 
     with transaction() as conn:
+        _lock_market_date_keys(conn, pairs)
         active_items: list[dict[str, Any]] = []
         pending_pairs: list[tuple[str, date]] = []
         for market, market_date in pairs:
@@ -78,26 +80,37 @@ def create_history_job(
 
         inserted_count = 0
         for market, market_date, status, report_id, skip_reason in item_specs:
-            inserted = conn.execute(
-                """
-                INSERT INTO daily_market_brief_job_items (
-                  job_id, market, market_date, status, report_id, skip_reason, finished_at
+            for _ in range(MAX_DEDUP_RETRIES):
+                inserted = _insert_history_item(
+                    conn,
+                    job_id=int(job["id"]),
+                    market=market,
+                    market_date=market_date,
+                    status=status,
+                    report_id=report_id,
+                    skip_reason=skip_reason,
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s = 'skipped' THEN now() ELSE NULL END)
-                ON CONFLICT (market, market_date)
-                  WHERE status IN ('queued', 'running')
-                  DO NOTHING
-                RETURNING *
-                """,
-                (job["id"], market, market_date, status, report_id, skip_reason, status),
-            ).fetchone()
-            if inserted is not None:
-                inserted_count += 1
-                continue
-            raced_active = _find_active_item(conn, market, market_date)
-            if raced_active is None:
-                raise RuntimeError("active daily market brief item conflict could not be resolved")
-            active_items.append(to_jsonable(raced_active))
+                if inserted is not None:
+                    inserted_count += 1
+                    break
+                raced_active = _find_active_item(conn, market, market_date)
+                if raced_active is not None:
+                    active_items.append(to_jsonable(raced_active))
+                    break
+            else:
+                resolved = _resolve_history_item_conflict(
+                    conn,
+                    job_id=int(job["id"]),
+                    market=market,
+                    market_date=market_date,
+                    status=status,
+                    report_id=report_id,
+                    skip_reason=skip_reason,
+                )
+                if int(resolved["job_id"]) == int(job["id"]):
+                    inserted_count += 1
+                else:
+                    active_items.append(to_jsonable(resolved))
 
         if inserted_count == 0:
             conn.execute(
@@ -135,43 +148,51 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
     cleaned_worker_name = (worker_name or "history-worker").strip() or "history-worker"
     lease_token = uuid4().hex
     with transaction() as conn:
+        candidate = conn.execute(
+            """
+            SELECT item.id, item.job_id, item.market, item.market_date
+            FROM daily_market_brief_job_items AS item
+            JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
+            WHERE item.status = 'queued'
+              AND job.status IN ('queued', 'running')
+              AND job.cancel_requested_at IS NULL
+            ORDER BY item.created_at ASC, item.id ASC
+            LIMIT 1
+            FOR UPDATE OF job SKIP LOCKED
+            """
+        ).fetchone()
+        if candidate is None:
+            return None
         row = conn.execute(
             """
-            WITH next_item AS (
-              SELECT item.id, item.job_id, item.market, item.market_date
-              FROM daily_market_brief_job_items AS item
-              JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
-              WHERE item.status = 'queued'
-                AND job.status IN ('queued', 'running')
-                AND job.cancel_requested_at IS NULL
-              ORDER BY item.created_at ASC, item.id ASC
-              LIMIT 1
-              FOR UPDATE SKIP LOCKED
-            ), claimed AS (
-              UPDATE daily_market_brief_job_items AS item SET
-                status = 'running',
-                attempt_count = item.attempt_count + 1,
-                worker_name = %s,
-                lease_token = %s,
-                claimed_at = now(),
-                heartbeat_at = now(),
-                updated_at = now()
-              FROM next_item
-              WHERE item.id = next_item.id
-              RETURNING item.*
-            )
+            UPDATE daily_market_brief_job_items AS item SET
+              status = 'running',
+              attempt_count = item.attempt_count + 1,
+              worker_name = %s,
+              lease_token = %s,
+              claimed_at = now(),
+              heartbeat_at = now(),
+              updated_at = now()
+            WHERE item.id = %s
+              AND item.status = 'queued'
+            RETURNING item.*
+            """,
+            (cleaned_worker_name, lease_token, candidate["id"]),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            """
             UPDATE daily_market_brief_jobs AS job SET
               status = 'running',
-              current_market = claimed.market,
-              current_market_date = claimed.market_date,
+              current_market = %s,
+              current_market_date = %s,
               worker_heartbeat_at = now(),
               updated_at = now()
-            FROM claimed
-            WHERE job.id = claimed.job_id
-            RETURNING claimed.*
+            WHERE job.id = %s
             """,
-            (cleaned_worker_name, lease_token),
-        ).fetchone()
+            (row["market"], row["market_date"], row["job_id"]),
+        )
     return to_jsonable(row) if row else None
 
 
@@ -194,6 +215,9 @@ def finish_history_item(
         raise ValueError("worker_name, lease_token, and positive attempt_count are required")
     public_error_code, public_error_summary = _resolve_public_error(status, error_code, error_summary)
     with transaction() as conn:
+        locked_job = _lock_history_job_for_item(conn, item_id)
+        if locked_job is None:
+            raise ValueError(f"daily market brief history item not found: {item_id}")
         row = conn.execute(
             """
             UPDATE daily_market_brief_job_items AS item SET
@@ -232,6 +256,9 @@ def finish_history_item(
 
 def request_history_job_cancel(job_id: int) -> dict[str, Any] | None:
     with transaction() as conn:
+        locked = _lock_history_jobs(conn, [job_id], active_only=True)
+        if not locked:
+            return None
         requested = conn.execute(
             """
             UPDATE daily_market_brief_jobs AS job SET
@@ -266,6 +293,25 @@ def request_history_job_cancel(job_id: int) -> dict[str, Any] | None:
 
 def requeue_stale_history_items(stale_before: datetime) -> int:
     with transaction() as conn:
+        candidates = conn.execute(
+            """
+            SELECT DISTINCT item.job_id
+            FROM daily_market_brief_job_items AS item
+            JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
+            WHERE item.status = 'running'
+              AND item.heartbeat_at < %s
+              AND job.cancel_requested_at IS NULL
+            ORDER BY item.job_id
+            """,
+            (stale_before,),
+        ).fetchall()
+        candidate_job_ids = sorted({int(row["job_id"]) for row in candidates})
+        if not candidate_job_ids:
+            return 0
+        locked_jobs = _lock_history_jobs(conn, candidate_job_ids)
+        locked_job_ids = [int(row["id"]) for row in locked_jobs]
+        if not locked_job_ids:
+            return 0
         rows = conn.execute(
             """
             UPDATE daily_market_brief_job_items AS item SET
@@ -277,6 +323,7 @@ def requeue_stale_history_items(stale_before: datetime) -> int:
               updated_at = now()
             WHERE item.status = 'running'
               AND item.heartbeat_at < %s
+              AND item.job_id = ANY(%s)
               AND EXISTS (
                 SELECT 1 FROM daily_market_brief_jobs AS job
                 WHERE job.id = item.job_id
@@ -284,12 +331,51 @@ def requeue_stale_history_items(stale_before: datetime) -> int:
               )
             RETURNING item.job_id
             """,
-            (stale_before,),
+            (stale_before, locked_job_ids),
         ).fetchall()
         job_ids = sorted({int(row["job_id"]) for row in rows})
         if job_ids:
             _recompute_history_jobs(conn, job_ids)
     return len(rows)
+
+
+def _lock_market_date_keys(conn: Any, pairs: list[tuple[str, date]]) -> None:
+    for market, market_date in sorted(pairs):
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"daily-market-brief:{market}:{market_date.isoformat()}",),
+        ).fetchone()
+
+
+def _lock_history_job_for_item(conn: Any, item_id: int) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT job.id
+        FROM daily_market_brief_jobs AS job
+        JOIN daily_market_brief_job_items AS item ON item.job_id = job.id
+        WHERE item.id = %s
+        FOR UPDATE OF job
+        """,
+        (item_id,),
+    ).fetchone()
+
+
+def _lock_history_jobs(conn: Any, job_ids: list[int], *, active_only: bool = False) -> list[dict[str, Any]]:
+    ordered_ids = sorted(set(job_ids))
+    if not ordered_ids:
+        return []
+    active_clause = "AND job.status IN ('queued', 'running')" if active_only else ""
+    return conn.execute(
+        f"""
+        SELECT job.id
+        FROM daily_market_brief_jobs AS job
+        WHERE job.id = ANY(%s)
+          {active_clause}
+        ORDER BY job.id
+        FOR UPDATE
+        """,
+        (ordered_ids,),
+    ).fetchall()
 
 
 def _recompute_history_jobs(conn: Any, job_ids: list[int]) -> list[dict[str, Any]]:
@@ -405,6 +491,59 @@ def _find_active_item(conn: Any, market: str, market_date: date) -> dict[str, An
         """,
         (market, market_date),
     ).fetchone()
+
+
+def _insert_history_item(
+    conn: Any,
+    *,
+    job_id: int,
+    market: str,
+    market_date: date,
+    status: str,
+    report_id: int | None,
+    skip_reason: str | None,
+) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        INSERT INTO daily_market_brief_job_items (
+          job_id, market, market_date, status, report_id, skip_reason, finished_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s = 'skipped' THEN now() ELSE NULL END)
+        ON CONFLICT (market, market_date)
+          WHERE status IN ('queued', 'running')
+          DO NOTHING
+        RETURNING *
+        """,
+        (job_id, market, market_date, status, report_id, skip_reason, status),
+    ).fetchone()
+
+
+def _resolve_history_item_conflict(
+    conn: Any,
+    *,
+    job_id: int,
+    market: str,
+    market_date: date,
+    status: str,
+    report_id: int | None,
+    skip_reason: str | None,
+) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        INSERT INTO daily_market_brief_job_items (
+          job_id, market, market_date, status, report_id, skip_reason, finished_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s = 'skipped' THEN now() ELSE NULL END)
+        ON CONFLICT (market, market_date)
+          WHERE status IN ('queued', 'running')
+          DO UPDATE SET updated_at = daily_market_brief_job_items.updated_at
+        RETURNING *
+        """,
+        (job_id, market, market_date, status, report_id, skip_reason, status),
+    ).fetchone()
+    if row is None:
+        raise AssertionError("conflict resolution did not return an item")
+    return row
 
 
 def _find_existing_report(conn: Any, market: str, market_date: date) -> dict[str, Any] | None:
