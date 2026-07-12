@@ -189,7 +189,7 @@ class DockerHealthChecker:
             )
         )
         if result.returncode != 0:
-            raise DeploymentHealthError(f"{service} is not running")
+            self._raise_not_running(service)
         rows = _json_rows(result.stdout)
         matching = [row for row in rows if str(row.get("Service") or "") == service]
         if not matching or any(
@@ -197,7 +197,13 @@ class DockerHealthChecker:
             or "restarting" in str(row.get("Status") or "").lower()
             for row in matching
         ):
-            raise DeploymentHealthError(f"{service} is not running")
+            self._raise_not_running(service)
+
+    def _raise_not_running(self, service: str) -> None:
+        logs = self._run(("docker", "compose", "logs", "--no-color", "--tail", "200", service))
+        detail = _safe_diagnostic_summary(logs.stdout if logs.returncode == 0 else "")
+        suffix = f": {detail}" if detail else ""
+        raise DeploymentHealthError(f"{service} is not running{suffix}")
 
     def _authenticated_negative_check(self) -> None:
         self._http_response(
@@ -1828,6 +1834,22 @@ def _json_rows(output: str) -> tuple[dict[str, object], ...]:
         except json.JSONDecodeError:
             return ()
     return tuple(value for value in values if isinstance(value, dict))
+
+
+def _safe_diagnostic_summary(output: str) -> str:
+    signatures = (
+        (("modulenotfounderror", "importerror"), "Python module import failed"),
+        (("psycopg", "operationalerror"), "database connection failed during startup"),
+        (("permission denied",), "startup permission check failed"),
+        (("no such file or directory",), "startup file was not found"),
+        (("traceback (most recent call last)",), "Python startup failed"),
+    )
+    for line in reversed(output.splitlines()):
+        normalized = line.lower()
+        for markers, summary in signatures:
+            if any(marker in normalized for marker in markers):
+                return summary
+    return ""
 
 
 def _compose_service_from_row(row: dict[str, object]) -> str | None:

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from contextlib import contextmanager
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 from threading import Event
 import time
 import unittest
@@ -58,6 +62,20 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_script_entrypoint_imports_project_package_outside_repo_cwd(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts" / "daily_market_brief_history_worker.py"
+        with tempfile.TemporaryDirectory() as cwd:
+            result = subprocess.run(
+                [sys.executable, "-I", str(script), "--help"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("Process queued historical daily market brief jobs", result.stdout)
 
     def test_claims_and_saves_one_exact_historical_item(self) -> None:
         item = _claimed_item()

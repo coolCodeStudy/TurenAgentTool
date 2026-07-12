@@ -5,10 +5,15 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import logging
 import os
+from pathlib import Path
 import signal
+import sys
 from threading import Event, Thread, current_thread, main_thread
 from time import monotonic
 from typing import Any, Iterator
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from investment_knowledge_mcp.daily_market_brief import (
     build_daily_market_brief,
