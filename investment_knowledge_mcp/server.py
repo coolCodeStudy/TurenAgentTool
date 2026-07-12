@@ -15,6 +15,7 @@ from investment_knowledge_mcp.command_router import (
     is_maintenance_command,
     is_query_command,
     is_research_write_command,
+    safe_public_command_message,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
@@ -462,14 +463,15 @@ def run_investment_command(
     try:
         run_schema()
         result = handle_command(cleaned, include_artifact_path=False)
+        response_message = safe_public_command_message(result, PUBLIC_COMMAND_FAILURE_MESSAGE)
         _record_agent_command(
             command=cleaned,
             ok=result.ok,
-            message=result.message,
+            message=response_message,
             sender=sender,
             source=source,
         )
-        return {"ok": result.ok, "message": result.message}
+        return {"ok": result.ok, "message": response_message}
     except Exception:
         logger.exception("Controlled InvestmentKnowledge command failed")
         _record_agent_command(

@@ -349,7 +349,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertTrue(all(fake.universe_calls == 2 for fake in fakes))
         self.assertLessEqual(tracker.maximum, 2)
 
-    def test_universe_load_returns_at_deadline(self) -> None:
+    def test_universe_load_does_not_return_before_provider_finishes(self) -> None:
         release = threading.Event()
         finished = threading.Event()
 
@@ -369,17 +369,15 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         )
         elapsed = time.monotonic() - started
 
-        self.assertLess(elapsed, 0.15)
+        self.assertGreaterEqual(elapsed, 0.18)
+        self.assertTrue(finished.is_set())
         self.assertEqual("timed_out", result.source_status["gainers"]["status"])
         self.assertEqual(0, result.source_status["gainers"]["requested"])
         self.assertEqual(0, result.source_status["gainers"]["queried"])
-        release.set()
-        self.assertTrue(finished.wait(1))
 
-    def test_deadline_stops_queued_requests_and_reports_incomplete_counts(self) -> None:
+    def test_deadline_prevents_new_requests_after_blocking_provider_finishes(self) -> None:
         release = threading.Event()
-        two_started = threading.Event()
-        all_finished = threading.Event()
+        finished = threading.Event()
         lock = threading.Lock()
 
         class BlockingHistory(FakeHistoricalAkshare):
@@ -405,43 +403,39 @@ class HistoricalActivityProviderTests(unittest.TestCase):
                 with lock:
                     self.history_calls.append(("stock_zh_a_hist", {"symbol": symbol, "timeout": timeout}))
                     self.active += 1
-                    if len(self.history_calls) == 2:
-                        two_started.set()
                 release.wait(1)
                 with lock:
                     self.active -= 1
                     if self.active == 0:
-                        all_finished.set()
+                        finished.set()
                 return FakeFrame(history_rows())
 
         fake = BlockingHistory()
+        timer = threading.Timer(0.12, release.set)
+        timer.daemon = True
+        timer.start()
         started = time.monotonic()
         result = load_historical_market_activity(
             "CN", date(2026, 7, 9), akshare_module=fake, timeout_seconds=0.08
         )
         elapsed = time.monotonic() - started
 
-        self.assertTrue(two_started.is_set())
-        self.assertLess(elapsed, 0.2)
+        self.assertGreaterEqual(elapsed, 0.1)
+        self.assertTrue(finished.is_set())
         self.assertEqual("timed_out", result.source_status["gainers"]["status"])
         self.assertEqual(8, result.source_status["gainers"]["requested"])
-        self.assertEqual(2, result.source_status["gainers"]["queried"])
+        self.assertEqual(1, result.source_status["gainers"]["queried"])
         self.assertEqual(0, result.source_status["gainers"]["usable"])
         self.assertTrue(result.source_status["gainers"]["incomplete"])
-        release.set()
-        self.assertTrue(all_finished.wait(1))
-        time.sleep(0.05)
-        self.assertEqual(2, len(fake.history_calls))
+        self.assertEqual(1, len(fake.history_calls))
 
-    def test_workers_are_fixed_daemons_and_do_not_grow_across_calls(self) -> None:
+    def test_history_provider_does_not_create_background_worker_threads(self) -> None:
         fake = FakeHistoricalAkshare(universe=[], histories={})
         for _ in range(10):
             load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake, timeout_seconds=0.02)
 
         workers = [thread for thread in threading.enumerate() if thread.name.startswith("daily-market-history-")]
-        self.assertLessEqual(len(workers), 4)
-        self.assertTrue(workers)
-        self.assertTrue(all(thread.daemon for thread in workers))
+        self.assertEqual([], workers)
         self.assertFalse(any(thread.name.startswith("ThreadPoolExecutor") for thread in threading.enumerate()))
 
     def test_global_host_gate_limits_concurrent_invocations_to_two(self) -> None:

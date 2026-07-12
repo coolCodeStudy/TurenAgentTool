@@ -118,6 +118,24 @@ class CommandResult:
     message: str
 
 
+_SENSITIVE_COMMAND_MESSAGE_RE = re.compile(
+    r"postgres(?:ql)?://|Traceback|"
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP)\b|"
+    r"password\s*=|secret|token|private_table|"
+    r"/(?:Users|app|opt|srv|private|tmp)/|"
+    r"psycopg|SSL|ConnectionError|RuntimeError",
+    flags=re.IGNORECASE,
+)
+
+
+def safe_public_command_message(result: CommandResult, fallback: str) -> str:
+    if result.ok:
+        return result.message
+    if _SENSITIVE_COMMAND_MESSAGE_RE.search(result.message or ""):
+        return fallback
+    return result.message
+
+
 PORTFOLIO_POSITION_COMMANDS = {
     "我的持仓",
     "我的仓位",
@@ -2351,7 +2369,7 @@ def _match_daily_market_history_job_command(
         current = now or _daily_market_history_now()
         for market in markets:
             latest_completed = resolve_latest_completed_session_date(market, now=current)
-            market_dates[market] = _recent_weekdays(recent_count, end=latest_completed)
+            market_dates[market] = _recent_weekdays(recent_count, end=latest_completed - timedelta(days=1))
     else:
         try:
             start = date.fromisoformat(match.group("start"))
@@ -2583,8 +2601,8 @@ def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
                 save=True,
                 use_fixture=bool(match.get("use_fixture")),
             )
-        except Exception as exc:
-            return CommandResult(ok=False, message=f"生成每日市场简报失败：{exc}")
+        except Exception:
+            return CommandResult(ok=False, message="生成每日市场简报失败，请稍后重试。")
         footer = ""
         if result.saved_report is not None:
             footer = f"\n\n已保存每日市场简报：review_reports #{result.saved_report.get('id')}"
@@ -2592,8 +2610,8 @@ def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
 
     try:
         report = get_daily_market_brief_report(market=market, market_date=market_date)
-    except Exception as exc:
-        return CommandResult(ok=False, message=f"读取每日市场简报失败：{exc}")
+    except Exception:
+        return CommandResult(ok=False, message="读取每日市场简报失败，请稍后重试。")
     if not report:
         date_hint = f" {market_date.isoformat()}" if market_date else ""
         return CommandResult(

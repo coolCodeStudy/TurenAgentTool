@@ -87,7 +87,15 @@ def create_web_history_job(
         _lock_market_date_keys(conn, [pair])
         active = _find_active_item(conn, *pair)
         if active is not None:
-            return _deduplicated_job(conn, [to_jsonable(active)])
+            active_job = _get_history_job(conn, int(active["job_id"]))
+            if (
+                active_job is not None
+                and active_job.get("source") == "web"
+                and active_job.get("request_type") == "single"
+            ):
+                active_job["deduplicated_items"] = _deduplicated_items([to_jsonable(active)])
+                return active_job
+            raise WebHistoryJobCapacityError(WEB_HISTORY_JOB_CAPACITY_MESSAGE)
 
         active_count = conn.execute(
             """
@@ -207,11 +215,30 @@ def get_history_job(job_id: int) -> dict[str, Any] | None:
         return _get_history_job(conn, job_id)
 
 
+def get_public_web_history_job(job_id: int) -> dict[str, Any] | None:
+    with transaction() as conn:
+        return _get_public_web_history_job(conn, job_id)
+
+
 def list_history_jobs(limit: int = 10) -> list[dict[str, Any]]:
     bounded_limit = max(1, min(int(limit), 100))
     with transaction() as conn:
         rows = conn.execute(
             _history_job_select_sql(where="", order_by="ORDER BY job.created_at DESC", limit=True),
+            (bounded_limit,),
+        ).fetchall()
+    return to_jsonable(rows)
+
+
+def list_public_web_history_jobs(limit: int = 10) -> list[dict[str, Any]]:
+    bounded_limit = max(1, min(int(limit), 50))
+    with transaction() as conn:
+        rows = conn.execute(
+            _history_job_select_sql(
+                where="WHERE job.source = 'web' AND job.request_type = 'single'",
+                order_by="ORDER BY job.created_at DESC",
+                limit=True,
+            ),
             (bounded_limit,),
         ).fetchall()
     return to_jsonable(rows)
@@ -733,6 +760,18 @@ def _recompute_history_jobs(conn: Any, job_ids: list[int]) -> list[dict[str, Any
 def _get_history_job(conn: Any, job_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         _history_job_select_sql(where="WHERE job.id = %s", order_by="", limit=False),
+        (job_id,),
+    ).fetchone()
+    return to_jsonable(row) if row else None
+
+
+def _get_public_web_history_job(conn: Any, job_id: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        _history_job_select_sql(
+            where="WHERE job.id = %s AND job.source = 'web' AND job.request_type = 'single'",
+            order_by="",
+            limit=False,
+        ),
         (job_id,),
     ).fetchone()
     return to_jsonable(row) if row else None

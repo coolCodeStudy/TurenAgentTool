@@ -25,7 +25,7 @@ class DailyMarketBriefHistoryCommandTests(unittest.TestCase):
         )
         self.assertFalse(parsed["force_refresh"])
 
-    def test_recent_market_days_use_each_markets_latest_completed_session(self) -> None:
+    def test_recent_market_days_stop_before_each_markets_latest_completed_session(self) -> None:
         now = datetime(2026, 7, 13, 8, 30, tzinfo=timezone.utc)
         parsed = command_router._match_daily_market_history_job_command(
             "补齐每日市场简报 CN,US 最近2个交易日",
@@ -34,10 +34,10 @@ class DailyMarketBriefHistoryCommandTests(unittest.TestCase):
 
         self.assertEqual(
             [
+                ("CN", date(2026, 7, 9)),
                 ("CN", date(2026, 7, 10)),
-                ("CN", date(2026, 7, 13)),
+                ("US", date(2026, 7, 8)),
                 ("US", date(2026, 7, 9)),
-                ("US", date(2026, 7, 10)),
             ],
             parsed["pairs"],
         )
@@ -57,8 +57,8 @@ class DailyMarketBriefHistoryCommandTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(2, create.call_count)
-        self.assertEqual((["CN"], [date(2026, 7, 10), date(2026, 7, 13)]), create.call_args_list[0].args)
-        self.assertEqual((["US"], [date(2026, 7, 9), date(2026, 7, 10)]), create.call_args_list[1].args)
+        self.assertEqual((["CN"], [date(2026, 7, 9), date(2026, 7, 10)]), create.call_args_list[0].args)
+        self.assertEqual((["US"], [date(2026, 7, 8), date(2026, 7, 9)]), create.call_args_list[1].args)
         self.assertIn("#401", result.message)
         self.assertIn("#402", result.message)
 

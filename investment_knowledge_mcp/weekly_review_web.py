@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import daily_market_jobs, repository
-from investment_knowledge_mcp.command_router import handle_command
+from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
 from investment_knowledge_mcp.command_workbench import (
     command_workbench_auth_error_payload,
     execution_blocker,
@@ -32,8 +32,8 @@ from investment_knowledge_mcp.daily_market_brief import (
     resolve_latest_completed_session_date,
 )
 from investment_knowledge_mcp.daily_market_jobs import (
-    get_history_job,
-    list_history_jobs,
+    get_public_web_history_job,
+    list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
@@ -235,10 +235,11 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         try:
             run_schema()
             result = handle_command(exact_command)
+            response_message = safe_public_command_message(result, PUBLIC_WORKBENCH_FAILURE_MESSAGE)
             event = record_command_event(
                 command=exact_command,
                 ok=result.ok,
-                message=result.message,
+                message=response_message,
                 sender=_clean_optional_text(payload.get("sender")),
                 source="weekly-review-web.command-workbench.execute",
             )
@@ -268,7 +269,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             status,
             {
                 "ok": result.ok,
-                "message": result.message,
+                "message": response_message,
                 "preview": preview,
                 "event_id": event.get("id"),
                 "executed_command": exact_command,
@@ -427,7 +428,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 job_id = int(job_id_text)
                 if job_id < 1:
                     raise ValueError("任务 ID 无效。")
-                job = get_history_job(job_id)
+                job = get_public_web_history_job(job_id)
                 if job is None:
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "未找到该历史简报任务。"})
                     return
@@ -438,7 +439,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             limit = int(limit_text)
             if limit < 1 or limit > 50:
                 raise ValueError("任务列表数量应在 1 到 50 之间。")
-            jobs = list_history_jobs(limit=limit)
+            jobs = list_public_web_history_jobs(limit=limit)
         except (TypeError, ValueError) as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return

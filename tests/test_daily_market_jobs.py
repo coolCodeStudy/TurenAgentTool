@@ -521,6 +521,17 @@ class DailyMarketJobsTests(unittest.TestCase):
         self.assertIn("ORDER BY job.created_at DESC", query)
         self.assertEqual((100,), params)
 
+    def test_public_web_history_jobs_are_filtered_to_single_web_jobs(self) -> None:
+        self.connection.listed_jobs = [{"id": 9}, {"id": 8}]
+
+        listed = jobs.list_public_web_history_jobs(limit=999)
+
+        self.assertEqual([9, 8], [job["id"] for job in listed])
+        query, params = self.connection.queries[-1]
+        self.assertIn("job.source = 'web'", query)
+        self.assertIn("job.request_type = 'single'", query)
+        self.assertEqual((50,), params)
+
     def test_claims_exactly_one_item_with_skip_locked_in_one_transaction(self) -> None:
         self.connection.claimed_item = {
             "id": 101,
@@ -1182,6 +1193,48 @@ class DailyMarketJobsPostgresConcurrencyTests(unittest.TestCase):
 
         self.assertEqual(active_job_ids[0], duplicate["id"])
         self.assertEqual(jobs.WEB_HISTORY_JOB_CAPACITY_MESSAGE, str(raised.exception))
+
+    def test_web_admission_does_not_return_authenticated_batch_on_dedup(self) -> None:
+        command_job_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+            VALUES ('batch', 'command', 'queued', 2)
+            RETURNING id
+            """
+        ).fetchone()["id"]
+        self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_job_items (job_id, market, market_date, status)
+            VALUES (%s, 'CN', '2026-07-01', 'queued')
+            """,
+            (command_job_id,),
+        )
+
+        with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+            with self.assertRaises(jobs.WebHistoryJobCapacityError):
+                jobs.create_web_history_job("CN", date(2026, 7, 1))
+
+    def test_public_web_job_lookup_ignores_authenticated_batch_jobs(self) -> None:
+        command_job_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+            VALUES ('batch', 'command', 'queued', 1)
+            RETURNING id
+            """
+        ).fetchone()["id"]
+        web_job_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+            VALUES ('single', 'web', 'queued', 1)
+            RETURNING id
+            """
+        ).fetchone()["id"]
+
+        with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+            self.assertIsNone(jobs.get_public_web_history_job(command_job_id))
+            visible = jobs.get_public_web_history_job(web_job_id)
+
+        self.assertEqual(web_job_id, visible["id"])
 
     def test_two_concurrent_claims_across_jobs_leave_only_one_running_item(self) -> None:
         for market in ("CN", "HK"):

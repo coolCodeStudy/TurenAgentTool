@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FutureTimeoutError, wait
 from dataclasses import dataclass
 from datetime import date, timedelta
 import importlib
 import json
 import math
-from queue import Full, Queue
-from threading import BoundedSemaphore, Event, Lock, Thread
+from threading import BoundedSemaphore, Event, Lock
 from time import monotonic, sleep
 from typing import Any, Callable
 
 
 AKSHARE_PROVIDER = "akshare_eastmoney"
-MAX_WORKERS = 4
 MAX_EASTMONEY_HOST_REQUESTS = 2
 MAX_ATTEMPTS = 2
-MAX_PENDING_TASKS = 16
 HISTORY_LOOKBACK_DAYS = 35
 TURNOVER_THRESHOLDS = {"CN": 50_000_000, "HK": 20_000_000, "US": 10_000_000}
 
@@ -29,45 +25,6 @@ class HistoricalActivityCancelled(Exception):
     pass
 
 
-class _DaemonWorkerPool:
-    def __init__(self, *, worker_count: int, queue_size: int) -> None:
-        self._queue: Queue[tuple[Future[Any], Callable[[], Any], float]] = Queue(maxsize=queue_size)
-        self._threads = [
-            Thread(target=self._run, name=f"daily-market-history-{index + 1}", daemon=True)
-            for index in range(worker_count)
-        ]
-        for thread in self._threads:
-            thread.start()
-
-    def submit(self, operation: Callable[[], Any], *, deadline: float) -> Future[Any] | None:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            return None
-        future: Future[Any] = Future()
-        try:
-            self._queue.put((future, operation, deadline), timeout=remaining)
-        except Full:
-            return None
-        return future
-
-    def _run(self) -> None:
-        while True:
-            future, operation, deadline = self._queue.get()
-            try:
-                if not future.set_running_or_notify_cancel():
-                    continue
-                if monotonic() >= deadline:
-                    future.set_exception(_DeadlineExpired())
-                    continue
-                try:
-                    future.set_result(operation())
-                except BaseException as exc:
-                    future.set_exception(exc)
-            finally:
-                self._queue.task_done()
-
-
-_WORKER_POOL = _DaemonWorkerPool(worker_count=MAX_WORKERS, queue_size=MAX_PENDING_TASKS)
 _EASTMONEY_HOST_GATE = BoundedSemaphore(MAX_EASTMONEY_HOST_REQUESTS)
 
 
@@ -137,27 +94,16 @@ def load_historical_market_activity(
         return _unavailable_result(detail_code=type(exc).__name__)
 
     universe_attempts = _AttemptCounter()
-    universe_future = _WORKER_POOL.submit(
-        lambda: _load_universe(
+    try:
+        universe = _load_universe(
             ak=ak,
             market=market_code,
             limit=max(1, min(int(universe_limit), 200)),
             deadline=deadline,
             attempts=universe_attempts,
             cancel_event=cancel_event,
-        ),
-        deadline=deadline,
-    )
-    if universe_future is None:
-        return _unavailable_result(
-            detail_code="deadline_exceeded",
-            timed_out=True,
-            universe_attempts=universe_attempts.count(),
         )
-    try:
-        universe = universe_future.result(timeout=_remaining(deadline))
-    except (FutureTimeoutError, _DeadlineExpired):
-        universe_future.cancel()
+    except _DeadlineExpired:
         return _unavailable_result(
             detail_code="deadline_exceeded",
             timed_out=True,
@@ -177,19 +123,15 @@ def load_historical_market_activity(
     rows: list[dict[str, Any]] = []
     completed = 0
     deadline_hit = False
-    workers = max(1, min(int(max_workers), MAX_WORKERS))
-    candidates = iter(universe)
-    pending: set[Future[Any]] = set()
+    del max_workers
 
-    def submit_next() -> bool:
-        nonlocal deadline_hit
+    for candidate in universe:
         _raise_if_cancelled(cancel_event)
+        if monotonic() >= deadline:
+            deadline_hit = True
+            break
         try:
-            candidate = next(candidates)
-        except StopIteration:
-            return False
-        future = _WORKER_POOL.submit(
-            lambda candidate=candidate: _load_candidate(
+            row, candidate_timed_out = _load_candidate(
                 ak=ak,
                 market=market_code,
                 market_date=market_date,
@@ -197,53 +139,23 @@ def load_historical_market_activity(
                 coverage=coverage,
                 deadline=deadline,
                 cancel_event=cancel_event,
-            ),
-            deadline=deadline,
-        )
-        if future is None:
+            )
+            if monotonic() >= deadline:
+                deadline_hit = True
+                row = None
+                candidate_timed_out = True
+        except _DeadlineExpired:
             deadline_hit = True
-            return False
-        pending.add(future)
-        return True
-
-    for _ in range(workers):
-        if not submit_next():
             break
-
-    try:
-        while pending:
-            _raise_if_cancelled(cancel_event)
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                deadline_hit = True
-                break
-            done, _ = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
-            if not done:
-                deadline_hit = True
-                break
-            for future in done:
-                _raise_if_cancelled(cancel_event)
-                pending.remove(future)
-                completed += 1
-                try:
-                    row, candidate_timed_out = future.result()
-                except _DeadlineExpired:
-                    deadline_hit = True
-                    row = None
-                    candidate_timed_out = True
-                except HistoricalActivityCancelled:
-                    raise
-                except Exception:
-                    row = None
-                    candidate_timed_out = False
-                deadline_hit = deadline_hit or candidate_timed_out
-                if row is not None:
-                    rows.append(row)
-            while len(pending) < workers and submit_next():
-                pass
-    finally:
-        for future in pending:
-            future.cancel()
+        except HistoricalActivityCancelled:
+            raise
+        except Exception:
+            row = None
+            candidate_timed_out = False
+        completed += 1
+        deadline_hit = deadline_hit or candidate_timed_out
+        if row is not None:
+            rows.append(row)
 
     queried = coverage.queried_count()
     usable = len(rows)

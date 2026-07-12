@@ -19,7 +19,7 @@ Out of scope for this pass: DingTalk push, paid data providers, cross-market sec
 - HK/US bounded Sina gainer fallback: `main` commit `027b9228a2658fb3aebc78afcc9a72f4d6db1764`; quick deploy run `29149263462` succeeded after the Ops API source-refresh fix in `main` commit `ff750055a3c214230162116dde39c07925f6e559`.
 - Cloud page: `http://47.84.190.191:8010/daily-market-brief` returned the tokenless CN/HK/US review surface. Browser verification found CN with 5 indexes, 5 sectors, and 5 gainers; HK with 3 indexes and 5 gainers; US with 4 indexes and 5 gainers. Unsupported HK/US sectors and unsupported capital-flow coverage are shown as product-language degraded states.
 - Persisted 2026-07-10 reports coexist as CN `#19`, HK `#20`, and US `#21`. A fresh US rerun updated report `#21`, confirming same-market/date idempotency.
-- Older and future public generation requests were rejected with HTTP 400. Cloud system status showed `daily-market-brief-scheduler` running alongside healthy Web, database, and control-plane services.
+- At the 2026-07-10 acceptance point, older and future public generation requests were rejected with HTTP 400. The later Historical Jobs section supersedes the older-date behavior: older dates now enqueue durable single-date history jobs and future dates remain rejected. Cloud system status showed `daily-market-brief-scheduler` running alongside healthy Web, database, and control-plane services.
 - `AT-2026-07-10-001` passed independent cloud acceptance on 2026-07-11. User acceptance remains pending.
 
 ## Touched Modules
@@ -74,9 +74,23 @@ The existing weekly-review Web service also serves Daily Market Brief:
 - Read API: `GET /api/daily-market-brief?market=CN&date=2026-06-30`
 - Generate API: `POST /api/daily-market-brief/generate`
 
-The page exposes CN/HK/US tabs, market-date selection, read/generate actions, summary cards, narrative, core-index table, sector/gainer/flow tables, source-status table, and Markdown original. Daily Market Brief read and live-generation APIs are public so the user does not need to create or enter a token. The public generation endpoint accepts only the selected market's latest completed session, rejects fixture mode and older/future dates, and applies a per-market/date single-flight gate with a 60-second cooldown. Schema initialization stays in service startup, not the public request path. Other Weekly Review Web write surfaces remain token-protected. The command surface remains the underlying product path for scheduler, operational reruns, fixture verification, retrieval, and regression verification; the Web page is the user acceptance surface.
+The page exposes CN/HK/US tabs, market-date selection, read/generate actions, summary cards, narrative, core-index table, sector/gainer/flow tables, source-status table, and Markdown original. Daily Market Brief read and current-session live-generation APIs are public so the user does not need to create or enter a token. The public generation endpoint accepts the selected market's latest completed session, rejects fixture mode and future dates, and applies a per-market/date single-flight gate with a 60-second cooldown. When the selected date is older than the latest completed session, the Web endpoint enqueues a durable single-date history job and returns HTTP 202 immediately. Schema initialization stays in service startup, not the public request path. Other Weekly Review Web write surfaces remain token-protected. The command surface remains the underlying product path for scheduler, operational reruns, fixture verification, retrieval, and regression verification; the Web page is the user acceptance surface.
 
-Live operational reruns are also limited to the latest completed session. Historical live generation may be rendered without saving to explain provider limitations, but it cannot overwrite a stored historical brief with empty spot-ranking sections. Historical replacement requires a provider that supplies genuine historical sector, gainer, and flow rankings.
+Live operational reruns are also limited to the latest completed session. Historical reconstruction jobs may save partial historical reports when the provider can supply real historical index bars but not exact historical sector, gainer, or flow rankings; missing sections are labeled as unavailable rather than filled from current spot rankings.
+
+## Historical Jobs
+
+Status: implemented_pending_deploy
+Last updated: 2026-07-12
+
+- Public Web historical generation accepts exactly one `market` and one `date`, rejects future dates and workload-control fields, and enqueues through `daily_market_brief_jobs` / `daily_market_brief_job_items`.
+- Public job status APIs expose only `source = web` and `request_type = single` jobs. If a tokenless Web request collides with an authenticated batch item for the same market/date, it returns a capacity response instead of leaking the authenticated parent batch.
+- Authenticated Command Workbench and the trusted MCP command path support batch backfill, status, and cancellation commands. Workbench write actions require confirmation; the public page has no batch or cancel control.
+- `scripts/daily_market_brief_history_worker.py` processes at most one item globally through PostgreSQL advisory locking and item leases. Provider work runs synchronously inside the claimed item lifecycle; the worker-level deadline covers the whole item and no provider thread is allowed to continue after the item returns.
+- Cancellation, lease checks, report upsert, terminalization, and parent-job recompute are serialized in transactions. A canceled item cannot save a report after cancellation wins the lease check.
+- Recent-trading-day batch expansion stops before each market's latest completed session, leaving that date for the realtime close generator.
+- MCP is still a trusted internal/control-plane surface. The production Compose default binds the MCP host port to `127.0.0.1` via `MCP_BIND_HOST`, so the unauthenticated MCP transport is not publicly exposed by default.
+- Workbench and MCP command failures use sanitized public messages when failed `CommandResult` values contain connection strings, SQL, tracebacks, filesystem paths, SSL/provider internals, tokens, or credentials.
 
 ## Scheduler-Ready Entry Points
 

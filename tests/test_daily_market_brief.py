@@ -768,7 +768,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         handler = object.__new__(web.WeeklyReviewWebHandler)
         handler._write_json = mock.Mock()
 
-        with mock.patch.object(web, "get_history_job", return_value=raw_job):
+        with mock.patch.object(web, "get_public_web_history_job", return_value=raw_job):
             handler._handle_daily_market_brief_history_jobs_read({"id": ["41"]})
         status, payload = handler._write_json.call_args.args
         self.assertEqual(HTTPStatus.OK, status)
@@ -779,11 +779,21 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertNotIn("attempt_count", payload["job"]["items"][0])
 
         handler._write_json.reset_mock()
-        with mock.patch.object(web, "list_history_jobs", return_value=[raw_job]) as list_jobs:
+        with mock.patch.object(web, "list_public_web_history_jobs", return_value=[raw_job]) as list_jobs:
             handler._handle_daily_market_brief_history_jobs_read({"limit": ["5"]})
         self.assertEqual(HTTPStatus.OK, handler._write_json.call_args.args[0])
         self.assertEqual(1, len(handler._write_json.call_args.args[1]["jobs"]))
         list_jobs.assert_called_once_with(limit=5)
+
+    def test_public_history_job_read_uses_public_web_filtered_repository(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(web, "get_public_web_history_job", return_value=None) as get_public:
+            handler._handle_daily_market_brief_history_jobs_read({"id": ["44"]})
+
+        self.assertEqual(HTTPStatus.NOT_FOUND, handler._write_json.call_args.args[0])
+        get_public.assert_called_once_with(44)
 
     def test_public_weekend_generation_returns_no_session(self) -> None:
         fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
