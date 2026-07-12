@@ -1524,7 +1524,7 @@ def render_daily_market_brief_html() -> str:
         ${{rows.map((row) => {{
           const numericValue = row.flow_value ?? row.value ?? row.change_pct;
           const valueText = flow ? fmt(numericValue) : pct(row.change_pct);
-          const noteText = row.turnover !== undefined ? fmt(row.turnover) : (row.message || row.metric || "-");
+          const noteText = row.turnover !== undefined ? formatMarketAmount(row.turnover, context.market?.code || state.market) : (row.message || row.metric || "-");
           return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money">${{escapeHtml(noteText)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`;
@@ -1565,6 +1565,20 @@ def render_daily_market_brief_html() -> str:
     function fmt(value) {{
       if (value === null || value === undefined || value === "") return "-";
       return Number(value).toLocaleString(undefined, {{ maximumFractionDigits: 2 }});
+    }}
+    function formatMarketAmount(value, market) {{
+      if (value === null || value === undefined || value === "") return "-";
+      const number = Number(value);
+      const currencies = {{
+        CN: {{ code: "CNY", unit: "元" }},
+        HK: {{ code: "HKD", unit: "港元" }},
+        US: {{ code: "USD", unit: "美元" }}
+      }};
+      const currency = currencies[market] || currencies.CN;
+      const absolute = Math.abs(number);
+      if (absolute >= 100000000) return `${{(number / 100000000).toFixed(2)}} 亿${{currency.unit}} ${{currency.code}}`;
+      if (absolute >= 10000) return `${{(number / 10000).toFixed(2)}} 万${{currency.unit}} ${{currency.code}}`;
+      return `${{number.toFixed(2)}} ${{currency.unit}} ${{currency.code}}`;
     }}
     function relativePct(current, baseline) {{
       if (!current || !baseline) return null;
