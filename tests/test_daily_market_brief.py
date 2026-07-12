@@ -196,6 +196,21 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual("6.33 亿美元 USD", dmb.format_market_amount(633_303_877.53, "US"))
         self.assertEqual("-", dmb.format_market_amount(None, "US"))
 
+    def test_cn_ranked_item_markdown_shows_percentage_and_turnover_currency(self) -> None:
+        result = dmb.build_daily_market_brief(
+            market="CN",
+            market_date=date(2026, 7, 9),
+            save=False,
+            market_bar_loader=fake_market_bar_loader,
+            use_fixture=True,
+            now=datetime(2026, 7, 9, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertIn(
+            "| 1 | 沪深样本1 | CN.F001 | +9.00% | 100.00 万元 CNY | fixture |",
+            result.markdown,
+        )
+
     def test_live_us_defaults_to_explicit_capital_flow_degraded_state(self) -> None:
         result = dmb.build_daily_market_brief(
             market="US",

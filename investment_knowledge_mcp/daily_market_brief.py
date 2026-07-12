@@ -1078,16 +1078,20 @@ def _render_index_table(indexes: list[dict[str, Any]]) -> list[str]:
 def _render_rank_table(items: list[dict[str, Any]], *, market: str, empty: str) -> list[str]:
     if not items:
         return [f"- {empty}"]
-    lines = ["| 排名 | 名称 | 代码/指标 | 涨跌幅/数值 | 来源 |", "| ---: | --- | --- | ---: | --- |"]
+    lines = [
+        "| 排名 | 名称 | 代码/指标 | 涨跌幅/数值 | 成交额 | 来源 |",
+        "| ---: | --- | --- | ---: | ---: | --- |",
+    ]
     for idx, item in enumerate(items[:5], start=1):
         metric = item.get("change_pct")
         if metric is None:
-            metric = item.get("flow_value") or item.get("turnover")
-            metric_text = format_market_amount(metric, market) if item.get("turnover") is not None else _fmt_number(metric)
+            metric = item.get("flow_value")
+            metric_text = _fmt_number(metric)
         else:
             metric_text = _fmt_pct(metric)
+        turnover_text = format_market_amount(item.get("turnover"), market)
         lines.append(
-            f"| {item.get('rank') or idx} | {item.get('name') or '-'} | {item.get('code') or item.get('metric') or '-'} | {metric_text} | {item.get('provider') or '-'} |"
+            f"| {item.get('rank') or idx} | {item.get('name') or '-'} | {item.get('code') or item.get('metric') or '-'} | {metric_text} | {turnover_text} | {item.get('provider') or '-'} |"
         )
     return lines
 
