@@ -118,6 +118,7 @@ PATH_RULES = (
         (
             "command-api",
             "daily-market-brief-history-worker",
+            "daily-market-brief-scheduler",
             "dingtalk-api",
             "dingtalk-stream-bot",
             "mcp",
@@ -269,9 +270,11 @@ def _compose_image_inputs_changed(repo: Path, base_sha: str, target_sha: str, ru
         target_path = Path(directory) / "target.yml"
         base_path.write_text(base_compose, encoding="utf-8")
         target_path.write_text(target_compose, encoding="utf-8")
-        return _compose_image_inputs(_compose_config(base_path, runner)) != _compose_image_inputs(
-            _compose_config(target_path, runner)
-        )
+        base_inputs = dict(_compose_image_inputs(_compose_config(base_path, runner)))
+        target_inputs = dict(_compose_image_inputs(_compose_config(target_path, runner)))
+        if base_inputs == target_inputs:
+            return False
+        return not _is_allowed_history_worker_addition(base_inputs, target_inputs)
 
 
 def _git_show(repo: Path, sha: str, runner: CommandRunner) -> str:
@@ -296,17 +299,30 @@ def _compose_config(path: Path, runner: CommandRunner) -> dict[str, object]:
     return parsed
 
 
-def _compose_image_inputs(compose_config: dict[str, object]) -> tuple[str, ...]:
+def _compose_image_inputs(compose_config: dict[str, object]) -> tuple[tuple[str, str], ...]:
     services = compose_config.get("services", {})
     if not isinstance(services, dict):
         raise RuntimeError("docker compose config services must be an object")
-    inputs: set[str] = set()
+    inputs: list[tuple[str, str]] = []
     for name, service in services.items():
         if not isinstance(name, str) or not isinstance(service, dict):
             raise RuntimeError("docker compose config service entries must be objects")
         image_input = {key: service.get(key) for key in ("image", "build", "platform") if key in service}
-        inputs.add(json.dumps(image_input, sort_keys=True, separators=(",", ":")))
+        inputs.append((name, json.dumps(image_input, sort_keys=True, separators=(",", ":"))))
     return tuple(sorted(inputs))
+
+
+def _is_allowed_history_worker_addition(
+    base_inputs: dict[str, str], target_inputs: dict[str, str]
+) -> bool:
+    worker = "daily-market-brief-history-worker"
+    if set(target_inputs) - set(base_inputs) != {worker}:
+        return False
+    if set(base_inputs) - set(target_inputs):
+        return False
+    if any(target_inputs.get(service) != recipe for service, recipe in base_inputs.items()):
+        return False
+    return target_inputs[worker] in base_inputs.values()
 
 
 def _rule_for(path: str) -> PathRule | None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import json
 import os
+import re
 import subprocess
 import tarfile
 from contextlib import contextmanager
@@ -1925,6 +1926,23 @@ class DockerHealthCheckerTests(TestCase):
         self.assertIn("POSTGRES_PORT: 5432", worker)
         self.assertNotIn("ports:", worker)
         self.assertIn("scripts/daily_market_brief_history_worker.py", worker)
+
+    def test_history_worker_compose_entrypoint_exists_in_integrated_checkout(self) -> None:
+        source = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
+        start = source.index("  daily-market-brief-history-worker:\n")
+        worker = source[start:source.index("\nvolumes:\n", start)]
+        script_paths = re.findall(r"python (scripts/[A-Za-z0-9_./-]+\.py)", worker)
+
+        self.assertEqual(
+            ["scripts/init_db.py", "scripts/daily_market_brief_history_worker.py"],
+            script_paths,
+        )
+        for script_path in script_paths:
+            with self.subTest(script_path=script_path):
+                self.assertTrue(
+                    Path(script_path).is_file(),
+                    "integrate the Async Task 2 worker commit before deploying this wiring",
+                )
 
     def test_exact_target_and_aggregate_health_routes_are_checked(self) -> None:
         self.health.check_service("weekly-review-web", ("/daily-market-brief",))
