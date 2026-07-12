@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -39,6 +40,11 @@ from investment_knowledge_mcp.system_overview import build_system_overview, rend
 
 
 config = get_config()
+logger = logging.getLogger(__name__)
+PUBLIC_COMMAND_FAILURE_MESSAGE = (
+    "执行 InvestmentKnowledge 指令失败，请稍后重试。 "
+    "Investment command failed. Please retry later."
+)
 mcp = FastMCP(
     "InvestmentKnowledge",
     host=config.mcp_host,
@@ -464,10 +470,16 @@ def run_investment_command(
             source=source,
         )
         return {"ok": result.ok, "message": result.message}
-    except Exception as exc:
-        message = f"执行 InvestmentKnowledge 指令失败：{exc}"
-        _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
-        return {"ok": False, "message": message}
+    except Exception:
+        logger.exception("Controlled InvestmentKnowledge command failed")
+        _record_agent_command(
+            command=cleaned,
+            ok=False,
+            message=PUBLIC_COMMAND_FAILURE_MESSAGE,
+            sender=sender,
+            source=source,
+        )
+        return {"ok": False, "message": PUBLIC_COMMAND_FAILURE_MESSAGE}
 
 
 def _is_safe_agent_command(command: str) -> bool:

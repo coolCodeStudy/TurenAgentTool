@@ -40,6 +40,24 @@ class DailyMarketBriefAgentCommandTests(unittest.TestCase):
                 run_schema.assert_called_once_with()
                 handle.assert_called_once_with(command, include_artifact_path=False)
 
+    def test_controlled_agent_exception_never_returns_sensitive_details(self) -> None:
+        raw_error = "postgresql://admin:fake-secret@db/investment SELECT * FROM private_table"
+        with (
+            mock.patch.object(server, "run_schema"),
+            mock.patch.object(server, "handle_command", side_effect=RuntimeError(raw_error)),
+            mock.patch.object(server, "_record_agent_command") as record,
+            mock.patch.object(server.logger, "exception") as log_exception,
+        ):
+            result = server.run_investment_command("每日市场简报任务 123", sender="coordinator")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("执行 InvestmentKnowledge 指令失败，请稍后重试", result["message"])
+        self.assertIn("Investment command failed", result["message"])
+        for secret in ("fake-secret", "postgresql://", "SELECT *", "private_table"):
+            self.assertNotIn(secret, result["message"])
+            self.assertNotIn(secret, record.call_args.kwargs["message"])
+        log_exception.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
