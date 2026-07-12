@@ -15,6 +15,7 @@ from investment_knowledge_mcp.command_router import (
     SYSTEM_STATUS_COMMANDS,
     WEEKLY_REVIEW_COMMANDS,
     WORKER_STATUS_COMMANDS,
+    is_daily_market_history_controlled_command,
 )
 
 COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
@@ -95,6 +96,17 @@ SERVICE_FIELD = (
         "type": "select",
         "options": ["mcp", "command-api", "codex-worker", "research-agent-worker", "dingtalk-stream-bot"],
     },
+)
+DAILY_MARKET_HISTORY_COMMAND_FIELD = (
+    {
+        "id": "command",
+        "label": "Backfill command",
+        "type": "text",
+        "placeholder": "补齐每日市场简报 CN 2026-07-01 到 2026-07-10",
+    },
+)
+DAILY_MARKET_HISTORY_JOB_FIELD = (
+    {"id": "job_id", "label": "Job ID", "type": "number", "placeholder": "123"},
 )
 
 ACTIONS: dict[str, CommandAction] = {
@@ -263,6 +275,54 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=(),
         expected_output="Recovery message explaining available weekly-review actions.",
         supports_execution=False,
+    ),
+    "daily_market_history_backfill": CommandAction(
+        id="daily_market_history_backfill",
+        action_family="Daily Market Brief",
+        label="Backfill daily market briefs",
+        description="Queue a bounded historical Daily Market Brief backfill.",
+        aliases=("补齐每日市场简报", "强制补齐每日市场简报"),
+        required_fields=DAILY_MARKET_HISTORY_COMMAND_FIELD,
+        optional_fields=(),
+        template="{command}",
+        safety_level="writes_durable_record",
+        confirmation_required=True,
+        result_type="daily_market_history_job",
+        side_effects="Creates one or more durable historical brief jobs. Does not run providers in the request thread.",
+        data_sources=("daily market brief job queue",),
+        expected_output="Queued job ids, item counts, skip counts, and progress-page path.",
+    ),
+    "daily_market_history_status": CommandAction(
+        id="daily_market_history_status",
+        action_family="Daily Market Brief",
+        label="Daily market brief job status",
+        description="Read one historical Daily Market Brief job.",
+        aliases=("每日市场简报任务",),
+        required_fields=DAILY_MARKET_HISTORY_JOB_FIELD,
+        optional_fields=(),
+        template="每日市场简报任务 {job_id}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="daily_market_history_job",
+        side_effects="Reads durable job metadata only.",
+        data_sources=("daily market brief job queue",),
+        expected_output="Job status, progress counts, sanitized failures, and progress-page path.",
+    ),
+    "daily_market_history_cancel": CommandAction(
+        id="daily_market_history_cancel",
+        action_family="Daily Market Brief",
+        label="Cancel daily market brief job",
+        description="Request cancellation of a queued or running historical brief job.",
+        aliases=("取消每日市场简报任务",),
+        required_fields=DAILY_MARKET_HISTORY_JOB_FIELD,
+        optional_fields=(),
+        template="取消每日市场简报任务 {job_id}",
+        safety_level="writes_durable_record",
+        confirmation_required=True,
+        result_type="daily_market_history_job",
+        side_effects="Cancels queued items and requests a safe stop for the running item.",
+        data_sources=("daily market brief job queue",),
+        expected_output="Cancellation acknowledgement and progress-page path.",
     ),
     "research_create_stock_job": CommandAction(
         id="research_create_stock_job",
@@ -1290,6 +1350,46 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
+    if re.fullmatch(
+        r"(?:强制)?补齐每日市场简报\s+.+?\s+"
+        r"(?:\d{4}-\d{1,2}-\d{1,2}\s*(?:到|至)\s*\d{4}-\d{1,2}-\d{1,2}|最近\s*\d{1,4}\s*个?交易日)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="daily_market_history_backfill",
+                fields={"command": text},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
+    history_cancel = re.fullmatch(r"取消每日市场简报任务\s+#?(\d+)", text)
+    if history_cancel:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="daily_market_history_cancel",
+                fields={"job_id": history_cancel.group(1)},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
+    history_status = re.fullmatch(r"每日市场简报任务\s+#?(\d+)", text)
+    if history_status:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="daily_market_history_status",
+                fields={"job_id": history_status.group(1)},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
     stock_exact = _match_first(
         text,
         [
@@ -1789,6 +1889,16 @@ def _build_exact_command(action: CommandAction, *, target: dict[str, Any] | None
         return action.template.format(**values)
     if action.id == "service_logs":
         return action.template.format(service=_normalize_service(str(fields.get("service") or "")))
+    if action.id == "daily_market_history_backfill":
+        command = str(fields.get("command") or "").strip()
+        if command.startswith(("补齐每日市场简报", "强制补齐每日市场简报")) and is_daily_market_history_controlled_command(command):
+            return command
+        return ""
+    if action.id in {"daily_market_history_status", "daily_market_history_cancel"}:
+        job_id = str(fields.get("job_id") or "").strip().lstrip("#")
+        if not job_id.isdigit():
+            return ""
+        return action.template.format(job_id=job_id)
     return action.template
 
 

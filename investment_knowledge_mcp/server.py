@@ -10,6 +10,7 @@ from investment_knowledge_mcp.command_router import (
     handle_command,
     is_candidate_write_command,
     is_coding_task_command,
+    is_daily_market_history_controlled_command,
     is_maintenance_command,
     is_query_command,
     is_research_write_command,
@@ -436,9 +437,9 @@ def run_investment_command(
     """Run a safe natural-language InvestmentKnowledge command for an agent shell.
 
     This tool is intended for controlled agent shells. It permits
-    query commands, Futu maintenance commands, candidate-memory proposals, and
-    explicit candidate confirmation/rejection. Direct formal memory writes remain
-    blocked.
+    query commands, controlled Daily Market Brief history jobs, Futu maintenance
+    commands, candidate-memory proposals, and explicit candidate confirmation or
+    rejection. Direct formal memory writes remain blocked.
     """
     cleaned = command.strip()
     if not cleaned:
@@ -472,6 +473,7 @@ def run_investment_command(
 def _is_safe_agent_command(command: str) -> bool:
     return bool(
         is_query_command(command)
+        or is_daily_market_history_controlled_command(command)
         or is_maintenance_command(command)
         or is_candidate_write_command(command)
         or is_coding_task_command(command)

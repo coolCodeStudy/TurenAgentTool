@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import unittest
 from unittest import mock
 
@@ -11,25 +11,56 @@ class DailyMarketBriefHistoryCommandTests(unittest.TestCase):
     def test_date_range_normalizes_markets_and_filters_weekends(self) -> None:
         parsed = command_router._match_daily_market_history_job_command(
             "补齐每日市场简报 A股,港股 2026-07-03 到 2026-07-06",
-            today=date(2026, 7, 12),
         )
 
         self.assertEqual(["CN", "HK"], parsed["markets"])
-        self.assertEqual([date(2026, 7, 3), date(2026, 7, 6)], parsed["dates"])
+        self.assertEqual(
+            [
+                ("CN", date(2026, 7, 3)),
+                ("CN", date(2026, 7, 6)),
+                ("HK", date(2026, 7, 3)),
+                ("HK", date(2026, 7, 6)),
+            ],
+            parsed["pairs"],
+        )
         self.assertFalse(parsed["force_refresh"])
 
-    def test_recent_market_days_expands_n_weekdays_for_each_market(self) -> None:
+    def test_recent_market_days_use_each_markets_latest_completed_session(self) -> None:
+        now = datetime(2026, 7, 13, 8, 30, tzinfo=timezone.utc)
         parsed = command_router._match_daily_market_history_job_command(
-            "补齐每日市场简报 CN,HK,US 最近20个交易日",
-            today=date(2026, 7, 12),
+            "补齐每日市场简报 CN,US 最近2个交易日",
+            now=now,
         )
 
-        self.assertEqual(["CN", "HK", "US"], parsed["markets"])
-        self.assertEqual(20, len(parsed["dates"]))
-        self.assertEqual(date(2026, 6, 15), parsed["dates"][0])
-        self.assertEqual(date(2026, 7, 10), parsed["dates"][-1])
-        self.assertTrue(all(day.weekday() < 5 for day in parsed["dates"]))
-        self.assertEqual(60, len(parsed["markets"]) * len(parsed["dates"]))
+        self.assertEqual(
+            [
+                ("CN", date(2026, 7, 10)),
+                ("CN", date(2026, 7, 13)),
+                ("US", date(2026, 7, 9)),
+                ("US", date(2026, 7, 10)),
+            ],
+            parsed["pairs"],
+        )
+        self.assertIn("节假日", parsed["calendar_note"])
+
+    def test_recent_multi_market_enqueue_preserves_pairs_without_cross_product(self) -> None:
+        now = datetime(2026, 7, 13, 8, 30, tzinfo=timezone.utc)
+        jobs = [
+            {"id": 401, "total_count": 2, "skipped_count": 0},
+            {"id": 402, "total_count": 2, "skipped_count": 0},
+        ]
+        with (
+            mock.patch.object(command_router, "_daily_market_history_now", return_value=now),
+            mock.patch.object(command_router.daily_market_jobs, "create_history_job", side_effect=jobs) as create,
+        ):
+            result = command_router.handle_command("补齐每日市场简报 CN,US 最近2个交易日")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(2, create.call_count)
+        self.assertEqual((["CN"], [date(2026, 7, 10), date(2026, 7, 13)]), create.call_args_list[0].args)
+        self.assertEqual((["US"], [date(2026, 7, 9), date(2026, 7, 10)]), create.call_args_list[1].args)
+        self.assertIn("#401", result.message)
+        self.assertIn("#402", result.message)
 
     def test_more_than_120_items_is_rejected_before_repository_call(self) -> None:
         with mock.patch.object(command_router.daily_market_jobs, "create_history_job") as create:

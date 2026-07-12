@@ -17,7 +17,11 @@ from investment_knowledge_mcp.analysis_provider import (
     route_command_intent_with_openai,
 )
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
-from investment_knowledge_mcp.daily_market_brief import build_daily_market_brief, get_daily_market_brief_report
+from investment_knowledge_mcp.daily_market_brief import (
+    build_daily_market_brief,
+    get_daily_market_brief_report,
+    resolve_latest_completed_session_date,
+)
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_cash_flows,
@@ -2321,7 +2325,7 @@ def _match_daily_market_brief_command(command: str) -> dict[str, Any] | None:
 def _match_daily_market_history_job_command(
     command: str,
     *,
-    today: date | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any] | None:
     compact = command.strip()
     match = re.fullmatch(
@@ -2339,11 +2343,15 @@ def _match_daily_market_history_job_command(
         return None
 
     markets = _parse_daily_market_history_markets(match.group("markets"))
+    market_dates: dict[str, list[date]] = {}
     if match.group("recent"):
         recent_count = int(match.group("recent"))
         if recent_count < 1:
             raise ValueError("最近交易日数量必须大于 0。")
-        dates = _recent_weekdays(recent_count, end=today or date.today())
+        current = now or _daily_market_history_now()
+        for market in markets:
+            latest_completed = resolve_latest_completed_session_date(market, now=current)
+            market_dates[market] = _recent_weekdays(recent_count, end=latest_completed)
     else:
         try:
             start = date.fromisoformat(match.group("start"))
@@ -2353,18 +2361,27 @@ def _match_daily_market_history_job_command(
         if end < start:
             raise ValueError("结束日期不能早于开始日期。")
         dates = _weekdays_between(start, end)
+        for market in markets:
+            market_dates[market] = list(dates)
 
-    if not dates:
+    pairs = [
+        (market, market_date)
+        for market in markets
+        for market_date in market_dates.get(market, [])
+    ]
+    if not pairs:
         raise ValueError("所选范围内没有工作日。")
-    item_count = len(markets) * len(dates)
+    item_count = len(pairs)
     if item_count > DAILY_MARKET_HISTORY_MAX_ITEMS:
         raise ValueError(
             f"一次最多 {DAILY_MARKET_HISTORY_MAX_ITEMS} 个市场/日期项目；当前为 {item_count} 个，请拆分任务。"
         )
     return {
         "markets": markets,
-        "dates": dates,
+        "market_dates": market_dates,
+        "pairs": pairs,
         "force_refresh": bool(match.group("force")),
+        "calendar_note": "交易日按各市场最近已收盘时点和工作日估算；节假日由历史生成任务的数据校验确认。",
     }
 
 
@@ -2414,30 +2431,64 @@ def _recent_weekdays(count: int, *, end: date) -> list[date]:
     return list(reversed(result))
 
 
-def _handle_daily_market_history_create(match: dict[str, Any]) -> CommandResult:
-    try:
-        job = daily_market_jobs.create_history_job(
-            match["markets"],
-            match["dates"],
-            request_type="batch",
-            source="command",
-            force_refresh=bool(match.get("force_refresh")),
-            max_items=DAILY_MARKET_HISTORY_MAX_ITEMS,
-        )
-    except Exception:
-        return CommandResult(ok=False, message="每日市场简报历史任务创建失败，请稍后重试。")
+def _daily_market_history_now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai"))
 
-    job_id = job.get("id")
-    total_count = int(job.get("total_count") or len(job.get("items") or []))
-    skipped_count = int(job.get("skipped_count") or 0)
-    deduplicated_count = len(job.get("deduplicated_items") or [])
+
+def is_daily_market_history_controlled_command(command: str) -> bool:
+    compact = command.strip()
+    if re.fullmatch(r"每日市场简报任务\s+#?\d+", compact):
+        return True
+    if re.fullmatch(r"取消每日市场简报任务\s+#?\d+", compact):
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:强制)?补齐每日市场简报\s+.+?\s+"
+            r"(?:\d{4}-\d{1,2}-\d{1,2}\s*(?:到|至)\s*\d{4}-\d{1,2}-\d{1,2}|"
+            r"最近\s*\d{1,4}\s*个?交易日)",
+            compact,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _handle_daily_market_history_create(match: dict[str, Any]) -> CommandResult:
+    jobs: list[dict[str, Any]] = []
+    for market in match["markets"]:
+        dates = match["market_dates"].get(market) or []
+        if not dates:
+            continue
+        try:
+            job = daily_market_jobs.create_history_job(
+                [market],
+                dates,
+                request_type="batch",
+                source="command",
+                force_refresh=bool(match.get("force_refresh")),
+                max_items=DAILY_MARKET_HISTORY_MAX_ITEMS,
+            )
+        except Exception:
+            if jobs:
+                created_ids = "、".join(f"#{item.get('id')}" for item in jobs)
+                return CommandResult(
+                    ok=False,
+                    message=f"部分任务已创建（{created_ids}），其余每日市场简报历史任务创建失败，请稍后重试。",
+                )
+            return CommandResult(ok=False, message="每日市场简报历史任务创建失败，请稍后重试。")
+        jobs.append(job)
+
+    job_ids = "、".join(f"#{job.get('id')}" for job in jobs)
+    total_count = sum(int(job.get("total_count") or len(job.get("items") or [])) for job in jobs)
+    skipped_count = sum(int(job.get("skipped_count") or 0) for job in jobs)
+    deduplicated_count = sum(len(job.get("deduplicated_items") or []) for job in jobs)
     mode = "强制刷新" if match.get("force_refresh") else "跳过已有报告"
     return CommandResult(
         ok=True,
         message=(
-            f"已创建每日市场简报历史任务 #{job_id}。\n"
+            f"已创建每日市场简报历史任务 {job_ids}。\n"
             f"项目 {total_count} 个，已跳过 {skipped_count} 个，去重 {deduplicated_count} 个。\n"
             f"模式：{mode}。\n"
+            f"日期说明：{match.get('calendar_note')}\n"
             f"进度页面：{DAILY_MARKET_BRIEF_PAGE_PATH}"
         ),
     )
