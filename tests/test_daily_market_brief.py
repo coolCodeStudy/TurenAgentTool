@@ -5,6 +5,7 @@ from http import HTTPStatus
 from pathlib import Path
 import inspect
 import sys
+import threading
 import types
 import unittest
 from unittest import mock
@@ -491,19 +492,22 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn('$("#market-date").value = "";', html)
         self.assertIn('if (data.market_date) $("#market-date").value = data.market_date;', html)
         self.assertIn("/api/daily-market-brief/dates", html)
+        self.assertIn("/api/daily-market-brief/history-jobs", html)
         self.assertIn("saved-date", html)
         self.assertIn("已保存", html)
         self.assertIn("尚未生成", html)
-        self.assertIn('if (action === "generate") loadSavedDates();', html)
+        self.assertIn("pollHistoryJob", html)
+        self.assertIn("job.completed_count", html)
+        self.assertIn("job.current_market_date", html)
+        self.assertNotIn("cancelHistoryJob", html)
 
-    def test_page_generation_progress_is_generic_until_server_classifies(self) -> None:
+    def test_page_generation_progress_supports_background_history_jobs(self) -> None:
         html = render_daily_market_brief_html()
 
-        self.assertIn(
-            'message.textContent = action === "read" ? "正在读取简报..." : "正在生成并保存简报...";',
-            html,
-        )
-        self.assertNotIn('date ? "正在重建历史简报..."', html)
+        self.assertIn("历史简报任务已加入队列", html)
+        self.assertIn("setTimeout", html)
+        self.assertIn("loadSavedDates", html)
+        self.assertIn("loadBrief(\"read\")", html)
         self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
 
     def test_missing_report_payload_and_page_show_not_generated(self) -> None:
@@ -534,6 +538,237 @@ class DailyMarketBriefTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未来日期"):
             _validate_public_daily_market_brief_date("CN", date(2026, 7, 13), now=now)
 
+    def test_historical_generate_enqueues_immediately_without_building(self) -> None:
+        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = fixed_now
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+        job = {
+            "id": 41,
+            "status": "queued",
+            "source": "web",
+            "request_type": "single",
+            "total_count": 1,
+            "completed_count": 0,
+            "items": [{"id": 52, "market": "CN", "market_date": "2026-07-09", "status": "queued"}],
+        }
+
+        with (
+            mock.patch.object(web, "datetime", clock),
+            mock.patch.object(web, "list_history_jobs", return_value=[]),
+            mock.patch.object(web, "create_history_job", return_value=job) as create,
+            mock.patch.object(web, "build_daily_market_brief", side_effect=AssertionError("historical HTTP must not build")),
+        ):
+            handler._handle_daily_market_brief_generate({"market": "CN", "date": "2026-07-09"})
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.ACCEPTED, status)
+        self.assertEqual(41, payload["job"]["id"])
+        self.assertEqual("2026-07-09", payload["market_date"])
+        create.assert_called_once_with(
+            ["CN"],
+            [date(2026, 7, 9)],
+            request_type="single",
+            source="web",
+            force_refresh=False,
+            max_items=1,
+        )
+
+    def test_history_job_create_accepts_only_market_and_date(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        for payload in (
+            {"market": "CN"},
+            {"market": "CN", "date": "2026-07-09", "force": True},
+            {"market": ["CN", "HK"], "date": "2026-07-09"},
+            {"market": "CN", "date": ["2026-07-08", "2026-07-09"]},
+        ):
+            handler._write_json.reset_mock()
+            handler._handle_daily_market_brief_history_job_create(payload)
+            self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
+
+    def test_history_job_create_rejects_future_and_fourth_active_web_job(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+        active_jobs = [
+            {"id": item, "source": "web", "status": "queued", "items": []}
+            for item in range(1, 4)
+        ]
+
+        with mock.patch.object(web, "list_history_jobs", return_value=active_jobs):
+            handler._handle_daily_market_brief_history_job_create({"market": "CN", "date": "2026-07-09"})
+        self.assertEqual(HTTPStatus.TOO_MANY_REQUESTS, handler._write_json.call_args.args[0])
+
+        handler._write_json.reset_mock()
+        with mock.patch.object(web, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            handler._handle_daily_market_brief_history_job_create({"market": "CN", "date": "2026-07-12"})
+        self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
+
+    def test_historical_generate_rejects_workload_controls(self) -> None:
+        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = fixed_now
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with (
+            mock.patch.object(web, "datetime", clock),
+            mock.patch.object(web, "create_history_job") as create,
+        ):
+            handler._handle_daily_market_brief_generate(
+                {"market": "CN", "date": "2026-07-09", "force": True}
+            )
+
+        self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
+        create.assert_not_called()
+
+    def test_history_job_create_returns_active_same_date_before_capacity_check(self) -> None:
+        active_job = {
+            "id": 41,
+            "source": "web",
+            "status": "running",
+            "total_count": 1,
+            "completed_count": 0,
+            "items": [{"market": "CN", "market_date": "2026-07-09", "status": "running"}],
+        }
+        other_jobs = [
+            {"id": item, "source": "web", "status": "queued", "items": []}
+            for item in (42, 43)
+        ]
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with (
+            mock.patch.object(web, "list_history_jobs", return_value=[active_job, *other_jobs]),
+            mock.patch.object(web, "create_history_job") as create,
+        ):
+            handler._handle_daily_market_brief_history_job_create(
+                {"market": "CN", "date": "2026-07-09"}
+            )
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.ACCEPTED, status)
+        self.assertEqual(41, payload["job"]["id"])
+        create.assert_not_called()
+
+    def test_concurrent_web_history_creation_cannot_exceed_three_active_jobs(self) -> None:
+        active_jobs = [
+            {"id": item, "source": "web", "status": "queued", "items": []}
+            for item in (1, 2)
+        ]
+        list_entries = 0
+        list_entries_lock = threading.Lock()
+        second_entry = threading.Event()
+        created_count = 0
+
+        def list_jobs(*, limit: int) -> list[dict]:
+            nonlocal list_entries
+            with list_entries_lock:
+                list_entries += 1
+                if list_entries == 2:
+                    second_entry.set()
+                snapshot = list(active_jobs)
+            second_entry.wait(0.1)
+            return snapshot
+
+        def create_job(*args, **kwargs) -> dict:
+            nonlocal created_count
+            with list_entries_lock:
+                created_count += 1
+                job = {
+                    "id": 2 + created_count,
+                    "source": "web",
+                    "status": "queued",
+                    "total_count": 1,
+                    "completed_count": 0,
+                    "items": [{
+                        "market": args[0][0],
+                        "market_date": args[1][0].isoformat(),
+                        "status": "queued",
+                    }],
+                }
+                active_jobs.append(job)
+                return job
+
+        handlers = []
+        for _ in range(2):
+            handler = object.__new__(web.WeeklyReviewWebHandler)
+            handler._write_json = mock.Mock()
+            handlers.append(handler)
+
+        with (
+            mock.patch.object(web, "list_history_jobs", side_effect=list_jobs),
+            mock.patch.object(web, "create_history_job", side_effect=create_job),
+        ):
+            threads = [
+                threading.Thread(
+                    target=handler._handle_daily_market_brief_history_job_create,
+                    args=({"market": "CN", "date": f"2026-07-0{day}"},),
+                )
+                for handler, day in zip(handlers, (8, 9), strict=True)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=2)
+
+        self.assertEqual(1, created_count)
+        self.assertEqual(
+            [HTTPStatus.ACCEPTED, HTTPStatus.TOO_MANY_REQUESTS],
+            sorted((handler._write_json.call_args.args[0] for handler in handlers), key=int),
+        )
+
+    def test_history_job_read_returns_sanitized_detail_and_recent_list(self) -> None:
+        raw_job = {
+            "id": 41,
+            "request_type": "single",
+            "source": "web",
+            "status": "running",
+            "total_count": 1,
+            "completed_count": 0,
+            "succeeded_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "cancelled_count": 0,
+            "current_market": "CN",
+            "current_market_date": "2026-07-09",
+            "summary": "正在生成",
+            "worker_heartbeat_at": "2026-07-12T10:00:00+00:00",
+            "items": [{
+                "id": 52,
+                "market": "CN",
+                "market_date": "2026-07-09",
+                "status": "running",
+                "report_id": None,
+                "error_summary": None,
+                "worker_name": "secret-worker",
+                "lease_token": "secret-token",
+                "attempt_count": 3,
+            }],
+        }
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(web, "get_history_job", return_value=raw_job):
+            handler._handle_daily_market_brief_history_jobs_read({"id": ["41"]})
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertEqual(41, payload["job"]["id"])
+        self.assertNotIn("worker_heartbeat_at", payload["job"])
+        self.assertNotIn("worker_name", payload["job"]["items"][0])
+        self.assertNotIn("lease_token", payload["job"]["items"][0])
+        self.assertNotIn("attempt_count", payload["job"]["items"][0])
+
+        handler._write_json.reset_mock()
+        with mock.patch.object(web, "list_history_jobs", return_value=[raw_job]) as list_jobs:
+            handler._handle_daily_market_brief_history_jobs_read({"limit": ["5"]})
+        self.assertEqual(HTTPStatus.OK, handler._write_json.call_args.args[0])
+        self.assertEqual(1, len(handler._write_json.call_args.args[1]["jobs"]))
+        list_jobs.assert_called_once_with(limit=5)
+
     def test_public_weekend_generation_returns_no_session(self) -> None:
         fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
         clock = mock.Mock(wraps=datetime)
@@ -544,7 +779,6 @@ class DailyMarketBriefTests(unittest.TestCase):
         with (
             mock.patch.object(web, "datetime", clock),
             mock.patch.object(web, "_DAILY_BRIEF_GENERATION_GATE", web._DailyBriefGenerationGate(cooldown_seconds=0)),
-            mock.patch.object(web, "_HISTORICAL_DAILY_BRIEF_GENERATION_GATE", web._DailyBriefGenerationGate(cooldown_seconds=0)),
         ):
             handler._handle_daily_market_brief_generate({"market": ["CN"], "date": ["2026-07-11"]})
 
@@ -936,41 +1170,6 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIsNotNone(second)
         second.release()
 
-    def test_global_historical_capacity_rejection_does_not_cool_down_date(self) -> None:
-        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
-        clock = mock.Mock(wraps=datetime)
-        clock.now.return_value = fixed_now
-        date_gate = web._DailyBriefGenerationGate(cooldown_seconds=60, clock=lambda: 100.0)
-        historical_gate = web._DailyBriefGenerationGate(cooldown_seconds=0, clock=lambda: 100.0)
-        occupied = historical_gate.try_acquire(("historical", "global"))
-        handler = object.__new__(web.WeeklyReviewWebHandler)
-        handler._write_json = mock.Mock()
-        generated = types.SimpleNamespace(
-            context={"market": {"code": "CN"}, "market_date": "2026-07-09"},
-            markdown="historical",
-            saved_report={"id": 1},
-        )
-
-        with (
-            mock.patch.object(web, "datetime", clock),
-            mock.patch.object(web, "_DAILY_BRIEF_GENERATION_GATE", date_gate),
-            mock.patch.object(web, "_HISTORICAL_DAILY_BRIEF_GENERATION_GATE", historical_gate),
-            mock.patch.object(web, "build_daily_market_brief", return_value=generated) as build,
-        ):
-            handler._handle_daily_market_brief_generate({"market": ["CN"], "date": ["2026-07-09"]})
-            first_status, first_payload = handler._write_json.call_args.args
-            self.assertEqual(HTTPStatus.TOO_MANY_REQUESTS, first_status)
-            self.assertIn("正在重建历史简报", first_payload["error"])
-
-            occupied.release()
-            handler._write_json.reset_mock()
-            handler._handle_daily_market_brief_generate({"market": ["CN"], "date": ["2026-07-09"]})
-
-        second_status, second_payload = handler._write_json.call_args.args
-        self.assertEqual(HTTPStatus.OK, second_status)
-        self.assertTrue(second_payload["ok"])
-        build.assert_called_once()
-
     def test_public_generation_uses_one_request_timestamp_for_all_date_decisions(self) -> None:
         fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
         clock = mock.Mock(wraps=datetime)
@@ -988,7 +1187,6 @@ class DailyMarketBriefTests(unittest.TestCase):
         with (
             mock.patch.object(web, "datetime", clock),
             mock.patch.object(web, "_DAILY_BRIEF_GENERATION_GATE", web._DailyBriefGenerationGate(cooldown_seconds=0)),
-            mock.patch.object(web, "_HISTORICAL_DAILY_BRIEF_GENERATION_GATE", web._DailyBriefGenerationGate(cooldown_seconds=0)),
             mock.patch.object(web, "_validate_public_daily_market_brief_date", wraps=validate) as validate_call,
             mock.patch.object(web, "resolve_latest_completed_session_date", wraps=resolve_latest) as latest_call,
             mock.patch.object(web, "build_daily_market_brief", return_value=generated) as build,
