@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+import threading
 from pathlib import Path
 import unittest
 from unittest import mock
+from uuid import uuid4
+
+import psycopg
+from psycopg import sql
+from psycopg.rows import dict_row
 
 from investment_knowledge_mcp import daily_market_jobs as jobs
+from investment_knowledge_mcp.config import get_config
 
 
 class FakeCursor:
@@ -45,6 +52,16 @@ class FakeConnection:
     def execute(self, query: str, params: tuple | None = None) -> FakeCursor:
         self.queries.append((query, params))
         compact = " ".join(query.split())
+        if compact.startswith("SELECT pg_advisory_xact_lock"):
+            return FakeCursor({"pg_advisory_xact_lock": None})
+        if "FOR UPDATE OF job" in compact and "WHERE item.id = %s" in compact:
+            job_id = (self.finished_item or {}).get("job_id", 41)
+            return FakeCursor({"id": job_id})
+        if "WHERE job.id = ANY(%s)" in compact and "ORDER BY job.id FOR UPDATE" in compact:
+            return FakeCursor({"id": 41}, [{"id": 41}])
+        if compact.startswith("SELECT DISTINCT item.job_id"):
+            rows = [{"job_id": 41}] if self.stale_count else []
+            return FakeCursor(many=rows)
         if "SELECT item.id, item.job_id, item.market, item.market_date" in compact and "AND item.status IN ('queued', 'running')" in compact:
             if self.active_item and params == (self.active_item["market"], self.active_item["market_date"]):
                 return FakeCursor(self.active_item)
@@ -56,8 +73,21 @@ class FakeConnection:
         if "INSERT INTO daily_market_brief_job_items" in compact:
             item = self.created_items.pop(0)
             return FakeCursor(dict(item))
-        if "FOR UPDATE SKIP LOCKED" in compact:
+        if "FOR UPDATE OF job SKIP LOCKED" in compact:
+            if self.claimed_item is None:
+                return FakeCursor()
+            return FakeCursor(
+                {
+                    "id": self.claimed_item["id"],
+                    "job_id": self.claimed_item.get("job_id", 41),
+                    "market": self.claimed_item.get("market", "CN"),
+                    "market_date": self.claimed_item.get("market_date", date(2026, 7, 1)),
+                }
+            )
+        if "UPDATE daily_market_brief_job_items AS item" in compact and "SET status = 'running'" in compact:
             return FakeCursor(self.claimed_item)
+        if "UPDATE daily_market_brief_jobs AS job" in compact and "current_market = %s" in compact:
+            return FakeCursor()
         if "UPDATE daily_market_brief_job_items AS item" in compact and "SET status = %s" in compact:
             return FakeCursor(self.finished_item)
         if compact.startswith("WITH aggregates AS") and "cancelled_count" in compact:
@@ -131,7 +161,31 @@ class StatefulQueueConnection:
     def execute(self, query: str, params: tuple | None = None) -> FakeCursor:
         self.queries.append((query, params))
         compact = " ".join(query.split())
-        if compact.startswith("UPDATE daily_market_brief_job_items AS item SET") and "lease_token = %s" in compact:
+        if "FOR UPDATE OF job" in compact and "WHERE item.id = %s" in compact:
+            item = self.items.get(params[0])
+            return FakeCursor({"id": item["job_id"]} if item else None)
+        if "WHERE job.id = ANY(%s)" in compact and "ORDER BY job.id FOR UPDATE" in compact:
+            rows = [
+                {"id": job_id}
+                for job_id in params[0]
+                if job_id in self.jobs
+                and ("job.status IN" not in compact or self.jobs[job_id]["status"] in {"queued", "running"})
+            ]
+            return FakeCursor(rows[0] if len(rows) == 1 else None, rows)
+        if compact.startswith("SELECT DISTINCT item.job_id"):
+            cutoff = params[0]
+            rows = [
+                {"job_id": item["job_id"]}
+                for item in self.items.values()
+                if item["status"] == "running"
+                and item["heartbeat_at"] < cutoff
+                and not self.jobs[item["job_id"]]["cancel_requested_at"]
+            ]
+            return FakeCursor(many=rows)
+        if "FOR UPDATE OF job SKIP LOCKED" in compact:
+            queued = next((item for item in self.items.values() if item["status"] == "queued"), None)
+            return FakeCursor(dict(queued) if queued else None)
+        if compact.startswith("UPDATE daily_market_brief_job_items AS item SET") and "AND item.lease_token = %s" in compact:
             status, report_id, error_code, error_summary, item_id, worker_name, lease_token, attempt_count = params
             item = self.items[item_id]
             if not (
@@ -149,6 +203,19 @@ class StatefulQueueConnection:
                 worker_name=None,
                 lease_token=None,
                 heartbeat_at=None,
+            )
+            return FakeCursor(dict(item))
+        if compact.startswith("UPDATE daily_market_brief_job_items AS item SET status = 'running'"):
+            worker_name, lease_token, item_id = params
+            item = self.items[item_id]
+            if item["status"] != "queued":
+                return FakeCursor()
+            item.update(
+                status="running",
+                attempt_count=item["attempt_count"] + 1,
+                worker_name=worker_name,
+                lease_token=lease_token,
+                heartbeat_at=datetime.now(timezone.utc),
             )
             return FakeCursor(dict(item))
         if compact.startswith("WITH aggregates AS") and "cancelled_count" in compact:
@@ -171,7 +238,7 @@ class StatefulQueueConnection:
                     item["lease_token"] = None
                     cancelled.append({"job_id": job_id})
             return FakeCursor(many=cancelled, rowcount=len(cancelled))
-        if compact.startswith("UPDATE daily_market_brief_job_items AS item SET") and "status = 'queued'" in compact:
+        if compact.startswith("UPDATE daily_market_brief_job_items AS item SET status = 'queued'"):
             cutoff = params[0]
             recovered = []
             for item in self.items.values():
@@ -180,21 +247,10 @@ class StatefulQueueConnection:
                     item.update(status="queued", worker_name=None, lease_token=None, heartbeat_at=None)
                     recovered.append({"job_id": item["job_id"]})
             return FakeCursor(many=recovered, rowcount=len(recovered))
-        if "FOR UPDATE SKIP LOCKED" in compact:
-            worker_name, lease_token = params
-            queued = next((item for item in self.items.values() if item["status"] == "queued"), None)
-            if queued is None:
-                return FakeCursor()
-            queued.update(
-                status="running",
-                attempt_count=queued["attempt_count"] + 1,
-                worker_name=worker_name,
-                lease_token=lease_token,
-                heartbeat_at=datetime.now(timezone.utc),
-            )
-            job = self.jobs[queued["job_id"]]
-            job.update(status="running", current_market=queued["market"], current_market_date=queued["market_date"])
-            return FakeCursor(dict(queued))
+        if compact.startswith("UPDATE daily_market_brief_jobs AS job SET") and "current_market = %s" in compact:
+            market, market_date, job_id = params
+            self.jobs[job_id].update(status="running", current_market=market, current_market_date=market_date)
+            return FakeCursor()
         raise AssertionError(f"unexpected SQL: {compact}")
 
     def _recompute_job(self, job_id: int) -> dict:
@@ -233,6 +289,8 @@ class DedupRaceConnection:
     def execute(self, query: str, params: tuple | None = None) -> FakeCursor:
         self.queries.append((query, params))
         compact = " ".join(query.split())
+        if compact.startswith("SELECT pg_advisory_xact_lock"):
+            return FakeCursor({"pg_advisory_xact_lock": None})
         if "SELECT item.id, item.job_id, item.market, item.market_date" in compact:
             self.active_reads += 1
             if self.active_reads == 1:
@@ -251,6 +309,108 @@ class DedupRaceConnection:
         if "FROM daily_market_brief_jobs AS job" in compact and "WHERE job.id = %s" in compact:
             return FakeCursor({"id": 9, "status": "queued", "total_count": 1, "items": []})
         raise AssertionError(f"unexpected SQL: {compact}")
+
+
+class ConflictBecomesTerminalConnection(DedupRaceConnection):
+    def __init__(self) -> None:
+        super().__init__()
+        self.item_insert_attempts = 0
+
+    def execute(self, query: str, params: tuple | None = None) -> FakeCursor:
+        compact = " ".join(query.split())
+        if compact.startswith("SELECT pg_advisory_xact_lock"):
+            self.queries.append((query, params))
+            return FakeCursor({"pg_advisory_xact_lock": None})
+        if "SELECT item.id, item.job_id, item.market, item.market_date" in compact:
+            self.queries.append((query, params))
+            self.active_reads += 1
+            return FakeCursor()
+        if "INSERT INTO daily_market_brief_job_items" in compact:
+            self.queries.append((query, params))
+            self.item_insert_attempts += 1
+            if self.item_insert_attempts == 1:
+                return FakeCursor()
+            return FakeCursor(
+                {
+                    "id": 902,
+                    "job_id": 41,
+                    "market": "CN",
+                    "market_date": date(2026, 7, 1),
+                    "status": "queued",
+                }
+            )
+        if "SELECT item.id, item.job_id, item.market, item.market_date, item.status" in compact:
+            self.queries.append((query, params))
+            return FakeCursor()
+        if compact.startswith("WITH aggregates AS"):
+            self.queries.append((query, params))
+            return FakeCursor({"id": 41, "status": "queued", "total_count": 1}, [{"id": 41, "status": "queued", "total_count": 1}])
+        if "FROM daily_market_brief_jobs AS job" in compact and "WHERE job.id = %s" in compact:
+            self.queries.append((query, params))
+            return FakeCursor({"id": 41, "status": "queued", "total_count": 1, "items": []})
+        return super().execute(query, params)
+
+
+class PersistentConflictConnection(ConflictBecomesTerminalConnection):
+    def execute(self, query: str, params: tuple | None = None) -> FakeCursor:
+        compact = " ".join(query.split())
+        if "FROM daily_market_brief_jobs AS job" in compact and "WHERE job.id = %s" in compact:
+            self.queries.append((query, params))
+            return FakeCursor({"id": 9, "status": "queued", "total_count": 1, "items": []})
+        if "INSERT INTO daily_market_brief_job_items" in compact:
+            self.queries.append((query, params))
+            self.item_insert_attempts += 1
+            if "DO UPDATE" in compact:
+                return FakeCursor(
+                    {
+                        "id": 901,
+                        "job_id": 9,
+                        "market": "CN",
+                        "market_date": date(2026, 7, 1),
+                        "status": "queued",
+                    }
+                )
+            return FakeCursor()
+        return super().execute(query, params)
+
+
+class BarrierConnection:
+    def __init__(self, connection: psycopg.Connection, recompute_barrier: threading.Barrier) -> None:
+        self.connection = connection
+        self.recompute_barrier = recompute_barrier
+        self.parent_locked = False
+
+    def execute(self, query: str, params: tuple | None = None):
+        compact = " ".join(query.split())
+        if compact.startswith("WITH aggregates AS") and not self.parent_locked:
+            self.recompute_barrier.wait(timeout=5)
+        result = self.connection.execute(query, params)
+        if "FOR UPDATE OF job" in compact and "daily_market_brief_jobs AS job" in compact:
+            self.parent_locked = True
+        return result
+
+
+class ConflictTerminalPostgresConnection:
+    def __init__(self, connection: psycopg.Connection, terminalizer: psycopg.Connection, conflicting_item_id: int) -> None:
+        self.connection = connection
+        self.terminalizer = terminalizer
+        self.conflicting_item_id = conflicting_item_id
+        self.active_read_missed = False
+        self.conflict_terminalized = False
+
+    def execute(self, query: str, params: tuple | None = None):
+        compact = " ".join(query.split())
+        if "SELECT item.id, item.job_id, item.market, item.market_date" in compact and not self.active_read_missed:
+            self.active_read_missed = True
+            return FakeCursor()
+        result = self.connection.execute(query, params)
+        if "INSERT INTO daily_market_brief_job_items" in compact and not self.conflict_terminalized:
+            self.terminalizer.execute(
+                "UPDATE daily_market_brief_job_items SET status = 'completed', finished_at = now() WHERE id = %s",
+                (self.conflicting_item_id,),
+            )
+            self.conflict_terminalized = True
+        return result
 
 
 class DailyMarketJobsTests(unittest.TestCase):
@@ -359,18 +519,22 @@ class DailyMarketJobsTests(unittest.TestCase):
             "worker_name": "history-worker",
             "lease_token": "generated",
             "attempt_count": 1,
+            "job_id": 41,
+            "market": "CN",
+            "market_date": date(2026, 7, 1),
         }
 
         claimed = jobs.claim_next_history_item("history-worker")
 
         self.assertEqual(101, claimed["id"])
-        self.assertEqual(1, len(self.connection.queries))
+        self.assertEqual(3, len(self.connection.queries))
         query, params = self.connection.queries[0]
-        self.assertIn("FOR UPDATE SKIP LOCKED", query)
+        self.assertIn("FOR UPDATE OF job SKIP LOCKED", query)
         self.assertIn("status = 'queued'", query)
-        self.assertEqual("history-worker", params[0])
-        self.assertTrue(params[1])
-        self.assertIn("lease_token = %s", query)
+        claim_query, claim_params = self.connection.queries[1]
+        self.assertEqual("history-worker", claim_params[0])
+        self.assertTrue(claim_params[1])
+        self.assertIn("lease_token = %s", claim_query)
 
     def test_finish_item_updates_aggregate_and_sanitizes_error(self) -> None:
         self.connection.finished_item = {
@@ -393,11 +557,11 @@ class DailyMarketJobsTests(unittest.TestCase):
 
         self.assertEqual("generation_failed", finished["error_code"])
         self.assertEqual(jobs.PUBLIC_ERROR_SUMMARIES["generation_failed"], finished["error_summary"])
-        query, params = self.connection.queries[0]
+        query, params = self.connection.queries[1]
         self.assertNotIn("daily_market_brief_jobs", query)
         self.assertNotIn("/srv/private.py", str(params))
         self.assertNotIn("password=secret", str(params))
-        self.assertEqual(2, len(self.connection.queries))
+        self.assertEqual(3, len(self.connection.queries))
 
     def test_cancel_requests_stop_for_queued_items_and_preserves_running_item_for_cooperative_cancel(self) -> None:
         self.connection.cancelled_job = {"id": 41, "status": "running", "cancel_requested_at": "2026-07-12T00:00:00+00:00"}
@@ -405,10 +569,10 @@ class DailyMarketJobsTests(unittest.TestCase):
         cancelled = jobs.request_history_job_cancel(41)
 
         self.assertEqual(41, cancelled["id"])
-        query, params = self.connection.queries[0]
+        query, params = self.connection.queries[1]
         self.assertIn("cancel_requested_at = COALESCE(job.cancel_requested_at, now())", query)
         self.assertEqual((41,), params)
-        self.assertEqual(3, len(self.connection.queries))
+        self.assertEqual(4, len(self.connection.queries))
 
     def test_requeues_stale_running_items_using_heartbeat_cutoff(self) -> None:
         self.connection.stale_count = 3
@@ -417,10 +581,14 @@ class DailyMarketJobsTests(unittest.TestCase):
         recovered = jobs.requeue_stale_history_items(cutoff)
 
         self.assertEqual(3, recovered)
-        query, params = self.connection.queries[0]
+        query, params = next(
+            (query, params)
+            for query, params in self.connection.queries
+            if "UPDATE daily_market_brief_job_items AS item" in query
+        )
         self.assertIn("status = 'running'", query)
         self.assertIn("heartbeat_at < %s", query)
-        self.assertEqual((cutoff,), params)
+        self.assertEqual((cutoff, [41]), params)
 
 
 class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
@@ -457,9 +625,24 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
         self.assertEqual("completed", connection.jobs[41]["status"])
         self.assertEqual(2, connection.jobs[41]["completed_count"])
         self.assertEqual(2, connection.jobs[41]["succeeded_count"])
-        self.assertEqual(2, len(connection.queries))
-        self.assertNotIn("daily_market_brief_jobs", connection.queries[0][0])
-        self.assertIn("daily_market_brief_jobs", connection.queries[1][0])
+        self.assertEqual(3, len(connection.queries))
+        self.assertIn("FOR UPDATE OF job", connection.queries[0][0])
+        self.assertNotIn("daily_market_brief_jobs", connection.queries[1][0])
+        self.assertIn("daily_market_brief_jobs", connection.queries[2][0])
+
+    def test_finish_locks_parent_before_item_mutation(self) -> None:
+        connection = StatefulQueueConnection()
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: fake_transaction(connection)):
+            jobs.finish_history_item(
+                101,
+                status="completed",
+                worker_name="worker-a",
+                lease_token="lease-a",
+                attempt_count=1,
+            )
+
+        self.assertIn("FOR UPDATE OF job", connection.queries[0][0])
+        self.assertIn("UPDATE daily_market_brief_job_items", connection.queries[1][0])
 
     def test_cancellation_updates_queued_items_then_recomputes_all_counts(self) -> None:
         connection = StatefulQueueConnection()
@@ -486,7 +669,7 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
         self.assertEqual(2, cancelled["completed_count"])
         self.assertEqual(1, cancelled["succeeded_count"])
         self.assertEqual(1, cancelled["cancelled_count"])
-        self.assertEqual(3, len(connection.queries))
+        self.assertEqual(4, len(connection.queries))
 
     def test_cancellation_terminalizes_job_when_no_item_remains_running(self) -> None:
         connection = StatefulQueueConnection()
@@ -503,6 +686,15 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
         self.assertEqual(2, cancelled["completed_count"])
         self.assertEqual(1, cancelled["succeeded_count"])
         self.assertEqual(1, cancelled["cancelled_count"])
+
+    def test_cancellation_locks_parent_before_job_or_item_mutation(self) -> None:
+        connection = StatefulQueueConnection()
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: fake_transaction(connection)):
+            jobs.request_history_job_cancel(41)
+
+        self.assertIn("FOR UPDATE", connection.queries[0][0])
+        self.assertIn("daily_market_brief_jobs", connection.queries[0][0])
+        self.assertIn("cancel_requested_at", connection.queries[1][0])
 
     def test_active_partial_unique_race_returns_existing_job_metadata(self) -> None:
         connection = DedupRaceConnection()
@@ -522,6 +714,37 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
         insert_sql = next(query for query, _ in connection.queries if "INSERT INTO daily_market_brief_job_items" in query)
         self.assertIn("ON CONFLICT (market, market_date)", insert_sql)
         self.assertIn("WHERE status IN ('queued', 'running')", insert_sql)
+
+    def test_conflict_that_becomes_terminal_is_retried_and_inserted(self) -> None:
+        connection = ConflictBecomesTerminalConnection()
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: fake_transaction(connection)):
+            created = jobs.create_history_job(
+                ["CN"],
+                [date(2026, 7, 1)],
+                request_type="single",
+                source="command",
+            )
+
+        self.assertEqual(41, created["id"])
+        self.assertEqual(2, connection.item_insert_attempts)
+        self.assertEqual([], created["deduplicated_items"])
+
+    def test_persistent_conflict_exhaustion_returns_real_job_metadata(self) -> None:
+        connection = PersistentConflictConnection()
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: fake_transaction(connection)):
+            created = jobs.create_history_job(
+                ["CN"],
+                [date(2026, 7, 1)],
+                request_type="single",
+                source="command",
+            )
+
+        self.assertEqual(9, created["id"])
+        self.assertEqual(jobs.MAX_DEDUP_RETRIES + 1, connection.item_insert_attempts)
+        self.assertEqual(
+            [{"job_id": 9, "market": "CN", "market_date": "2026-07-01"}],
+            created["deduplicated_items"],
+        )
 
     def test_stale_requeue_invalidates_lease_and_expired_worker_cannot_finish_after_reclaim(self) -> None:
         connection = StatefulQueueConnection()
@@ -551,6 +774,36 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
         self.assertNotEqual("lease-a", reclaimed["lease_token"])
         self.assertEqual(2, reclaimed["attempt_count"])
         self.assertEqual("completed", finished["status"])
+
+    def test_stale_requeue_locks_sorted_parents_before_item_mutation(self) -> None:
+        connection = StatefulQueueConnection()
+        cutoff = datetime(2026, 7, 12, 1, 0, tzinfo=timezone.utc)
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: fake_transaction(connection)):
+            jobs.requeue_stale_history_items(cutoff)
+
+        item_update_index = next(
+            index
+            for index, (query, _) in enumerate(connection.queries)
+            if "UPDATE daily_market_brief_job_items" in query
+        )
+        parent_lock_index = next(
+            index
+            for index, (query, _) in enumerate(connection.queries)
+            if "FOR UPDATE" in query and "daily_market_brief_jobs" in query
+        )
+        self.assertLess(parent_lock_index, item_update_index)
+        self.assertIn("ORDER BY job.id", connection.queries[parent_lock_index][0])
+
+    def test_claim_locks_parent_with_skip_locked_before_item_mutation(self) -> None:
+        connection = StatefulQueueConnection()
+        connection.items[101].update(status="queued", worker_name=None, lease_token=None, heartbeat_at=None)
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: fake_transaction(connection)):
+            claimed = jobs.claim_next_history_item("worker-b")
+
+        self.assertEqual(101, claimed["id"])
+        self.assertIn("FOR UPDATE OF job SKIP LOCKED", connection.queries[0][0])
+        self.assertIn("UPDATE daily_market_brief_job_items", connection.queries[1][0])
+        self.assertIn("UPDATE daily_market_brief_jobs", connection.queries[2][0])
 
     def test_web_source_cannot_force_refresh(self) -> None:
         with self.assertRaisesRegex(ValueError, "web.*force_refresh"):
@@ -601,6 +854,220 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
                         request_type="single",
                         source="command",
                     )
+
+
+class DailyMarketJobsPostgresConcurrencyTests(unittest.TestCase):
+    schema_name: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.schema_name = f"daily_market_jobs_test_{uuid4().hex}"
+        try:
+            cls.admin = cls._connect()
+        except psycopg.OperationalError as exc:
+            raise unittest.SkipTest(f"PostgreSQL test database unavailable: {exc}") from exc
+        cls.admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(cls.schema_name)))
+        cls.admin.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(cls.schema_name)))
+        cls.admin.execute(
+            """
+            CREATE TABLE daily_market_brief_jobs (
+              id BIGSERIAL PRIMARY KEY,
+              request_type TEXT NOT NULL DEFAULT 'batch',
+              source TEXT NOT NULL DEFAULT 'command',
+              status TEXT NOT NULL DEFAULT 'queued',
+              force_refresh BOOLEAN NOT NULL DEFAULT false,
+              total_count INTEGER NOT NULL DEFAULT 0,
+              completed_count INTEGER NOT NULL DEFAULT 0,
+              succeeded_count INTEGER NOT NULL DEFAULT 0,
+              skipped_count INTEGER NOT NULL DEFAULT 0,
+              failed_count INTEGER NOT NULL DEFAULT 0,
+              cancelled_count INTEGER NOT NULL DEFAULT 0,
+              current_market TEXT,
+              current_market_date DATE,
+              summary TEXT,
+              cancel_requested_at TIMESTAMPTZ,
+              worker_heartbeat_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              completed_at TIMESTAMPTZ
+            );
+            CREATE TABLE daily_market_brief_job_items (
+              id BIGSERIAL PRIMARY KEY,
+              job_id BIGINT NOT NULL REFERENCES daily_market_brief_jobs(id) ON DELETE CASCADE,
+              market TEXT NOT NULL,
+              market_date DATE NOT NULL,
+              status TEXT NOT NULL DEFAULT 'queued',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              report_id BIGINT,
+              skip_reason TEXT,
+              error_code TEXT,
+              error_summary TEXT,
+              worker_name TEXT,
+              lease_token TEXT,
+              claimed_at TIMESTAMPTZ,
+              heartbeat_at TIMESTAMPTZ,
+              finished_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            CREATE UNIQUE INDEX daily_market_brief_job_items_active_unique
+              ON daily_market_brief_job_items(market, market_date)
+              WHERE status IN ('queued', 'running');
+            CREATE TABLE review_reports (
+              id BIGSERIAL PRIMARY KEY,
+              report_type TEXT NOT NULL,
+              report_date DATE NOT NULL,
+              portfolio_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+            );
+            """
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if not hasattr(cls, "admin"):
+            return
+        cls.admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(cls.schema_name)))
+        cls.admin.close()
+
+    def setUp(self) -> None:
+        self.admin.execute(
+            "TRUNCATE daily_market_brief_job_items, daily_market_brief_jobs, review_reports RESTART IDENTITY CASCADE"
+        )
+
+    @classmethod
+    def _connect(cls) -> psycopg.Connection:
+        config = get_config()
+        kwargs = {"row_factory": dict_row, "autocommit": True, "connect_timeout": 2}
+        if config.database_url:
+            return psycopg.connect(config.database_url, **kwargs)
+        return psycopg.connect(
+            host=config.postgres_host,
+            port=config.postgres_port,
+            dbname=config.postgres_db,
+            user=config.postgres_user,
+            password=config.postgres_password,
+            **kwargs,
+        )
+
+    @contextmanager
+    def _transaction(self, barrier: threading.Barrier):
+        connection = self._connect()
+        try:
+            connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema_name)))
+            with connection.transaction():
+                yield BarrierConnection(connection, barrier)
+        finally:
+            connection.close()
+
+    @contextmanager
+    def _conflict_transaction(self, conflicting_item_id: int):
+        connection = self._connect()
+        terminalizer = self._connect()
+        try:
+            connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema_name)))
+            terminalizer.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema_name)))
+            with connection.transaction():
+                yield ConflictTerminalPostgresConnection(connection, terminalizer, conflicting_item_id)
+        finally:
+            terminalizer.close()
+            connection.close()
+
+    def test_two_concurrent_finishes_preserve_final_parent_aggregate(self) -> None:
+        job_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_jobs (status, total_count, current_market, current_market_date)
+            VALUES ('running', 2, 'CN', DATE '2026-07-01')
+            RETURNING id
+            """
+        ).fetchone()["id"]
+        item_rows = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_job_items (
+              job_id, market, market_date, status, attempt_count, worker_name, lease_token, claimed_at, heartbeat_at
+            )
+            VALUES
+              (%s, 'CN', DATE '2026-07-01', 'running', 1, 'worker-a', 'lease-a', now(), now()),
+              (%s, 'HK', DATE '2026-07-01', 'running', 1, 'worker-b', 'lease-b', now(), now())
+            RETURNING id, worker_name, lease_token
+            """,
+            (job_id, job_id),
+        ).fetchall()
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def finish(row: dict) -> None:
+            try:
+                jobs.finish_history_item(
+                    int(row["id"]),
+                    status="completed",
+                    worker_name=str(row["worker_name"]),
+                    lease_token=str(row["lease_token"]),
+                    attempt_count=1,
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+        with mock.patch.object(jobs, "transaction", side_effect=lambda: self._transaction(barrier)):
+            threads = [threading.Thread(target=finish, args=(row,)) for row in item_rows]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=15)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads), "concurrent finish threads did not terminate")
+        self.assertEqual([], errors)
+        parent = self.admin.execute(
+            "SELECT status, total_count, completed_count, succeeded_count FROM daily_market_brief_jobs WHERE id = %s",
+            (job_id,),
+        ).fetchone()
+        self.assertEqual(
+            {"status": "completed", "total_count": 2, "completed_count": 2, "succeeded_count": 2},
+            parent,
+        )
+        statuses = self.admin.execute(
+            "SELECT status FROM daily_market_brief_job_items WHERE job_id = %s ORDER BY id",
+            (job_id,),
+        ).fetchall()
+        self.assertEqual(["completed", "completed"], [row["status"] for row in statuses])
+
+    def test_partial_unique_conflict_that_terminalizes_is_retried(self) -> None:
+        existing_job_id = self.admin.execute(
+            "INSERT INTO daily_market_brief_jobs (status, total_count) VALUES ('queued', 1) RETURNING id"
+        ).fetchone()["id"]
+        conflicting_item_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_job_items (job_id, market, market_date, status)
+            VALUES (%s, 'CN', DATE '2026-07-01', 'queued')
+            RETURNING id
+            """,
+            (existing_job_id,),
+        ).fetchone()["id"]
+
+        with mock.patch.object(
+            jobs,
+            "transaction",
+            side_effect=lambda: self._conflict_transaction(conflicting_item_id),
+        ):
+            created = jobs.create_history_job(
+                ["CN"],
+                [date(2026, 7, 1)],
+                request_type="single",
+                source="command",
+            )
+
+        self.assertNotEqual(existing_job_id, created["id"])
+        rows = self.admin.execute(
+            """
+            SELECT job_id, status
+            FROM daily_market_brief_job_items
+            WHERE market = 'CN' AND market_date = DATE '2026-07-01'
+            ORDER BY id
+            """
+        ).fetchall()
+        self.assertEqual(
+            [(existing_job_id, "completed"), (created["id"], "queued")],
+            [(row["job_id"], row["status"]) for row in rows],
+        )
 
 
 if __name__ == "__main__":
