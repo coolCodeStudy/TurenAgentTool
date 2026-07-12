@@ -5,7 +5,6 @@ from http import HTTPStatus
 from pathlib import Path
 import inspect
 import sys
-import threading
 import types
 import unittest
 from unittest import mock
@@ -500,6 +499,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("job.completed_count", html)
         self.assertIn("job.current_market_date", html)
         self.assertNotIn("cancelHistoryJob", html)
+        self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
 
     def test_page_generation_progress_supports_background_history_jobs(self) -> None:
         html = render_daily_market_brief_html()
@@ -508,6 +508,11 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("setTimeout", html)
         self.assertIn("loadSavedDates", html)
         self.assertIn("loadBrief(\"read\")", html)
+        self.assertIn("pollGeneration", html)
+        self.assertIn("generation !== state.pollGeneration", html)
+        self.assertIn("state.jobId !== jobId", html)
+        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();', html)
+        self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', html)
         self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
 
     def test_missing_report_payload_and_page_show_not_generated(self) -> None:
@@ -556,8 +561,12 @@ class DailyMarketBriefTests(unittest.TestCase):
 
         with (
             mock.patch.object(web, "datetime", clock),
-            mock.patch.object(web, "list_history_jobs", return_value=[]),
-            mock.patch.object(web, "create_history_job", return_value=job) as create,
+            mock.patch.object(
+                web.daily_market_jobs,
+                "create_web_history_job",
+                return_value=job,
+                create=True,
+            ) as create,
             mock.patch.object(web, "build_daily_market_brief", side_effect=AssertionError("historical HTTP must not build")),
         ):
             handler._handle_daily_market_brief_generate({"market": "CN", "date": "2026-07-09"})
@@ -566,14 +575,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(HTTPStatus.ACCEPTED, status)
         self.assertEqual(41, payload["job"]["id"])
         self.assertEqual("2026-07-09", payload["market_date"])
-        create.assert_called_once_with(
-            ["CN"],
-            [date(2026, 7, 9)],
-            request_type="single",
-            source="web",
-            force_refresh=False,
-            max_items=1,
-        )
+        create.assert_called_once_with("CN", date(2026, 7, 9), max_active_jobs=3)
 
     def test_history_job_create_accepts_only_market_and_date(self) -> None:
         handler = object.__new__(web.WeeklyReviewWebHandler)
@@ -589,15 +591,16 @@ class DailyMarketBriefTests(unittest.TestCase):
             handler._handle_daily_market_brief_history_job_create(payload)
             self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
 
-    def test_history_job_create_rejects_future_and_fourth_active_web_job(self) -> None:
+    def test_history_job_create_rejects_future_and_repository_capacity_error(self) -> None:
         handler = object.__new__(web.WeeklyReviewWebHandler)
         handler._write_json = mock.Mock()
-        active_jobs = [
-            {"id": item, "source": "web", "status": "queued", "items": []}
-            for item in range(1, 4)
-        ]
 
-        with mock.patch.object(web, "list_history_jobs", return_value=active_jobs):
+        with mock.patch.object(
+            web.daily_market_jobs,
+            "create_web_history_job",
+            side_effect=web.daily_market_jobs.WebHistoryJobCapacityError("web history job capacity reached"),
+            create=True,
+        ):
             handler._handle_daily_market_brief_history_job_create({"market": "CN", "date": "2026-07-09"})
         self.assertEqual(HTTPStatus.TOO_MANY_REQUESTS, handler._write_json.call_args.args[0])
 
@@ -616,7 +619,7 @@ class DailyMarketBriefTests(unittest.TestCase):
 
         with (
             mock.patch.object(web, "datetime", clock),
-            mock.patch.object(web, "create_history_job") as create,
+            mock.patch.object(web.daily_market_jobs, "create_web_history_job", create=True) as create,
         ):
             handler._handle_daily_market_brief_generate(
                 {"market": "CN", "date": "2026-07-09", "force": True}
@@ -625,7 +628,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
         create.assert_not_called()
 
-    def test_history_job_create_returns_active_same_date_before_capacity_check(self) -> None:
+    def test_history_job_create_returns_repository_deduplicated_job(self) -> None:
         active_job = {
             "id": 41,
             "source": "web",
@@ -634,17 +637,15 @@ class DailyMarketBriefTests(unittest.TestCase):
             "completed_count": 0,
             "items": [{"market": "CN", "market_date": "2026-07-09", "status": "running"}],
         }
-        other_jobs = [
-            {"id": item, "source": "web", "status": "queued", "items": []}
-            for item in (42, 43)
-        ]
         handler = object.__new__(web.WeeklyReviewWebHandler)
         handler._write_json = mock.Mock()
 
-        with (
-            mock.patch.object(web, "list_history_jobs", return_value=[active_job, *other_jobs]),
-            mock.patch.object(web, "create_history_job") as create,
-        ):
+        with mock.patch.object(
+            web.daily_market_jobs,
+            "create_web_history_job",
+            return_value=active_job,
+            create=True,
+        ) as create:
             handler._handle_daily_market_brief_history_job_create(
                 {"market": "CN", "date": "2026-07-09"}
             )
@@ -652,74 +653,17 @@ class DailyMarketBriefTests(unittest.TestCase):
         status, payload = handler._write_json.call_args.args
         self.assertEqual(HTTPStatus.ACCEPTED, status)
         self.assertEqual(41, payload["job"]["id"])
-        create.assert_not_called()
+        create.assert_called_once_with("CN", date(2026, 7, 9), max_active_jobs=3)
 
-    def test_concurrent_web_history_creation_cannot_exceed_three_active_jobs(self) -> None:
-        active_jobs = [
-            {"id": item, "source": "web", "status": "queued", "items": []}
-            for item in (1, 2)
-        ]
-        list_entries = 0
-        list_entries_lock = threading.Lock()
-        second_entry = threading.Event()
-        created_count = 0
+    def test_public_date_validation_uses_selected_market_local_date(self) -> None:
+        boundary = datetime(2026, 7, 12, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
 
-        def list_jobs(*, limit: int) -> list[dict]:
-            nonlocal list_entries
-            with list_entries_lock:
-                list_entries += 1
-                if list_entries == 2:
-                    second_entry.set()
-                snapshot = list(active_jobs)
-            second_entry.wait(0.1)
-            return snapshot
-
-        def create_job(*args, **kwargs) -> dict:
-            nonlocal created_count
-            with list_entries_lock:
-                created_count += 1
-                job = {
-                    "id": 2 + created_count,
-                    "source": "web",
-                    "status": "queued",
-                    "total_count": 1,
-                    "completed_count": 0,
-                    "items": [{
-                        "market": args[0][0],
-                        "market_date": args[1][0].isoformat(),
-                        "status": "queued",
-                    }],
-                }
-                active_jobs.append(job)
-                return job
-
-        handlers = []
-        for _ in range(2):
-            handler = object.__new__(web.WeeklyReviewWebHandler)
-            handler._write_json = mock.Mock()
-            handlers.append(handler)
-
-        with (
-            mock.patch.object(web, "list_history_jobs", side_effect=list_jobs),
-            mock.patch.object(web, "create_history_job", side_effect=create_job),
-        ):
-            threads = [
-                threading.Thread(
-                    target=handler._handle_daily_market_brief_history_job_create,
-                    args=({"market": "CN", "date": f"2026-07-0{day}"},),
-                )
-                for handler, day in zip(handlers, (8, 9), strict=True)
-            ]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join(timeout=2)
-
-        self.assertEqual(1, created_count)
         self.assertEqual(
-            [HTTPStatus.ACCEPTED, HTTPStatus.TOO_MANY_REQUESTS],
-            sorted((handler._write_json.call_args.args[0] for handler in handlers), key=int),
+            date(2026, 7, 12),
+            _validate_public_daily_market_brief_date("CN", date(2026, 7, 12), now=boundary),
         )
+        with self.assertRaisesRegex(ValueError, "未来日期"):
+            _validate_public_daily_market_brief_date("US", date(2026, 7, 12), now=boundary)
 
     def test_history_job_read_returns_sanitized_detail_and_recent_list(self) -> None:
         raw_job = {

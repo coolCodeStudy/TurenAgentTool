@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from investment_knowledge_mcp import repository
+from investment_knowledge_mcp import daily_market_jobs, repository
 from investment_knowledge_mcp.command_router import handle_command
 from investment_knowledge_mcp.command_workbench import (
     command_workbench_auth_error_payload,
@@ -24,13 +24,13 @@ from investment_knowledge_mcp.command_workbench import (
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.daily_market_brief import (
+    MARKET_CONFIGS,
     build_daily_market_brief,
     get_daily_market_brief_report,
     list_daily_market_brief_dates,
     resolve_latest_completed_session_date,
 )
 from investment_knowledge_mcp.daily_market_jobs import (
-    create_history_job,
     get_history_job,
     list_history_jobs,
 )
@@ -78,13 +78,7 @@ class _DailyBriefGenerationGate:
 
 
 _DAILY_BRIEF_GENERATION_GATE = _DailyBriefGenerationGate(cooldown_seconds=60)
-_ACTIVE_HISTORY_JOB_STATUSES = {"queued", "running"}
 _MAX_ACTIVE_WEB_HISTORY_JOBS = 3
-_WEB_HISTORY_JOB_CREATE_LOCK = Lock()
-
-
-class _WebHistoryJobCapacityError(RuntimeError):
-    pass
 
 
 class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
@@ -466,13 +460,18 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 market_date,
                 now=datetime.now(SHANGHAI_TZ),
             )
-            job = _create_public_history_job(market, market_date)
-        except _WebHistoryJobCapacityError:
-            self._write_json(
-                HTTPStatus.TOO_MANY_REQUESTS,
-                {"ok": False, "error": "已有 3 个历史简报任务等待处理，请稍后再试。"},
-            )
-            return
+            try:
+                job = daily_market_jobs.create_web_history_job(
+                    market,
+                    market_date,
+                    max_active_jobs=_MAX_ACTIVE_WEB_HISTORY_JOBS,
+                )
+            except daily_market_jobs.WebHistoryJobCapacityError:
+                self._write_json(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    {"ok": False, "error": "已有 3 个历史简报任务等待处理，请稍后再试。"},
+                )
+                return
         except ValueError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
@@ -1574,7 +1573,7 @@ def render_daily_market_brief_html() -> str:
         <button data-market="HK" type="button">港股</button>
         <button data-market="US" type="button">美股</button>
       </div>
-      <div id="message" class="notice">正在读取每日市场简报。</div>
+      <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取每日市场简报。</div>
       <section><h2>历史生成任务</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
       <div id="summary" class="summary-grid"></div>
       <section><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
@@ -1587,7 +1586,7 @@ def render_daily_market_brief_html() -> str:
     </main>
   </div>
   <script>
-    const state = {{ market: "CN", context: null, markdown: "", jobId: null, pollTimer: null }};
+    const state = {{ market: "CN", context: null, markdown: "", jobId: null, pollTimer: null, pollGeneration: 0 }};
     const $ = (selector) => document.querySelector(selector);
     const message = $("#message");
 
@@ -1603,8 +1602,12 @@ def render_daily_market_brief_html() -> str:
     }});
     $("#read").addEventListener("click", () => loadBrief("read"));
     $("#generate").addEventListener("click", () => loadBrief("generate"));
-    $("#market-date").addEventListener("change", () => loadBrief("read"));
+    $("#market-date").addEventListener("change", () => {{
+      stopHistoryJobPolling();
+      loadBrief("read");
+    }});
     $("#saved-date").addEventListener("change", (event) => {{
+      stopHistoryJobPolling();
       if (!event.target.value) return;
       $("#market-date").value = event.target.value;
       loadBrief("read");
@@ -1656,7 +1659,7 @@ def render_daily_market_brief_html() -> str:
           renderHistoryJob(data.job);
           message.textContent = "历史简报任务已加入队列，页面会自动更新进度。";
           loadRecentHistoryJobs();
-          pollHistoryJob(data.job.id, data.market_date);
+          startHistoryJobPolling(data.job.id, data.market_date);
           return;
         }}
         state.context = data.context || null;
@@ -1685,12 +1688,18 @@ def render_daily_market_brief_html() -> str:
       }}
     }}
 
-    async function pollHistoryJob(jobId, marketDate) {{
+    function startHistoryJobPolling(jobId, marketDate) {{
       stopHistoryJobPolling(false);
       state.jobId = jobId;
+      const generation = state.pollGeneration;
+      pollHistoryJob(jobId, marketDate, generation);
+    }}
+
+    async function pollHistoryJob(jobId, marketDate, generation) {{
       try {{
         const response = await fetch(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
         const data = await response.json();
+        if (generation !== state.pollGeneration || state.jobId !== jobId) return;
         if (!data.ok) throw new Error(data.error || "读取任务失败");
         const job = data.job;
         renderHistoryJob(job);
@@ -1712,14 +1721,16 @@ def render_daily_market_brief_html() -> str:
           return;
         }}
         message.textContent = historyJobProgress(job);
-        state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate), 2000);
+        state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate, generation), 2000);
       }} catch (error) {{
+        if (generation !== state.pollGeneration || state.jobId !== jobId) return;
         message.textContent = `任务进度读取失败：${{error.message}}`;
-        state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate), 5000);
+        state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate, generation), 5000);
       }}
     }}
 
     function stopHistoryJobPolling(clearJob = true) {{
+      state.pollGeneration += 1;
       if (state.pollTimer) clearTimeout(state.pollTimer);
       state.pollTimer = null;
       if (clearJob) state.jobId = null;
@@ -1925,7 +1936,7 @@ def _validate_public_daily_market_brief_date(
     now: datetime | None = None,
 ) -> date:
     current = now or datetime.now(SHANGHAI_TZ)
-    current_date = current.astimezone(SHANGHAI_TZ).date()
+    current_date = current.astimezone(MARKET_CONFIGS[market].timezone).date()
     resolved_date = market_date or resolve_latest_completed_session_date(market, now=current)
     if resolved_date > current_date:
         raise ValueError("不能生成未来日期的市场简报。")
@@ -1933,44 +1944,6 @@ def _validate_public_daily_market_brief_date(
     if resolved_date > latest_completed and resolved_date.weekday() < 5:
         raise ValueError(f"不能生成未来日期的市场简报；最近已收盘交易日为 {latest_completed.isoformat()}。")
     return resolved_date
-
-
-def _find_active_web_history_job(
-    jobs: list[dict[str, Any]],
-    market: str,
-    market_date: date,
-) -> dict[str, Any] | None:
-    target_date = market_date.isoformat()
-    for job in jobs:
-        if job.get("source") != "web" or job.get("status") not in _ACTIVE_HISTORY_JOB_STATUSES:
-            continue
-        for item in job.get("items") or []:
-            if item.get("market") == market and str(item.get("market_date") or "") == target_date:
-                return job
-    return None
-
-
-def _create_public_history_job(market: str, market_date: date) -> dict[str, Any]:
-    with _WEB_HISTORY_JOB_CREATE_LOCK:
-        recent_jobs = list_history_jobs(limit=100)
-        duplicate = _find_active_web_history_job(recent_jobs, market, market_date)
-        if duplicate is not None:
-            return duplicate
-        active_count = sum(
-            1
-            for job in recent_jobs
-            if job.get("source") == "web" and job.get("status") in _ACTIVE_HISTORY_JOB_STATUSES
-        )
-        if active_count >= _MAX_ACTIVE_WEB_HISTORY_JOBS:
-            raise _WebHistoryJobCapacityError
-        return create_history_job(
-            [market],
-            [market_date],
-            request_type="single",
-            source="web",
-            force_refresh=False,
-            max_items=1,
-        )
 
 
 def _public_history_job(job: dict[str, Any]) -> dict[str, Any]:
