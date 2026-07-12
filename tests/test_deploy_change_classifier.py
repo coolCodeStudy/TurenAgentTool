@@ -191,6 +191,7 @@ class DeployContractTests(TestCase):
                 (
                     "command-api",
                     "daily-market-brief-history-worker",
+                    "daily-market-brief-scheduler",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
@@ -272,6 +273,62 @@ class DeployContractTests(TestCase):
 
         self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
         self.assertEqual(APPLICATION_SERVICES, plan.targets)
+
+    def test_service_removal_requires_full_image_even_when_recipe_is_duplicated(self) -> None:
+        shared = {"image": "app:stable", "build": {"context": "."}}
+        runner = FakeRunner(
+            ("docker-compose.prod.yml",),
+            (
+                {"services": {"web": shared, "worker": shared}},
+                {"services": {"web": shared}},
+            ),
+        )
+
+        plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+
+    def test_service_rename_requires_full_image(self) -> None:
+        shared = {"image": "app:stable", "build": {"context": "."}}
+        runner = FakeRunner(
+            ("docker-compose.prod.yml",),
+            (
+                {"services": {"old-worker": shared}},
+                {"services": {"renamed-worker": shared}},
+            ),
+        )
+
+        plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+
+    def test_cross_service_recipe_swap_requires_full_image(self) -> None:
+        recipe_a = {"image": "app:a", "build": {"context": "./a"}}
+        recipe_b = {"image": "app:b", "build": {"context": "./b"}}
+        runner = FakeRunner(
+            ("docker-compose.prod.yml",),
+            (
+                {"services": {"web": recipe_a, "worker": recipe_b}},
+                {"services": {"web": recipe_b, "worker": recipe_a}},
+            ),
+        )
+
+        plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+
+    def test_changed_recipe_for_existing_service_requires_full_image(self) -> None:
+        runner = FakeRunner(
+            ("docker-compose.prod.yml",),
+            (
+                {"services": {"web": {"image": "app:old"}}},
+                {"services": {"web": {"image": "app:new"}}},
+            ),
+        )
+
+        plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
 
     def test_real_diff_uses_full_image_for_compose_build_change(self) -> None:
         runner = FakeRunner(
