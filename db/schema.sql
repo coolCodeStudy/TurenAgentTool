@@ -455,3 +455,64 @@ CREATE INDEX IF NOT EXISTS idx_research_jobs_symbol_market
 CREATE UNIQUE INDEX IF NOT EXISTS idx_research_jobs_active_unique
   ON research_jobs(symbol, market)
   WHERE status IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS daily_market_brief_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  request_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  force_refresh BOOLEAN NOT NULL DEFAULT false,
+  total_count INTEGER NOT NULL DEFAULT 0,
+  completed_count INTEGER NOT NULL DEFAULT 0,
+  succeeded_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  current_market TEXT,
+  current_market_date DATE,
+  summary TEXT,
+  cancel_requested_at TIMESTAMPTZ,
+  worker_heartbeat_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  CHECK (request_type IN ('single', 'batch')),
+  CHECK (source IN ('web', 'command', 'scheduler_recovery', 'agent')),
+  CHECK (status IN ('queued', 'running', 'completed', 'partial', 'failed', 'cancelled')),
+  CHECK (total_count >= 0),
+  CHECK (completed_count >= 0),
+  CHECK (succeeded_count >= 0),
+  CHECK (skipped_count >= 0),
+  CHECK (failed_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS daily_market_brief_job_items (
+  id BIGSERIAL PRIMARY KEY,
+  job_id BIGINT NOT NULL REFERENCES daily_market_brief_jobs(id) ON DELETE CASCADE,
+  market TEXT NOT NULL,
+  market_date DATE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  report_id BIGINT REFERENCES review_reports(id) ON DELETE SET NULL,
+  skip_reason TEXT,
+  error_summary TEXT,
+  worker_name TEXT,
+  claimed_at TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (job_id, market, market_date),
+  CHECK (status IN ('queued', 'running', 'completed', 'skipped', 'failed', 'cancelled')),
+  CHECK (attempt_count >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_market_brief_jobs_created_at
+  ON daily_market_brief_jobs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_daily_market_brief_job_items_active
+  ON daily_market_brief_job_items(status, created_at ASC)
+  WHERE status IN ('queued', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_market_brief_job_items_active_unique
+  ON daily_market_brief_job_items(market, market_date)
+  WHERE status IN ('queued', 'running');
