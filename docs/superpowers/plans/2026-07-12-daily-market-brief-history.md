@@ -173,7 +173,7 @@ git commit -m "feat: expose saved daily brief dates"
 
 **Interfaces:**
 - Produces: `HistoricalActivityResult` dataclass with `sectors`, `gainers`, `capital_flow`, and `source_status`.
-- Produces: `load_historical_market_activity(market: str, market_date: date, *, akshare_module: Any | None = None, max_workers: int = 12, timeout_seconds: float = 90.0) -> HistoricalActivityResult`.
+- Produces: `load_historical_market_activity(market: str, market_date: date, *, akshare_module: Any | None = None, max_workers: int = 4, timeout_seconds: float = 90.0) -> HistoricalActivityResult`.
 - Produces: `HistoricalActivityProvider = Callable[[str, date], HistoricalActivityResult]`.
 - Consumes: normalized spot symbol/name metadata only as a universe; all ranking values come from exact-date historical bars.
 
@@ -223,7 +223,7 @@ def _rank_exact_date_history(rows: list[dict[str, Any]], target: date) -> dict[s
     }
 ```
 
-CN uses `stock_zh_a_hist(symbol=..., period="daily", start_date=..., end_date=..., adjust="")`; HK uses `stock_hk_hist` with the same date arguments; US uses `stock_us_hist(symbol=..., period="daily", start_date=..., end_date=..., adjust="")`. Apply existing turnover and security-name filters before selecting five rows. Never call the existing spot ranking provider for ranking values.
+CN uses `stock_zh_a_hist(symbol=..., period="daily", start_date=..., end_date=..., adjust="")`; HK uses `stock_hk_hist` with the same date arguments; US uses `stock_us_hist(symbol=..., period="daily", start_date=..., end_date=..., adjust="")` with the exact provider code from `stock_us_spot_em()` such as `105.MSFT`, not a bare ticker. Apply existing turnover and security-name filters before selecting five rows. Default to four total workers and no more than two concurrent requests per Eastmoney host; add bounded retry for rate-limit, connection, JSON, and empty-response failures. Never call the existing spot ranking provider for ranking values.
 
 - [ ] **Step 4: Run provider and existing tests**
 
