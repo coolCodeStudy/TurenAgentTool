@@ -74,6 +74,7 @@ DEPLOY_MUTEX = threading.Lock()
 COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
+    "daily-market-brief-history-worker": "daily-market-brief-history-worker",
     "daily-market-brief-scheduler": "daily-market-brief-scheduler",
     "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
@@ -99,6 +100,8 @@ SERVICE_ALIASES = {
     "research": "research-agent-worker",
     "dingtalk": "dingtalk-stream-bot",
     "stream": "dingtalk-stream-bot",
+    "history-worker": "daily-market-brief-history-worker",
+    "daily-market-history": "daily-market-brief-history-worker",
     "account-snapshot": "account-snapshot-scheduler",
     "snapshot": "account-snapshot-scheduler",
     "snapshot-scheduler": "account-snapshot-scheduler",
@@ -284,6 +287,7 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
         "mcp",
         "dingtalk-stream-bot",
         "account-snapshot-scheduler",
+        "daily-market-brief-history-worker",
         "daily-market-brief-scheduler",
         "ipo-reminder-scheduler",
         "command-api",
@@ -661,6 +665,7 @@ def build_deploy_health() -> dict[str, Any]:
         "weekly-review-web",
         "dingtalk-stream-bot",
         "account-snapshot-scheduler",
+        "daily-market-brief-history-worker",
         "daily-market-brief-scheduler",
         "ipo-reminder-scheduler",
     ):

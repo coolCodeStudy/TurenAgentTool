@@ -28,6 +28,15 @@ PREVIOUS_SHA = "a" * 40
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_daily_market_brief_history_worker_is_in_ops_health_and_diagnostics(self) -> None:
+        source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
+
+        self.assertEqual(
+            "daily-market-brief-history-worker",
+            ops.COMPOSE_SERVICES["daily-market-brief-history-worker"],
+        )
+        self.assertGreaterEqual(source.count('"daily-market-brief-history-worker"'), 3)
+
     def test_daily_market_brief_scheduler_is_in_ops_health_and_diagnostics(self) -> None:
         source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
 
