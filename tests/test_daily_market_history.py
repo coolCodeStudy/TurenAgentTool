@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+import json
+import threading
+import time
 import unittest
 
 from investment_knowledge_mcp.daily_market_history import load_historical_market_activity
@@ -20,7 +23,7 @@ class FakeHistoricalAkshare:
     def __init__(self, *, universe: list[dict], histories: dict[str, list[dict]]) -> None:
         self.universe = universe
         self.histories = histories
-        self.history_calls: list[tuple[str, dict[str, str]]] = []
+        self.history_calls: list[tuple[str, dict[str, object]]] = []
 
     def stock_zh_a_spot_em(self) -> FakeFrame:
         return FakeFrame(self.universe)
@@ -31,18 +34,61 @@ class FakeHistoricalAkshare:
     def stock_us_spot_em(self) -> FakeFrame:
         return FakeFrame(self.universe)
 
-    def stock_zh_a_hist(self, **kwargs: str) -> FakeFrame:
-        return self._history("stock_zh_a_hist", kwargs)
+    def stock_zh_a_hist(
+        self,
+        symbol: str,
+        period: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+        timeout: float | None = None,
+    ) -> FakeFrame:
+        return self._history(
+            "stock_zh_a_hist",
+            symbol=symbol,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+            timeout=timeout,
+        )
 
-    def stock_hk_hist(self, **kwargs: str) -> FakeFrame:
-        return self._history("stock_hk_hist", kwargs)
+    def stock_hk_hist(
+        self, symbol: str, period: str, start_date: str, end_date: str, adjust: str
+    ) -> FakeFrame:
+        return self._history(
+            "stock_hk_hist",
+            symbol=symbol,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
 
-    def stock_us_hist(self, **kwargs: str) -> FakeFrame:
-        return self._history("stock_us_hist", kwargs)
+    def stock_us_hist(
+        self, symbol: str, period: str, start_date: str, end_date: str, adjust: str
+    ) -> FakeFrame:
+        return self._history(
+            "stock_us_hist",
+            symbol=symbol,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
 
-    def _history(self, method: str, kwargs: dict[str, str]) -> FakeFrame:
+    def _history(self, method: str, **kwargs: object) -> FakeFrame:
         self.history_calls.append((method, kwargs))
-        return FakeFrame(self.histories.get(kwargs["symbol"], []))
+        return FakeFrame(self.histories.get(str(kwargs["symbol"]), []))
+
+
+def history_rows(
+    *, previous_date: str = "2026-07-08", market_date: str = "2026-07-09", turnover: float = 100_000_000
+) -> list[dict]:
+    return [
+        {"日期": previous_date, "收盘": 10, "成交额": turnover},
+        {"日期": market_date, "收盘": 11, "成交额": turnover},
+    ]
 
 
 class HistoricalActivityProviderTests(unittest.TestCase):
@@ -71,10 +117,36 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual(100_000_000, result.gainers[0]["turnover"])
         self.assertEqual("2026-07-09", result.gainers[0]["session_date"])
         self.assertEqual("current_liquid_top_200", result.source_status["gainers"]["universe_basis"])
-        self.assertEqual(
-            {"period": "daily", "start_date": "20260702", "end_date": "20260709", "adjust": ""},
-            {key: fake.history_calls[0][1][key] for key in ("period", "start_date", "end_date", "adjust")},
+
+    def test_exact_akshare_signatures_and_cn_remaining_timeout(self) -> None:
+        cn = FakeHistoricalAkshare(
+            universe=[{"代码": "000001", "名称": "甲", "成交额": 100_000_000}],
+            histories={"000001": history_rows()},
         )
+        hk = FakeHistoricalAkshare(
+            universe=[{"代码": "00700", "名称": "Tencent", "成交额": 30_000_000}],
+            histories={"00700": history_rows(turnover=30_000_000)},
+        )
+        us = FakeHistoricalAkshare(
+            universe=[{"代码": "105.MSFT", "名称": "Microsoft", "成交额": 20_000_000}],
+            histories={"105.MSFT": history_rows(turnover=20_000_000)},
+        )
+
+        load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=cn, max_workers=1)
+        load_historical_market_activity("HK", date(2026, 7, 9), akshare_module=hk, max_workers=1)
+        load_historical_market_activity("US", date(2026, 7, 9), akshare_module=us, max_workers=1)
+
+        self.assertEqual("stock_zh_a_hist", cn.history_calls[0][0])
+        self.assertGreater(cn.history_calls[0][1]["timeout"], 0)
+        self.assertLessEqual(cn.history_calls[0][1]["timeout"], 90.0)
+        self.assertEqual("stock_hk_hist", hk.history_calls[0][0])
+        self.assertNotIn("timeout", hk.history_calls[0][1])
+        self.assertEqual("stock_us_hist", us.history_calls[0][0])
+        self.assertNotIn("timeout", us.history_calls[0][1])
+        for call in (cn.history_calls[0], hk.history_calls[0], us.history_calls[0]):
+            self.assertEqual("daily", call[1]["period"])
+            self.assertEqual("20260709", call[1]["end_date"])
+            self.assertEqual("", call[1]["adjust"])
 
     def test_history_without_requested_row_cannot_use_a_later_bar(self) -> None:
         fake = FakeHistoricalAkshare(
@@ -90,10 +162,11 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake, max_workers=1)
 
         self.assertEqual([], result.gainers)
+        self.assertEqual(1, result.source_status["gainers"]["requested"])
         self.assertEqual(1, result.source_status["gainers"]["queried"])
         self.assertEqual(0, result.source_status["gainers"]["usable"])
 
-    def test_partial_coverage_records_queried_and_usable_counts(self) -> None:
+    def test_partial_coverage_records_requested_queried_and_usable_counts(self) -> None:
         fake = FakeHistoricalAkshare(
             universe=[
                 {"代码": "000001", "名称": "甲", "成交额": 100_000_000},
@@ -101,34 +174,274 @@ class HistoricalActivityProviderTests(unittest.TestCase):
                 {"代码": "000003", "名称": "丙", "成交额": 80_000_000},
             ],
             histories={
-                "000001": [
-                    {"日期": "2026-07-08", "收盘": 10, "成交额": 90_000_000},
-                    {"日期": "2026-07-09", "收盘": 11, "成交额": 100_000_000},
-                ],
+                "000001": history_rows(),
                 "000002": [{"日期": "2026-07-09", "收盘": 12, "成交额": 90_000_000}],
-                "000003": [
-                    {"日期": "2026-07-08", "收盘": 10, "成交额": 40_000_000},
-                    {"日期": "2026-07-09", "收盘": 13, "成交额": 40_000_000},
-                ],
+                "000003": history_rows(turnover=40_000_000),
             },
         )
 
         result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake, max_workers=1)
 
+        self.assertEqual(3, result.source_status["gainers"]["requested"])
         self.assertEqual(3, result.source_status["gainers"]["queried"])
         self.assertEqual(1, result.source_status["gainers"]["usable"])
         self.assertEqual("partial", result.source_status["gainers"]["status"])
         self.assertEqual(["000001"], [row["code"] for row in result.gainers])
 
+    def test_universe_load_returns_at_deadline(self) -> None:
+        release = threading.Event()
+        finished = threading.Event()
+
+        class BlockingUniverse(FakeHistoricalAkshare):
+            def stock_zh_a_spot_em(self) -> FakeFrame:
+                release.wait(1)
+                finished.set()
+                return FakeFrame(self.universe)
+
+        fake = BlockingUniverse(universe=[], histories={})
+        timer = threading.Timer(0.2, release.set)
+        timer.daemon = True
+        timer.start()
+        started = time.monotonic()
+        result = load_historical_market_activity(
+            "CN", date(2026, 7, 9), akshare_module=fake, timeout_seconds=0.05
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.15)
+        self.assertEqual("timed_out", result.source_status["gainers"]["status"])
+        self.assertEqual(0, result.source_status["gainers"]["requested"])
+        self.assertEqual(0, result.source_status["gainers"]["queried"])
+        release.set()
+        self.assertTrue(finished.wait(1))
+
+    def test_deadline_stops_queued_requests_and_reports_incomplete_counts(self) -> None:
+        release = threading.Event()
+        two_started = threading.Event()
+        all_finished = threading.Event()
+        lock = threading.Lock()
+
+        class BlockingHistory(FakeHistoricalAkshare):
+            def __init__(self) -> None:
+                super().__init__(
+                    universe=[
+                        {"代码": f"{index:06d}", "名称": f"样本{index}", "成交额": 100_000_000}
+                        for index in range(8)
+                    ],
+                    histories={},
+                )
+                self.active = 0
+
+            def stock_zh_a_hist(
+                self,
+                symbol: str,
+                period: str,
+                start_date: str,
+                end_date: str,
+                adjust: str,
+                timeout: float | None = None,
+            ) -> FakeFrame:
+                with lock:
+                    self.history_calls.append(("stock_zh_a_hist", {"symbol": symbol, "timeout": timeout}))
+                    self.active += 1
+                    if len(self.history_calls) == 2:
+                        two_started.set()
+                release.wait(1)
+                with lock:
+                    self.active -= 1
+                    if self.active == 0:
+                        all_finished.set()
+                return FakeFrame(history_rows())
+
+        fake = BlockingHistory()
+        started = time.monotonic()
+        result = load_historical_market_activity(
+            "CN", date(2026, 7, 9), akshare_module=fake, timeout_seconds=0.08
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertTrue(two_started.is_set())
+        self.assertLess(elapsed, 0.2)
+        self.assertEqual("timed_out", result.source_status["gainers"]["status"])
+        self.assertEqual(8, result.source_status["gainers"]["requested"])
+        self.assertEqual(2, result.source_status["gainers"]["queried"])
+        self.assertEqual(0, result.source_status["gainers"]["usable"])
+        self.assertTrue(result.source_status["gainers"]["incomplete"])
+        release.set()
+        self.assertTrue(all_finished.wait(1))
+        time.sleep(0.05)
+        self.assertEqual(2, len(fake.history_calls))
+
+    def test_workers_are_fixed_daemons_and_do_not_grow_across_calls(self) -> None:
+        fake = FakeHistoricalAkshare(universe=[], histories={})
+        for _ in range(10):
+            load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake, timeout_seconds=0.02)
+
+        workers = [thread for thread in threading.enumerate() if thread.name.startswith("daily-market-history-")]
+        self.assertLessEqual(len(workers), 4)
+        self.assertTrue(workers)
+        self.assertTrue(all(thread.daemon for thread in workers))
+        self.assertFalse(any(thread.name.startswith("ThreadPoolExecutor") for thread in threading.enumerate()))
+
+    def test_global_host_gate_limits_concurrent_invocations_to_two(self) -> None:
+        lock = threading.Lock()
+
+        class TrackingAkshare(FakeHistoricalAkshare):
+            def __init__(self) -> None:
+                super().__init__(
+                    universe=[{"代码": "000001", "名称": "甲", "成交额": 100_000_000}],
+                    histories={"000001": history_rows()},
+                )
+                self.active = 0
+                self.maximum = 0
+
+            def _tracked(self, callback):
+                with lock:
+                    self.active += 1
+                    self.maximum = max(self.maximum, self.active)
+                try:
+                    time.sleep(0.03)
+                    return callback()
+                finally:
+                    with lock:
+                        self.active -= 1
+
+            def stock_zh_a_spot_em(self) -> FakeFrame:
+                return self._tracked(lambda: FakeFrame(self.universe))
+
+            def stock_zh_a_hist(
+                self,
+                symbol: str,
+                period: str,
+                start_date: str,
+                end_date: str,
+                adjust: str,
+                timeout: float | None = None,
+            ) -> FakeFrame:
+                return self._tracked(lambda: FakeFrame(self.histories[symbol]))
+
+        fake = TrackingAkshare()
+        threads = [
+            threading.Thread(
+                target=load_historical_market_activity,
+                args=("CN", date(2026, 7, 9)),
+                kwargs={"akshare_module": fake},
+            )
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(2)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertLessEqual(fake.maximum, 2)
+
+    def test_transient_history_failure_retries_once(self) -> None:
+        class RetryingAkshare(FakeHistoricalAkshare):
+            def stock_zh_a_hist(
+                self,
+                symbol: str,
+                period: str,
+                start_date: str,
+                end_date: str,
+                adjust: str,
+                timeout: float | None = None,
+            ) -> FakeFrame:
+                self.history_calls.append(("stock_zh_a_hist", {"symbol": symbol, "timeout": timeout}))
+                if len(self.history_calls) == 1:
+                    raise ConnectionError("transient")
+                return FakeFrame(self.histories[symbol])
+
+        fake = RetryingAkshare(
+            universe=[{"代码": "000001", "名称": "甲", "成交额": 100_000_000}],
+            histories={"000001": history_rows()},
+        )
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake, max_workers=1)
+
+        self.assertEqual(2, len(fake.history_calls))
+        self.assertEqual(1, result.source_status["gainers"]["queried"])
+        self.assertEqual(1, result.source_status["gainers"]["usable"])
+
+    def test_current_universe_is_capped_at_top_200_by_turnover(self) -> None:
+        universe = [
+            {"代码": f"{index:06d}", "名称": f"样本{index}", "成交额": index}
+            for index in range(205)
+        ]
+        fake = FakeHistoricalAkshare(
+            universe=universe,
+            histories={row["代码"]: history_rows() for row in universe},
+        )
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        requested_codes = {str(call[1]["symbol"]) for call in fake.history_calls}
+        self.assertEqual(200, result.source_status["gainers"]["requested"])
+        self.assertEqual(200, result.source_status["gainers"]["queried"])
+        self.assertEqual(200, len(requested_codes))
+        self.assertNotIn("000000", requested_codes)
+        self.assertNotIn("000001", requested_codes)
+        self.assertNotIn("000002", requested_codes)
+        self.assertNotIn("000003", requested_codes)
+        self.assertNotIn("000004", requested_codes)
+
+    def test_non_finite_values_are_rejected_and_result_is_strict_json(self) -> None:
+        fake = FakeHistoricalAkshare(
+            universe=[
+                {"代码": "000001", "名称": "甲", "成交额": float("nan")},
+                {"代码": "000002", "名称": "乙", "成交额": float("inf")},
+            ],
+            histories={
+                "000001": [
+                    {"日期": "2026-07-08", "收盘": 10, "成交额": 100_000_000},
+                    {"日期": "2026-07-09", "收盘": float("inf"), "成交额": 100_000_000},
+                ],
+                "000002": [
+                    {"日期": "2026-07-08", "收盘": 10, "成交额": 100_000_000},
+                    {"日期": "2026-07-09", "收盘": 11, "成交额": float("nan")},
+                ],
+            },
+        )
+
+        result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual([], result.gainers)
+        json.dumps(result.as_dict(), allow_nan=False)
+
+    def test_history_window_covers_prior_session_across_golden_week(self) -> None:
+        fake = FakeHistoricalAkshare(
+            universe=[{"代码": "000001", "名称": "甲", "成交额": 100_000_000}],
+            histories={
+                "000001": history_rows(
+                    previous_date="2026-09-30", market_date="2026-10-09", turnover=100_000_000
+                )
+            },
+        )
+
+        result = load_historical_market_activity("CN", date(2026, 10, 9), akshare_module=fake, max_workers=1)
+
+        self.assertEqual("000001", result.gainers[0]["code"])
+        self.assertEqual("20260904", fake.history_calls[0][1]["start_date"])
+
+    def test_dow_is_eligible_while_warrant_metadata_is_excluded(self) -> None:
+        fake = FakeHistoricalAkshare(
+            universe=[
+                {"代码": "106.DOW", "名称": "Dow Inc", "成交额": 20_000_000},
+                {"代码": "105.TESTW", "名称": "Example Warrant", "成交额": 30_000_000},
+            ],
+            histories={"106.DOW": history_rows(turnover=20_000_000)},
+        )
+
+        result = load_historical_market_activity("US", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual(["106.DOW"], [row["code"] for row in result.gainers])
+        self.assertEqual(["106.DOW"], [call[1]["symbol"] for call in fake.history_calls])
+
     def test_us_uses_provider_symbol_and_keeps_sections_explicitly_unavailable(self) -> None:
         fake = FakeHistoricalAkshare(
             universe=[{"代码": "105.MSFT", "名称": "Microsoft", "成交额": 20_000_000}],
-            histories={
-                "105.MSFT": [
-                    {"日期": "2026-07-08", "收盘": 10, "成交额": 20_000_000},
-                    {"日期": "2026-07-09", "收盘": 11, "成交额": 20_000_000},
-                ]
-            },
+            histories={"105.MSFT": history_rows(turnover=20_000_000)},
         )
 
         result = load_historical_market_activity("US", date(2026, 7, 9), akshare_module=fake, max_workers=1)
@@ -141,12 +454,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
     def test_hk_keeps_historical_sections_explicitly_unavailable(self) -> None:
         fake = FakeHistoricalAkshare(
             universe=[{"代码": "00700", "名称": "Tencent", "成交额": 30_000_000}],
-            histories={
-                "00700": [
-                    {"日期": "2026-07-08", "收盘": 10, "成交额": 30_000_000},
-                    {"日期": "2026-07-09", "收盘": 11, "成交额": 30_000_000},
-                ]
-            },
+            histories={"00700": history_rows(turnover=30_000_000)},
         )
 
         result = load_historical_market_activity("HK", date(2026, 7, 9), akshare_module=fake, max_workers=1)
