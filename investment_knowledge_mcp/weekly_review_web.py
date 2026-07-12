@@ -483,7 +483,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             HTTPStatus.ACCEPTED,
             {
                 "ok": True,
-                "status": "queued",
+                "status": job.get("status") or "queued",
                 "market": market,
                 "market_date": market_date.isoformat(),
                 "job": _public_history_job(job),
@@ -623,6 +623,9 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         try:
             length = int(content_length)
         except ValueError:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid Content-Length"})
+            return None
+        if length < 0:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid Content-Length"})
             return None
         if length > MAX_BODY_BYTES:
@@ -1586,7 +1589,16 @@ def render_daily_market_brief_html() -> str:
     </main>
   </div>
   <script>
-    const state = {{ market: "CN", context: null, markdown: "", jobId: null, pollTimer: null, pollGeneration: 0 }};
+    const state = {{
+      market: "CN",
+      context: null,
+      markdown: "",
+      jobId: null,
+      pollTimer: null,
+      pollGeneration: 0,
+      loadGeneration: 0,
+      loadController: null
+    }};
     const $ = (selector) => document.querySelector(selector);
     const message = $("#message");
 
@@ -1636,6 +1648,10 @@ def render_daily_market_brief_html() -> str:
     }}
 
     async function loadBrief(action) {{
+      cancelBriefLoad();
+      const generation = state.loadGeneration;
+      const controller = new AbortController();
+      state.loadController = controller;
       setBusy(true);
       const date = $("#market-date").value;
       message.textContent = action === "read" ? "正在读取简报..." : "正在生成并保存简报...";
@@ -1643,15 +1659,19 @@ def render_daily_market_brief_html() -> str:
         let response;
         if (action === "read") {{
           const query = new URLSearchParams({{ market: state.market, date }});
-          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`);
+          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`, {{
+            signal: controller.signal
+          }});
         }} else {{
           response = await fetch("/api/daily-market-brief/generate", {{
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
-            body: JSON.stringify({{ market: state.market, date }})
+            body: JSON.stringify({{ market: state.market, date }}),
+            signal: controller.signal
           }});
         }}
         const data = await response.json();
+        if (generation !== state.loadGeneration || controller.signal.aborted) return;
         if (!data.ok) throw new Error(data.error || "处理失败");
         if (data.market_date) $("#market-date").value = data.market_date;
         if (data.job) {{
@@ -1671,10 +1691,20 @@ def render_daily_market_brief_html() -> str:
         }}
         message.textContent = statusMessage(action, data);
       }} catch (error) {{
+        if (generation !== state.loadGeneration || error.name === "AbortError") return;
         message.textContent = `处理失败：${{error.message}}`;
       }} finally {{
-        setBusy(false);
+        if (generation === state.loadGeneration) {{
+          if (state.loadController === controller) state.loadController = null;
+          setBusy(false);
+        }}
       }}
+    }}
+
+    function cancelBriefLoad() {{
+      state.loadGeneration += 1;
+      if (state.loadController) state.loadController.abort();
+      state.loadController = null;
     }}
 
     async function loadRecentHistoryJobs() {{

@@ -4,7 +4,9 @@ from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
 from pathlib import Path
 import inspect
+import socket
 import sys
+import threading
 import types
 import unittest
 from unittest import mock
@@ -511,6 +513,15 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("pollGeneration", html)
         self.assertIn("generation !== state.pollGeneration", html)
         self.assertIn("state.jobId !== jobId", html)
+        self.assertIn("loadGeneration", html)
+        self.assertIn("new AbortController()", html)
+        self.assertGreaterEqual(html.count("signal: controller.signal"), 2)
+        self.assertIn("generation !== state.loadGeneration || controller.signal.aborted", html)
+        self.assertIn('error.name === "AbortError"', html)
+        self.assertLess(
+            html.index("generation !== state.loadGeneration || controller.signal.aborted"),
+            html.index("startHistoryJobPolling(data.job.id, data.market_date)"),
+        )
         self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();', html)
         self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', html)
         self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
@@ -653,7 +664,68 @@ class DailyMarketBriefTests(unittest.TestCase):
         status, payload = handler._write_json.call_args.args
         self.assertEqual(HTTPStatus.ACCEPTED, status)
         self.assertEqual(41, payload["job"]["id"])
+        self.assertEqual("running", payload["status"])
         create.assert_called_once_with("CN", date(2026, 7, 9), max_active_jobs=3)
+
+    def test_history_job_create_reflects_existing_report_completion_status(self) -> None:
+        completed_job = {
+            "id": 44,
+            "source": "web",
+            "status": "completed",
+            "total_count": 1,
+            "completed_count": 1,
+            "skipped_count": 1,
+            "items": [{
+                "market": "CN",
+                "market_date": "2026-07-09",
+                "status": "skipped",
+                "report_id": 19,
+                "skip_reason": "existing_report",
+            }],
+        }
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(
+            web.daily_market_jobs,
+            "create_web_history_job",
+            return_value=completed_job,
+        ):
+            handler._handle_daily_market_brief_history_job_create(
+                {"market": "CN", "date": "2026-07-09"}
+            )
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.ACCEPTED, status)
+        self.assertEqual("completed", payload["status"])
+        self.assertEqual("completed", payload["job"]["status"])
+
+    def test_negative_content_length_is_rejected_without_waiting_for_a_body(self) -> None:
+        server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.WeeklyReviewWebHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        client = socket.create_connection(server.server_address, timeout=1)
+        client.settimeout(1)
+        try:
+            client.sendall(
+                b"POST /api/daily-market-brief/history-jobs HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: -1\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            response_parts = []
+            while chunk := client.recv(4096):
+                response_parts.append(chunk)
+            response = b"".join(response_parts)
+        finally:
+            client.close()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertIn(b" 400 ", response)
+        self.assertIn(b"invalid Content-Length", response)
 
     def test_public_date_validation_uses_selected_market_local_date(self) -> None:
         boundary = datetime(2026, 7, 12, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
