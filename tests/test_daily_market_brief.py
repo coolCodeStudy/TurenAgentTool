@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp import daily_market_brief as dmb
 from investment_knowledge_mcp import weekly_review_web as web
+from investment_knowledge_mcp.daily_market_history import HistoricalActivityResult
 from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
 from investment_knowledge_mcp.weekly_review_web import (
     _daily_market_brief_response,
@@ -504,8 +505,150 @@ class DailyMarketBriefTests(unittest.TestCase):
             _validate_public_daily_market_brief_date("CN", date(2026, 7, 12), now=now)
         with self.assertRaisesRegex(ValueError, "最近 31 天"):
             _validate_public_daily_market_brief_date("CN", date(2026, 6, 9), now=now)
-        with self.assertRaisesRegex(ValueError, "最近一个已收盘交易日"):
-            _validate_public_daily_market_brief_date("CN", date(2026, 7, 9), now=now)
+        self.assertEqual(date(2026, 7, 9), _validate_public_daily_market_brief_date("CN", date(2026, 7, 9), now=now))
+
+    def test_historical_generation_uses_historical_provider_and_saves(self) -> None:
+        calls = []
+
+        def historical_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            calls.append((market, market_date))
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "历史样本",
+                        "change_pct": 10.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "ok", "count": 1, "queried": 1, "usable": 1},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        first = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=historical_provider,
+        )
+        second = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 5, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertEqual([("CN", date(2026, 7, 9)), ("CN", date(2026, 7, 9))], calls)
+        self.assertEqual("historical_reconstruction", first.context["generation_kind"])
+        self.assertEqual("2026-07-09", first.context["gainers"][0]["session_date"])
+        self.assertEqual("2026-07-09", first.context["source_status"]["gainers"]["session_date"])
+        self.assertEqual(first.saved_report["id"], second.saved_report["id"])
+
+    def test_current_session_generation_keeps_spot_provider(self) -> None:
+        spot_provider = mock.Mock(return_value=dmb._empty_activity("CN"))
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 10),
+            save=False,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            activity_provider=spot_provider,
+        )
+
+        spot_provider.assert_called_once_with("CN", date(2026, 7, 10))
+        self.assertEqual("live_rerun", result.context["generation_kind"])
+
+    def test_future_generation_fails_before_save(self) -> None:
+        with self.assertRaisesRegex(ValueError, "未来日期"):
+            dmb.build_daily_market_brief(
+                "CN",
+                date(2026, 7, 13),
+                save=True,
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+            )
+
+        self.assertEqual({}, self.fake_repository.rows)
+
+    def test_historical_weekend_preserves_no_session_state(self) -> None:
+        historical_provider = mock.Mock(side_effect=AssertionError("provider must not run for a weekend"))
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 4),
+            save=False,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertTrue(result.context["no_session"])
+        self.assertEqual("historical_reconstruction", result.context["generation_kind"])
+        historical_provider.assert_not_called()
+
+    def test_historical_provider_timeout_does_not_save_empty_report(self) -> None:
+        def timeout_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            raise TimeoutError("upstream timed out")
+
+        with self.assertRaisesRegex(ValueError, "历史市场活动数据暂不可用"):
+            dmb.build_daily_market_brief(
+                "CN",
+                date(2026, 7, 9),
+                save=True,
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+                historical_activity_provider=timeout_provider,
+            )
+
+        self.assertEqual({}, self.fake_repository.rows)
+
+    def test_historical_generation_rejects_mismatched_activity_date_before_save(self) -> None:
+        def mismatched_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "日期不符样本",
+                        "change_pct": 10.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "ok", "count": 1, "session_date": "2026-07-08"},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "历史数据日期未通过校验"):
+            dmb.build_daily_market_brief(
+                "CN",
+                date(2026, 7, 9),
+                save=True,
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+                historical_activity_provider=mismatched_provider,
+            )
+
+        self.assertEqual({}, self.fake_repository.rows)
 
     def test_historical_live_generation_does_not_use_spot_rankings(self) -> None:
         def unexpected_activity(market: str, market_date: date) -> dict:
@@ -524,7 +667,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual("historical_not_supported", result.context["source_status"]["sectors"]["status"])
         self.assertIn("历史榜单", result.markdown)
 
-    def test_historical_live_rerun_cannot_overwrite_saved_rankings(self) -> None:
+    def test_historical_provider_failure_cannot_overwrite_saved_rankings(self) -> None:
         original = dmb.build_daily_market_brief(
             market="CN",
             market_date=date(2026, 6, 30),
@@ -534,7 +677,7 @@ class DailyMarketBriefTests(unittest.TestCase):
             now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
         )
 
-        with self.assertRaisesRegex(ValueError, "不能用实时榜单重跑历史日期"):
+        with self.assertRaisesRegex(ValueError, "历史市场活动数据暂不可用"):
             dmb.build_daily_market_brief(
                 market="CN",
                 market_date=date(2026, 6, 30),
@@ -581,6 +724,12 @@ class DailyMarketBriefTests(unittest.TestCase):
         second = gate.try_acquire(("CN", "2026-07-10"))
         self.assertIsNotNone(second)
         second.release()
+
+    def test_historical_generation_uses_one_global_lease(self) -> None:
+        source = inspect.getsource(web.WeeklyReviewWebHandler._handle_daily_market_brief_generate)
+
+        self.assertIn("_HISTORICAL_DAILY_BRIEF_GENERATION_GATE", source)
+        self.assertIn("正在重建历史简报", source)
 
     def test_schema_and_repository_keep_daily_brief_upsert_concurrency_safe(self) -> None:
         root = Path(__file__).resolve().parents[1]

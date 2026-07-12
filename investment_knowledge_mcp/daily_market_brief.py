@@ -10,7 +10,11 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
-from investment_knowledge_mcp.daily_market_history import HistoricalActivityProvider, load_historical_market_activity
+from investment_knowledge_mcp.daily_market_history import (
+    HistoricalActivityProvider,
+    HistoricalActivityResult,
+    load_historical_market_activity,
+)
 from investment_knowledge_mcp.market_data_provider import (
     MarketBarSnapshot,
     MarketDataProviderError,
@@ -113,26 +117,24 @@ def build_daily_market_brief(
     now: datetime | None = None,
     market_bar_loader: MarketBarLoader | None = None,
     activity_provider: ActivityProvider | None = None,
+    historical_activity_provider: HistoricalActivityProvider | None = None,
     use_fixture: bool = False,
 ) -> DailyMarketBriefResult:
-    if save and market_date is not None and not use_fixture:
-        generated_at = now or datetime.now(SG_TZ)
-        requested_date = _coerce_date(market_date)
-        latest_completed = resolve_latest_completed_session_date(market, now=generated_at)
-        if requested_date != latest_completed:
-            raise ValueError(
-                f"不能用实时榜单重跑历史日期；当前仅可生成最近已收盘交易日 {latest_completed.isoformat()}。"
-            )
     context = build_daily_market_brief_context(
         market=market,
         market_date=market_date,
         now=now,
         market_bar_loader=market_bar_loader,
         activity_provider=activity_provider,
+        historical_activity_provider=historical_activity_provider,
         use_fixture=use_fixture,
     )
     markdown = render_daily_market_brief_markdown(context)
-    saved_report = save_daily_market_brief_report(context=context, markdown=markdown) if save else None
+    if save:
+        _validate_daily_market_brief_context_for_save(context)
+        saved_report = save_daily_market_brief_report(context=context, markdown=markdown)
+    else:
+        saved_report = None
     return DailyMarketBriefResult(context=context, markdown=markdown, saved_report=saved_report)
 
 
@@ -143,11 +145,18 @@ def build_daily_market_brief_context(
     now: datetime | None = None,
     market_bar_loader: MarketBarLoader | None = None,
     activity_provider: ActivityProvider | None = None,
+    historical_activity_provider: HistoricalActivityProvider | None = None,
     use_fixture: bool = False,
 ) -> dict[str, Any]:
     config = _market_config(market)
-    resolved_date = market_date or resolve_latest_completed_session_date(config.code, now=now)
     generated_at = now or datetime.now(SG_TZ)
+    latest_completed_session = resolve_latest_completed_session_date(config.code, now=generated_at)
+    resolved_date = _coerce_date(market_date) if market_date is not None else latest_completed_session
+    if resolved_date > latest_completed_session:
+        current_market_date = generated_at.astimezone(config.timezone).date()
+        if not (_is_weekend(resolved_date) and resolved_date <= current_market_date):
+            raise ValueError(f"未来日期不可生成；最近已收盘交易日为 {latest_completed_session.isoformat()}。")
+    generation_kind = "historical_reconstruction" if resolved_date < latest_completed_session else "live_rerun"
     local_generated_at = generated_at.astimezone(config.timezone)
     sg_generated_at = generated_at.astimezone(SG_TZ)
     source_status: dict[str, Any] = {
@@ -175,7 +184,6 @@ def build_daily_market_brief_context(
     warnings: list[str] = []
 
     no_session = _is_weekend(resolved_date)
-    latest_completed_session = resolve_latest_completed_session_date(config.code, now=generated_at)
     if no_session:
         source_status["session"] = {
             "status": "no_session",
@@ -210,9 +218,13 @@ def build_daily_market_brief_context(
                 "message": "核心指数行情未能确认该日期已完成交易；为避免混入错误日期的实时榜单，本次未生成榜单。",
             }
             activity = _empty_activity(config.code)
-        elif not use_fixture and resolved_date != latest_completed_session:
-            activity = _historical_activity(config.code, resolved_date)
+        elif generation_kind == "historical_reconstruction":
+            provider = historical_activity_provider or (
+                _fixture_historical_activity_provider if use_fixture else load_historical_market_activity
+            )
+            activity = _historical_activity(config.code, resolved_date, provider=provider)
             _merge_activity_status(source_status, activity)
+            _attach_historical_session_provenance(source_status, resolved_date)
         else:
             provider = activity_provider or (_fixture_activity_provider if use_fixture else _akshare_activity_provider)
             activity = provider(config.code, resolved_date)
@@ -250,6 +262,7 @@ def build_daily_market_brief_context(
         "narrative": narrative,
         "no_session": no_session,
         "provider_mode": "fixture" if use_fixture else "live",
+        "generation_kind": generation_kind,
     }
 
 
@@ -266,6 +279,7 @@ def save_daily_market_brief_report(context: dict[str, Any], markdown: str) -> di
             "narrative": context.get("narrative") or "",
             "no_session": bool(context.get("no_session")),
             "provider_mode": context.get("provider_mode"),
+            "generation_kind": context.get("generation_kind"),
             "generated_at": context.get("generated_at") or {},
         },
     )
@@ -550,8 +564,76 @@ def _empty_activity_provider(market: str, market_date: date) -> dict[str, Any]:
     return _empty_activity(market)
 
 
-def _historical_activity(market: str, market_date: date, provider: HistoricalActivityProvider = load_historical_market_activity) -> dict[str, Any]:
-    return provider(market, market_date).as_dict()
+def _historical_activity(
+    market: str,
+    market_date: date,
+    provider: HistoricalActivityProvider = load_historical_market_activity,
+) -> dict[str, Any]:
+    try:
+        return provider(market, market_date).as_dict()
+    except Exception as exc:
+        status = "timed_out" if isinstance(exc, TimeoutError) else "provider_unavailable"
+        return {
+            "sectors": [],
+            "gainers": [],
+            "capital_flow": [],
+            "source_status": {
+                "sectors": {"status": "historical_not_supported", "count": 0},
+                "gainers": {
+                    "status": status,
+                    "provider": "historical_activity_provider",
+                    "count": 0,
+                    "message": "历史精确日期涨幅榜暂不可用；未保存空白历史简报。",
+                },
+                "capital_flow": {"status": "historical_not_supported", "count": 0},
+            },
+        }
+
+
+def _fixture_historical_activity_provider(market: str, market_date: date) -> HistoricalActivityResult:
+    activity = _fixture_activity_provider(market, market_date)
+    session_date = market_date.isoformat()
+    for section in ("sectors", "gainers", "capital_flow"):
+        for row in activity.get(section) or []:
+            row["session_date"] = session_date
+        status = activity.get("source_status", {}).get(section)
+        if isinstance(status, dict):
+            status["session_date"] = session_date
+    return HistoricalActivityResult(
+        sectors=activity.get("sectors") or [],
+        gainers=activity.get("gainers") or [],
+        capital_flow=activity.get("capital_flow") or [],
+        source_status=activity.get("source_status") or {},
+    )
+
+
+def _attach_historical_session_provenance(source_status: dict[str, Any], market_date: date) -> None:
+    session_date = market_date.isoformat()
+    for key in ("sectors", "gainers", "capital_flow"):
+        status = source_status.get(key)
+        if isinstance(status, dict):
+            status.setdefault("session_date", session_date)
+
+
+def _validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> None:
+    if context.get("generation_kind") != "historical_reconstruction" or context.get("no_session"):
+        return
+
+    expected_session_date = str(context.get("market_date") or "")
+    source_status = context.get("source_status") or {}
+    gainers_status = source_status.get("gainers") if isinstance(source_status, dict) else {}
+    if isinstance(gainers_status, dict) and gainers_status.get("status") in {"timed_out", "provider_unavailable"}:
+        raise ValueError("历史市场活动数据暂不可用，未保存空白历史简报。")
+
+    for section in ("sectors", "gainers", "capital_flow"):
+        rows = context.get(section) or []
+        if not rows:
+            continue
+        status = source_status.get(section) if isinstance(source_status, dict) else None
+        if not isinstance(status, dict) or status.get("session_date") != expected_session_date:
+            raise ValueError("历史数据日期未通过校验，未保存简报。")
+        if any(str(row.get("session_date") or "") != expected_session_date for row in rows if isinstance(row, dict)):
+            raise ValueError("历史数据日期未通过校验，未保存简报。")
 
 
 def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]:
