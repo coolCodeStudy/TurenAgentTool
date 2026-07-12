@@ -5,6 +5,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import logging
 import os
 import re
 from threading import Lock
@@ -41,6 +42,8 @@ from investment_knowledge_mcp.weekly_review import build_weekly_review, save_wee
 
 MAX_BODY_BYTES = 64 * 1024
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+logger = logging.getLogger(__name__)
+PUBLIC_WORKBENCH_FAILURE_MESSAGE = "Command execution failed. Please retry later."
 
 
 class _DailyBriefGenerationLease:
@@ -239,19 +242,19 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                 sender=_clean_optional_text(payload.get("sender")),
                 source="weekly-review-web.command-workbench.execute",
             )
-        except Exception as exc:
-            message = f"command failed: {exc}"
+        except Exception:
+            logger.exception("Command Workbench execution failed")
             event = _record_workbench_event(
                 command=exact_command,
                 ok=False,
-                message=message,
+                message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
                 source="weekly-review-web.command-workbench.execute",
             )
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {
                     "ok": False,
-                    "error": message,
+                    "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE,
                     "preview": preview,
                     "event_id": event.get("id") if event else None,
                     "executed_command": exact_command,
