@@ -6,7 +6,10 @@ import threading
 import time
 import unittest
 
-from investment_knowledge_mcp.daily_market_history import load_historical_market_activity
+from investment_knowledge_mcp.daily_market_history import (
+    HistoricalActivityCancelled,
+    load_historical_market_activity,
+)
 
 
 class FakeFrame:
@@ -620,6 +623,50 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual("stock_hk_hist", fake.history_calls[0][0])
         self.assertEqual("historical_not_supported", result.source_status["sectors"]["status"])
         self.assertEqual("historical_not_supported", result.source_status["capital_flow"]["status"])
+
+    def test_pre_cancelled_provider_stops_before_any_external_call(self) -> None:
+        fake = SequencedUniverseAkshare(outcomes=[[]])
+        cancel = threading.Event()
+        cancel.set()
+
+        with self.assertRaises(HistoricalActivityCancelled):
+            load_historical_market_activity(
+                "CN",
+                date(2026, 7, 9),
+                akshare_module=fake,
+                cancel_event=cancel,
+            )
+
+        self.assertEqual(0, fake.universe_calls)
+        self.assertEqual([], fake.history_calls)
+
+    def test_cancellation_stops_before_submitting_the_next_symbol(self) -> None:
+        cancel = threading.Event()
+
+        class CancellingAkshare(FakeHistoricalAkshare):
+            def _history(self, method: str, **kwargs: object) -> FakeFrame:
+                result = super()._history(method, **kwargs)
+                cancel.set()
+                return result
+
+        fake = CancellingAkshare(
+            universe=[
+                {"代码": "000001", "名称": "甲", "成交额": 200_000_000},
+                {"代码": "000002", "名称": "乙", "成交额": 100_000_000},
+            ],
+            histories={"000001": history_rows(), "000002": history_rows()},
+        )
+
+        with self.assertRaises(HistoricalActivityCancelled):
+            load_historical_market_activity(
+                "CN",
+                date(2026, 7, 9),
+                akshare_module=fake,
+                max_workers=1,
+                cancel_event=cancel,
+            )
+
+        self.assertEqual(1, len(fake.history_calls))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.daily_market_history import (
+    HistoricalActivityCancelled,
     HistoricalActivityProvider,
     HistoricalActivityResult,
     load_historical_market_activity,
@@ -582,6 +583,8 @@ def _historical_activity(
 ) -> dict[str, Any]:
     try:
         return provider(market, market_date).as_dict()
+    except HistoricalActivityCancelled:
+        raise
     except Exception as exc:
         status = "timed_out" if isinstance(exc, TimeoutError) else "provider_unavailable"
         return {
@@ -653,6 +656,10 @@ def _validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> No
     useful_activity = any(context.get(section) for section in ("sectors", "gainers", "capital_flow"))
     if status == "provider_unavailable" or (status == "timed_out" and not useful_activity):
         raise ValueError("历史市场活动数据暂不可用，未保存空白历史简报。")
+
+
+def validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> None:
+    _validate_daily_market_brief_context_for_save(context)
 
 
 def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]:

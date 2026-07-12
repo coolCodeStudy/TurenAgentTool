@@ -7,7 +7,7 @@ import importlib
 import json
 import math
 from queue import Full, Queue
-from threading import BoundedSemaphore, Lock, Thread
+from threading import BoundedSemaphore, Event, Lock, Thread
 from time import monotonic, sleep
 from typing import Any, Callable
 
@@ -22,6 +22,10 @@ TURNOVER_THRESHOLDS = {"CN": 50_000_000, "HK": 20_000_000, "US": 10_000_000}
 
 
 class _DeadlineExpired(Exception):
+    pass
+
+
+class HistoricalActivityCancelled(Exception):
     pass
 
 
@@ -122,7 +126,9 @@ def load_historical_market_activity(
     universe_limit: int = 200,
     max_workers: int = 4,
     timeout_seconds: float = 90.0,
+    cancel_event: Event | None = None,
 ) -> HistoricalActivityResult:
+    _raise_if_cancelled(cancel_event)
     market_code = _normalize_market(market)
     deadline = monotonic() + max(0.001, float(timeout_seconds))
     try:
@@ -138,6 +144,7 @@ def load_historical_market_activity(
             limit=max(1, min(int(universe_limit), 200)),
             deadline=deadline,
             attempts=universe_attempts,
+            cancel_event=cancel_event,
         ),
         deadline=deadline,
     )
@@ -157,12 +164,15 @@ def load_historical_market_activity(
             universe_attempts=universe_attempts.count(),
         )
     except Exception as exc:
+        if isinstance(exc, HistoricalActivityCancelled):
+            raise
         return _unavailable_result(
             detail_code=type(exc).__name__,
             universe_attempts=universe_attempts.count(),
         )
 
     requested = len(universe)
+    _raise_if_cancelled(cancel_event)
     coverage = _QueryCoverage()
     rows: list[dict[str, Any]] = []
     completed = 0
@@ -173,6 +183,7 @@ def load_historical_market_activity(
 
     def submit_next() -> bool:
         nonlocal deadline_hit
+        _raise_if_cancelled(cancel_event)
         try:
             candidate = next(candidates)
         except StopIteration:
@@ -185,6 +196,7 @@ def load_historical_market_activity(
                 candidate=candidate,
                 coverage=coverage,
                 deadline=deadline,
+                cancel_event=cancel_event,
             ),
             deadline=deadline,
         )
@@ -200,6 +212,7 @@ def load_historical_market_activity(
 
     try:
         while pending:
+            _raise_if_cancelled(cancel_event)
             remaining = deadline - monotonic()
             if remaining <= 0:
                 deadline_hit = True
@@ -209,6 +222,7 @@ def load_historical_market_activity(
                 deadline_hit = True
                 break
             for future in done:
+                _raise_if_cancelled(cancel_event)
                 pending.remove(future)
                 completed += 1
                 try:
@@ -217,6 +231,8 @@ def load_historical_market_activity(
                     deadline_hit = True
                     row = None
                     candidate_timed_out = True
+                except HistoricalActivityCancelled:
+                    raise
                 except Exception:
                     row = None
                     candidate_timed_out = False
@@ -275,6 +291,7 @@ def _load_universe(
     limit: int,
     deadline: float,
     attempts: _AttemptCounter,
+    cancel_event: Event | None,
 ) -> list[dict[str, Any]]:
     loader_name = {
         "CN": "stock_zh_a_spot_em",
@@ -286,10 +303,12 @@ def _load_universe(
     last_error: Exception | None = None
 
     def load_once() -> Any:
+        _raise_if_cancelled(cancel_event)
         attempts.increment()
         return loader()
 
     for attempt in range(MAX_ATTEMPTS):
+        _raise_if_cancelled(cancel_event)
         if monotonic() >= deadline:
             raise _DeadlineExpired()
         try:
@@ -304,6 +323,7 @@ def _load_universe(
                 raise
             last_error = exc
         if attempt + 1 < MAX_ATTEMPTS:
+            _raise_if_cancelled(cancel_event)
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise _DeadlineExpired()
@@ -314,6 +334,7 @@ def _load_universe(
 
     candidates: list[dict[str, Any]] = []
     for row in records:
+        _raise_if_cancelled(cancel_event)
         provider_symbol = _text(_first_value(row, "代码", "symbol", "Symbol"))
         name = _text(_first_value(row, "名称", "股票简称", "name", "Name"))
         if not provider_symbol or not name or _excluded_security(market, provider_symbol, name, row):
@@ -338,7 +359,9 @@ def _load_candidate(
     candidate: dict[str, Any],
     coverage: _QueryCoverage,
     deadline: float,
+    cancel_event: Event | None,
 ) -> tuple[dict[str, Any] | None, bool]:
+    _raise_if_cancelled(cancel_event)
     rows, timed_out = _load_history_with_retry(
         ak=ak,
         market=market,
@@ -346,6 +369,7 @@ def _load_candidate(
         market_date=market_date,
         deadline=deadline,
         on_first_request=lambda: coverage.mark_queried(candidate["provider_symbol"]),
+        cancel_event=cancel_event,
     )
     rank = _rank_exact_date_history(rows, market_date)
     if rank is None or rank.get("turnover") is None or rank["turnover"] < TURNOVER_THRESHOLDS[market]:
@@ -372,6 +396,7 @@ def _load_history_with_retry(
     market_date: date,
     deadline: float,
     on_first_request: Callable[[], None],
+    cancel_event: Event | None,
 ) -> tuple[list[dict[str, Any]], bool]:
     start_date = (market_date - timedelta(days=HISTORY_LOOKBACK_DAYS)).strftime("%Y%m%d")
     end_date = market_date.strftime("%Y%m%d")
@@ -381,6 +406,7 @@ def _load_history_with_retry(
 
     def load_once() -> Any:
         nonlocal request_started
+        _raise_if_cancelled(cancel_event)
         remaining = _remaining(deadline)
         if not request_started:
             on_first_request()
@@ -397,6 +423,7 @@ def _load_history_with_retry(
         return loader(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
 
     for attempt in range(MAX_ATTEMPTS):
+        _raise_if_cancelled(cancel_event)
         if monotonic() >= deadline:
             return [], True
         try:
@@ -405,15 +432,23 @@ def _load_history_with_retry(
                 return rows, False
         except _DeadlineExpired:
             return [], True
+        except HistoricalActivityCancelled:
+            raise
         except Exception as exc:
             if not _retryable_error(exc):
                 return [], False
         if attempt + 1 < MAX_ATTEMPTS:
+            _raise_if_cancelled(cancel_event)
             remaining = deadline - monotonic()
             if remaining <= 0:
                 return [], True
             sleep(min(0.1, remaining))
     return [], monotonic() >= deadline
+
+
+def _raise_if_cancelled(cancel_event: Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise HistoricalActivityCancelled()
 
 
 def _call_under_host_gate(operation: Callable[[], Any], *, deadline: float) -> Any:

@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
+from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.db import transaction
 from investment_knowledge_mcp.serialization import to_jsonable
 
@@ -220,6 +221,20 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
     cleaned_worker_name = (worker_name or "history-worker").strip() or "history-worker"
     lease_token = uuid4().hex
     with transaction() as conn:
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ("daily-market-brief:global-history-claim",),
+        ).fetchone()
+        running = conn.execute(
+            """
+            SELECT item.id
+            FROM daily_market_brief_job_items AS item
+            WHERE item.status = 'running'
+            LIMIT 1
+            """
+        ).fetchone()
+        if running is not None:
+            return None
         candidate = conn.execute(
             """
             SELECT item.id, item.job_id, item.market, item.market_date, job.force_refresh
@@ -269,6 +284,73 @@ def claim_next_history_item(worker_name: str) -> dict[str, Any] | None:
     if claimed is not None:
         claimed["force_refresh"] = bool(candidate.get("force_refresh"))
     return claimed
+
+
+def finalize_history_item_report(
+    item_id: int,
+    *,
+    worker_name: str,
+    lease_token: str,
+    attempt_count: int,
+    context: dict[str, Any],
+    markdown: str,
+) -> dict[str, Any]:
+    """Serialize cancellation, report persistence, and item completion."""
+    cleaned_worker_name, cleaned_lease_token, normalized_attempt = _normalize_lease(
+        worker_name, lease_token, attempt_count
+    )
+    with transaction() as conn:
+        locked = _lock_active_history_item(
+            conn,
+            item_id,
+            worker_name=cleaned_worker_name,
+            lease_token=cleaned_lease_token,
+            attempt_count=normalized_attempt,
+        )
+        if locked is None:
+            raise ValueError(f"daily market brief history item lease is no longer active: {item_id}")
+        context_market = str((context.get("market") or {}).get("code") or "").strip().upper()
+        context_date = str(context.get("market_date") or "")
+        if context_market != locked["market"] or context_date != locked["market_date"].isoformat():
+            raise ValueError("daily market brief report context does not match the claimed history item")
+        if locked["cancel_requested"]:
+            row = _terminalize_history_item(
+                conn,
+                item_id,
+                status="cancelled",
+                worker_name=cleaned_worker_name,
+                lease_token=cleaned_lease_token,
+                attempt_count=normalized_attempt,
+            )
+        else:
+            market = str(context["market"]["code"])
+            market_date = str(context["market_date"])
+            saved = repository.upsert_daily_market_brief_report_in_transaction(
+                conn,
+                market=market,
+                market_date=market_date,
+                summary=markdown,
+                context=context,
+                source_status=context.get("source_status") or {},
+                story={
+                    "narrative": context.get("narrative") or "",
+                    "no_session": bool(context.get("no_session")),
+                    "provider_mode": context.get("provider_mode"),
+                    "generation_kind": context.get("generation_kind"),
+                    "generated_at": context.get("generated_at") or {},
+                },
+            )
+            row = _terminalize_history_item(
+                conn,
+                item_id,
+                status="completed",
+                report_id=int(saved["id"]),
+                worker_name=cleaned_worker_name,
+                lease_token=cleaned_lease_token,
+                attempt_count=normalized_attempt,
+            )
+        _recompute_history_jobs(conn, [int(row["job_id"])])
+    return to_jsonable(row)
 
 
 def heartbeat_history_item(
@@ -345,15 +427,19 @@ def finish_history_item(
 ) -> dict[str, Any]:
     if status not in TERMINAL_ITEM_STATUSES:
         raise ValueError("history item status must be completed, skipped, failed, or cancelled")
-    cleaned_worker_name = (worker_name or "").strip()
-    cleaned_lease_token = (lease_token or "").strip()
-    if not cleaned_worker_name or not cleaned_lease_token or int(attempt_count) < 1:
-        raise ValueError("worker_name, lease_token, and positive attempt_count are required")
+    cleaned_worker_name, cleaned_lease_token, normalized_attempt = _normalize_lease(
+        worker_name, lease_token, attempt_count
+    )
     public_error_code, public_error_summary = _resolve_public_error(status, error_code, error_summary)
     with transaction() as conn:
         locked_job = _lock_history_job_for_item(conn, item_id)
         if locked_job is None:
             raise ValueError(f"daily market brief history item not found: {item_id}")
+        if locked_job.get("cancel_requested") and status != "cancelled":
+            status = "cancelled"
+            report_id = None
+            public_error_code = None
+            public_error_summary = None
         row = conn.execute(
             """
             UPDATE daily_market_brief_job_items AS item SET
@@ -381,7 +467,7 @@ def finish_history_item(
                 item_id,
                 cleaned_worker_name,
                 cleaned_lease_token,
-                int(attempt_count),
+                normalized_attempt,
             ),
         ).fetchone()
         if row is None:
@@ -486,7 +572,7 @@ def _lock_market_date_keys(conn: Any, pairs: list[tuple[str, date]]) -> None:
 def _lock_history_job_for_item(conn: Any, item_id: int) -> dict[str, Any] | None:
     return conn.execute(
         """
-        SELECT job.id
+        SELECT job.id, (job.cancel_requested_at IS NOT NULL) AS cancel_requested
         FROM daily_market_brief_jobs AS job
         JOIN daily_market_brief_job_items AS item ON item.job_id = job.id
         WHERE item.id = %s
@@ -494,6 +580,79 @@ def _lock_history_job_for_item(conn: Any, item_id: int) -> dict[str, Any] | None
         """,
         (item_id,),
     ).fetchone()
+
+
+def _lock_active_history_item(
+    conn: Any,
+    item_id: int,
+    *,
+    worker_name: str,
+    lease_token: str,
+    attempt_count: int,
+) -> dict[str, Any] | None:
+    return conn.execute(
+        """
+        SELECT
+          job.id AS job_id,
+          item.market,
+          item.market_date,
+          (job.cancel_requested_at IS NOT NULL) AS cancel_requested
+        FROM daily_market_brief_jobs AS job
+        JOIN daily_market_brief_job_items AS item ON item.job_id = job.id
+        WHERE item.id = %s
+          AND item.status = 'running'
+          AND item.worker_name = %s
+          AND item.lease_token = %s
+          AND item.attempt_count = %s
+        FOR UPDATE OF job
+        """,
+        (item_id, worker_name, lease_token, attempt_count),
+    ).fetchone()
+
+
+def _terminalize_history_item(
+    conn: Any,
+    item_id: int,
+    *,
+    status: str,
+    worker_name: str,
+    lease_token: str,
+    attempt_count: int,
+    report_id: int | None = None,
+) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        UPDATE daily_market_brief_job_items AS item SET
+          status = %s,
+          report_id = %s,
+          error_code = NULL,
+          error_summary = NULL,
+          worker_name = NULL,
+          lease_token = NULL,
+          heartbeat_at = NULL,
+          finished_at = now(),
+          updated_at = now()
+        WHERE item.id = %s
+          AND item.status = 'running'
+          AND item.worker_name = %s
+          AND item.lease_token = %s
+          AND item.attempt_count = %s
+        RETURNING item.*
+        """,
+        (status, report_id, item_id, worker_name, lease_token, attempt_count),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"daily market brief history item lease is no longer active: {item_id}")
+    return row
+
+
+def _normalize_lease(worker_name: str, lease_token: str, attempt_count: int) -> tuple[str, str, int]:
+    cleaned_worker_name = (worker_name or "").strip()
+    cleaned_lease_token = (lease_token or "").strip()
+    normalized_attempt = int(attempt_count)
+    if not cleaned_worker_name or not cleaned_lease_token or normalized_attempt < 1:
+        raise ValueError("worker_name, lease_token, and positive attempt_count are required")
+    return cleaned_worker_name, cleaned_lease_token, normalized_attempt
 
 
 def _lock_history_jobs(conn: Any, job_ids: list[int], *, active_only: bool = False) -> list[dict[str, Any]]:

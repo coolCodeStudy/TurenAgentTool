@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from contextlib import contextmanager
 from threading import Event
+import time
 import unittest
 from unittest import mock
 
@@ -26,13 +27,20 @@ def _claimed_item(**overrides):
     return item
 
 
-def _result(*, report_id: int | None = None, source_status: dict | None = None, no_session: bool = False):
+def _result(
+    *,
+    report_id: int | None = None,
+    source_status: dict | None = None,
+    no_session: bool = False,
+    gainers: list[dict] | None = None,
+):
     context = {
         "market": {"code": "CN"},
         "market_date": "2026-07-09",
         "source_status": source_status or {"gainers": {"status": "ok"}},
         "no_session": no_session,
         "generation_kind": "historical_reconstruction",
+        "gainers": gainers or [],
     }
     return DailyMarketBriefResult(
         context=context,
@@ -42,6 +50,15 @@ def _result(*, report_id: int | None = None, source_status: dict | None = None, 
 
 
 class DailyMarketHistoryWorkerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = mock.patch.object(
+            worker,
+            "resolve_latest_completed_session_date",
+            return_value=date(2026, 7, 10),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_claims_and_saves_one_exact_historical_item(self) -> None:
         item = _claimed_item()
         built = _result()
@@ -50,8 +67,11 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
             mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
             mock.patch.object(worker, "get_daily_market_brief_report", return_value=None),
             mock.patch.object(worker, "build_daily_market_brief", return_value=built) as build,
-            mock.patch.object(worker, "save_daily_market_brief_report", return_value={"id": 19}) as save,
-            mock.patch.object(worker, "finish_history_item", return_value={"status": "completed"}) as finish,
+            mock.patch.object(
+                worker,
+                "finalize_history_item_report",
+                return_value={"status": "completed", "report_id": 19},
+            ) as finalize,
         ):
             outcome = worker.run_worker_once(worker_name="fixture-worker", item_timeout_seconds=600)
 
@@ -65,10 +85,12 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
         provider = kwargs["historical_activity_provider"]
         with mock.patch.object(worker, "load_historical_market_activity", return_value="activity") as load:
             self.assertEqual("activity", provider("CN", date(2026, 7, 9)))
-        load.assert_called_once_with("CN", date(2026, 7, 9), timeout_seconds=600.0)
-        save.assert_called_once_with(context=built.context, markdown=built.markdown)
-        self.assertEqual("completed", finish.call_args.kwargs["status"])
-        self.assertEqual(19, finish.call_args.kwargs["report_id"])
+        load_kwargs = load.call_args.kwargs
+        self.assertGreater(load_kwargs["timeout_seconds"], 599.0)
+        self.assertLessEqual(load_kwargs["timeout_seconds"], 600.0)
+        self.assertIsInstance(load_kwargs["cancel_event"], Event)
+        self.assertEqual(built.context, finalize.call_args.kwargs["context"])
+        self.assertEqual(built.markdown, finalize.call_args.kwargs["markdown"])
 
     def test_skips_report_created_after_enqueue_unless_force_refresh(self) -> None:
         with (
@@ -90,8 +112,11 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
             mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
             mock.patch.object(worker, "get_daily_market_brief_report", return_value={"id": 17}),
             mock.patch.object(worker, "build_daily_market_brief", return_value=_result()),
-            mock.patch.object(worker, "save_daily_market_brief_report", return_value={"id": 20}),
-            mock.patch.object(worker, "finish_history_item", return_value={"status": "completed"}),
+            mock.patch.object(
+                worker,
+                "finalize_history_item_report",
+                return_value={"status": "completed", "report_id": 20},
+            ),
         ):
             outcome = worker.run_worker_once(worker_name="fixture-worker")
         self.assertEqual(20, outcome["report_id"])
@@ -111,7 +136,19 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
     def test_no_session_and_useful_partial_results_are_saved(self) -> None:
         scenarios = (
             (_result(no_session=True), False),
-            (_result(source_status={"gainers": {"status": "timed_out", "usable": 1}}), True),
+            (
+                _result(
+                    source_status={
+                        "gainers": {
+                            "status": "timed_out",
+                            "usable": 1,
+                            "session_date": "2026-07-09",
+                        }
+                    },
+                    gainers=[{"code": "000001", "session_date": "2026-07-09"}],
+                ),
+                True,
+            ),
         )
         for built, expected_partial in scenarios:
             with self.subTest(partial=expected_partial):
@@ -120,8 +157,11 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
                     mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
                     mock.patch.object(worker, "get_daily_market_brief_report", return_value=None),
                     mock.patch.object(worker, "build_daily_market_brief", return_value=built),
-                    mock.patch.object(worker, "save_daily_market_brief_report", return_value={"id": 21}),
-                    mock.patch.object(worker, "finish_history_item", return_value={"status": "completed"}),
+                    mock.patch.object(
+                        worker,
+                        "finalize_history_item_report",
+                        return_value={"status": "completed", "report_id": 21},
+                    ),
                 ):
                     outcome = worker.run_worker_once(worker_name="fixture-worker")
                 self.assertEqual("completed", outcome["status"])
@@ -132,13 +172,13 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
             mock.patch.object(worker, "claim_next_history_item", return_value=_claimed_item()),
             mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": True}),
             mock.patch.object(worker, "build_daily_market_brief") as build,
-            mock.patch.object(worker, "save_daily_market_brief_report") as save,
+            mock.patch.object(worker, "finalize_history_item_report") as finalize,
             mock.patch.object(worker, "finish_history_item", return_value={"status": "cancelled"}) as finish,
         ):
             outcome = worker.run_worker_once(worker_name="fixture-worker")
         self.assertEqual("cancelled", outcome["status"])
         build.assert_not_called()
-        save.assert_not_called()
+        finalize.assert_not_called()
         self.assertEqual("cancelled", finish.call_args.kwargs["status"])
 
     def test_lost_lease_before_build_stops_without_side_effects(self) -> None:
@@ -146,29 +186,30 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
             mock.patch.object(worker, "claim_next_history_item", return_value=_claimed_item()),
             mock.patch.object(worker, "heartbeat_history_item", return_value=None),
             mock.patch.object(worker, "build_daily_market_brief") as build,
-            mock.patch.object(worker, "save_daily_market_brief_report") as save,
+            mock.patch.object(worker, "finalize_history_item_report") as finalize,
             mock.patch.object(worker, "finish_history_item") as finish,
         ):
             outcome = worker.run_worker_once(worker_name="fixture-worker")
         self.assertEqual("lease_lost", outcome["status"])
         build.assert_not_called()
-        save.assert_not_called()
+        finalize.assert_not_called()
         finish.assert_not_called()
 
     def test_cancelled_before_finalization_does_not_save(self) -> None:
-        heartbeats = iter(({"cancel_requested": False}, {"cancel_requested": True}))
         with (
             mock.patch.object(worker, "claim_next_history_item", return_value=_claimed_item()),
-            mock.patch.object(worker, "heartbeat_history_item", side_effect=lambda *_, **__: next(heartbeats)),
+            mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
             mock.patch.object(worker, "get_daily_market_brief_report", return_value=None),
             mock.patch.object(worker, "build_daily_market_brief", return_value=_result()),
-            mock.patch.object(worker, "save_daily_market_brief_report") as save,
-            mock.patch.object(worker, "finish_history_item", return_value={"status": "cancelled"}) as finish,
+            mock.patch.object(
+                worker,
+                "finalize_history_item_report",
+                return_value={"status": "cancelled", "report_id": None},
+            ) as finalize,
         ):
             outcome = worker.run_worker_once(worker_name="fixture-worker")
         self.assertEqual("cancelled", outcome["status"])
-        save.assert_not_called()
-        self.assertEqual("cancelled", finish.call_args.kwargs["status"])
+        finalize.assert_called_once()
 
     def test_failure_persists_only_public_error_code_and_copy(self) -> None:
         raw = RuntimeError("SSL password=super-secret host=internal-db")
@@ -211,8 +252,11 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
             mock.patch.object(worker, "heartbeat_history_item", side_effect=heartbeat),
             mock.patch.object(worker, "get_daily_market_brief_report", return_value=None),
             mock.patch.object(worker, "build_daily_market_brief", side_effect=build),
-            mock.patch.object(worker, "save_daily_market_brief_report", return_value={"id": 22}),
-            mock.patch.object(worker, "finish_history_item", return_value={"status": "completed"}),
+            mock.patch.object(
+                worker,
+                "finalize_history_item_report",
+                return_value={"status": "completed", "report_id": 22},
+            ),
         ):
             worker.run_worker_once(worker_name="fixture-worker")
         self.assertGreaterEqual(heartbeat_calls, 2)
@@ -240,6 +284,97 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
     def test_returns_none_when_queue_is_empty(self) -> None:
         with mock.patch.object(worker, "claim_next_history_item", return_value=None):
             self.assertIsNone(worker.run_worker_once(worker_name="fixture-worker"))
+
+    def test_latest_completed_session_item_is_rejected_without_live_build(self) -> None:
+        with (
+            mock.patch.object(worker, "claim_next_history_item", return_value=_claimed_item()),
+            mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
+            mock.patch.object(worker, "resolve_latest_completed_session_date", return_value=date(2026, 7, 9)),
+            mock.patch.object(worker, "get_daily_market_brief_report") as read,
+            mock.patch.object(worker, "build_daily_market_brief") as build,
+            mock.patch.object(worker, "finish_history_item", return_value={"status": "failed"}) as finish,
+        ):
+            outcome = worker.run_worker_once(
+                worker_name="fixture-worker",
+                now=datetime(2026, 7, 10, 18, tzinfo=timezone.utc),
+            )
+        self.assertEqual("failed", outcome["status"])
+        self.assertEqual("historical_data_unavailable", finish.call_args.kwargs["error_code"])
+        read.assert_not_called()
+        build.assert_not_called()
+
+    def test_item_deadline_covers_entire_build_and_prevents_final_write(self) -> None:
+        def blocked_build(**kwargs):
+            time.sleep(0.2)
+            return _result()
+
+        with (
+            mock.patch.object(worker, "claim_next_history_item", return_value=_claimed_item()),
+            mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
+            mock.patch.object(worker, "resolve_latest_completed_session_date", return_value=date(2026, 7, 10)),
+            mock.patch.object(worker, "get_daily_market_brief_report", return_value=None),
+            mock.patch.object(worker, "build_daily_market_brief", side_effect=blocked_build),
+            mock.patch.object(worker, "finalize_history_item_report") as finalize,
+            mock.patch.object(worker, "finish_history_item", return_value={"status": "failed"}) as finish,
+        ):
+            started = time.monotonic()
+            outcome = worker.run_worker_once(worker_name="fixture-worker", item_timeout_seconds=0.02)
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.15)
+        self.assertEqual("provider_timeout", outcome["error_code"])
+        finalize.assert_not_called()
+        self.assertEqual("failed", finish.call_args.kwargs["status"])
+
+    def test_item_deadline_interrupts_pre_finalization_transaction(self) -> None:
+        def blocked_finalize(*args, **kwargs):
+            time.sleep(0.2)
+            return {"status": "completed", "report_id": 99}
+
+        with (
+            mock.patch.object(worker, "claim_next_history_item", return_value=_claimed_item()),
+            mock.patch.object(worker, "heartbeat_history_item", return_value={"cancel_requested": False}),
+            mock.patch.object(worker, "get_daily_market_brief_report", return_value=None),
+            mock.patch.object(worker, "build_daily_market_brief", return_value=_result()),
+            mock.patch.object(worker, "finalize_history_item_report", side_effect=blocked_finalize),
+            mock.patch.object(worker, "finish_history_item", return_value={"status": "failed"}) as finish,
+        ):
+            started = time.monotonic()
+            outcome = worker.run_worker_once(worker_name="fixture-worker", item_timeout_seconds=0.02)
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.15)
+        self.assertEqual("provider_timeout", outcome["error_code"])
+        self.assertEqual("failed", finish.call_args.kwargs["status"])
+
+    def test_forever_recovers_periodically_and_survives_iteration_errors(self) -> None:
+        stop = Event()
+        recover_calls = 0
+        worker_calls = 0
+
+        def recover(*args, **kwargs):
+            nonlocal recover_calls
+            recover_calls += 1
+            if recover_calls == 1:
+                raise RuntimeError("temporary recovery failure")
+            return 0
+
+        def run_once(**kwargs):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 1:
+                raise RuntimeError("temporary claim failure")
+            if worker_calls >= 3:
+                stop.set()
+            return None
+
+        clock = iter((0.0, 0.0, 61.0, 61.0, 122.0, 122.0, 183.0, 183.0))
+        with (
+            mock.patch.object(worker, "_monotonic", side_effect=lambda: next(clock)),
+            mock.patch.object(worker, "requeue_stale_history_items", side_effect=recover),
+            mock.patch.object(worker, "run_worker_once", side_effect=run_once),
+        ):
+            worker.run_worker_forever(poll_seconds=0, stop_event=stop)
+        self.assertGreaterEqual(recover_calls, 2)
+        self.assertEqual(3, worker_calls)
 
     def test_repository_heartbeat_locks_parent_before_updating_item(self) -> None:
         class Cursor:

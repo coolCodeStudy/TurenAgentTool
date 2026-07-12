@@ -54,6 +54,8 @@ class FakeConnection:
         compact = " ".join(query.split())
         if compact.startswith("SELECT pg_advisory_xact_lock"):
             return FakeCursor({"pg_advisory_xact_lock": None})
+        if compact.startswith("SELECT item.id FROM daily_market_brief_job_items"):
+            return FakeCursor()
         if compact.startswith("SELECT count(*)::integer AS active_count"):
             return FakeCursor({"active_count": 0})
         if "FOR UPDATE OF job" in compact and "WHERE item.id = %s" in compact:
@@ -163,6 +165,11 @@ class StatefulQueueConnection:
     def execute(self, query: str, params: tuple | None = None) -> FakeCursor:
         self.queries.append((query, params))
         compact = " ".join(query.split())
+        if compact.startswith("SELECT pg_advisory_xact_lock"):
+            return FakeCursor({"pg_advisory_xact_lock": None})
+        if compact.startswith("SELECT item.id FROM daily_market_brief_job_items"):
+            running = next((item for item in self.items.values() if item["status"] == "running"), None)
+            return FakeCursor({"id": running["id"]} if running else None)
         if "FOR UPDATE OF job" in compact and "WHERE item.id = %s" in compact:
             item = self.items.get(params[0])
             return FakeCursor({"id": item["job_id"]} if item else None)
@@ -529,11 +536,11 @@ class DailyMarketJobsTests(unittest.TestCase):
         claimed = jobs.claim_next_history_item("history-worker")
 
         self.assertEqual(101, claimed["id"])
-        self.assertEqual(3, len(self.connection.queries))
-        query, params = self.connection.queries[0]
+        self.assertEqual(5, len(self.connection.queries))
+        query, params = self.connection.queries[2]
         self.assertIn("FOR UPDATE OF job SKIP LOCKED", query)
         self.assertIn("status = 'queued'", query)
-        claim_query, claim_params = self.connection.queries[1]
+        claim_query, claim_params = self.connection.queries[3]
         self.assertEqual("history-worker", claim_params[0])
         self.assertTrue(claim_params[1])
         self.assertIn("lease_token = %s", claim_query)
@@ -803,9 +810,9 @@ class DailyMarketJobsReviewRegressionTests(unittest.TestCase):
             claimed = jobs.claim_next_history_item("worker-b")
 
         self.assertEqual(101, claimed["id"])
-        self.assertIn("FOR UPDATE OF job SKIP LOCKED", connection.queries[0][0])
-        self.assertIn("UPDATE daily_market_brief_job_items", connection.queries[1][0])
-        self.assertIn("UPDATE daily_market_brief_jobs", connection.queries[2][0])
+        self.assertIn("FOR UPDATE OF job SKIP LOCKED", connection.queries[2][0])
+        self.assertIn("UPDATE daily_market_brief_job_items", connection.queries[3][0])
+        self.assertIn("UPDATE daily_market_brief_jobs", connection.queries[4][0])
 
     def test_web_source_cannot_force_refresh(self) -> None:
         with self.assertRaisesRegex(ValueError, "web.*force_refresh"):
@@ -919,7 +926,15 @@ class DailyMarketJobsPostgresConcurrencyTests(unittest.TestCase):
               id BIGSERIAL PRIMARY KEY,
               report_type TEXT NOT NULL,
               report_date DATE NOT NULL,
-              portfolio_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+              portfolio_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+              summary TEXT,
+              period_start DATE,
+              period_end DATE,
+              source_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+              story JSONB NOT NULL DEFAULT '{}'::jsonb,
+              generated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              refreshed_at TIMESTAMPTZ,
+              report_key TEXT
             );
             """
         )
@@ -1167,6 +1182,166 @@ class DailyMarketJobsPostgresConcurrencyTests(unittest.TestCase):
 
         self.assertEqual(active_job_ids[0], duplicate["id"])
         self.assertEqual(jobs.WEB_HISTORY_JOB_CAPACITY_MESSAGE, str(raised.exception))
+
+    def test_two_concurrent_claims_across_jobs_leave_only_one_running_item(self) -> None:
+        for market in ("CN", "HK"):
+            job_id = self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+                VALUES ('single', 'command', 'queued', 1)
+                RETURNING id
+                """
+            ).fetchone()["id"]
+            self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_job_items (job_id, market, market_date, status)
+                VALUES (%s, %s, DATE '2026-07-01', 'queued')
+                """,
+                (job_id, market),
+            )
+
+        start = threading.Barrier(2)
+        claims: list[dict | None] = []
+
+        def claim(worker_name: str) -> None:
+            start.wait(timeout=5)
+            claims.append(jobs.claim_next_history_item(worker_name))
+
+        with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+            threads = [threading.Thread(target=claim, args=(f"worker-{index}",)) for index in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=15)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(1, sum(claimed is not None for claimed in claims))
+        running = self.admin.execute(
+            "SELECT count(*) AS count FROM daily_market_brief_job_items WHERE status = 'running'"
+        ).fetchone()["count"]
+        self.assertEqual(1, running)
+
+    def test_cancel_and_report_finalization_are_one_serialized_decision(self) -> None:
+        context = {
+            "market": {"code": "CN"},
+            "market_date": "2026-07-01",
+            "source_status": {"gainers": {"status": "ok"}},
+            "narrative": "history",
+            "no_session": False,
+            "provider_mode": "live",
+            "generation_kind": "historical_reconstruction",
+            "generated_at": {},
+        }
+        for _ in range(10):
+            self.admin.execute(
+                "TRUNCATE daily_market_brief_job_items, daily_market_brief_jobs, review_reports RESTART IDENTITY CASCADE"
+            )
+            job_id = self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+                VALUES ('single', 'command', 'running', 1)
+                RETURNING id
+                """
+            ).fetchone()["id"]
+            item_id = self.admin.execute(
+                """
+                INSERT INTO daily_market_brief_job_items (
+                  job_id, market, market_date, status, attempt_count, worker_name, lease_token,
+                  claimed_at, heartbeat_at
+                ) VALUES (%s, 'CN', DATE '2026-07-01', 'running', 1, 'worker-a', 'lease-a', now(), now())
+                RETURNING id
+                """,
+                (job_id,),
+            ).fetchone()["id"]
+            start = threading.Barrier(2)
+            errors: list[BaseException] = []
+
+            def cancel() -> None:
+                try:
+                    start.wait(timeout=5)
+                    jobs.request_history_job_cancel(job_id)
+                except BaseException as exc:
+                    errors.append(exc)
+
+            def finalize() -> None:
+                try:
+                    start.wait(timeout=5)
+                    jobs.finalize_history_item_report(
+                        item_id,
+                        worker_name="worker-a",
+                        lease_token="lease-a",
+                        attempt_count=1,
+                        context=context,
+                        markdown="# history",
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+                threads = [threading.Thread(target=cancel), threading.Thread(target=finalize)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=15)
+
+            self.assertFalse(any(thread.is_alive() for thread in threads))
+            self.assertEqual([], errors)
+            item = self.admin.execute(
+                "SELECT status, report_id FROM daily_market_brief_job_items WHERE id = %s", (item_id,)
+            ).fetchone()
+            report_count = self.admin.execute(
+                "SELECT count(*) AS count FROM review_reports WHERE report_type = 'daily_market_brief'"
+            ).fetchone()["count"]
+            if item["status"] == "cancelled":
+                self.assertIsNone(item["report_id"])
+                self.assertEqual(0, report_count)
+            else:
+                self.assertEqual("completed", item["status"])
+                self.assertIsNotNone(item["report_id"])
+                self.assertEqual(1, report_count)
+
+    def test_report_finalization_rejects_context_that_does_not_match_claimed_item(self) -> None:
+        job_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_jobs (request_type, source, status, total_count)
+            VALUES ('single', 'command', 'running', 1)
+            RETURNING id
+            """
+        ).fetchone()["id"]
+        item_id = self.admin.execute(
+            """
+            INSERT INTO daily_market_brief_job_items (
+              job_id, market, market_date, status, attempt_count, worker_name, lease_token,
+              claimed_at, heartbeat_at
+            ) VALUES (%s, 'CN', DATE '2026-07-01', 'running', 1, 'worker-a', 'lease-a', now(), now())
+            RETURNING id
+            """,
+            (job_id,),
+        ).fetchone()["id"]
+        context = {
+            "market": {"code": "HK"},
+            "market_date": "2026-07-02",
+            "source_status": {},
+            "generation_kind": "historical_reconstruction",
+        }
+
+        with mock.patch.object(jobs, "transaction", side_effect=self._plain_transaction):
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                jobs.finalize_history_item_report(
+                    item_id,
+                    worker_name="worker-a",
+                    lease_token="lease-a",
+                    attempt_count=1,
+                    context=context,
+                    markdown="# wrong",
+                )
+
+        item = self.admin.execute(
+            "SELECT status, report_id FROM daily_market_brief_job_items WHERE id = %s", (item_id,)
+        ).fetchone()
+        self.assertEqual({"status": "running", "report_id": None}, item)
+        report_count = self.admin.execute("SELECT count(*) AS count FROM review_reports").fetchone()["count"]
+        self.assertEqual(0, report_count)
 
 
 if __name__ == "__main__":
