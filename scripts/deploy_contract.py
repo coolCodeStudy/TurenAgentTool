@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/classify_deploy_
 APPLICATION_SERVICES = (
     "account-snapshot-scheduler",
     "command-api",
+    "daily-market-brief-history-worker",
     "daily-market-brief-scheduler",
     "dingtalk-api",
     "dingtalk-stream-bot",
@@ -100,6 +101,12 @@ PATH_RULES = (
     ),
     PathRule("scripts/ecs_ops_api.py", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
     PathRule(
+        "scripts/daily_market_brief_history_worker.py",
+        DeployMode.TARGETED_QUICK,
+        ("daily-market-brief-history-worker",),
+        "daily market brief history worker runtime",
+    ),
+    PathRule(
         "scripts/dingtalk_stream_bot.py",
         DeployMode.TARGETED_QUICK,
         ("dingtalk-stream-bot",),
@@ -108,7 +115,14 @@ PATH_RULES = (
     PathRule(
         "scripts/init_db.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        (
+            "command-api",
+            "daily-market-brief-history-worker",
+            "dingtalk-api",
+            "dingtalk-stream-bot",
+            "mcp",
+            "weekly-review-web",
+        ),
         "database initialization runtime",
     ),
     PathRule("investment_knowledge_mcp/weekly_review_web.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "weekly review web"),
@@ -127,7 +141,15 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/daily_market_brief.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "daily-market-brief-scheduler", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        (
+            "command-api",
+            "daily-market-brief-history-worker",
+            "daily-market-brief-scheduler",
+            "dingtalk-api",
+            "dingtalk-stream-bot",
+            "mcp",
+            "weekly-review-web",
+        ),
         "shared command logic",
     ),
     PathRule(
@@ -274,16 +296,16 @@ def _compose_config(path: Path, runner: CommandRunner) -> dict[str, object]:
     return parsed
 
 
-def _compose_image_inputs(compose_config: dict[str, object]) -> tuple[tuple[str, str], ...]:
+def _compose_image_inputs(compose_config: dict[str, object]) -> tuple[str, ...]:
     services = compose_config.get("services", {})
     if not isinstance(services, dict):
         raise RuntimeError("docker compose config services must be an object")
-    inputs: list[tuple[str, str]] = []
+    inputs: set[str] = set()
     for name, service in services.items():
         if not isinstance(name, str) or not isinstance(service, dict):
             raise RuntimeError("docker compose config service entries must be objects")
         image_input = {key: service.get(key) for key in ("image", "build", "platform") if key in service}
-        inputs.append((name, json.dumps(image_input, sort_keys=True, separators=(",", ":"))))
+        inputs.add(json.dumps(image_input, sort_keys=True, separators=(",", ":")))
     return tuple(sorted(inputs))
 
 

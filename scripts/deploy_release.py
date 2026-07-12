@@ -119,6 +119,7 @@ class SystemClock:
 class DockerHealthChecker:
     _PROCESS_SERVICES = {
         "account-snapshot-scheduler",
+        "daily-market-brief-history-worker",
         "daily-market-brief-scheduler",
         "ipo-reminder-scheduler",
         "dingtalk-stream-bot",
