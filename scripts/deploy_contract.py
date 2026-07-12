@@ -84,6 +84,8 @@ PATH_RULES = (
     PathRule("scripts/audit_prd_status.py", DeployMode.NO_DEPLOY, (), "local audit"),
     PathRule("scripts/classify_deploy_change.py", DeployMode.NO_DEPLOY, (), "local deploy classifier"),
     PathRule("scripts/evaluate_agent_flow_cases.py", DeployMode.NO_DEPLOY, (), "local evaluation"),
+    PathRule("scripts/smoke_test.py", DeployMode.NO_DEPLOY, (), "local smoke verification"),
+    PathRule("scripts/verify_change_package.py", DeployMode.NO_DEPLOY, (), "local change-package verification"),
     PathRule("scripts/bootstrap_deploy_baseline.py", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
     PathRule("scripts/bootstrap_ops_api_v2_on_ecs.sh", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
     PathRule("scripts/deploy_contract.py", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),

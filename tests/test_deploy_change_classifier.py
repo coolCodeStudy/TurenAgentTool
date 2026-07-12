@@ -66,6 +66,8 @@ class DeployContractTests(TestCase):
                 "AGENTS.md",
                 "docs/project-management/Agent-Operating-Model-Roadmap.md",
                 "scripts/evaluate_agent_flow_cases.py",
+                "scripts/smoke_test.py",
+                "scripts/verify_change_package.py",
                 ".github/workflows/deploy.yml",
             )
         )
@@ -221,6 +223,8 @@ class DeployContractTests(TestCase):
             "scripts/deploy_state.py",
             "scripts/deploy_support.py",
             "scripts/ecs_ops_api.py",
+            "scripts/smoke_test.py",
+            "scripts/verify_change_package.py",
             "scripts/install_ops_api_on_ecs.sh",
         )
 
