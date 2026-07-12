@@ -66,7 +66,7 @@ services:
       OPS_API_URL: ${OPS_API_URL:-http://host.docker.internal:8767}
       OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
     ports:
-      - "${MCP_HOST_PORT:-8000}:${MCP_PORT:-8000}"
+      - "${MCP_BIND_HOST:-127.0.0.1}:${MCP_HOST_PORT:-8000}:${MCP_PORT:-8000}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.server"]
 
   command-api:
@@ -369,6 +369,32 @@ services:
       - sh
       - -c
       - python scripts/init_db.py && python -m investment_knowledge_mcp.daily_market_brief --interval-seconds 300
+
+  daily-market-brief-history-worker:
+    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    restart: unless-stopped
+    volumes:
+      - ./db:/app/db:ro
+      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
+      - ./scripts:/app/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
+    command:
+      - sh
+      - -c
+      - python scripts/init_db.py && python scripts/daily_market_brief_history_worker.py
 
 volumes:
   postgres_prod_data:

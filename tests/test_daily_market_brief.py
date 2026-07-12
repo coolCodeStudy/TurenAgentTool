@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from http import HTTPStatus
 from pathlib import Path
 import inspect
+import socket
 import sys
+import threading
 import types
 import unittest
 from unittest import mock
@@ -12,6 +15,7 @@ from zoneinfo import ZoneInfo
 from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp import daily_market_brief as dmb
 from investment_knowledge_mcp import weekly_review_web as web
+from investment_knowledge_mcp.daily_market_history import HistoricalActivityResult
 from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
 from investment_knowledge_mcp.weekly_review_web import (
     _daily_market_brief_response,
@@ -59,6 +63,10 @@ class FakeDailyBriefRepository:
     def get_latest_daily_market_brief_report(self, *, market: str) -> dict | None:
         rows = [row for (row_market, _), row in self.rows.items() if row_market == market]
         return sorted(rows, key=lambda item: item["report_date"], reverse=True)[0] if rows else None
+
+    def list_daily_market_brief_dates(self, *, market: str, limit: int = 120) -> list[str]:
+        dates = sorted((day for row_market, day in self.rows if row_market == market), reverse=True)
+        return dates[:limit]
 
 
 def fake_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
@@ -177,8 +185,62 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(len(second.context["sectors"]), 5)
         self.assertEqual(len(second.context["gainers"]), 5)
         self.assertEqual(second.context["source_status"]["capital_flow"]["status"], "ok")
-        self.assertIn("Shanghai Composite", second.markdown)
+        self.assertIn("上证指数", second.markdown)
         self.assertIn("不构成买卖建议", second.markdown)
+
+    def test_saved_dates_are_market_scoped_and_newest_first(self) -> None:
+        self.fake_repository.rows[("CN", "2026-07-09")] = {"id": 1, "report_date": "2026-07-09"}
+        self.fake_repository.rows[("CN", "2026-07-10")] = {"id": 2, "report_date": "2026-07-10"}
+        self.fake_repository.rows[("HK", "2026-07-10")] = {"id": 3, "report_date": "2026-07-10"}
+
+        self.assertEqual(["2026-07-10", "2026-07-09"], dmb.list_daily_market_brief_dates("CN"))
+
+    def test_saved_dates_endpoint_returns_market_scoped_response(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(web, "list_daily_market_brief_dates", return_value=["2026-07-10", "2026-07-09"]):
+            handler._handle_daily_market_brief_dates({"market": ["CN"]})
+
+        handler._write_json.assert_called_once_with(
+            HTTPStatus.OK,
+            {"ok": True, "market": "CN", "dates": ["2026-07-10", "2026-07-09"]},
+        )
+
+    def test_cn_indexes_use_chinese_display_names(self) -> None:
+        result = dmb.build_daily_market_brief(
+            market="CN", market_date=date(2026, 7, 9), save=False,
+            market_bar_loader=fake_market_bar_loader, use_fixture=True,
+            now=datetime(2026, 7, 9, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertEqual(
+            ["上证指数", "深证成指", "沪深300", "创业板指", "科创50"],
+            [row["name"] for row in result.context["indexes"]],
+        )
+        self.assertIn("上证指数", result.markdown)
+        self.assertNotIn("Shanghai Composite", result.markdown)
+
+    def test_format_market_amount_uses_currency_and_chinese_units(self) -> None:
+        self.assertEqual("50.93 亿元 CNY", dmb.format_market_amount(5_093_000_000, "CN"))
+        self.assertEqual("6310.44 万港元 HKD", dmb.format_market_amount(63_104_400, "HK"))
+        self.assertEqual("6.33 亿美元 USD", dmb.format_market_amount(633_303_877.53, "US"))
+        self.assertEqual("-", dmb.format_market_amount(None, "US"))
+
+    def test_cn_ranked_item_markdown_shows_percentage_and_turnover_currency(self) -> None:
+        result = dmb.build_daily_market_brief(
+            market="CN",
+            market_date=date(2026, 7, 9),
+            save=False,
+            market_bar_loader=fake_market_bar_loader,
+            use_fixture=True,
+            now=datetime(2026, 7, 9, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertIn(
+            "| 1 | 沪深样本1 | CN.F001 | +9.00% | 100.00 万元 CNY | fixture |",
+            result.markdown,
+        )
 
     def test_live_us_defaults_to_explicit_capital_flow_degraded_state(self) -> None:
         result = dmb.build_daily_market_brief(
@@ -352,18 +414,18 @@ class DailyMarketBriefTests(unittest.TestCase):
 
         self.assertTrue(generated.ok)
         self.assertTrue(rerun.ok)
-        self.assertIn("Shanghai Composite", generated.message)
-        self.assertIn("Shenzhen Component", generated.message)
-        self.assertIn("CSI 300", generated.message)
-        self.assertIn("ChiNext Index", generated.message)
-        self.assertIn("STAR 50", generated.message)
+        self.assertIn("上证指数", generated.message)
+        self.assertIn("深证成指", generated.message)
+        self.assertIn("沪深300", generated.message)
+        self.assertIn("创业板指", generated.message)
+        self.assertIn("科创50", generated.message)
         self.assertNotIn("暂无可用核心指数数据", generated.message)
         self.assertIn("review_reports #1", generated.message)
         self.assertIn("review_reports #1", rerun.message)
 
     def test_cross_market_fixture_generation_coexists_for_same_date(self) -> None:
         for market, required_index in (
-            ("CN", "Shanghai Composite"),
+            ("CN", "上证指数"),
             ("HK", "Hang Seng Index"),
             ("US", "S&P 500"),
         ):
@@ -430,18 +492,634 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertNotIn("生成 fixture", html)
         self.assertIn('$("#market-date").value = "";', html)
         self.assertIn('if (data.market_date) $("#market-date").value = data.market_date;', html)
+        self.assertIn("/api/daily-market-brief/dates", html)
+        self.assertIn("/api/daily-market-brief/history-jobs", html)
+        self.assertIn("saved-date", html)
+        self.assertIn("已保存", html)
+        self.assertIn("尚未生成", html)
+        self.assertIn("pollHistoryJob", html)
+        self.assertIn("job.completed_count", html)
+        self.assertIn("job.current_market_date", html)
+        self.assertNotIn("cancelHistoryJob", html)
+        self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
 
-    def test_public_generation_date_window_is_bounded(self) -> None:
+    def test_page_generation_progress_supports_background_history_jobs(self) -> None:
+        html = render_daily_market_brief_html()
+
+        self.assertIn("历史简报任务已加入队列", html)
+        self.assertIn("setTimeout", html)
+        self.assertIn("loadSavedDates", html)
+        self.assertIn("loadBrief(\"read\")", html)
+        self.assertIn("pollGeneration", html)
+        self.assertIn("generation !== state.pollGeneration", html)
+        self.assertIn("state.jobId !== jobId", html)
+        self.assertIn("loadGeneration", html)
+        self.assertIn("new AbortController()", html)
+        self.assertGreaterEqual(html.count("signal: controller.signal"), 2)
+        self.assertIn("generation !== state.loadGeneration || controller.signal.aborted", html)
+        self.assertIn('error.name === "AbortError"', html)
+        self.assertLess(
+            html.index("generation !== state.loadGeneration || controller.signal.aborted"),
+            html.index("startHistoryJobPolling(data.job.id, data.market_date)"),
+        )
+        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();', html)
+        self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', html)
+        self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
+
+    def test_missing_report_payload_and_page_show_not_generated(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        handler._handle_daily_market_brief_read({"market": ["CN"], "date": ["2026-07-10"]})
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertEqual("missing", payload["status"])
+        self.assertEqual("missing", payload["context"]["generation_kind"])
+        html = render_daily_market_brief_html()
+        self.assertIn('if (data.status === "missing")', html)
+        self.assertIn('renderEmpty("尚未生成")', html)
+
+    def test_public_generation_allows_supported_history_and_rejects_future(self) -> None:
         now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
         _validate_public_daily_market_brief_date("CN", None, now=now)
         _validate_public_daily_market_brief_date("CN", date(2026, 7, 10), now=now)
+        self.assertEqual(date(2026, 7, 11), _validate_public_daily_market_brief_date("CN", date(2026, 7, 11), now=now))
+        self.assertEqual(date(2026, 7, 4), _validate_public_daily_market_brief_date("CN", date(2026, 7, 4), now=now))
+        self.assertEqual(date(2020, 1, 2), _validate_public_daily_market_brief_date("CN", date(2020, 1, 2), now=now))
         with self.assertRaisesRegex(ValueError, "未来日期"):
             _validate_public_daily_market_brief_date("CN", date(2026, 7, 12), now=now)
-        with self.assertRaisesRegex(ValueError, "最近 31 天"):
-            _validate_public_daily_market_brief_date("CN", date(2026, 6, 9), now=now)
-        with self.assertRaisesRegex(ValueError, "最近一个已收盘交易日"):
-            _validate_public_daily_market_brief_date("CN", date(2026, 7, 9), now=now)
+        self.assertEqual(date(2026, 7, 9), _validate_public_daily_market_brief_date("CN", date(2026, 7, 9), now=now))
+        with self.assertRaisesRegex(ValueError, "未来日期"):
+            _validate_public_daily_market_brief_date("CN", date(2026, 7, 13), now=now)
+
+    def test_historical_generate_enqueues_immediately_without_building(self) -> None:
+        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = fixed_now
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+        job = {
+            "id": 41,
+            "status": "queued",
+            "source": "web",
+            "request_type": "single",
+            "total_count": 1,
+            "completed_count": 0,
+            "items": [{"id": 52, "market": "CN", "market_date": "2026-07-09", "status": "queued"}],
+        }
+
+        with (
+            mock.patch.object(web, "datetime", clock),
+            mock.patch.object(
+                web.daily_market_jobs,
+                "create_web_history_job",
+                return_value=job,
+                create=True,
+            ) as create,
+            mock.patch.object(web, "build_daily_market_brief", side_effect=AssertionError("historical HTTP must not build")),
+        ):
+            handler._handle_daily_market_brief_generate({"market": "CN", "date": "2026-07-09"})
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.ACCEPTED, status)
+        self.assertEqual(41, payload["job"]["id"])
+        self.assertEqual("2026-07-09", payload["market_date"])
+        create.assert_called_once_with("CN", date(2026, 7, 9), max_active_jobs=3)
+
+    def test_history_job_create_accepts_only_market_and_date(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        for payload in (
+            {"market": "CN"},
+            {"market": "CN", "date": "2026-07-09", "force": True},
+            {"market": ["CN", "HK"], "date": "2026-07-09"},
+            {"market": "CN", "date": ["2026-07-08", "2026-07-09"]},
+        ):
+            handler._write_json.reset_mock()
+            handler._handle_daily_market_brief_history_job_create(payload)
+            self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
+
+    def test_history_job_create_rejects_future_and_repository_capacity_error(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(
+            web.daily_market_jobs,
+            "create_web_history_job",
+            side_effect=web.daily_market_jobs.WebHistoryJobCapacityError("web history job capacity reached"),
+            create=True,
+        ):
+            handler._handle_daily_market_brief_history_job_create({"market": "CN", "date": "2026-07-09"})
+        self.assertEqual(HTTPStatus.TOO_MANY_REQUESTS, handler._write_json.call_args.args[0])
+
+        handler._write_json.reset_mock()
+        with mock.patch.object(web, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            handler._handle_daily_market_brief_history_job_create({"market": "CN", "date": "2026-07-12"})
+        self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
+
+    def test_historical_generate_rejects_workload_controls(self) -> None:
+        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = fixed_now
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with (
+            mock.patch.object(web, "datetime", clock),
+            mock.patch.object(web.daily_market_jobs, "create_web_history_job", create=True) as create,
+        ):
+            handler._handle_daily_market_brief_generate(
+                {"market": "CN", "date": "2026-07-09", "force": True}
+            )
+
+        self.assertEqual(HTTPStatus.BAD_REQUEST, handler._write_json.call_args.args[0])
+        create.assert_not_called()
+
+    def test_history_job_create_returns_repository_deduplicated_job(self) -> None:
+        active_job = {
+            "id": 41,
+            "source": "web",
+            "status": "running",
+            "total_count": 1,
+            "completed_count": 0,
+            "items": [{"market": "CN", "market_date": "2026-07-09", "status": "running"}],
+        }
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(
+            web.daily_market_jobs,
+            "create_web_history_job",
+            return_value=active_job,
+            create=True,
+        ) as create:
+            handler._handle_daily_market_brief_history_job_create(
+                {"market": "CN", "date": "2026-07-09"}
+            )
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.ACCEPTED, status)
+        self.assertEqual(41, payload["job"]["id"])
+        self.assertEqual("running", payload["status"])
+        create.assert_called_once_with("CN", date(2026, 7, 9), max_active_jobs=3)
+
+    def test_history_job_create_reflects_existing_report_completion_status(self) -> None:
+        completed_job = {
+            "id": 44,
+            "source": "web",
+            "status": "completed",
+            "total_count": 1,
+            "completed_count": 1,
+            "skipped_count": 1,
+            "items": [{
+                "market": "CN",
+                "market_date": "2026-07-09",
+                "status": "skipped",
+                "report_id": 19,
+                "skip_reason": "existing_report",
+            }],
+        }
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(
+            web.daily_market_jobs,
+            "create_web_history_job",
+            return_value=completed_job,
+        ):
+            handler._handle_daily_market_brief_history_job_create(
+                {"market": "CN", "date": "2026-07-09"}
+            )
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.ACCEPTED, status)
+        self.assertEqual("completed", payload["status"])
+        self.assertEqual("completed", payload["job"]["status"])
+
+    def test_negative_content_length_is_rejected_without_waiting_for_a_body(self) -> None:
+        server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.WeeklyReviewWebHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        client = socket.create_connection(server.server_address, timeout=1)
+        client.settimeout(1)
+        try:
+            client.sendall(
+                b"POST /api/daily-market-brief/history-jobs HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: -1\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            response_parts = []
+            while chunk := client.recv(4096):
+                response_parts.append(chunk)
+            response = b"".join(response_parts)
+        finally:
+            client.close()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertIn(b" 400 ", response)
+        self.assertIn(b"invalid Content-Length", response)
+
+    def test_public_date_validation_uses_selected_market_local_date(self) -> None:
+        boundary = datetime(2026, 7, 12, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+        self.assertEqual(
+            date(2026, 7, 12),
+            _validate_public_daily_market_brief_date("CN", date(2026, 7, 12), now=boundary),
+        )
+        with self.assertRaisesRegex(ValueError, "未来日期"):
+            _validate_public_daily_market_brief_date("US", date(2026, 7, 12), now=boundary)
+
+    def test_history_job_read_returns_sanitized_detail_and_recent_list(self) -> None:
+        raw_job = {
+            "id": 41,
+            "request_type": "single",
+            "source": "web",
+            "status": "running",
+            "total_count": 1,
+            "completed_count": 0,
+            "succeeded_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "cancelled_count": 0,
+            "current_market": "CN",
+            "current_market_date": "2026-07-09",
+            "summary": "正在生成",
+            "worker_heartbeat_at": "2026-07-12T10:00:00+00:00",
+            "items": [{
+                "id": 52,
+                "market": "CN",
+                "market_date": "2026-07-09",
+                "status": "running",
+                "report_id": None,
+                "error_summary": None,
+                "worker_name": "secret-worker",
+                "lease_token": "secret-token",
+                "attempt_count": 3,
+            }],
+        }
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(web, "get_public_web_history_job", return_value=raw_job):
+            handler._handle_daily_market_brief_history_jobs_read({"id": ["41"]})
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertEqual(41, payload["job"]["id"])
+        self.assertNotIn("worker_heartbeat_at", payload["job"])
+        self.assertNotIn("worker_name", payload["job"]["items"][0])
+        self.assertNotIn("lease_token", payload["job"]["items"][0])
+        self.assertNotIn("attempt_count", payload["job"]["items"][0])
+
+        handler._write_json.reset_mock()
+        with mock.patch.object(web, "list_public_web_history_jobs", return_value=[raw_job]) as list_jobs:
+            handler._handle_daily_market_brief_history_jobs_read({"limit": ["5"]})
+        self.assertEqual(HTTPStatus.OK, handler._write_json.call_args.args[0])
+        self.assertEqual(1, len(handler._write_json.call_args.args[1]["jobs"]))
+        list_jobs.assert_called_once_with(limit=5)
+
+    def test_public_history_job_read_uses_public_web_filtered_repository(self) -> None:
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with mock.patch.object(web, "get_public_web_history_job", return_value=None) as get_public:
+            handler._handle_daily_market_brief_history_jobs_read({"id": ["44"]})
+
+        self.assertEqual(HTTPStatus.NOT_FOUND, handler._write_json.call_args.args[0])
+        get_public.assert_called_once_with(44)
+
+    def test_public_weekend_generation_returns_no_session(self) -> None:
+        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = fixed_now
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+
+        with (
+            mock.patch.object(web, "datetime", clock),
+            mock.patch.object(web, "_DAILY_BRIEF_GENERATION_GATE", web._DailyBriefGenerationGate(cooldown_seconds=0)),
+        ):
+            handler._handle_daily_market_brief_generate({"market": ["CN"], "date": ["2026-07-11"]})
+
+        status, payload = handler._write_json.call_args.args
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertTrue(payload["context"]["no_session"])
+        self.assertEqual("no_session", payload["context"]["source_status"]["session"]["status"])
+
+    def test_historical_generation_uses_historical_provider_and_saves(self) -> None:
+        calls = []
+
+        def historical_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            calls.append((market, market_date))
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "历史样本",
+                        "change_pct": 10.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "ok", "count": 1, "queried": 1, "usable": 1},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        first = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=historical_provider,
+        )
+        second = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 5, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertEqual([("CN", date(2026, 7, 9)), ("CN", date(2026, 7, 9))], calls)
+        self.assertEqual("historical_reconstruction", first.context["generation_kind"])
+        self.assertEqual("2026-07-09", first.context["gainers"][0]["session_date"])
+        self.assertEqual("2026-07-09", first.context["source_status"]["gainers"]["session_date"])
+        self.assertEqual(first.saved_report["id"], second.saved_report["id"])
+
+    def test_historical_indexes_keep_only_individually_exact_date_rows(self) -> None:
+        def mixed_index_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+            snapshot = fake_market_bar_loader(codes, start, end)
+            for code in codes[1:]:
+                snapshot.bars_by_code[code] = [row for row in snapshot.bars_by_code[code] if row["date"] != end]
+            return snapshot
+
+        def historical_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "历史样本",
+                        "change_pct": 5.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "ok", "count": 1},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=mixed_index_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertEqual(["SH.000001"], [row["code"] for row in result.context["indexes"]])
+        self.assertTrue(all(row["date"] == "2026-07-09" for row in result.context["indexes"]))
+        self.assertEqual("partial", result.context["source_status"]["indexes"]["status"])
+        self.assertEqual(4, len(result.context["source_status"]["indexes"]["missing"]))
+        self.assertIsNotNone(result.saved_report)
+
+    def test_historical_weekday_holiday_with_only_prior_index_bars_saves_no_session(self) -> None:
+        def holiday_index_loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+            snapshot = fake_market_bar_loader(codes, start, end)
+            for code in codes:
+                snapshot.bars_by_code[code] = [row for row in snapshot.bars_by_code[code] if row["date"] < end]
+            return snapshot
+
+        historical_provider = mock.Mock(side_effect=AssertionError("activity provider must not run for a holiday"))
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=holiday_index_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertTrue(result.context["no_session"])
+        self.assertEqual([], result.context["indexes"])
+        self.assertEqual("no_session", result.context["source_status"]["session"]["status"])
+        self.assertEqual("provider_calendar", result.context["source_status"]["session"]["reason"])
+        self.assertIn("无常规交易日", result.context["narrative"])
+        self.assertNotIn("主要数据源状态正常", result.context["narrative"])
+        self.assertNotIn("无法形成完整涨跌判断", result.context["narrative"])
+        self.assertIn("休市状态", result.markdown)
+        self.assertIsNotNone(result.saved_report)
+        historical_provider.assert_not_called()
+
+    def test_historical_save_validation_rejects_nonempty_stale_index(self) -> None:
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=False,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            use_fixture=True,
+        )
+        result.context["indexes"][0]["date"] = "2026-07-08"
+
+        with self.assertRaisesRegex(ValueError, "历史指数日期未通过校验"):
+            dmb._validate_daily_market_brief_context_for_save(result.context)
+
+    def test_partial_timed_out_historical_activity_with_exact_rows_saves(self) -> None:
+        def partial_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "超时前样本",
+                        "change_pct": 5.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "timed_out", "count": 1, "usable": 1, "timed_out": True},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 9),
+            save=True,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=partial_provider,
+        )
+
+        self.assertEqual("timed_out", result.context["source_status"]["gainers"]["status"])
+        self.assertEqual("2026-07-09", result.context["gainers"][0]["session_date"])
+        self.assertIsNotNone(result.saved_report)
+        self.assertIn("历史数据获取超时，已保留可用结果", result.markdown)
+        self.assertNotIn("timed_out", result.markdown)
+        html = render_daily_market_brief_html()
+        self.assertIn('timed_out: "历史数据获取超时，已保留可用结果"', html)
+
+    def test_historical_gap_statuses_are_named_in_narrative(self) -> None:
+        def partial_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "历史样本",
+                        "change_pct": 5.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "timed_out", "count": 1, "usable": 1},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        result = dmb.build_daily_market_brief(
+            "HK",
+            date(2026, 7, 9),
+            save=False,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=partial_provider,
+        )
+
+        self.assertIn("需要注意的数据缺口", result.context["narrative"])
+        self.assertIn("sectors", result.context["narrative"])
+        self.assertIn("gainers", result.context["narrative"])
+        self.assertIn("capital_flow", result.context["narrative"])
+        self.assertNotIn("主要数据源状态正常", result.context["narrative"])
+
+    def test_current_session_generation_keeps_spot_provider(self) -> None:
+        spot_provider = mock.Mock(return_value=dmb._empty_activity("CN"))
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 10),
+            save=False,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            activity_provider=spot_provider,
+        )
+
+        spot_provider.assert_called_once_with("CN", date(2026, 7, 10))
+        self.assertEqual("live_rerun", result.context["generation_kind"])
+
+    def test_future_generation_fails_before_save(self) -> None:
+        with self.assertRaisesRegex(ValueError, "未来日期"):
+            dmb.build_daily_market_brief(
+                "CN",
+                date(2026, 7, 13),
+                save=True,
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+            )
+
+        self.assertEqual({}, self.fake_repository.rows)
+
+    def test_historical_weekend_preserves_no_session_state(self) -> None:
+        historical_provider = mock.Mock(side_effect=AssertionError("provider must not run for a weekend"))
+
+        result = dmb.build_daily_market_brief(
+            "CN",
+            date(2026, 7, 4),
+            save=False,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            historical_activity_provider=historical_provider,
+        )
+
+        self.assertTrue(result.context["no_session"])
+        self.assertEqual("historical_reconstruction", result.context["generation_kind"])
+        historical_provider.assert_not_called()
+
+    def test_historical_provider_timeout_does_not_save_empty_report(self) -> None:
+        def timeout_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            raise TimeoutError("upstream timed out")
+
+        with self.assertRaisesRegex(ValueError, "历史市场活动数据暂不可用"):
+            dmb.build_daily_market_brief(
+                "CN",
+                date(2026, 7, 9),
+                save=True,
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+                historical_activity_provider=timeout_provider,
+            )
+
+        self.assertEqual({}, self.fake_repository.rows)
+
+    def test_historical_generation_rejects_mismatched_activity_date_before_save(self) -> None:
+        def mismatched_provider(market: str, market_date: date) -> HistoricalActivityResult:
+            return HistoricalActivityResult(
+                sectors=[],
+                gainers=[
+                    {
+                        "rank": 1,
+                        "code": "000001",
+                        "name": "日期不符样本",
+                        "change_pct": 10.0,
+                        "turnover": 100_000_000,
+                        "provider": "fixture_history",
+                        "session_date": market_date.isoformat(),
+                    }
+                ],
+                capital_flow=[],
+                source_status={
+                    "sectors": {"status": "historical_not_supported", "count": 0},
+                    "gainers": {"status": "ok", "count": 1, "session_date": "2026-07-08"},
+                    "capital_flow": {"status": "historical_not_supported", "count": 0},
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "历史数据日期未通过校验"):
+            dmb.build_daily_market_brief(
+                "CN",
+                date(2026, 7, 9),
+                save=True,
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+                historical_activity_provider=mismatched_provider,
+            )
+
+        self.assertEqual({}, self.fake_repository.rows)
 
     def test_historical_live_generation_does_not_use_spot_rankings(self) -> None:
         def unexpected_activity(market: str, market_date: date) -> dict:
@@ -460,7 +1138,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual("historical_not_supported", result.context["source_status"]["sectors"]["status"])
         self.assertIn("历史榜单", result.markdown)
 
-    def test_historical_live_rerun_cannot_overwrite_saved_rankings(self) -> None:
+    def test_historical_provider_failure_cannot_overwrite_saved_rankings(self) -> None:
         original = dmb.build_daily_market_brief(
             market="CN",
             market_date=date(2026, 6, 30),
@@ -470,7 +1148,7 @@ class DailyMarketBriefTests(unittest.TestCase):
             now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
         )
 
-        with self.assertRaisesRegex(ValueError, "不能用实时榜单重跑历史日期"):
+        with self.assertRaisesRegex(ValueError, "历史市场活动数据暂不可用"):
             dmb.build_daily_market_brief(
                 market="CN",
                 market_date=date(2026, 6, 30),
@@ -517,6 +1195,35 @@ class DailyMarketBriefTests(unittest.TestCase):
         second = gate.try_acquire(("CN", "2026-07-10"))
         self.assertIsNotNone(second)
         second.release()
+
+    def test_public_generation_uses_one_request_timestamp_for_all_date_decisions(self) -> None:
+        fixed_now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = fixed_now
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler._write_json = mock.Mock()
+        generated = types.SimpleNamespace(
+            context={"market": {"code": "CN"}, "market_date": "2026-07-10"},
+            markdown="current",
+            saved_report={"id": 1},
+        )
+        validate = web._validate_public_daily_market_brief_date
+        resolve_latest = web.resolve_latest_completed_session_date
+
+        with (
+            mock.patch.object(web, "datetime", clock),
+            mock.patch.object(web, "_DAILY_BRIEF_GENERATION_GATE", web._DailyBriefGenerationGate(cooldown_seconds=0)),
+            mock.patch.object(web, "_validate_public_daily_market_brief_date", wraps=validate) as validate_call,
+            mock.patch.object(web, "resolve_latest_completed_session_date", wraps=resolve_latest) as latest_call,
+            mock.patch.object(web, "build_daily_market_brief", return_value=generated) as build,
+        ):
+            handler._handle_daily_market_brief_generate({"market": ["CN"], "date": ["2026-07-10"]})
+
+        self.assertEqual(1, clock.now.call_count)
+        self.assertEqual(fixed_now, validate_call.call_args.kwargs["now"])
+        self.assertTrue(latest_call.call_args_list)
+        self.assertTrue(all(call.kwargs.get("now") == fixed_now for call in latest_call.call_args_list))
+        self.assertEqual(fixed_now, build.call_args.kwargs["now"])
 
     def test_schema_and_repository_keep_daily_brief_upsert_concurrency_safe(self) -> None:
         root = Path(__file__).resolve().parents[1]

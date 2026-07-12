@@ -460,3 +460,120 @@ CREATE INDEX IF NOT EXISTS idx_research_jobs_symbol_market
 CREATE UNIQUE INDEX IF NOT EXISTS idx_research_jobs_active_unique
   ON research_jobs(symbol, market)
   WHERE status IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS daily_market_brief_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  request_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  force_refresh BOOLEAN NOT NULL DEFAULT false,
+  total_count INTEGER NOT NULL DEFAULT 0,
+  completed_count INTEGER NOT NULL DEFAULT 0,
+  succeeded_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  cancelled_count INTEGER NOT NULL DEFAULT 0,
+  current_market TEXT,
+  current_market_date DATE,
+  summary TEXT,
+  cancel_requested_at TIMESTAMPTZ,
+  worker_heartbeat_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  CHECK (request_type IN ('single', 'batch')),
+  CHECK (source IN ('web', 'command', 'scheduler_recovery', 'agent')),
+  CHECK (status IN ('queued', 'running', 'completed', 'partial', 'failed', 'cancelled')),
+  CHECK (total_count >= 0),
+  CHECK (completed_count >= 0),
+  CHECK (succeeded_count >= 0),
+  CHECK (skipped_count >= 0),
+  CHECK (failed_count >= 0),
+  CHECK (cancelled_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS daily_market_brief_job_items (
+  id BIGSERIAL PRIMARY KEY,
+  job_id BIGINT NOT NULL REFERENCES daily_market_brief_jobs(id) ON DELETE CASCADE,
+  market TEXT NOT NULL,
+  market_date DATE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  report_id BIGINT REFERENCES review_reports(id) ON DELETE SET NULL,
+  skip_reason TEXT,
+  error_code TEXT,
+  error_summary TEXT,
+  worker_name TEXT,
+  lease_token TEXT,
+  claimed_at TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (job_id, market, market_date),
+  CHECK (status IN ('queued', 'running', 'completed', 'skipped', 'failed', 'cancelled')),
+  CHECK (attempt_count >= 0)
+);
+
+ALTER TABLE daily_market_brief_jobs
+  ADD COLUMN IF NOT EXISTS cancelled_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE daily_market_brief_job_items
+  ADD COLUMN IF NOT EXISTS error_code TEXT;
+
+ALTER TABLE daily_market_brief_job_items
+  ADD COLUMN IF NOT EXISTS lease_token TEXT;
+
+UPDATE daily_market_brief_jobs AS job
+SET
+  total_count = aggregates.total_count,
+  completed_count = aggregates.completed_count,
+  succeeded_count = aggregates.succeeded_count,
+  skipped_count = aggregates.skipped_count,
+  failed_count = aggregates.failed_count,
+  cancelled_count = aggregates.cancelled_count
+FROM (
+  SELECT
+    item.job_id,
+    count(*)::integer AS total_count,
+    count(*) FILTER (WHERE item.status IN ('completed', 'skipped', 'failed', 'cancelled'))::integer AS completed_count,
+    count(*) FILTER (WHERE item.status = 'completed')::integer AS succeeded_count,
+    count(*) FILTER (WHERE item.status = 'skipped')::integer AS skipped_count,
+    count(*) FILTER (WHERE item.status = 'failed')::integer AS failed_count,
+    count(*) FILTER (WHERE item.status = 'cancelled')::integer AS cancelled_count
+  FROM daily_market_brief_job_items AS item
+  GROUP BY item.job_id
+) AS aggregates
+WHERE job.id = aggregates.job_id;
+
+DO $$
+BEGIN
+  ALTER TABLE daily_market_brief_jobs
+    DROP CONSTRAINT IF EXISTS daily_market_brief_jobs_aggregate_counts_check;
+  ALTER TABLE daily_market_brief_jobs
+    ADD CONSTRAINT daily_market_brief_jobs_aggregate_counts_check
+    CHECK (completed_count = succeeded_count + skipped_count + failed_count + cancelled_count);
+
+  ALTER TABLE daily_market_brief_jobs
+    DROP CONSTRAINT IF EXISTS daily_market_brief_jobs_completed_total_check;
+  ALTER TABLE daily_market_brief_jobs
+    ADD CONSTRAINT daily_market_brief_jobs_completed_total_check
+    CHECK (completed_count <= total_count);
+
+  ALTER TABLE daily_market_brief_job_items
+    DROP CONSTRAINT IF EXISTS daily_market_brief_job_items_error_code_check;
+  ALTER TABLE daily_market_brief_job_items
+    ADD CONSTRAINT daily_market_brief_job_items_error_code_check
+    CHECK (error_code IS NULL OR error_code IN ('generation_failed', 'provider_timeout', 'provider_unavailable', 'historical_data_unavailable'));
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_daily_market_brief_jobs_created_at
+  ON daily_market_brief_jobs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_daily_market_brief_job_items_active
+  ON daily_market_brief_job_items(status, created_at ASC)
+  WHERE status IN ('queued', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_market_brief_job_items_active_unique
+  ON daily_market_brief_job_items(market, market_date)
+  WHERE status IN ('queued', 'running');

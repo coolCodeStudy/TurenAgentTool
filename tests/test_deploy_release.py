@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import json
 import os
+import re
 import subprocess
 import tarfile
 from contextlib import contextmanager
@@ -1277,6 +1278,29 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(any("rm postgres" in command for command in rendered))
         self.assertFalse(any(" down" in f" {command}" for command in rendered))
 
+    def test_history_worker_target_is_recreated_without_postgresql(self) -> None:
+        self.plan = replace(
+            self.plan,
+            targets=("daily-market-brief-history-worker",),
+        )
+        request = replace(
+            self.targeted_request,
+            requested_targets=("daily-market-brief-history-worker",),
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        rendered = [" ".join(_without_compose_file(command)) for command in self.runner.commands]
+        self.assertTrue(
+            any(
+                "docker compose up -d --no-deps --force-recreate daily-market-brief-history-worker"
+                in command
+                for command in rendered
+            )
+        )
+        self.assertFalse(any("force-recreate postgres" in command for command in rendered))
+
     def test_emergency_override_cannot_target_postgresql(self) -> None:
         request = replace(
             self.targeted_request,
@@ -1891,6 +1915,35 @@ class DockerHealthCheckerTests(TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def test_history_worker_compose_contract_is_private_and_uses_container_database(self) -> None:
+        source = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
+        start = source.index("  daily-market-brief-history-worker:\n")
+        worker = source[start:source.index("\nvolumes:\n", start)]
+
+        self.assertIn("image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}", worker)
+        self.assertIn("restart: unless-stopped", worker)
+        self.assertIn("POSTGRES_HOST: postgres", worker)
+        self.assertIn("POSTGRES_PORT: 5432", worker)
+        self.assertNotIn("ports:", worker)
+        self.assertIn("scripts/daily_market_brief_history_worker.py", worker)
+
+    def test_history_worker_compose_entrypoint_exists_in_integrated_checkout(self) -> None:
+        source = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
+        start = source.index("  daily-market-brief-history-worker:\n")
+        worker = source[start:source.index("\nvolumes:\n", start)]
+        script_paths = re.findall(r"python (scripts/[A-Za-z0-9_./-]+\.py)", worker)
+
+        self.assertEqual(
+            ["scripts/init_db.py", "scripts/daily_market_brief_history_worker.py"],
+            script_paths,
+        )
+        for script_path in script_paths:
+            with self.subTest(script_path=script_path):
+                self.assertTrue(
+                    Path(script_path).is_file(),
+                    "integrate the Async Task 2 worker commit before deploying this wiring",
+                )
+
     def test_exact_target_and_aggregate_health_routes_are_checked(self) -> None:
         self.health.check_service("weekly-review-web", ("/daily-market-brief",))
         self.health.check_service("command-api", ())
@@ -2021,6 +2074,23 @@ class DockerHealthCheckerTests(TestCase):
 
         with self.assertRaisesRegex(DeploymentHealthError, "startup failure"):
             self.health.check_service("account-snapshot-scheduler", ())
+
+    def test_history_worker_health_checks_running_state_and_startup_logs(self) -> None:
+        self.health.check_service("daily-market-brief-history-worker", ())
+
+        rendered = [" ".join(command) for command in self.runner.commands]
+        self.assertTrue(
+            any(
+                "ps --status running --format json daily-market-brief-history-worker" in command
+                for command in rendered
+            )
+        )
+        self.assertTrue(
+            any(
+                "logs --no-color --tail 200 daily-market-brief-history-worker" in command
+                for command in rendered
+            )
+        )
 
     def test_mcp_target_rejects_not_found_transport(self) -> None:
         command = (

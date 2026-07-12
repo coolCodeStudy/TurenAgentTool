@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/classify_deploy_
 APPLICATION_SERVICES = (
     "account-snapshot-scheduler",
     "command-api",
+    "daily-market-brief-history-worker",
     "daily-market-brief-scheduler",
     "dingtalk-api",
     "dingtalk-stream-bot",
@@ -100,6 +101,12 @@ PATH_RULES = (
     ),
     PathRule("scripts/ecs_ops_api.py", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
     PathRule(
+        "scripts/daily_market_brief_history_worker.py",
+        DeployMode.TARGETED_QUICK,
+        ("daily-market-brief-history-worker",),
+        "daily market brief history worker runtime",
+    ),
+    PathRule(
         "scripts/dingtalk_stream_bot.py",
         DeployMode.TARGETED_QUICK,
         ("dingtalk-stream-bot",),
@@ -108,7 +115,15 @@ PATH_RULES = (
     PathRule(
         "scripts/init_db.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        (
+            "command-api",
+            "daily-market-brief-history-worker",
+            "daily-market-brief-scheduler",
+            "dingtalk-api",
+            "dingtalk-stream-bot",
+            "mcp",
+            "weekly-review-web",
+        ),
         "database initialization runtime",
     ),
     PathRule("investment_knowledge_mcp/weekly_review_web.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "weekly review web"),
@@ -127,7 +142,15 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/daily_market_brief.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "daily-market-brief-scheduler", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        (
+            "command-api",
+            "daily-market-brief-history-worker",
+            "daily-market-brief-scheduler",
+            "dingtalk-api",
+            "dingtalk-stream-bot",
+            "mcp",
+            "weekly-review-web",
+        ),
         "shared command logic",
     ),
     PathRule(
@@ -247,9 +270,11 @@ def _compose_image_inputs_changed(repo: Path, base_sha: str, target_sha: str, ru
         target_path = Path(directory) / "target.yml"
         base_path.write_text(base_compose, encoding="utf-8")
         target_path.write_text(target_compose, encoding="utf-8")
-        return _compose_image_inputs(_compose_config(base_path, runner)) != _compose_image_inputs(
-            _compose_config(target_path, runner)
-        )
+        base_inputs = dict(_compose_image_inputs(_compose_config(base_path, runner)))
+        target_inputs = dict(_compose_image_inputs(_compose_config(target_path, runner)))
+        if base_inputs == target_inputs:
+            return False
+        return not _is_allowed_history_worker_addition(base_inputs, target_inputs)
 
 
 def _git_show(repo: Path, sha: str, runner: CommandRunner) -> str:
@@ -285,6 +310,19 @@ def _compose_image_inputs(compose_config: dict[str, object]) -> tuple[tuple[str,
         image_input = {key: service.get(key) for key in ("image", "build", "platform") if key in service}
         inputs.append((name, json.dumps(image_input, sort_keys=True, separators=(",", ":"))))
     return tuple(sorted(inputs))
+
+
+def _is_allowed_history_worker_addition(
+    base_inputs: dict[str, str], target_inputs: dict[str, str]
+) -> bool:
+    worker = "daily-market-brief-history-worker"
+    if set(target_inputs) - set(base_inputs) != {worker}:
+        return False
+    if set(base_inputs) - set(target_inputs):
+        return False
+    if any(target_inputs.get(service) != recipe for service, recipe in base_inputs.items()):
+        return False
+    return target_inputs[worker] in base_inputs.values()
 
 
 def _rule_for(path: str) -> PathRule | None:

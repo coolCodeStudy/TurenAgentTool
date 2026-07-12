@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -10,9 +11,11 @@ from investment_knowledge_mcp.command_router import (
     handle_command,
     is_candidate_write_command,
     is_coding_task_command,
+    is_daily_market_history_controlled_command,
     is_maintenance_command,
     is_query_command,
     is_research_write_command,
+    safe_public_command_message,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
@@ -38,6 +41,11 @@ from investment_knowledge_mcp.system_overview import build_system_overview, rend
 
 
 config = get_config()
+logger = logging.getLogger(__name__)
+PUBLIC_COMMAND_FAILURE_MESSAGE = (
+    "执行 InvestmentKnowledge 指令失败，请稍后重试。 "
+    "Investment command failed. Please retry later."
+)
 mcp = FastMCP(
     "InvestmentKnowledge",
     host=config.mcp_host,
@@ -436,9 +444,9 @@ def run_investment_command(
     """Run a safe natural-language InvestmentKnowledge command for an agent shell.
 
     This tool is intended for controlled agent shells. It permits
-    query commands, Futu maintenance commands, candidate-memory proposals, and
-    explicit candidate confirmation/rejection. Direct formal memory writes remain
-    blocked.
+    query commands, controlled Daily Market Brief history jobs, Futu maintenance
+    commands, candidate-memory proposals, and explicit candidate confirmation or
+    rejection. Direct formal memory writes remain blocked.
     """
     cleaned = command.strip()
     if not cleaned:
@@ -455,23 +463,31 @@ def run_investment_command(
     try:
         run_schema()
         result = handle_command(cleaned, include_artifact_path=False)
+        response_message = safe_public_command_message(result, PUBLIC_COMMAND_FAILURE_MESSAGE)
         _record_agent_command(
             command=cleaned,
             ok=result.ok,
-            message=result.message,
+            message=response_message,
             sender=sender,
             source=source,
         )
-        return {"ok": result.ok, "message": result.message}
-    except Exception as exc:
-        message = f"执行 InvestmentKnowledge 指令失败：{exc}"
-        _record_agent_command(command=cleaned, ok=False, message=message, sender=sender, source=source)
-        return {"ok": False, "message": message}
+        return {"ok": result.ok, "message": response_message}
+    except Exception:
+        logger.exception("Controlled InvestmentKnowledge command failed")
+        _record_agent_command(
+            command=cleaned,
+            ok=False,
+            message=PUBLIC_COMMAND_FAILURE_MESSAGE,
+            sender=sender,
+            source=source,
+        )
+        return {"ok": False, "message": PUBLIC_COMMAND_FAILURE_MESSAGE}
 
 
 def _is_safe_agent_command(command: str) -> bool:
     return bool(
         is_query_command(command)
+        or is_daily_market_history_controlled_command(command)
         or is_maintenance_command(command)
         or is_candidate_write_command(command)
         or is_coding_task_command(command)

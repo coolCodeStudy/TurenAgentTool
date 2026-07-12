@@ -10,14 +10,18 @@ import re
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from investment_knowledge_mcp import repository
+from investment_knowledge_mcp import daily_market_jobs, repository
 from investment_knowledge_mcp.analysis_provider import (
     generate_portfolio_analysis_with_openai,
     generate_stock_analysis_with_openai,
     route_command_intent_with_openai,
 )
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
-from investment_knowledge_mcp.daily_market_brief import build_daily_market_brief, get_daily_market_brief_report
+from investment_knowledge_mcp.daily_market_brief import (
+    build_daily_market_brief,
+    get_daily_market_brief_report,
+    resolve_latest_completed_session_date,
+)
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
     get_futu_cash_flows,
@@ -78,6 +82,14 @@ DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT = 1
 DEFAULT_RESEARCH_JOB_REQUEUE_LIMIT = 1
 MAX_RESEARCH_JOB_REQUEUE_LIMIT = 3
 DEFAULT_MAX_ACTIVE_CODEX_RESEARCH_JOBS = 1
+DAILY_MARKET_HISTORY_MAX_ITEMS = 120
+DAILY_MARKET_BRIEF_PAGE_PATH = "/daily-market-brief"
+DAILY_MARKET_HISTORY_ERROR_MESSAGES = {
+    "generation_failed": "历史市场简报生成失败，请稍后重试。",
+    "provider_timeout": "历史数据源响应超时，请稍后重试。",
+    "provider_unavailable": "历史数据源暂时不可用，请稍后重试。",
+    "historical_data_unavailable": "未找到该市场日期的可用历史数据。",
+}
 CHINESE_MONTHS = {
     "一": 1,
     "二": 2,
@@ -104,6 +116,24 @@ _DATE_TOKEN_RE = re.compile(
 class CommandResult:
     ok: bool
     message: str
+
+
+_SENSITIVE_COMMAND_MESSAGE_RE = re.compile(
+    r"postgres(?:ql)?://|Traceback|"
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP)\b|"
+    r"password\s*=|secret|token|private_table|"
+    r"/(?:Users|app|opt|srv|private|tmp)/|"
+    r"psycopg|SSL|ConnectionError|RuntimeError",
+    flags=re.IGNORECASE,
+)
+
+
+def safe_public_command_message(result: CommandResult, fallback: str) -> str:
+    if result.ok:
+        return result.message
+    if _SENSITIVE_COMMAND_MESSAGE_RE.search(result.message or ""):
+        return fallback
+    return result.message
 
 
 PORTFOLIO_POSITION_COMMANDS = {
@@ -575,6 +605,21 @@ def handle_command(
     if cleaned in {"港股新股", "港股IPO", "港股ipo", "新股", "ipo", "IPO"}:
         return _handle_hk_ipos()
 
+    history_cancel_match = re.fullmatch(r"取消每日市场简报任务\s+#?(\d+)", cleaned)
+    if history_cancel_match:
+        return _handle_daily_market_history_cancel(int(history_cancel_match.group(1)))
+
+    history_status_match = re.fullmatch(r"每日市场简报任务\s+#?(\d+)", cleaned)
+    if history_status_match:
+        return _handle_daily_market_history_status(int(history_status_match.group(1)))
+
+    if re.match(r"^(?:强制)?补齐每日市场简报(?:\s|$)", cleaned):
+        try:
+            history_job_match = _match_daily_market_history_job_command(cleaned)
+        except ValueError as exc:
+            return CommandResult(ok=False, message=str(exc))
+        return _handle_daily_market_history_create(history_job_match)
+
     daily_market_brief_match = _match_daily_market_brief_command(cleaned)
     if daily_market_brief_match is not None:
         return _handle_daily_market_brief(daily_market_brief_match)
@@ -724,6 +769,7 @@ def is_query_command(command: str) -> bool:
             normalized,
             flags=re.IGNORECASE,
         )
+        or re.fullmatch(r"每日市场简报任务\s+#?\d+", normalized)
         or _match_weekly_review_command(normalized) is not None
         or _match_next_week_command(normalized) is not None
         or _extract_stock_query(normalized) is not None
@@ -2294,6 +2340,241 @@ def _match_daily_market_brief_command(command: str) -> dict[str, Any] | None:
     }
 
 
+def _match_daily_market_history_job_command(
+    command: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    compact = command.strip()
+    match = re.fullmatch(
+        r"(?P<force>强制)?补齐每日市场简报\s+(?P<markets>.+?)\s+"
+        r"(?:(?P<start>\d{4}-\d{1,2}-\d{1,2})\s*(?:到|至)\s*(?P<end>\d{4}-\d{1,2}-\d{1,2})|"
+        r"最近\s*(?P<recent>\d{1,4})\s*个?交易日)",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        if re.match(r"^(?:强制)?补齐每日市场简报(?:\s|$)", compact):
+            raise ValueError(
+                "补齐指令格式不正确。例如：补齐每日市场简报 CN 2026-07-01 到 2026-07-10。"
+            )
+        return None
+
+    markets = _parse_daily_market_history_markets(match.group("markets"))
+    market_dates: dict[str, list[date]] = {}
+    if match.group("recent"):
+        recent_count = int(match.group("recent"))
+        if recent_count < 1:
+            raise ValueError("最近交易日数量必须大于 0。")
+        current = now or _daily_market_history_now()
+        for market in markets:
+            latest_completed = resolve_latest_completed_session_date(market, now=current)
+            market_dates[market] = _recent_weekdays(recent_count, end=latest_completed - timedelta(days=1))
+    else:
+        try:
+            start = date.fromisoformat(match.group("start"))
+            end = date.fromisoformat(match.group("end"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("日期格式必须为 YYYY-MM-DD。") from exc
+        if end < start:
+            raise ValueError("结束日期不能早于开始日期。")
+        dates = _weekdays_between(start, end)
+        for market in markets:
+            market_dates[market] = list(dates)
+
+    pairs = [
+        (market, market_date)
+        for market in markets
+        for market_date in market_dates.get(market, [])
+    ]
+    if not pairs:
+        raise ValueError("所选范围内没有工作日。")
+    item_count = len(pairs)
+    if item_count > DAILY_MARKET_HISTORY_MAX_ITEMS:
+        raise ValueError(
+            f"一次最多 {DAILY_MARKET_HISTORY_MAX_ITEMS} 个市场/日期项目；当前为 {item_count} 个，请拆分任务。"
+        )
+    return {
+        "markets": markets,
+        "market_dates": market_dates,
+        "pairs": pairs,
+        "force_refresh": bool(match.group("force")),
+        "calendar_note": "交易日按各市场最近已收盘时点和工作日估算；节假日由历史生成任务的数据校验确认。",
+    }
+
+
+def _parse_daily_market_history_markets(value: str) -> list[str]:
+    aliases = {
+        "CN": "CN",
+        "A股": "CN",
+        "沪深": "CN",
+        "HK": "HK",
+        "港股": "HK",
+        "香港": "HK",
+        "US": "US",
+        "美股": "US",
+        "美国": "US",
+    }
+    result: list[str] = []
+    for token in re.split(r"[,，、/\s]+", value.strip()):
+        if not token:
+            continue
+        market = aliases.get(token.upper()) or aliases.get(token)
+        if market is None:
+            raise ValueError(f"不支持的市场：{token}。仅支持 CN/A股、HK/港股、US/美股。")
+        if market not in result:
+            result.append(market)
+    if not result:
+        raise ValueError("请至少指定一个市场：CN、HK 或 US。")
+    return result
+
+
+def _weekdays_between(start: date, end: date) -> list[date]:
+    result: list[date] = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5:
+            result.append(current)
+        current += timedelta(days=1)
+    return result
+
+
+def _recent_weekdays(count: int, *, end: date) -> list[date]:
+    result: list[date] = []
+    current = end
+    while len(result) < count:
+        if current.weekday() < 5:
+            result.append(current)
+        current -= timedelta(days=1)
+    return list(reversed(result))
+
+
+def _daily_market_history_now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai"))
+
+
+def is_daily_market_history_controlled_command(command: str) -> bool:
+    compact = command.strip()
+    if re.fullmatch(r"每日市场简报任务\s+#?\d+", compact):
+        return True
+    if re.fullmatch(r"取消每日市场简报任务\s+#?\d+", compact):
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:强制)?补齐每日市场简报\s+.+?\s+"
+            r"(?:\d{4}-\d{1,2}-\d{1,2}\s*(?:到|至)\s*\d{4}-\d{1,2}-\d{1,2}|"
+            r"最近\s*\d{1,4}\s*个?交易日)",
+            compact,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _handle_daily_market_history_create(match: dict[str, Any]) -> CommandResult:
+    jobs: list[dict[str, Any]] = []
+    for market in match["markets"]:
+        dates = match["market_dates"].get(market) or []
+        if not dates:
+            continue
+        try:
+            job = daily_market_jobs.create_history_job(
+                [market],
+                dates,
+                request_type="batch",
+                source="command",
+                force_refresh=bool(match.get("force_refresh")),
+                max_items=DAILY_MARKET_HISTORY_MAX_ITEMS,
+            )
+        except Exception:
+            if jobs:
+                created_ids = "、".join(f"#{item.get('id')}" for item in jobs)
+                return CommandResult(
+                    ok=False,
+                    message=f"部分任务已创建（{created_ids}），其余每日市场简报历史任务创建失败，请稍后重试。",
+                )
+            return CommandResult(ok=False, message="每日市场简报历史任务创建失败，请稍后重试。")
+        jobs.append(job)
+
+    job_ids = "、".join(f"#{job.get('id')}" for job in jobs)
+    total_count = sum(int(job.get("total_count") or len(job.get("items") or [])) for job in jobs)
+    skipped_count = sum(int(job.get("skipped_count") or 0) for job in jobs)
+    deduplicated_count = sum(len(job.get("deduplicated_items") or []) for job in jobs)
+    mode = "强制刷新" if match.get("force_refresh") else "跳过已有报告"
+    return CommandResult(
+        ok=True,
+        message=(
+            f"已创建每日市场简报历史任务 {job_ids}。\n"
+            f"项目 {total_count} 个，已跳过 {skipped_count} 个，去重 {deduplicated_count} 个。\n"
+            f"模式：{mode}。\n"
+            f"日期说明：{match.get('calendar_note')}\n"
+            f"进度页面：{DAILY_MARKET_BRIEF_PAGE_PATH}"
+        ),
+    )
+
+
+def _handle_daily_market_history_status(job_id: int) -> CommandResult:
+    try:
+        job = daily_market_jobs.get_history_job(job_id)
+    except Exception:
+        return CommandResult(ok=False, message="每日市场简报任务状态暂时无法读取，请稍后重试。")
+    if job is None:
+        return CommandResult(ok=False, message=f"没有找到每日市场简报任务 #{job_id}。")
+    return CommandResult(ok=True, message=_render_daily_market_history_job(job))
+
+
+def _handle_daily_market_history_cancel(job_id: int) -> CommandResult:
+    try:
+        job = daily_market_jobs.request_history_job_cancel(job_id)
+    except Exception:
+        return CommandResult(ok=False, message="每日市场简报任务取消失败，请稍后重试。")
+    if job is None:
+        return CommandResult(ok=False, message=f"任务 #{job_id} 不存在或已结束，无法取消。")
+    return CommandResult(
+        ok=True,
+        message=f"已请求取消任务 #{job_id}。正在执行的单项将在安全检查点结束。\n进度页面：{DAILY_MARKET_BRIEF_PAGE_PATH}",
+    )
+
+
+def _render_daily_market_history_job(job: dict[str, Any]) -> str:
+    job_id = job.get("id")
+    total = int(job.get("total_count") or 0)
+    completed = int(job.get("completed_count") or 0)
+    lines = [
+        f"每日市场简报任务 #{job_id}",
+        f"状态：{_daily_market_history_status_label(job.get('status'))}",
+        f"进度：{completed}/{total}",
+        (
+            "结果："
+            f"成功 {int(job.get('succeeded_count') or 0)}，"
+            f"跳过 {int(job.get('skipped_count') or 0)}，"
+            f"失败 {int(job.get('failed_count') or 0)}，"
+            f"取消 {int(job.get('cancelled_count') or 0)}"
+        ),
+    ]
+    if job.get("current_market") and job.get("current_market_date"):
+        lines.append(f"当前：{job['current_market']} {job['current_market_date']}")
+    failures = [item for item in (job.get("items") or []) if item.get("status") == "failed"]
+    for item in failures[:10]:
+        public_message = DAILY_MARKET_HISTORY_ERROR_MESSAGES.get(
+            str(item.get("error_code") or ""),
+            DAILY_MARKET_HISTORY_ERROR_MESSAGES["generation_failed"],
+        )
+        lines.append(f"失败项：{item.get('market')} {item.get('market_date')} - {public_message}")
+    lines.append(f"进度页面：{DAILY_MARKET_BRIEF_PAGE_PATH}")
+    return "\n".join(lines)
+
+
+def _daily_market_history_status_label(status: Any) -> str:
+    return {
+        "queued": "排队中",
+        "running": "执行中",
+        "completed": "已完成",
+        "partial": "部分完成",
+        "failed": "失败",
+        "cancelled": "已取消",
+    }.get(str(status or ""), "未知")
+
+
 def _extract_daily_market_brief_market(command: str) -> str | None:
     patterns = [
         (r"\bCN\b|A股|沪深|A\s*-?\s*shares?", "CN"),
@@ -2320,8 +2601,8 @@ def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
                 save=True,
                 use_fixture=bool(match.get("use_fixture")),
             )
-        except Exception as exc:
-            return CommandResult(ok=False, message=f"生成每日市场简报失败：{exc}")
+        except Exception:
+            return CommandResult(ok=False, message="生成每日市场简报失败，请稍后重试。")
         footer = ""
         if result.saved_report is not None:
             footer = f"\n\n已保存每日市场简报：review_reports #{result.saved_report.get('id')}"
@@ -2329,8 +2610,8 @@ def _handle_daily_market_brief(match: dict[str, Any]) -> CommandResult:
 
     try:
         report = get_daily_market_brief_report(market=market, market_date=market_date)
-    except Exception as exc:
-        return CommandResult(ok=False, message=f"读取每日市场简报失败：{exc}")
+    except Exception:
+        return CommandResult(ok=False, message="读取每日市场简报失败，请稍后重试。")
     if not report:
         date_hint = f" {market_date.isoformat()}" if market_date else ""
         return CommandResult(

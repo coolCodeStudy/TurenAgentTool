@@ -65,8 +65,16 @@ P0 output surface:
 - Persist each brief as a structured `review_reports` entry with report type `daily_market_brief`.
 - Add command retrieval for latest and specific market/date briefs. The exact command parser wording is an Engineering detail, but the user-facing intent must support "show latest daily market brief for CN/HK/US" and "show daily market brief for market/date".
 - Provide a Web review page so the user can inspect and accept the feature without running CLI commands. The page may extend the existing Weekly Review Web service as long as it has a direct `/daily-market-brief` route and read/generate controls for CN/HK/US.
-- Keep Daily Market Brief read and live-generation actions available without an access token. Do not expose fixture generation on the public page. Public live generation accepts only the selected market's latest completed session, rejects future or older dates, and applies per-market/date single-flight plus cooldown protection; command and scheduler paths retain broader operational rerun controls. Historical reads remain available, while live spot rankings are never written into a historical report.
+- Keep Daily Market Brief read and live-generation actions available without an access token. Do not expose fixture generation on the public page. Public current-session live generation accepts only the selected market's latest completed session, rejects future dates, and applies per-market/date single-flight plus cooldown protection. When the user selects an older market date, the public page enqueues a persistent single-date historical reconstruction job and returns immediately; the background worker may create a partial historical report using real historical index data plus clearly labeled missing sector, gainer, and flow coverage when exact historical provider data is unavailable. Command and scheduler paths retain broader operational rerun controls.
 - Store structured context, source status, generated Markdown, market, market date, provider labels, and generation timestamp so the brief can be regenerated, inspected, and rendered consistently.
+
+## Historical Access
+
+Approved 2026-07-12: the user should be able to ask for a specific market/date and let the system look up that day's market conditions directly. The Web page should not block the request thread for provider reconstruction. It should enqueue a persistent single-date job, show progress, and load the saved report when the job finishes. The public page remains limited to one market/date per request.
+
+Batch historical backfill is allowed only through controlled operational surfaces such as the authenticated Command Workbench or the trusted MCP agent command path. Batch jobs must be durable, cancelable, and checkpointed item by item. The worker processes at most one item globally, rejects dates that belong to the latest completed session or the future so realtime close generation remains authoritative, and records product-language missing-data states instead of provider internals.
+
+Public status APIs must expose only public single-date Web jobs. Authenticated command or batch job details must not be readable through the tokenless page. MCP/Workbench failures must not return raw provider, SSL, database, traceback, path, token, or credential details.
 
 P0 does not include DingTalk push or a separate standalone Web app. Those remain P1 because they require channel, layout, and notification-timing decisions. Engineering should keep the storage/API shape compatible with future push surfaces.
 

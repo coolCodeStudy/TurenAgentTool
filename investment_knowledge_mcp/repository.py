@@ -1044,44 +1044,45 @@ def upsert_daily_market_brief_report(
     source_status: dict[str, Any] | None = None,
     story: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    normalized_market = market.strip().upper()
     with transaction() as conn:
-        report_key = _daily_market_brief_report_key(normalized_market, market_date)
-        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (report_key,))
-        existing = _find_daily_market_brief_row(conn, market=normalized_market, market_date=market_date)
-        has_report_key = _review_reports_has_column(conn, "report_key")
-        values = (
-            market_date,
-            Jsonb(context or {}),
-            summary,
-            "daily_market_brief",
-            market_date,
-            market_date,
-            Jsonb(source_status or {}),
-            Jsonb(story or {}),
+        return upsert_daily_market_brief_report_in_transaction(
+            conn,
+            market=market,
+            market_date=market_date,
+            summary=summary,
+            context=context,
+            source_status=source_status,
+            story=story,
         )
-        if existing:
-            if has_report_key:
-                row = conn.execute(
-                    """
-                    UPDATE review_reports
-                    SET
-                      report_date = %s,
-                      portfolio_snapshot = %s,
-                      summary = %s,
-                      report_type = %s,
-                      period_start = %s,
-                      period_end = %s,
-                      source_status = %s,
-                      story = %s,
-                      report_key = %s,
-                      refreshed_at = now()
-                    WHERE id = %s
-                    RETURNING *
-                    """,
-                    (*values, report_key, existing["id"]),
-                ).fetchone()
-                return to_jsonable(row)
+
+
+def upsert_daily_market_brief_report_in_transaction(
+    conn: Connection,
+    *,
+    market: str,
+    market_date: str,
+    summary: str,
+    context: dict[str, Any],
+    source_status: dict[str, Any] | None = None,
+    story: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_market = market.strip().upper()
+    report_key = _daily_market_brief_report_key(normalized_market, market_date)
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (report_key,))
+    existing = _find_daily_market_brief_row(conn, market=normalized_market, market_date=market_date)
+    has_report_key = _review_reports_has_column(conn, "report_key")
+    values = (
+        market_date,
+        Jsonb(context or {}),
+        summary,
+        "daily_market_brief",
+        market_date,
+        market_date,
+        Jsonb(source_status or {}),
+        Jsonb(story or {}),
+    )
+    if existing:
+        if has_report_key:
             row = conn.execute(
                 """
                 UPDATE review_reports
@@ -1094,39 +1095,59 @@ def upsert_daily_market_brief_report(
                   period_end = %s,
                   source_status = %s,
                   story = %s,
+                  report_key = %s,
                   refreshed_at = now()
                 WHERE id = %s
                 RETURNING *
                 """,
-                (*values, existing["id"]),
+                (*values, report_key, existing["id"]),
             ).fetchone()
             return to_jsonable(row)
+        row = conn.execute(
+            """
+            UPDATE review_reports
+            SET
+              report_date = %s,
+              portfolio_snapshot = %s,
+              summary = %s,
+              report_type = %s,
+              period_start = %s,
+              period_end = %s,
+              source_status = %s,
+              story = %s,
+              refreshed_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (*values, existing["id"]),
+        ).fetchone()
+        return to_jsonable(row)
 
-        if has_report_key:
-            row = conn.execute(
-                """
-                INSERT INTO review_reports (
-                  report_date, portfolio_snapshot, summary, report_type, period_start,
-                  period_end, source_status, story, generated_at, report_key
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), %s)
-                RETURNING *
-                """,
-                (*values, report_key),
-            ).fetchone()
-            return to_jsonable(row)
-
+    if has_report_key:
         row = conn.execute(
             """
             INSERT INTO review_reports (
               report_date, portfolio_snapshot, summary, report_type, period_start,
-              period_end, source_status, story, generated_at
+              period_end, source_status, story, generated_at, report_key
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), %s)
             RETURNING *
             """,
-            values,
+            (*values, report_key),
         ).fetchone()
+        return to_jsonable(row)
+
+    row = conn.execute(
+        """
+        INSERT INTO review_reports (
+          report_date, portfolio_snapshot, summary, report_type, period_start,
+          period_end, source_status, story, generated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+        RETURNING *
+        """,
+        values,
+    ).fetchone()
     return to_jsonable(row)
 
 
@@ -1152,6 +1173,26 @@ def get_latest_daily_market_brief_report(market: str) -> dict[str, Any] | None:
             (normalized_market,),
         ).fetchone()
     return to_jsonable(row) if row else None
+
+
+def list_daily_market_brief_dates(market: str, limit: int = 120) -> list[str]:
+    normalized_market = market.strip().upper()
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT report_date
+            FROM review_reports
+            WHERE report_type = 'daily_market_brief'
+              AND portfolio_snapshot->'market'->>'code' = %s
+            ORDER BY report_date DESC
+            LIMIT %s
+            """,
+            (normalized_market, max(1, min(int(limit), 366))),
+        ).fetchall()
+    return [
+        row["report_date"].isoformat() if hasattr(row["report_date"], "isoformat") else str(row["report_date"])
+        for row in rows
+    ]
 
 
 def _find_daily_market_brief_row(conn: Connection, *, market: str, market_date: str) -> dict[str, Any] | None:

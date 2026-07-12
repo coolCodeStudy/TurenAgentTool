@@ -5,6 +5,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import logging
 import os
 import re
 from threading import Lock
@@ -13,8 +14,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from investment_knowledge_mcp import repository
-from investment_knowledge_mcp.command_router import handle_command
+from investment_knowledge_mcp import daily_market_jobs, repository
+from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
 from investment_knowledge_mcp.command_workbench import (
     command_workbench_auth_error_payload,
     execution_blocker,
@@ -24,9 +25,15 @@ from investment_knowledge_mcp.command_workbench import (
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.daily_market_brief import (
+    MARKET_CONFIGS,
     build_daily_market_brief,
     get_daily_market_brief_report,
+    list_daily_market_brief_dates,
     resolve_latest_completed_session_date,
+)
+from investment_knowledge_mcp.daily_market_jobs import (
+    get_public_web_history_job,
+    list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
@@ -35,6 +42,8 @@ from investment_knowledge_mcp.weekly_review import build_weekly_review, save_wee
 
 MAX_BODY_BYTES = 64 * 1024
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+logger = logging.getLogger(__name__)
+PUBLIC_WORKBENCH_FAILURE_MESSAGE = "Command execution failed. Please retry later."
 
 
 class _DailyBriefGenerationLease:
@@ -72,6 +81,7 @@ class _DailyBriefGenerationGate:
 
 
 _DAILY_BRIEF_GENERATION_GATE = _DailyBriefGenerationGate(cooldown_seconds=60)
+_MAX_ACTIVE_WEB_HISTORY_JOBS = 3
 
 
 class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
@@ -108,6 +118,12 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/daily-market-brief":
             self._handle_daily_market_brief_read(parse_qs(parsed.query))
+            return
+        if parsed.path == "/api/daily-market-brief/dates":
+            self._handle_daily_market_brief_dates(parse_qs(parsed.query))
+            return
+        if parsed.path == "/api/daily-market-brief/history-jobs":
+            self._handle_daily_market_brief_history_jobs_read(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
             if not self._authorized():
@@ -159,6 +175,12 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             if payload is None:
                 return
             self._handle_daily_market_brief_generate(payload)
+            return
+        if parsed.path == "/api/daily-market-brief/history-jobs":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._handle_daily_market_brief_history_job_create(payload)
             return
 
         candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
@@ -213,26 +235,27 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         try:
             run_schema()
             result = handle_command(exact_command)
+            response_message = safe_public_command_message(result, PUBLIC_WORKBENCH_FAILURE_MESSAGE)
             event = record_command_event(
                 command=exact_command,
                 ok=result.ok,
-                message=result.message,
+                message=response_message,
                 sender=_clean_optional_text(payload.get("sender")),
                 source="weekly-review-web.command-workbench.execute",
             )
-        except Exception as exc:
-            message = f"command failed: {exc}"
+        except Exception:
+            logger.exception("Command Workbench execution failed")
             event = _record_workbench_event(
                 command=exact_command,
                 ok=False,
-                message=message,
+                message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
                 source="weekly-review-web.command-workbench.execute",
             )
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {
                     "ok": False,
-                    "error": message,
+                    "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE,
                     "preview": preview,
                     "event_id": event.get("id") if event else None,
                     "executed_command": exact_command,
@@ -246,7 +269,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             status,
             {
                 "ok": result.ok,
-                "message": result.message,
+                "message": response_message,
                 "preview": preview,
                 "event_id": event.get("id"),
                 "executed_command": exact_command,
@@ -385,15 +408,111 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_daily_market_brief_dates(self, payload: dict[str, Any]) -> None:
+        try:
+            market = _resolve_daily_market(payload)
+            dates = list_daily_market_brief_dates(market)
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": _public_daily_market_brief_error(exc)})
+            return
+
+        self._write_json(HTTPStatus.OK, {"ok": True, "market": market, "dates": dates})
+
+    def _handle_daily_market_brief_history_jobs_read(self, payload: dict[str, Any]) -> None:
+        try:
+            job_id_text = _first_query_value(payload, "id")
+            if job_id_text:
+                job_id = int(job_id_text)
+                if job_id < 1:
+                    raise ValueError("任务 ID 无效。")
+                job = get_public_web_history_job(job_id)
+                if job is None:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "未找到该历史简报任务。"})
+                    return
+                self._write_json(HTTPStatus.OK, {"ok": True, "job": _public_history_job(job)})
+                return
+
+            limit_text = _first_query_value(payload, "limit") or "10"
+            limit = int(limit_text)
+            if limit < 1 or limit > 50:
+                raise ValueError("任务列表数量应在 1 到 50 之间。")
+            jobs = list_public_web_history_jobs(limit=limit)
+        except (TypeError, ValueError) as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "历史简报任务暂时无法读取。"})
+            return
+
+        self._write_json(HTTPStatus.OK, {"ok": True, "jobs": [_public_history_job(job) for job in jobs]})
+
+    def _handle_daily_market_brief_history_job_create(self, payload: dict[str, Any]) -> None:
+        try:
+            if set(payload) != {"market", "date"}:
+                raise ValueError("历史简报任务只接受 market 和 date。")
+            if not isinstance(payload.get("market"), str) or not isinstance(payload.get("date"), str):
+                raise ValueError("历史简报任务仅支持单个市场和单个日期。")
+            market = _resolve_daily_market(payload)
+            market_date = _resolve_optional_date(payload)
+            if market_date is None:
+                raise ValueError("请选择历史市场日期。")
+            market_date = _validate_public_daily_market_brief_date(
+                market,
+                market_date,
+                now=datetime.now(SHANGHAI_TZ),
+            )
+            try:
+                job = daily_market_jobs.create_web_history_job(
+                    market,
+                    market_date,
+                    max_active_jobs=_MAX_ACTIVE_WEB_HISTORY_JOBS,
+                )
+            except daily_market_jobs.WebHistoryJobCapacityError:
+                self._write_json(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    {"ok": False, "error": "已有 3 个历史简报任务等待处理，请稍后再试。"},
+                )
+                return
+        except ValueError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception:
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "历史简报任务暂时无法创建。"})
+            return
+
+        self._write_json(
+            HTTPStatus.ACCEPTED,
+            {
+                "ok": True,
+                "status": job.get("status") or "queued",
+                "market": market,
+                "market_date": market_date.isoformat(),
+                "job": _public_history_job(job),
+            },
+        )
+
     def _handle_daily_market_brief_generate(self, payload: dict[str, Any]) -> None:
         lease: _DailyBriefGenerationLease | None = None
+        request_now = datetime.now(SHANGHAI_TZ)
         try:
+            allowed_fields = {"market", "date", "market_date", "fixture"}
+            if not set(payload).issubset(allowed_fields):
+                raise ValueError("公开生成不支持 force、batch 或其他工作量控制参数。")
             market = _resolve_daily_market(payload)
             market_date = _resolve_optional_date(payload)
             use_fixture = _truthy(_first_query_value(payload, "fixture"))
             if use_fixture:
                 raise ValueError("公开页面不支持 fixture 生成。")
-            market_date = _validate_public_daily_market_brief_date(market, market_date)
+            market_date = _validate_public_daily_market_brief_date(market, market_date, now=request_now)
+            latest_completed = resolve_latest_completed_session_date(market, now=request_now)
+            if market_date < latest_completed:
+                self._handle_daily_market_brief_history_job_create(
+                    {"market": market, "date": market_date.isoformat()}
+                )
+                return
             lease = _DAILY_BRIEF_GENERATION_GATE.try_acquire((market, market_date.isoformat()))
             if lease is None:
                 self._write_json(
@@ -401,7 +520,13 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": "该市场简报正在生成或刚刚生成，请稍后再试。"},
                 )
                 return
-            result = build_daily_market_brief(market=market, market_date=market_date, save=True, use_fixture=False)
+            result = build_daily_market_brief(
+                market=market,
+                market_date=market_date,
+                save=True,
+                now=request_now,
+                use_fixture=False,
+            )
         except ValueError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
@@ -502,6 +627,9 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         try:
             length = int(content_length)
         except ValueError:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid Content-Length"})
+            return None
+        if length < 0:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid Content-Length"})
             return None
         if length > MAX_BODY_BYTES:
@@ -1442,6 +1570,7 @@ def render_daily_market_brief_html() -> str:
         </div>
         <div class="controls">
           <input id="market-date" type="date" value="{today}" aria-label="市场日期">
+          <select id="saved-date" aria-label="已保存日期"><option value="">已保存日期</option></select>
           <button id="read" type="button">读取</button>
           <button id="generate" class="primary" type="button">生成</button>
         </div>
@@ -1451,7 +1580,8 @@ def render_daily_market_brief_html() -> str:
         <button data-market="HK" type="button">港股</button>
         <button data-market="US" type="button">美股</button>
       </div>
-      <div id="message" class="notice">正在读取每日市场简报。</div>
+      <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取每日市场简报。</div>
+      <section><h2>历史生成任务</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
       <div id="summary" class="summary-grid"></div>
       <section><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
       <section><h2>核心指数</h2><div id="indexes"></div></section>
@@ -1463,61 +1593,218 @@ def render_daily_market_brief_html() -> str:
     </main>
   </div>
   <script>
-    const state = {{ market: "CN", context: null, markdown: "" }};
+    const state = {{
+      market: "CN",
+      context: null,
+      markdown: "",
+      jobId: null,
+      pollTimer: null,
+      pollGeneration: 0,
+      loadGeneration: 0,
+      loadController: null
+    }};
     const $ = (selector) => document.querySelector(selector);
     const message = $("#message");
 
     document.querySelectorAll("[data-market]").forEach((button) => {{
       button.addEventListener("click", () => {{
+        stopHistoryJobPolling();
         state.market = button.dataset.market;
         $("#market-date").value = "";
         document.querySelectorAll("[data-market]").forEach((item) => item.classList.toggle("active", item === button));
+        loadSavedDates();
         loadBrief("read");
       }});
     }});
     $("#read").addEventListener("click", () => loadBrief("read"));
     $("#generate").addEventListener("click", () => loadBrief("generate"));
-    $("#market-date").addEventListener("change", () => loadBrief("read"));
+    $("#market-date").addEventListener("change", () => {{
+      stopHistoryJobPolling();
+      loadBrief("read");
+    }});
+    $("#saved-date").addEventListener("change", (event) => {{
+      stopHistoryJobPolling();
+      if (!event.target.value) return;
+      $("#market-date").value = event.target.value;
+      loadBrief("read");
+    }});
+    loadSavedDates();
+    loadRecentHistoryJobs();
     loadBrief("read");
 
+    async function loadSavedDates() {{
+      const savedDate = $("#saved-date");
+      savedDate.innerHTML = '<option value="">已保存日期</option>';
+      try {{
+        const response = await fetch(`/api/daily-market-brief/dates?market=${{encodeURIComponent(state.market)}}`);
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || "读取已保存日期失败");
+        (data.dates || []).forEach((value) => {{
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = `已保存 ${{value}}`;
+          savedDate.appendChild(option);
+        }});
+        if (!(data.dates || []).length) savedDate.options[0].textContent = "尚未生成";
+      }} catch (error) {{
+        savedDate.options[0].textContent = "尚未生成";
+      }}
+    }}
+
     async function loadBrief(action) {{
+      cancelBriefLoad();
+      const generation = state.loadGeneration;
+      const controller = new AbortController();
+      state.loadController = controller;
       setBusy(true);
+      const date = $("#market-date").value;
       message.textContent = action === "read" ? "正在读取简报..." : "正在生成并保存简报...";
       try {{
-        const date = $("#market-date").value;
         let response;
         if (action === "read") {{
           const query = new URLSearchParams({{ market: state.market, date }});
-          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`);
+          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`, {{
+            signal: controller.signal
+          }});
         }} else {{
           response = await fetch("/api/daily-market-brief/generate", {{
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
-            body: JSON.stringify({{ market: state.market, date }})
+            body: JSON.stringify({{ market: state.market, date }}),
+            signal: controller.signal
           }});
         }}
         const data = await response.json();
+        if (generation !== state.loadGeneration || controller.signal.aborted) return;
         if (!data.ok) throw new Error(data.error || "处理失败");
         if (data.market_date) $("#market-date").value = data.market_date;
+        if (data.job) {{
+          state.jobId = data.job.id;
+          renderHistoryJob(data.job);
+          message.textContent = "历史简报任务已加入队列，页面会自动更新进度。";
+          loadRecentHistoryJobs();
+          startHistoryJobPolling(data.job.id, data.market_date);
+          return;
+        }}
         state.context = data.context || null;
         state.markdown = data.markdown || "";
         renderAll(data);
+        if (action === "generate") {{
+          loadSavedDates();
+          loadRecentHistoryJobs();
+        }}
         message.textContent = statusMessage(action, data);
       }} catch (error) {{
+        if (generation !== state.loadGeneration || error.name === "AbortError") return;
         message.textContent = `处理失败：${{error.message}}`;
       }} finally {{
-        setBusy(false);
+        if (generation === state.loadGeneration) {{
+          if (state.loadController === controller) state.loadController = null;
+          setBusy(false);
+        }}
       }}
+    }}
+
+    function cancelBriefLoad() {{
+      state.loadGeneration += 1;
+      if (state.loadController) state.loadController.abort();
+      state.loadController = null;
+    }}
+
+    async function loadRecentHistoryJobs() {{
+      try {{
+        const response = await fetch("/api/daily-market-brief/history-jobs?limit=10");
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || "读取任务失败");
+        renderRecentHistoryJobs(data.jobs || []);
+      }} catch (error) {{
+        $("#history-jobs").textContent = "历史生成任务暂时无法读取。";
+      }}
+    }}
+
+    function startHistoryJobPolling(jobId, marketDate) {{
+      stopHistoryJobPolling(false);
+      state.jobId = jobId;
+      const generation = state.pollGeneration;
+      pollHistoryJob(jobId, marketDate, generation);
+    }}
+
+    async function pollHistoryJob(jobId, marketDate, generation) {{
+      try {{
+        const response = await fetch(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
+        const data = await response.json();
+        if (generation !== state.pollGeneration || state.jobId !== jobId) return;
+        if (!data.ok) throw new Error(data.error || "读取任务失败");
+        const job = data.job;
+        renderHistoryJob(job);
+        if (["completed", "partial", "failed", "cancelled"].includes(job.status)) {{
+          state.jobId = null;
+          loadRecentHistoryJobs();
+          if (["completed", "partial"].includes(job.status)) {{
+            message.textContent = job.status === "partial"
+              ? "历史简报已部分生成，缺失项已在数据状态中说明。"
+              : "历史简报已生成并保存。";
+            await loadSavedDates();
+            if (state.market === job.items?.[0]?.market && $("#market-date").value === marketDate) {{
+              await loadBrief("read");
+            }}
+          }} else {{
+            const failures = (job.items || []).map((item) => item.error_summary).filter(Boolean);
+            message.textContent = failures[0] || (job.status === "cancelled" ? "历史简报任务已取消。" : "历史简报生成失败，请稍后重试。");
+          }}
+          return;
+        }}
+        message.textContent = historyJobProgress(job);
+        state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate, generation), 2000);
+      }} catch (error) {{
+        if (generation !== state.pollGeneration || state.jobId !== jobId) return;
+        message.textContent = `任务进度读取失败：${{error.message}}`;
+        state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate, generation), 5000);
+      }}
+    }}
+
+    function stopHistoryJobPolling(clearJob = true) {{
+      state.pollGeneration += 1;
+      if (state.pollTimer) clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+      if (clearJob) state.jobId = null;
+    }}
+
+    function historyJobProgress(job) {{
+      const current = job.current_market_date
+        ? `，当前 ${{job.current_market || ""}} ${{job.current_market_date}}`
+        : "";
+      return `历史简报任务 #${{job.id}}：已处理 ${{job.completed_count || 0}}/${{job.total_count || 0}}${{current}}。`;
+    }}
+
+    function renderHistoryJob(job) {{
+      const failures = (job.items || []).map((item) => item.error_summary).filter(Boolean);
+      $("#history-jobs").innerHTML = `<strong>任务 #${{escapeHtml(job.id)}}</strong><br>${{escapeHtml(historyJobProgress(job))}}${{failures.length ? `<br>${{escapeHtml(failures.join("；"))}}` : ""}}`;
+    }}
+
+    function renderRecentHistoryJobs(jobs) {{
+      if (!jobs.length) {{
+        $("#history-jobs").textContent = "暂无历史生成任务。";
+        return;
+      }}
+      $("#history-jobs").innerHTML = jobs.map((job) => {{
+        const item = (job.items || [])[0] || {{}};
+        return `<div><strong>#${{escapeHtml(job.id)}}</strong> ${{escapeHtml(item.market || "-")}} ${{escapeHtml(item.market_date || "-")}}：${{escapeHtml(job.status || "-")}}，${{escapeHtml(job.completed_count || 0)}}/${{escapeHtml(job.total_count || 0)}}</div>`;
+      }}).join("");
     }}
 
     function statusMessage(action, data) {{
       if (data.status === "missing") return "当前市场和日期还没有简报，可以点击生成。";
       if (action === "generate") return "简报已生成并保存，请检查数据状态和是否存在缺口。";
-      return "已读取每日市场简报。";
+      return "已读取已保存的每日市场简报。";
     }}
 
     function renderAll(data) {{
       const context = state.context;
+      if (data.status === "missing") {{
+        renderEmpty("尚未生成");
+        return;
+      }}
       if (!context) {{
         renderEmpty();
         return;
@@ -1527,7 +1814,8 @@ def render_daily_market_brief_html() -> str:
         ["市场", `${{context.market?.name || state.market}}（${{context.market?.code || state.market}}）`],
         ["市场日期", context.market_date || "-"],
         ["生成时间", context.generated_at?.asia_singapore || "-"],
-        ["模式", context.provider_mode === "fixture" ? "fixture 验收样例" : "live / degraded"]
+        ["模式", context.provider_mode === "fixture" ? "fixture 验收样例" : "live / degraded"],
+        ["生成类型", context.generation_kind === "historical_reconstruction" ? "历史重建" : (context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成")]
       ].map(([label, value]) => `<div class="summary-card"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(value)}}</span></div>`).join("");
       $("#narrative").textContent = context.narrative || "暂无摘要。";
       $("#indexes").innerHTML = indexTable(context.indexes || []);
@@ -1538,8 +1826,10 @@ def render_daily_market_brief_html() -> str:
       $("#markdown").value = state.markdown;
     }}
 
-    function renderEmpty() {{
-      $("#summary").innerHTML = "";
+    function renderEmpty(stateLabel = "") {{
+      $("#summary").innerHTML = stateLabel
+        ? `<div class="summary-card"><strong>状态</strong><span>${{escapeHtml(stateLabel)}}</span></div>`
+        : "";
       $("#narrative").textContent = "暂无简报。";
       $("#indexes").innerHTML = `<div class="empty">暂无核心指数数据。</div>`;
       $("#sectors").innerHTML = `<div class="empty">暂无行业/板块数据。</div>`;
@@ -1567,7 +1857,7 @@ def render_daily_market_brief_html() -> str:
         ${{rows.map((row) => {{
           const numericValue = row.flow_value ?? row.value ?? row.change_pct;
           const valueText = flow ? fmt(numericValue) : pct(row.change_pct);
-          const noteText = row.turnover !== undefined ? fmt(row.turnover) : (row.message || row.metric || "-");
+          const noteText = row.turnover !== undefined ? formatMarketAmount(row.turnover, context.market?.code || state.market) : (row.message || row.metric || "-");
           return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money">${{escapeHtml(noteText)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`;
@@ -1589,7 +1879,7 @@ def render_daily_market_brief_html() -> str:
       return {{ indexes: "核心指数", sectors: "行业/板块", gainers: "领涨个股", capital_flow: "资金流", session: "交易日" }}[key] || key;
     }}
     function statusLabel(status) {{
-      return {{ ok: "可用", partial: "部分可用", missing: "暂缺", provider_unavailable: "数据源暂不可用", not_available: "未提供", no_session: "无常规交易", unverified: "交易日未确认", historical_not_supported: "不支持历史榜单" }}[status] || status || "未知";
+      return {{ ok: "可用", partial: "部分可用", missing: "暂缺", provider_unavailable: "数据源暂不可用", not_available: "未提供", no_session: "无常规交易", unverified: "交易日未确认", historical_not_supported: "不支持历史榜单", timed_out: "历史数据获取超时，已保留可用结果" }}[status] || status || "未知";
     }}
     function pct(value) {{
       if (value === null || value === undefined || value === "") return "-";
@@ -1599,6 +1889,20 @@ def render_daily_market_brief_html() -> str:
     function fmt(value) {{
       if (value === null || value === undefined || value === "") return "-";
       return Number(value).toLocaleString(undefined, {{ maximumFractionDigits: 2 }});
+    }}
+    function formatMarketAmount(value, market) {{
+      if (value === null || value === undefined || value === "") return "-";
+      const number = Number(value);
+      const currencies = {{
+        CN: {{ code: "CNY", unit: "元" }},
+        HK: {{ code: "HKD", unit: "港元" }},
+        US: {{ code: "USD", unit: "美元" }}
+      }};
+      const currency = currencies[market] || currencies.CN;
+      const absolute = Math.abs(number);
+      if (absolute >= 100000000) return `${{(number / 100000000).toFixed(2)}} 亿${{currency.unit}} ${{currency.code}}`;
+      if (absolute >= 10000) return `${{(number / 10000).toFixed(2)}} 万${{currency.unit}} ${{currency.code}}`;
+      return `${{number.toFixed(2)}} ${{currency.unit}} ${{currency.code}}`;
     }}
     function relativePct(current, baseline) {{
       if (!current || !baseline) return null;
@@ -1666,16 +1970,53 @@ def _validate_public_daily_market_brief_date(
     now: datetime | None = None,
 ) -> date:
     current = now or datetime.now(SHANGHAI_TZ)
-    current_date = current.astimezone(SHANGHAI_TZ).date()
+    current_date = current.astimezone(MARKET_CONFIGS[market].timezone).date()
     resolved_date = market_date or resolve_latest_completed_session_date(market, now=current)
     if resolved_date > current_date:
         raise ValueError("不能生成未来日期的市场简报。")
-    if resolved_date < current_date - timedelta(days=31):
-        raise ValueError("公开页面仅支持生成最近 31 天的市场简报。")
     latest_completed = resolve_latest_completed_session_date(market, now=current)
-    if resolved_date != latest_completed:
-        raise ValueError(f"公开页面仅支持生成最近一个已收盘交易日（{latest_completed.isoformat()}）的市场简报。")
+    if resolved_date > latest_completed and resolved_date.weekday() < 5:
+        raise ValueError(f"不能生成未来日期的市场简报；最近已收盘交易日为 {latest_completed.isoformat()}。")
     return resolved_date
+
+
+def _public_history_job(job: dict[str, Any]) -> dict[str, Any]:
+    job_fields = (
+        "id",
+        "request_type",
+        "source",
+        "status",
+        "total_count",
+        "completed_count",
+        "succeeded_count",
+        "skipped_count",
+        "failed_count",
+        "cancelled_count",
+        "current_market",
+        "current_market_date",
+        "summary",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    )
+    item_fields = (
+        "id",
+        "market",
+        "market_date",
+        "status",
+        "report_id",
+        "skip_reason",
+        "error_code",
+        "error_summary",
+        "finished_at",
+    )
+    public_job = {field: job.get(field) for field in job_fields if field in job}
+    public_job["items"] = [
+        {field: item.get(field) for field in item_fields if field in item}
+        for item in (job.get("items") or [])
+        if isinstance(item, dict)
+    ]
+    return public_job
 
 
 def _daily_market_brief_response(report: dict[str, Any], *, status: str) -> dict[str, Any]:
@@ -1720,6 +2061,7 @@ def _empty_daily_market_brief_context(market: str, market_date: date | None) -> 
         "warnings": [],
         "narrative": "",
         "provider_mode": "missing",
+        "generation_kind": "missing",
     }
 
 
