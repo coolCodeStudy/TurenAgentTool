@@ -1,9 +1,11 @@
 # Daily Market Brief Historical Reconstruction Design
 
-Status: approved
+Status: superseded
 Owner: Daily Market Brief Feature Coordinator
 Source PRD: `docs/product/PRD-Daily-Market-Brief.md`
 Related technical plan: `docs/techplans/daily-market-brief.md`
+
+Superseded by `docs/superpowers/specs/2026-07-12-daily-market-brief-history-jobs-design.md` after implementation review showed that long-running historical reconstruction should not execute inside a public synchronous Web request.
 
 ## Objective
 

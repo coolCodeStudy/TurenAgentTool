@@ -1,5 +1,7 @@
 # Daily Market Brief Historical Reconstruction Implementation Plan
 
+Status: superseded after Task 3 by `docs/superpowers/plans/2026-07-12-daily-market-brief-history-jobs.md`. The display, saved-date, and historical-provider deliverables remain valid; synchronous public historical generation must not be deployed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add date-correct historical Daily Market Brief reconstruction and persistence, readable market-currency amounts, saved-date navigation, and Chinese A-share index names.
