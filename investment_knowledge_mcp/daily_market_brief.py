@@ -132,7 +132,12 @@ def build_daily_market_brief(
     )
     markdown = render_daily_market_brief_markdown(context)
     if save:
-        _validate_daily_market_brief_context_for_save(context)
+        existing_report = get_daily_market_brief_report(
+            context["market"]["code"], context["market_date"]
+        )
+        _validate_daily_market_brief_context_for_save(
+            context, existing_report=existing_report
+        )
         saved_report = save_daily_market_brief_report(context=context, markdown=markdown)
     else:
         saved_report = None
@@ -629,7 +634,9 @@ def _attach_historical_session_provenance(source_status: dict[str, Any], market_
             status.setdefault("session_date", session_date)
 
 
-def _validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> None:
+def _validate_daily_market_brief_context_for_save(
+    context: dict[str, Any], *, existing_report: dict[str, Any] | None = None
+) -> None:
     if context.get("generation_kind") != "historical_reconstruction" or context.get("no_session"):
         return
 
@@ -652,14 +659,29 @@ def _validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> No
     gainers_status = source_status.get("gainers") if isinstance(source_status, dict) else {}
     if not isinstance(gainers_status, dict):
         return
-    status = gainers_status.get("status")
-    useful_activity = any(context.get(section) for section in ("sectors", "gainers", "capital_flow"))
-    if status == "provider_unavailable" or (status == "timed_out" and not useful_activity):
+    useful_activity = any(
+        context.get(section) for section in ("sectors", "gainers", "capital_flow")
+    )
+    useful_evidence = bool(indexes) or useful_activity
+    if not useful_evidence:
         raise ValueError("历史市场活动数据暂不可用，未保存空白历史简报。")
+    if not useful_activity and _report_has_market_activity(existing_report):
+        raise ValueError("历史市场活动数据暂不可用，未覆盖已有完整简报。")
 
 
-def validate_daily_market_brief_context_for_save(context: dict[str, Any]) -> None:
-    _validate_daily_market_brief_context_for_save(context)
+def _report_has_market_activity(report: dict[str, Any] | None) -> bool:
+    snapshot = (report or {}).get("portfolio_snapshot") or {}
+    return isinstance(snapshot, dict) and any(
+        snapshot.get(section) for section in ("sectors", "gainers", "capital_flow")
+    )
+
+
+def validate_daily_market_brief_context_for_save(
+    context: dict[str, Any], *, existing_report: dict[str, Any] | None = None
+) -> None:
+    _validate_daily_market_brief_context_for_save(
+        context, existing_report=existing_report
+    )
 
 
 def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]:
