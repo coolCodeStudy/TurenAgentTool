@@ -47,7 +47,7 @@
 - Inspect: `docs/project-management/Acceptance-Queue.md`
 
 **Interfaces:**
-- Consumes: accepted Weekly Review development commit `aef9424a65b3d014ef82495361222885803bfb90` plus its coordinator's final deploy/acceptance return.
+- Consumes: accepted Weekly Review compatibility commit `ee4a3ea4d942dcc0691977109c62a4b4bd02cadf` integrated from authoritative `main@6bdde0d859658c402298e97945f0dccd672af5ad`, plus its coordinator's final deploy/acceptance return.
 - Produces: an implementation baseline where `GET /api/weekly-review` is public, the public Weekly Review page is read-only and has no token field, and generate/refresh/save/candidate operations remain protected.
 
 - [ ] **Step 1: Inspect the compatibility return before integration**
@@ -55,9 +55,9 @@
 Run:
 
 ```bash
-git show --stat --oneline aef9424a65b3d014ef82495361222885803bfb90
-git show --check aef9424a65b3d014ef82495361222885803bfb90
-git diff HEAD aef9424a65b3d014ef82495361222885803bfb90 -- investment_knowledge_mcp/weekly_review_web.py tests/test_weekly_review_web_auth.py docs/techplans/weekly-review.md
+git show --stat --oneline ee4a3ea4d942dcc0691977109c62a4b4bd02cadf
+git show --check ee4a3ea4d942dcc0691977109c62a4b4bd02cadf
+git diff 4577242 ee4a3ea4d942dcc0691977109c62a4b4bd02cadf -- investment_knowledge_mcp/weekly_review_web.py tests/test_weekly_review_web_auth.py docs/techplans/weekly-review.md
 ```
 
 Expected: only Weekly Review public-read/read-only UI, privilege tests, and its technical-plan traceability change; no Command token-storage or Daily Market Brief auth change appears.
@@ -67,10 +67,10 @@ Expected: only Weekly Review public-read/read-only UI, privilege tests, and its 
 Run:
 
 ```bash
-git cherry-pick aef9424a65b3d014ef82495361222885803bfb90
+git merge --no-edit origin/main
 ```
 
-Expected: clean cherry-pick or narrow conflicts limited to coordinator-state/docs already changed on this branch. Resolve docs by preserving newer Frontend Experience state and both feature rows.
+Expected: clean merge or narrow conflicts limited to coordinator-state/docs already changed on this branch. Resolve docs by preserving newer Frontend Experience state and both feature rows.
 
 - [ ] **Step 3: Verify the accepted matrix**
 
@@ -93,7 +93,7 @@ git add docs/project-management/Delivery-Queue.md docs/project-management/Accept
 git commit -m "chore: reconcile weekly review public auth"
 ```
 
-Expected: no extra commit when the cherry-pick was clean and no coordinator state required adjustment.
+Expected: no extra follow-up commit when the merge was clean and no coordinator state required adjustment.
 
 ### Task 2: Build the Shared Experience Kernel
 

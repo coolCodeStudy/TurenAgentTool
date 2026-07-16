@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+from contextlib import ExitStack
+from http import HTTPStatus
+import http.client
+import json
+import threading
+from types import SimpleNamespace
+import unittest
+from unittest import mock
+
+from investment_knowledge_mcp import weekly_review_web as web
+
+
+WEEK_START = "2026-06-22"
+
+
+class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._patches = ExitStack()
+        self._patches.enter_context(
+            mock.patch.object(
+                web,
+                "get_config",
+                return_value=SimpleNamespace(
+                    weekly_review_web_token="configured-weekly-token",
+                    command_api_token="configured-command-token",
+                ),
+            )
+        )
+        self._patches.enter_context(mock.patch.object(web, "run_schema"))
+        self._patches.enter_context(
+            mock.patch.object(
+                web.repository,
+                "get_review_report",
+                return_value={
+                    "id": 42,
+                    "report_type": "weekly",
+                    "summary": "# 本周复盘 2026-06-22 ~ 2026-06-28",
+                    "portfolio_snapshot": {
+                        "holder_attribution": [
+                            {
+                                "code": "HK.02476",
+                                "name": "胜宏科技",
+                                "weekly_pl": -6920.0,
+                                "attribution_verdict": "mixed",
+                                "cause_candidates": [],
+                            }
+                        ]
+                    },
+                },
+            )
+        )
+        self._patches.enter_context(mock.patch.object(web, "get_daily_market_brief_report", return_value=None))
+        self._patches.enter_context(mock.patch.object(web.repository, "list_candidate_insights", return_value=[]))
+        self.server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.WeeklyReviewWebHandler)
+        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_thread.start()
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.server_thread.join(timeout=2)
+        self._patches.close()
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict[str, str], bytes]:
+        connection = http.client.HTTPConnection(*self.server.server_address, timeout=2)
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request_headers = dict(headers or {})
+        if body is not None:
+            request_headers["Content-Type"] = "application/json"
+        try:
+            connection.request(method, path, body=body, headers=request_headers)
+            response = connection.getresponse()
+            return response.status, dict(response.getheaders()), response.read()
+        finally:
+            connection.close()
+
+    def test_weekly_review_read_is_public_even_when_write_tokens_are_configured(self) -> None:
+        status, headers, body = self.request(
+            "GET",
+            f"/api/weekly-review?week_start={WEEK_START}",
+        )
+
+        payload = json.loads(body)
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertIn("application/json", headers["Content-Type"])
+        self.assertTrue(payload["ok"])
+        self.assertEqual("existing", payload["status"])
+        self.assertEqual("HK.02476", payload["context"]["holder_attribution"][0]["code"])
+
+    def test_weekly_review_privileged_apis_reject_tokenless_requests(self) -> None:
+        requests = (
+            ("POST", "/api/weekly-review/generate", {"week_start": WEEK_START}),
+            ("POST", "/api/weekly-review/refresh", {"week_start": WEEK_START, "force": True}),
+            ("POST", "/api/weekly-review/save", {"week_start": WEEK_START, "markdown": "report"}),
+            ("GET", "/api/candidate-insights?status=pending", None),
+            ("POST", "/api/candidate-insights/1/confirm", None),
+            ("POST", "/api/candidate-insights/1/reject", None),
+            ("POST", "/api/command-workbench/parse", {"text": "本周复盘"}),
+        )
+
+        for method, path, payload in requests:
+            with self.subTest(method=method, path=path):
+                status, _, body = self.request(method, path, payload=payload)
+                self.assertEqual(HTTPStatus.UNAUTHORIZED, status)
+                self.assertEqual("unauthorized", json.loads(body)["error"])
+
+    def test_valid_token_reaches_privileged_weekly_generate_handler(self) -> None:
+        status, _, body = self.request(
+            "POST",
+            "/api/weekly-review/generate",
+            payload={"week_start": WEEK_START},
+            headers={"Authorization": "Bearer configured-weekly-token"},
+        )
+
+        payload = json.loads(body)
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("existing", payload["status"])
+
+    def test_public_weekly_review_page_is_read_only_and_has_no_secret_token_ux(self) -> None:
+        status, headers, body = self.request("GET", "/weekly-review")
+
+        html = body.decode("utf-8")
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn('data-slot="attribution"', html)
+        self.assertIn("function attributionCards", html)
+        self.assertIn("/api/weekly-review", html)
+        self.assertNotIn("api-token", html)
+        self.assertNotIn("weekly_review_web_token", html)
+        self.assertNotIn("localStorage", html)
+        self.assertNotIn("/api/weekly-review/generate", html)
+        self.assertNotIn("/api/weekly-review/refresh", html)
+        self.assertNotIn("/api/weekly-review/save", html)
+        self.assertNotIn("/api/candidate-insights", html)
+
+    def test_daily_market_brief_read_remains_public_when_tokens_are_configured(self) -> None:
+        status, _, body = self.request("GET", "/api/daily-market-brief?market=HK&date=2026-06-22")
+
+        payload = json.loads(body)
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("missing", payload["status"])
+
+    def test_candidate_read_fails_closed_without_configured_tokens_while_weekly_read_stays_public(self) -> None:
+        config = SimpleNamespace(weekly_review_web_token=None, command_api_token=None)
+        with mock.patch.object(web, "get_config", return_value=config):
+            weekly_status, _, weekly_body = self.request(
+                "GET",
+                f"/api/weekly-review?week_start={WEEK_START}",
+            )
+            candidate_status, _, candidate_body = self.request(
+                "GET",
+                "/api/candidate-insights?status=pending",
+            )
+
+        self.assertEqual(HTTPStatus.OK, weekly_status)
+        self.assertTrue(json.loads(weekly_body)["ok"])
+        self.assertEqual(HTTPStatus.SERVICE_UNAVAILABLE, candidate_status)
+        self.assertEqual("web write token is not configured", json.loads(candidate_body)["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()
