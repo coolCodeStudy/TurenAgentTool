@@ -47,7 +47,7 @@
 - Inspect: `docs/project-management/Acceptance-Queue.md`
 
 **Interfaces:**
-- Consumes: accepted Weekly Review compatibility commit `ee4a3ea4d942dcc0691977109c62a4b4bd02cadf` integrated from authoritative `main@6bdde0d859658c402298e97945f0dccd672af5ad`, plus its coordinator's final deploy/acceptance return.
+- Consumes: accepted Weekly Review compatibility commit `ee4a3ea4d942dcc0691977109c62a4b4bd02cadf` integrated from authoritative `main@6bdde0d859658c402298e97945f0dccd672af5ad`. The Weekly Review coordinator's deployment/acceptance return remains a live watch input for Task 7 and does not block local shared-kernel development after this concrete code Return Gate.
 - Produces: an implementation baseline where `GET /api/weekly-review` is public, the public Weekly Review page is read-only and has no token field, and generate/refresh/save/candidate operations remain protected.
 
 - [ ] **Step 1: Inspect the compatibility return before integration**
@@ -84,7 +84,7 @@ Expected: all tests pass; public Weekly Review read is allowed, privileged route
 
 - [ ] **Step 4: Record the reconciliation result**
 
-Update `DQ-2026-07-04-020` with the accepted commit and the Weekly Review coordinator's final deployed/accepted ref. Do not close the Weekly Review coordinator's own row on its behalf.
+Update `DQ-2026-07-04-020` with the accepted code commit and authoritative integration ref. Keep watching the Weekly Review coordinator's deploy/acceptance return and reconcile that evidence during Task 7; do not close the Weekly Review coordinator's own row on its behalf.
 
 - [ ] **Step 5: Commit only if conflict resolution or state reconciliation changed files**
 
@@ -511,7 +511,7 @@ git commit -m "docs: record frontend experience verification"
 - Modify after evidence: `docs/project-management/Delivery-Queue.md`
 
 **Interfaces:**
-- Consumes: pushed verified implementation ref and deploy-classifier targets from Task 6.
+- Consumes: pushed verified implementation ref and deploy-classifier targets from Task 6, plus any final deploy/acceptance return from the Weekly Review compatibility coordinator.
 - Produces: stable cloud deployment, independent acceptance result, and `ready_for_user_acceptance` or a precise returned blocker.
 
 - [ ] **Step 1: Push the reviewed implementation ref**
