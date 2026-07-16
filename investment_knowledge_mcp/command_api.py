@@ -16,6 +16,7 @@ from investment_knowledge_mcp.command_workbench import (
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
+from investment_knowledge_mcp.web_experience import access_error_payload
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -174,15 +175,19 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _require_authorized(self) -> bool:
-        token = get_config().command_api_token
-        if not token:
-            self._write_json(
-                HTTPStatus.SERVICE_UNAVAILABLE,
-                {"ok": False, "error": "COMMAND_API_TOKEN is not configured"},
-            )
+        configured_token = get_config().command_api_token
+        supplied_token = _supplied_command_token(
+            self.headers.get("Authorization"),
+            self.headers.get("X-Command-Token"),
+        )
+        if not configured_token:
+            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, access_error_payload("access_not_configured"))
             return False
-        if not _authorized(self.headers.get("Authorization"), self.headers.get("X-Command-Token"), token):
-            self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+        if not supplied_token:
+            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
+            return False
+        if not hmac.compare_digest(supplied_token, configured_token):
+            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
             return False
         return True
 
@@ -231,13 +236,12 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _authorized(authorization: str | None, command_token: str | None, expected_token: str) -> bool:
+def _supplied_command_token(authorization: str | None, command_token: str | None) -> str:
     if authorization and authorization.startswith("Bearer "):
-        supplied = authorization.removeprefix("Bearer ").strip()
-        return hmac.compare_digest(supplied, expected_token)
+        return authorization.removeprefix("Bearer ").strip()
     if command_token:
-        return hmac.compare_digest(command_token.strip(), expected_token)
-    return False
+        return command_token.strip()
+    return ""
 
 
 def _clean_optional_text(value: Any) -> str | None:

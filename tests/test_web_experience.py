@@ -1,7 +1,10 @@
 import json
 import shutil
 import subprocess
+from http import HTTPStatus
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 from investment_knowledge_mcp.web_experience import (
     CANONICAL_ACCESS_KEY,
@@ -214,3 +217,58 @@ assert.deepEqual(access.classifyResponse(200, {}), {status: "ready"});
         self.assertIn(":focus-visible", css)
         self.assertIn("@media (max-width: 760px)", css)
         self.assertIn("--experience-accent", css)
+
+    def test_command_uses_shared_shell_and_canonical_access(self) -> None:
+        from investment_knowledge_mcp.command_workbench import render_command_workbench_html
+
+        html = render_command_workbench_html()
+        self.assertIn('href="/command" aria-current="page"', html)
+        self.assertIn("investment_knowledge_access_token", html)
+        self.assertNotIn('id="api-token"', html)
+        self.assertIn('id="access-panel"', html)
+        self.assertIn('role="alert"', html)
+
+    def test_command_api_authorization_reports_distinct_access_errors(self) -> None:
+        from investment_knowledge_mcp import command_api
+
+        cases = (
+            ({}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_required"),
+            ({"Authorization": "Bearer synthetic-invalid"}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_rejected"),
+            ({}, None, HTTPStatus.SERVICE_UNAVAILABLE, "access_not_configured"),
+        )
+        for headers, configured_token, expected_status, expected_error in cases:
+            with self.subTest(expected_error=expected_error):
+                handler = object.__new__(command_api.CommandRequestHandler)
+                handler.headers = headers
+                handler._write_json = mock.Mock()
+                config = SimpleNamespace(command_api_token=configured_token)
+                with mock.patch.object(command_api, "get_config", return_value=config):
+                    self.assertFalse(handler._require_authorized())
+
+                status, payload = handler._write_json.call_args.args
+                self.assertEqual(expected_status, status)
+                self.assertEqual(expected_error, payload["error"])
+
+    def test_weekly_command_authorization_reports_distinct_access_errors(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web
+
+        cases = (
+            ({}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_required"),
+            ({"Authorization": "Bearer synthetic-invalid"}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_rejected"),
+            ({}, None, HTTPStatus.SERVICE_UNAVAILABLE, "access_not_configured"),
+        )
+        for headers, configured_token, expected_status, expected_error in cases:
+            with self.subTest(expected_error=expected_error):
+                handler = object.__new__(weekly_review_web.WeeklyReviewWebHandler)
+                handler.headers = headers
+                handler._write_json = mock.Mock()
+                config = SimpleNamespace(
+                    command_api_token=configured_token,
+                    weekly_review_web_token=None,
+                )
+                with mock.patch.object(weekly_review_web, "get_config", return_value=config):
+                    self.assertFalse(handler._authorized_for_command_workbench())
+
+                status, payload = handler._write_json.call_args.args
+                self.assertEqual(expected_status, status)
+                self.assertEqual(expected_error, payload["error"])

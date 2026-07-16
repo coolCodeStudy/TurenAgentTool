@@ -443,6 +443,12 @@ def main() -> None:
         assert workbench_bootstrap["exact_command"] == "创建股票档案 TSTZZ US"
         assert workbench_unknown["status"] == "unsupported"
         assert "Command Workbench" in workbench_html
+        assert 'href="/command" aria-current="page"' in workbench_html
+        assert "investment_knowledge_access_token" in workbench_html
+        assert 'id="api-token"' not in workbench_html
+        assert 'id="access-panel"' in workbench_html
+        assert 'role="alert"' in workbench_html
+        assert "access.authorizationHeaders()" in workbench_html
         assert router_insight_result.ok
         assert router_candidate_result.ok
         assert router_duplicate_candidate_result.ok

@@ -98,20 +98,20 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
 
     def test_weekly_review_privileged_apis_reject_tokenless_requests(self) -> None:
         requests = (
-            ("POST", "/api/weekly-review/generate", {"week_start": WEEK_START}),
-            ("POST", "/api/weekly-review/refresh", {"week_start": WEEK_START, "force": True}),
-            ("POST", "/api/weekly-review/save", {"week_start": WEEK_START, "markdown": "report"}),
-            ("GET", "/api/candidate-insights?status=pending", None),
-            ("POST", "/api/candidate-insights/1/confirm", None),
-            ("POST", "/api/candidate-insights/1/reject", None),
-            ("POST", "/api/command-workbench/parse", {"text": "本周复盘"}),
+            ("POST", "/api/weekly-review/generate", {"week_start": WEEK_START}, "unauthorized"),
+            ("POST", "/api/weekly-review/refresh", {"week_start": WEEK_START, "force": True}, "unauthorized"),
+            ("POST", "/api/weekly-review/save", {"week_start": WEEK_START, "markdown": "report"}, "unauthorized"),
+            ("GET", "/api/candidate-insights?status=pending", None, "unauthorized"),
+            ("POST", "/api/candidate-insights/1/confirm", None, "unauthorized"),
+            ("POST", "/api/candidate-insights/1/reject", None, "unauthorized"),
+            ("POST", "/api/command-workbench/parse", {"text": "本周复盘"}, "access_required"),
         )
 
-        for method, path, payload in requests:
+        for method, path, payload, expected_error in requests:
             with self.subTest(method=method, path=path):
                 status, _, body = self.request(method, path, payload=payload)
                 self.assertEqual(HTTPStatus.UNAUTHORIZED, status)
-                self.assertEqual("unauthorized", json.loads(body)["error"])
+                self.assertEqual(expected_error, json.loads(body)["error"])
 
     def test_valid_token_reaches_privileged_weekly_generate_handler(self) -> None:
         status, _, body = self.request(

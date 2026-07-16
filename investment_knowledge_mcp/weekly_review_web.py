@@ -17,7 +17,6 @@ from zoneinfo import ZoneInfo
 from investment_knowledge_mcp import daily_market_jobs, repository
 from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
 from investment_knowledge_mcp.command_workbench import (
-    command_workbench_auth_error_payload,
     execution_blocker,
     list_workbench_actions,
     parse_workbench_command,
@@ -38,6 +37,7 @@ from investment_knowledge_mcp.daily_market_jobs import (
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
+from investment_knowledge_mcp.web_experience import access_error_payload
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -578,6 +578,18 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         supplied = _authorization_token(self.headers.get("Authorization"))
         command_token = self.headers.get("X-Command-Token")
         weekly_token = self.headers.get("X-Weekly-Review-Token")
+        configured_tokens = [
+            token for token in (config.command_api_token, config.weekly_review_web_token) if token
+        ]
+        supplied_tokens = [
+            token for token in (supplied, command_token, weekly_token) if token
+        ]
+        if not configured_tokens:
+            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, access_error_payload("access_not_configured"))
+            return False
+        if not supplied_tokens:
+            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
+            return False
         candidates = [
             (supplied, config.command_api_token),
             (command_token, config.command_api_token),
@@ -589,10 +601,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             for supplied_token, expected in candidates
         ):
             return True
-        if not config.command_api_token and not config.weekly_review_web_token:
-            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "command workbench token is not configured"})
-            return False
-        self._write_json(HTTPStatus.UNAUTHORIZED, command_workbench_auth_error_payload())
+        self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
         return False
 
     def _authorized(self, *, require_configured: bool = False) -> bool:

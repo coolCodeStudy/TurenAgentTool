@@ -17,24 +17,11 @@ from investment_knowledge_mcp.command_router import (
     WORKER_STATUS_COMMANDS,
     is_daily_market_history_controlled_command,
 )
-
-COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE = (
-    "Enter the private Command Workbench access token and preview again. "
-    "The token is stored only in this browser and is required for private previews and runs."
+from investment_knowledge_mcp.web_experience import (
+    render_access_session_script,
+    render_experience_css,
+    render_primary_navigation,
 )
-
-
-def command_workbench_auth_error_payload() -> dict[str, Any]:
-    return {
-        "ok": False,
-        "error": "unauthorized",
-        "message": COMMAND_WORKBENCH_AUTH_RECOVERY_MESSAGE,
-        "recovery": {
-            "title": "Access token required",
-            "next_action": "Enter the private access token and preview again.",
-            "storage": "Stored only in this browser localStorage key command_workbench_token.",
-        },
-    }
 
 
 @dataclass(frozen=True)
@@ -538,13 +525,14 @@ def execution_blocker(preview: dict[str, Any], *, confirmed: bool) -> str | None
 
 
 def render_command_workbench_html() -> str:
-    return """<!doctype html>
+    html = r"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Command Workbench</title>
   <style>
+    __EXPERIENCE_CSS__
     :root {
       color-scheme: light;
       --bg: #f7f8fa;
@@ -607,7 +595,7 @@ def render_command_workbench_html() -> str:
     }
     .input-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 150px 92px;
+      grid-template-columns: minmax(0, 1fr) 92px;
       gap: 8px;
       margin-bottom: 14px;
     }
@@ -803,6 +791,13 @@ def render_command_workbench_html() -> str:
       font-size: 13px;
       margin-bottom: 8px;
     }
+    .access-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    #access-panel[hidden] { display: none; }
     @media (max-width: 980px) {
       .shell { display: block; }
       aside { border-left: 0; border-top: 1px solid var(--line); }
@@ -815,15 +810,29 @@ def render_command_workbench_html() -> str:
   </style>
 </head>
 <body>
-  <div class="shell">
-    <main>
+  <div class="experience-shell">
+    __PRIMARY_NAVIGATION__
+    <div class="experience-main">
+      <div class="shell">
+        <main>
       <h1>Command Workbench</h1>
       <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
       <div class="input-row">
         <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
-        <input id="api-token" type="password" autocomplete="off" placeholder="Access token">
         <button id="parse" class="primary">Preview</button>
       </div>
+      <section id="access-panel" aria-labelledby="access-title" hidden>
+        <h2 id="access-title">Private access</h2>
+        <p id="access-message" role="alert">Enter the private access credential to continue.</p>
+        <label class="form-row" for="access-token">
+          <span class="label">Access credential</span>
+          <input id="access-token" type="password" autocomplete="current-password">
+        </label>
+        <div class="access-actions">
+          <button id="access-continue" class="primary">Continue</button>
+          <button id="access-forget" class="secondary">Forget access</button>
+        </div>
+      </section>
       <section id="preview-section">
         <h2>Parsed Preview</h2>
         <div id="preview"><div class="notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
@@ -836,27 +845,41 @@ def render_command_workbench_html() -> str:
         <h2>Execution Result / 执行结果</h2>
         <div id="result"><span class="label">No command has run in this session.</span></div>
       </section>
-    </main>
-    <aside>
+        </main>
+        <aside>
       <h2>Action Catalog</h2>
       <div id="catalog" class="actions"></div>
       <h3>Pinned</h3>
       <div id="pinned" class="history"></div>
       <h3>Recent</h3>
       <div id="recent" class="history"></div>
-    </aside>
+        </aside>
+      </div>
+    </div>
   </div>
+  __ACCESS_SESSION_SCRIPT__
   <script>
     const $ = (selector) => document.querySelector(selector);
-    const state = { actions: [], preview: null, activeAction: null, selectedTarget: null };
+    const access = window.InvestmentKnowledgeAccess;
+    const state = {
+      actions: [],
+      preview: null,
+      activeAction: null,
+      selectedTarget: null,
+      pendingAccessRetry: null
+    };
     const storage = {
       recent: "command_workbench_recent",
-      pinned: "command_workbench_pinned",
-      token: "command_workbench_token"
+      pinned: "command_workbench_pinned"
     };
 
-    $("#api-token").value = localStorage.getItem(storage.token) || "";
+    const accessResolution = access.resolve();
+    if (accessResolution.status === "legacy_conflict") {
+      showAccessPanel("Saved access credentials conflict. Forget access, then enter the current credential.");
+    }
     $("#parse").addEventListener("click", () => parseSmartInput());
+    $("#access-continue").addEventListener("click", continueWithAccess);
+    $("#access-forget").addEventListener("click", forgetAccess);
     $("#smart-input").addEventListener("keydown", (event) => {
       if (event.key === "Enter") parseSmartInput();
     });
@@ -879,7 +902,7 @@ def render_command_workbench_html() -> str:
     }
 
     async function parseSmartInput(extra = {}) {
-      persistToken();
+      state.pendingAccessRetry = () => parseSmartInput(extra);
       setBusy(true);
       try {
         const payload = {
@@ -891,9 +914,11 @@ def render_command_workbench_html() -> str:
         const data = await postJson("/api/command-workbench/parse", payload);
         state.preview = data.preview;
         state.activeAction = payload.action_id;
+        state.pendingAccessRetry = null;
+        hideAccessPanel();
         renderPreview(data.preview);
       } catch (error) {
-        showResult({ ok: false, error: error.message });
+        if (!error.accessFailure) showResult({ ok: false, error: error.message });
       } finally {
         setBusy(false);
       }
@@ -901,7 +926,7 @@ def render_command_workbench_html() -> str:
 
     async function runPreview() {
       if (!state.preview) return;
-      persistToken();
+      state.pendingAccessRetry = () => runPreview();
       setBusy(true);
       try {
         const data = await postJson("/api/command-workbench/execute", {
@@ -912,10 +937,12 @@ def render_command_workbench_html() -> str:
           confirmed: true
         });
         state.preview = data.preview || state.preview;
+        state.pendingAccessRetry = null;
+        hideAccessPanel();
         showResult(data);
         addRecent(data);
       } catch (error) {
-        showResult({ ok: false, error: error.message });
+        if (!error.accessFailure) showResult({ ok: false, error: error.message });
       } finally {
         setBusy(false);
       }
@@ -924,12 +951,46 @@ def render_command_workbench_html() -> str:
     async function postJson(url, payload) {
       const response = await fetch(url, {
         method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        headers: { ...access.authorizationHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
       const data = await response.json();
+      const accessStatus = access.classifyResponse(response.status, data).status;
+      if (["access_required", "access_rejected", "access_not_configured"].includes(accessStatus)) {
+        showAccessPanel(data.message || "Private access is required for this operation.");
+        const error = new Error(accessStatus);
+        error.accessFailure = true;
+        throw error;
+      }
       if (!response.ok && !data.preview) throw new Error(data.error || "Request failed");
       return data;
+    }
+
+    function showAccessPanel(message) {
+      $("#access-message").textContent = message;
+      $("#access-panel").hidden = false;
+    }
+
+    function hideAccessPanel() {
+      $("#access-panel").hidden = true;
+    }
+
+    function continueWithAccess() {
+      const resolution = access.remember($("#access-token").value);
+      if (resolution.status !== "ready") {
+        showAccessPanel("Enter the private access credential to continue.");
+        return;
+      }
+      $("#access-token").value = "";
+      hideAccessPanel();
+      const retry = state.pendingAccessRetry;
+      if (retry) retry();
+    }
+
+    function forgetAccess() {
+      access.forget();
+      $("#access-token").value = "";
+      showAccessPanel("Saved access has been forgotten. Enter the current credential to continue.");
     }
 
     function renderCatalog() {
@@ -1169,14 +1230,6 @@ def render_command_workbench_html() -> str:
       parseSmartInput();
     };
 
-    function authHeaders() {
-      const token = $("#api-token").value.trim();
-      return token ? { "Authorization": `Bearer ${token}` } : {};
-    }
-    function persistToken() {
-      const token = $("#api-token").value.trim();
-      if (token) localStorage.setItem(storage.token, token);
-    }
     function setBusy(busy) {
       $("#parse").disabled = busy;
     }
@@ -1192,6 +1245,11 @@ def render_command_workbench_html() -> str:
   </script>
 </body>
 </html>"""
+    return (
+        html.replace("__EXPERIENCE_CSS__", render_experience_css())
+        .replace("__PRIMARY_NAVIGATION__", render_primary_navigation("command_workbench"))
+        .replace("__ACCESS_SESSION_SCRIPT__", render_access_session_script())
+    )
 
 
 def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
