@@ -15,6 +15,11 @@ MAX_EASTMONEY_HOST_REQUESTS = 2
 MAX_ATTEMPTS = 2
 HISTORY_LOOKBACK_DAYS = 35
 TURNOVER_THRESHOLDS = {"CN": 50_000_000, "HK": 20_000_000, "US": 10_000_000}
+MARKET_CAP_THRESHOLDS = {
+    "CN": 3_500_000_000,
+    "HK": 4_000_000_000,
+    "US": 500_000_000,
+}
 
 
 class _DeadlineExpired(Exception):
@@ -181,8 +186,8 @@ def load_historical_market_activity(
         "timed_out": timed_out,
         "universe_attempts": universe_attempts.count(),
         "universe_size": requested,
-        "universe_basis": "current_liquid_top_200",
-        "message": "Current liquid universe is used only to select candidates; historical rankings use exact-date daily bars and may have survivorship bias.",
+        "universe_basis": "current_liquid_common_equity_market_cap_top_200",
+        "message": "Current spot market capitalization and liquidity are used only to select common-equity candidates; historical rankings use exact-date daily bars and may have survivorship bias.",
     }
     return HistoricalActivityResult(
         sectors=[],
@@ -249,7 +254,15 @@ def _load_universe(
         _raise_if_cancelled(cancel_event)
         provider_symbol = _text(_first_value(row, "代码", "symbol", "Symbol"))
         name = _text(_first_value(row, "名称", "股票简称", "name", "Name"))
-        if not provider_symbol or not name or _excluded_security(market, provider_symbol, name, row):
+        current_market_cap = _number(
+            _first_value(row, "总市值", "Total Market Value", "Market Cap", "market_cap", "mktcap")
+        )
+        if not provider_symbol or not name or not _eligible_common_equity(
+            market=market,
+            code=provider_symbol,
+            name=name,
+            market_cap=current_market_cap,
+        ):
             continue
         candidates.append(
             {
@@ -257,6 +270,7 @@ def _load_universe(
                 "provider_symbol": provider_symbol,
                 "name": name,
                 "current_turnover": _number(_first_value(row, "成交额", "金额", "amount", "成交金额")) or 0.0,
+                "current_market_cap": current_market_cap,
             }
         )
     candidates.sort(key=lambda item: item["current_turnover"], reverse=True)
@@ -293,8 +307,9 @@ def _load_candidate(
             "change_pct": rank["change_pct"],
             "turnover": rank["turnover"],
             "session_date": rank["session_date"],
+            "current_market_cap": candidate["current_market_cap"],
             "provider": AKSHARE_PROVIDER,
-            "metric": f"exact_date_turnover_filtered_change_pct_min_{int(TURNOVER_THRESHOLDS[market])}",
+            "metric": _historical_gainer_metric(market),
         },
         timed_out,
     )
@@ -421,7 +436,7 @@ def _unavailable_result(
             "incomplete": timed_out,
             "timed_out": timed_out,
             "universe_attempts": universe_attempts,
-            "universe_basis": "current_liquid_top_200",
+            "universe_basis": "current_liquid_common_equity_market_cap_top_200",
             "detail_code": detail_code,
             "message": "Historical exact-date gainer reconstruction is unavailable from the configured provider.",
         },
@@ -440,16 +455,68 @@ def _unsupported_section_status(section: str) -> dict[str, Any]:
     }
 
 
-def _excluded_security(market: str, code: str, name: str, row: dict[str, Any]) -> bool:
-    if market == "CN":
-        return "ST" in name.upper() or "退" in name
-    if market == "US":
-        upper_name = name.upper()
-        security_type = _text(_first_value(row, "证券类型", "类型", "type", "Type")).upper()
-        return any(word in upper_name for word in ("WARRANT", " WT", "RIGHT")) or any(
-            word in security_type for word in ("WARRANT", "RIGHT")
-        )
-    return False
+def _eligible_common_equity(*, market: str, code: str, name: str, market_cap: float | None) -> bool:
+    min_market_cap = MARKET_CAP_THRESHOLDS.get(market)
+    if min_market_cap is None or market_cap is None or not math.isfinite(market_cap):
+        return False
+    if market_cap < min_market_cap:
+        return False
+    if market == "CN" and ("ST" in name.upper() or "退" in name):
+        return False
+    if _looks_like_non_common_equity(market=market, code=code, name=name):
+        return False
+    return not (market == "US" and _looks_like_us_warrant(code, name))
+
+
+def _looks_like_non_common_equity(*, market: str, code: str, name: str) -> bool:
+    if market == "US" and _looks_like_us_non_common_symbol(code):
+        return True
+    upper_name = name.upper()
+    markers = (
+        "ETF",
+        "ETN",
+        "FUND",
+        "LEVERAGED",
+        "INVERSE",
+        "WARRANT",
+        " RIGHT",
+        "UNIT",
+        "PREFERRED",
+        " PREF",
+        " BULL",
+        " BEAR",
+        " SHORT",
+        " 2X",
+        " 3X",
+        "基金",
+        "杠杆",
+        "反向",
+        "权证",
+        "优先股",
+    )
+    return any(marker in upper_name for marker in markers)
+
+
+def _looks_like_us_non_common_symbol(code: str) -> bool:
+    symbol = code.split(".")[-1].upper()
+    if symbol == "DOW":
+        return False
+    return symbol.endswith(("W", "WS", "WT", "R", "RT", "U", "UN", "P", "PR"))
+
+
+def _looks_like_us_warrant(code: str, name: str) -> bool:
+    symbol = code.split(".")[-1].upper()
+    upper_name = name.upper()
+    return symbol.endswith(("WS", "WT")) or any(
+        word in upper_name for word in (" WARRANT", " WT", " RIGHT")
+    )
+
+
+def _historical_gainer_metric(market: str) -> str:
+    return (
+        f"exact_date_turnover_filtered_change_pct_min_{int(TURNOVER_THRESHOLDS[market])}_"
+        f"current_market_cap_min_{int(MARKET_CAP_THRESHOLDS[market])}"
+    )
 
 
 def _retryable_error(exc: Exception) -> bool:

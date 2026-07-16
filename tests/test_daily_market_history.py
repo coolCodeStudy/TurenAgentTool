@@ -23,8 +23,28 @@ class FakeFrame:
 
 
 class FakeHistoricalAkshare:
-    def __init__(self, *, universe: list[dict], histories: dict[str, list[dict]]) -> None:
-        self.universe = universe
+    def __init__(
+        self,
+        *,
+        universe: list[dict],
+        histories: dict[str, list[dict]],
+        market_cap_default: float | None = 10_000_000_000,
+    ) -> None:
+        self.universe = [
+            {
+                **row,
+                **(
+                    {"总市值": market_cap_default}
+                    if market_cap_default is not None
+                    and not any(
+                        key in row
+                        for key in ("总市值", "Total Market Value", "Market Cap", "market_cap", "mktcap")
+                    )
+                    else {}
+                ),
+            }
+            for row in universe
+        ]
         self.histories = histories
         self.history_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -96,7 +116,7 @@ def history_rows(
 
 class SequencedUniverseAkshare(FakeHistoricalAkshare):
     def __init__(self, *, outcomes: list[object]) -> None:
-        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000, "总市值": 10_000_000_000}]
         super().__init__(universe=universe, histories={"000001": history_rows()})
         self.outcomes = list(outcomes)
         self.universe_calls = 0
@@ -134,7 +154,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual(20.0, result.gainers[0]["change_pct"])
         self.assertEqual(100_000_000, result.gainers[0]["turnover"])
         self.assertEqual("2026-07-09", result.gainers[0]["session_date"])
-        self.assertEqual("current_liquid_top_200", result.source_status["gainers"]["universe_basis"])
+        self.assertEqual("current_liquid_common_equity_market_cap_top_200", result.source_status["gainers"]["universe_basis"])
 
     def test_exact_akshare_signatures_and_cn_remaining_timeout(self) -> None:
         cn = FakeHistoricalAkshare(
@@ -207,7 +227,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual(["000001"], [row["code"] for row in result.gainers])
 
     def test_transient_universe_connection_error_succeeds_on_retry(self) -> None:
-        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000, "总市值": 10_000_000_000}]
         fake = SequencedUniverseAkshare(outcomes=[ConnectionError("transient"), universe])
 
         result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
@@ -217,7 +237,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual("ok", result.source_status["gainers"]["status"])
 
     def test_transient_universe_json_decode_error_succeeds_on_retry(self) -> None:
-        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000, "总市值": 10_000_000_000}]
         decode_error = json.JSONDecodeError("invalid response", "", 0)
         fake = SequencedUniverseAkshare(outcomes=[decode_error, universe])
 
@@ -228,7 +248,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual("ok", result.source_status["gainers"]["status"])
 
     def test_empty_universe_response_succeeds_on_retry(self) -> None:
-        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000, "总市值": 10_000_000_000}]
         fake = SequencedUniverseAkshare(outcomes=[[], universe])
 
         result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
@@ -238,7 +258,7 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         self.assertEqual("ok", result.source_status["gainers"]["status"])
 
     def test_rate_limited_universe_succeeds_on_retry(self) -> None:
-        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000}]
+        universe = [{"代码": "000001", "名称": "甲", "成交额": 100_000_000, "总市值": 10_000_000_000}]
         fake = SequencedUniverseAkshare(outcomes=[RuntimeError("429 too many requests"), universe])
 
         result = load_historical_market_activity("CN", date(2026, 7, 9), akshare_module=fake)
@@ -578,6 +598,62 @@ class HistoricalActivityProviderTests(unittest.TestCase):
 
         self.assertEqual("000001", result.gainers[0]["code"])
         self.assertEqual("20260904", fake.history_calls[0][1]["start_date"])
+
+    def test_historical_candidates_require_current_market_cap_and_common_equity(self) -> None:
+        cases = (
+            ("CN", 3_500_000_000, 50_000_000, "000001", "示例股份", "Total Market Value"),
+            ("HK", 4_000_000_000, 20_000_000, "00700", "Example Holdings", "Market Cap"),
+            ("US", 500_000_000, 10_000_000, "106.DOW", "Dow Inc", "总市值"),
+        )
+
+        for market, min_market_cap, turnover, ordinary_code, ordinary_name, market_cap_key in cases:
+            missing_cap_code = f"{market}.NOCAP"
+            low_cap_code = f"{market}.LOWCAP"
+            non_common_code = "106.TESTW" if market == "US" else f"{market}.ETF"
+            fake = FakeHistoricalAkshare(
+                universe=[
+                    {
+                        "代码": ordinary_code,
+                        "名称": ordinary_name,
+                        "成交额": turnover,
+                        market_cap_key: min_market_cap,
+                    },
+                    {"代码": missing_cap_code, "名称": "Missing Cap Company", "成交额": turnover},
+                    {
+                        "代码": low_cap_code,
+                        "名称": "Low Cap Company",
+                        "成交额": turnover,
+                        "Market Cap": min_market_cap - 1,
+                    },
+                    {
+                        "代码": non_common_code,
+                        "名称": "Leveraged ETF" if market != "US" else "Example Holdings",
+                        "成交额": turnover,
+                        "Market Cap": min_market_cap * 2,
+                    },
+                ],
+                histories={
+                    ordinary_code: [
+                        {"日期": "2026-07-08", "收盘": 10, "成交额": turnover},
+                        {"日期": "2026-07-09", "收盘": 25, "成交额": turnover},
+                    ],
+                    missing_cap_code: history_rows(turnover=turnover),
+                    low_cap_code: history_rows(turnover=turnover),
+                    non_common_code: history_rows(turnover=turnover),
+                },
+                market_cap_default=None,
+            )
+
+            result = load_historical_market_activity(market, date(2026, 7, 9), akshare_module=fake)
+
+            self.assertEqual([ordinary_code], [row["code"] for row in result.gainers])
+            self.assertEqual(150.0, result.gainers[0]["change_pct"])
+            self.assertEqual(float(turnover), result.gainers[0]["turnover"])
+            self.assertEqual(float(min_market_cap), result.gainers[0]["current_market_cap"])
+            self.assertEqual([ordinary_code], [call[1]["symbol"] for call in fake.history_calls])
+            self.assertEqual("current_liquid_common_equity_market_cap_top_200", result.source_status["gainers"]["universe_basis"])
+            self.assertIn("current_market_cap_min_", result.gainers[0]["metric"])
+            self.assertIn("current spot market capitalization", result.source_status["gainers"]["message"].lower())
 
     def test_dow_is_eligible_while_warrant_metadata_is_excluded(self) -> None:
         fake = FakeHistoricalAkshare(
