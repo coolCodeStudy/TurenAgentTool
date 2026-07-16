@@ -10,8 +10,8 @@
 - Feature Registry row: `Weekly review generator`
 - Acceptance Queue rows: historical `AT-2026-06-25-001`, historical `AT-2026-06-30-001`, regression `AT-2026-07-16-001`
 - Delivery Queue row: `DQ-2026-07-16-001`
-- Current authoritative branch/ref: `origin/main@dde3023abe06d61175f2147fbad49aff81e8e34f`
-- Related coordinator branch/ref: `origin/codex/weekly-review-public-web-auth-reconciled@dde3023abe06d61175f2147fbad49aff81e8e34f`; implementation commit `ee4a3ea`
+- Current authoritative branch/ref: `origin/main@64d9a2854cdefcc95a6623eca59d5dd611f07f39`; the Weekly Review fix entered `main` at `dde3023` and remains an ancestor.
+- Related coordinator evidence: durable blocker-correction commit `a816bf0` on `origin/codex/weekly-review-public-web-auth-reconciled`; implementation commit `ee4a3ea`.
 - Current deployed ref or deploy event: `/health` reports `1d45daeb66a27527fabf3f51eaf692aa4c5d3f42`; latest-main deployment evidence must be refreshed after the fix.
 - User-facing surface: `http://47.84.190.191:8010/weekly-review`
 - Current state: the fix is implemented, reviewed, locally verified, pushed, and integrated to authoritative `main`. GitHub Actions runs `29511640343` (job `87666390001`) and `29512741489` (job `87670092096`) both completed without activating services.
