@@ -10,23 +10,24 @@
 - Feature Registry row: `Weekly review generator`
 - Acceptance Queue rows: historical `AT-2026-06-25-001`, historical `AT-2026-06-30-001`, regression `AT-2026-07-16-001`
 - Delivery Queue row: `DQ-2026-07-16-001`
-- Current authoritative branch/ref: `origin/main@6bdde0d859658c402298e97945f0dccd672af5ad`
-- Related coordinator branch/ref: `origin/codex/weekly-review-public-web-auth-reconciled@6bdde0d859658c402298e97945f0dccd672af5ad`; implementation commit `ee4a3ea`
+- Current authoritative branch/ref: `origin/main@dde3023abe06d61175f2147fbad49aff81e8e34f`
+- Related coordinator branch/ref: `origin/codex/weekly-review-public-web-auth-reconciled@dde3023abe06d61175f2147fbad49aff81e8e34f`; implementation commit `ee4a3ea`
 - Current deployed ref or deploy event: `/health` reports `1d45daeb66a27527fabf3f51eaf692aa4c5d3f42`; latest-main deployment evidence must be refreshed after the fix.
 - User-facing surface: `http://47.84.190.191:8010/weekly-review`
-- Current state: the fix is implemented, reviewed, locally verified, pushed, and integrated to authoritative `main`. Automatic deploy run `29511640343` failed at `Delegate deployment to Ops API` with curl exit `22`; classification/planning succeeded and selected the shared targeted path.
-- Known blockers: cloud deployment and acceptance are incomplete. Evidence suggests the immediately preceding asynchronous Ops deployment may still have held the shared deploy lock, but the exact Ops response and current cloud release could not be confirmed because approval-service failures rejected subsequent read-only cloud/GitHub checks. Do not launch another deployment channel without confirming the lock/release state.
+- Current state: the fix is implemented, reviewed, locally verified, pushed, and integrated to authoritative `main`. GitHub Actions runs `29511640343` (job `87666390001`) and `29512741489` (job `87670092096`) both completed without activating services.
+- Known blockers: both shared deploy attempts were rejected by the Ops API with HTTP `422 deployment_rejected` because deployment resource preflight reported available ECS memory below the required `512 MiB`. This is not an async deploy-lock, credential, browser-auth, or application-code blocker. Do not launch another retry while memory remains below the gate.
 - Active child threads or role sessions: Development Agent returned and passed the Coordinator Return Gate; no child implementation remains.
 - Watch contract:
-  - Watched item: Development Agent return for `DQ-2026-07-16-001`.
-  - Wake event or cadence: active coordinator mailbox watch until the child returns; after integration/deploy, poll shared deploy status and the cloud page/API until stable.
-  - Expected return artifact: branch/commit, failing-then-passing tests, narrow verification, exact public-versus-privileged endpoint contract, and deploy classification.
-  - Coordinator action on wake: apply the Coordinator Return Gate, integrate or reject the return, record Deploy Intent, deploy through the shared serialized path if accepted, run cloud smoke, then dispatch independent Acceptance Testing.
-- Next owner: Owner for explicit approval to resume read-only cloud/GitHub status checks after the approval-service rejection; then this Feature Coordinator resumes the serialized deploy/retest loop.
-- Next handoff: confirm the shared deploy lock and active cloud ref; retry only the shared `targeted_quick` `weekly-review-web` path when clear; then run coordinator cloud smoke and independent acceptance.
+  - Watched item: ECS deployment resource preflight for Weekly Review `main@dde3023` or the then-current authoritative `origin/main` tip.
+  - Wake event or cadence: resume only when read-only deploy status reports no active run and available memory is at least `512 MiB`.
+  - Expected return artifact: typed resource-preflight evidence showing the memory gate is satisfied, followed by one serialized shared deploy event/ref.
+  - Coordinator action on wake: deploy once through the shared channel, smoke `/health`, `/weekly-review`, tokenless Weekly GET, authenticated write guards, and `/daily-market-brief`, then dispatch independent Acceptance Testing for `AT-2026-07-16-001`.
+- Next owner: Infrastructure & Release Reliability / ECS capacity recovery, with this Feature Coordinator resuming after the memory gate passes.
+- Next handoff: provide read-only deploy status with no active run and available ECS memory `>=512 MiB`; then deploy authoritative `main@dde3023` or the then-current `origin/main` tip through the single shared channel.
 - Deploy needed: yes.
-- Deploy decision: `blocked` after failed shared run `29511640343`; no ad hoc restart, direct Compose action, or duplicate deploy channel is allowed.
-- Escalation target: Owner, because the tool approval service rejected the read-only checks required to distinguish a cleared lock from an active global production deployment.
-- User decision needed: explicitly approve the read-only cloud/GitHub status checks and one serialized retry after the lock is confirmed clear.
+- Deploy decision: `blocked` after HTTP `422 deployment_rejected` in runs `29511640343` and `29512741489`; no ad hoc restart, direct Compose action, or retry below the `512 MiB` gate is allowed.
+- State reconciliation: commit and push this blocker correction on the feature-coordinator branch only. Do not push the documentation-only correction to `main` while the memory gate is closed because the current workflow would start another prohibited production deploy attempt; reconcile durable state to the authoritative branch after a no-deploy-safe control-plane path exists or the resource gate has passed.
+- Escalation target: Infrastructure & Release Reliability / ECS operator for the resource preflight blocker; no Owner product decision is required.
+- User decision needed: none. Resume is condition-based on ECS memory and deploy status.
 - Completion gate: independent cloud acceptance passes for Weekly Review page/API, holder-attribution cards and the 2026-06-22 report, with no raw secrets/internal errors and Daily Market Brief unchanged.
 - Role learning check: pending final evidence.
