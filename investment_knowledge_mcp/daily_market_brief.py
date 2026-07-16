@@ -1345,13 +1345,14 @@ def _eligible_common_equity(*, market: str, code: str, name: str, market_cap: fl
         return False
     if market == "CN" and ("ST" in name.upper() or "退" in name):
         return False
-    if _looks_like_non_common_equity(code, name):
+    if _looks_like_non_common_equity(market=market, code=code, name=name):
         return False
     return not (market == "US" and _looks_like_us_warrant(code, name))
 
 
-def _looks_like_non_common_equity(code: str, name: str) -> bool:
-    del code
+def _looks_like_non_common_equity(*, market: str, code: str, name: str) -> bool:
+    if market == "US" and _looks_like_us_non_common_symbol(code):
+        return True
     upper_name = name.upper()
     markers = (
         "ETF",
@@ -1376,6 +1377,13 @@ def _looks_like_non_common_equity(code: str, name: str) -> bool:
         "优先股",
     )
     return any(marker in upper_name for marker in markers)
+
+
+def _looks_like_us_non_common_symbol(code: str) -> bool:
+    symbol = code.split(".")[-1].upper()
+    if symbol == "DOW":
+        return False
+    return symbol.endswith(("W", "WS", "WT", "R", "RT", "U", "UN", "P", "PR"))
 
 
 def _looks_like_us_warrant(code: str, name: str) -> bool:

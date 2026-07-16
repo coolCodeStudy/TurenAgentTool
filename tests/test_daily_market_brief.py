@@ -390,6 +390,54 @@ class DailyMarketBriefTests(unittest.TestCase):
             dmb.MARKET_CAP_THRESHOLDS,
         )
 
+    def test_us_gainer_symbol_classification_rejects_non_common_securities(self) -> None:
+        rows = [
+            {
+                "代码": "DOW",
+                "名称": "Dow Inc.",
+                "涨跌幅": 125.0,
+                "成交额": dmb.US_MIN_TURNOVER,
+                "总市值": 1_000_000_000,
+            },
+            {
+                "代码": "TESTW",
+                "名称": "Example Holdings",
+                "涨跌幅": 124.0,
+                "成交额": dmb.US_MIN_TURNOVER,
+                "总市值": 1_000_000_000,
+            },
+            {
+                "代码": "TESTR",
+                "名称": "Example Holdings",
+                "涨跌幅": 123.0,
+                "成交额": dmb.US_MIN_TURNOVER,
+                "总市值": 1_000_000_000,
+            },
+            {
+                "代码": "TESTU",
+                "名称": "Example Holdings",
+                "涨跌幅": 122.0,
+                "成交额": dmb.US_MIN_TURNOVER,
+                "总市值": 1_000_000_000,
+            },
+            {
+                "代码": "TESTP",
+                "名称": "Example Holdings",
+                "涨跌幅": 121.0,
+                "成交额": dmb.US_MIN_TURNOVER,
+                "总市值": 1_000_000_000,
+            },
+        ]
+
+        gainers = dmb._akshare_stock_gainers(
+            rows,
+            market="US",
+            min_turnover=dmb.US_MIN_TURNOVER,
+        )
+
+        self.assertEqual(["DOW"], [row["code"] for row in gainers])
+        self.assertEqual(125.0, gainers[0]["change_pct"])
+
     def test_direct_eastmoney_hk_us_gainers_keep_liquid_common_equities(self) -> None:
         hk_rows = [
             {"f12": f"00{rank:03d}", "f14": f"港股样本{rank}", "f3": 12 - rank, "f6": 30_000_000, "f20": 4_000_000_000}
