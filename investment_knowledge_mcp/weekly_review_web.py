@@ -112,8 +112,6 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, {"ok": True, "actions": list_workbench_actions()})
             return
         if parsed.path == "/api/weekly-review":
-            if not self._authorized():
-                return
             self._handle_weekly_review_read(parse_qs(parsed.query))
             return
         if parsed.path == "/api/daily-market-brief":
@@ -126,7 +124,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._handle_daily_market_brief_history_jobs_read(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
-            if not self._authorized():
+            if not self._authorized(require_configured=True):
                 return
             self._handle_candidate_insights(parse_qs(parsed.query))
             return
@@ -756,12 +754,14 @@ def render_weekly_review_workbench_html() -> str:
       flex-wrap: wrap;
       justify-content: flex-end;
     }}
-    .token-field {{
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
+    .read-only-badge {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--chip);
       color: var(--muted);
-      font-size: 13px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 650;
     }}
     input, select, button {{
       font: inherit;
@@ -980,9 +980,7 @@ def render_weekly_review_workbench_html() -> str:
         <a class="active" href="/weekly-review">本周复盘</a>
         <a href="/daily-market-brief">每日市场简报</a>
         <a href="#holdings">当前持仓</a>
-        <a href="#markdown">交易复盘</a>
-        <a href="#candidates">心得确认</a>
-        <a href="#markdown">研究队列</a>
+        <a href="#markdown">报告原文</a>
         <a href="#source-status">数据源状态</a>
       </nav>
     </aside>
@@ -990,16 +988,13 @@ def render_weekly_review_workbench_html() -> str:
       <div class="topbar">
         <div>
           <h1>本周复盘</h1>
-          <p class="subtitle">基于交易记录、账户快照、当前持仓、IPO 和知识库生成草稿。</p>
+          <p class="subtitle">只读查看基于交易记录、账户快照、当前持仓、IPO 和知识库生成的周复盘。</p>
         </div>
         <div class="controls">
           <button id="prev-week" type="button">上一周</button>
           <button id="this-week" type="button">本周</button>
           <input id="week-date" type="date" value="{start.isoformat()}" aria-label="复盘周">
-          <label class="token-field"><span>访问令牌</span><input id="api-token" type="password" autocomplete="off" placeholder="用于保存和私有访问" aria-label="访问令牌"></label>
-          <button id="generate" class="primary">生成复盘</button>
-          <button id="refresh">强制刷新</button>
-          <button id="save">保存报告</button>
+          <span class="read-only-badge">公开只读</span>
         </div>
       </div>
       <div id="message" class="notice">正在读取本周复盘状态。</div>
@@ -1011,8 +1006,7 @@ def render_weekly_review_workbench_html() -> str:
       <section id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
       <section id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><select id="market-filter"><option value="">全部市场</option></select><select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></div><div data-slot="holdings"></div></section>
       <section id="attribution"><h2>7. 持仓归因卡</h2><div data-slot="attribution"></div></section>
-      <section id="markdown"><h2>报告草稿</h2><textarea id="markdown-text" class="markdown" spellcheck="false"></textarea></section>
-      <section id="candidates"><h2>候选心得</h2><div data-slot="candidates" class="empty">保存报告后可在这里确认或拒绝候选心得。</div></section>
+      <section id="markdown"><h2>报告原文</h2><textarea id="markdown-text" class="markdown" spellcheck="false" readonly></textarea></section>
     </main>
     <aside class="aside" aria-label="复盘目录">
       <a href="#highlights">1. 高光时刻</a>
@@ -1031,48 +1025,20 @@ def render_weekly_review_workbench_html() -> str:
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
     const message = $("#message");
 
-    $("#generate").addEventListener("click", () => loadReview("generate"));
-    $("#refresh").addEventListener("click", () => loadReview("refresh"));
-    $("#save").addEventListener("click", () => loadReview("save"));
     $("#prev-week").addEventListener("click", () => shiftWeek(-7));
     $("#this-week").addEventListener("click", () => setThisWeek());
-    $("#week-date").addEventListener("change", () => loadReview("read"));
+    $("#week-date").addEventListener("change", loadReview);
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
-    $("#api-token").value = localStorage.getItem("weekly_review_web_token") || "";
-    loadReview("read");
+    loadReview();
 
-    async function loadReview(action) {{
-      setBusy(true);
-      if (action === "refresh") {{
-        const weekText = state.week ? `${{state.week.week}}（${{state.week.start}} 至 ${{state.week.end}}）` : "当前选择周";
-        if (!window.confirm(`强制刷新 ${{weekText}}？\\n\\n系统会重新读取数据并覆盖这一周的自动生成内容。`)) {{
-          setBusy(false);
-          return;
-        }}
-      }}
-      message.textContent = {{
-        read: "正在读取复盘状态...",
-        generate: "正在生成并保存本周复盘...",
-        refresh: "正在强制刷新本周复盘...",
-        save: "正在保存当前报告..."
-      }}[action] || "正在处理...";
+    async function loadReview() {{
+      message.textContent = "正在读取复盘状态...";
       try {{
-        const payload = {{ week_start: $("#week-date").value, markdown: $("#markdown-text").value, context: state.context }};
-        const headers = authHeaders();
-        let response;
-        if (action === "read") {{
-          response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(payload.week_start)}}`, {{ headers }});
-        }} else if (action === "generate") {{
-          response = await fetch("/api/weekly-review/generate", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify({{ week_start: payload.week_start }}) }});
-        }} else if (action === "refresh") {{
-          response = await fetch("/api/weekly-review/refresh", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify({{ week_start: payload.week_start, force: true }}) }});
-        }} else {{
-          response = await fetch("/api/weekly-review/save", {{ method: "POST", headers: {{ ...headers, "Content-Type": "application/json" }}, body: JSON.stringify(payload) }});
-        }}
+        const weekStart = $("#week-date").value;
+        const response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(weekStart)}}`);
         const data = await response.json();
         if (!data.ok) throw new Error(data.error || "处理失败");
-        persistToken();
         state.week = data.week || state.week;
         if (state.week && state.week.start) $("#week-date").value = state.week.start;
         state.reportStatus = data.status || "existing";
@@ -1080,21 +1046,15 @@ def render_weekly_review_workbench_html() -> str:
         state.markdown = data.markdown || "";
         state.holdings = data.context ? data.context.holdings_table || [] : [];
         renderAll();
-        message.textContent = statusMessage(action, data);
-        if (action === "save") loadCandidates();
+        message.textContent = statusMessage(data);
       }} catch (error) {{
         message.textContent = `处理失败：${{error.message}}`;
-      }} finally {{
-        setBusy(false);
       }}
     }}
 
-    function statusMessage(action, data) {{
-      if (data.status === "missing") return "这一周还没有复盘。点击生成复盘会创建并保存一条周复盘记录。";
+    function statusMessage(data) {{
+      if (data.status === "missing") return "这一周还没有已生成的复盘。";
       if (data.already_exists) return "这一周已有复盘，已读取现有内容，没有重新生成。";
-      if (action === "save" && data.saved_report) return "报告已保存。";
-      if (action === "refresh") return "强制刷新完成，已覆盖这一周的自动生成内容。";
-      if (action === "generate") return "复盘已生成并保存，请检查故事、下周展望和数据缺口。";
       return "已读取这一周的复盘内容。";
     }}
 
@@ -1102,32 +1062,12 @@ def render_weekly_review_workbench_html() -> str:
       const current = parseDateInput($("#week-date").value) || new Date();
       current.setDate(current.getDate() + days);
       $("#week-date").value = formatDateInput(current);
-      loadReview("read");
+      loadReview();
     }}
 
     function setThisWeek() {{
       $("#week-date").value = formatDateInput(new Date());
-      loadReview("read");
-    }}
-
-    async function loadCandidates() {{
-      try {{
-        const response = await fetch("/api/candidate-insights?status=pending", {{ headers: authHeaders() }});
-        const data = await response.json();
-        if (data.ok) renderCandidates(data.items || []);
-      }} catch (error) {{
-        slot("candidates").textContent = `候选心得读取失败：${{error.message}}`;
-      }}
-    }}
-
-    async function decideCandidate(id, action) {{
-      const response = await fetch(`/api/candidate-insights/${{id}}/${{action}}`, {{ method: "POST", headers: authHeaders() }});
-      const data = await response.json();
-      if (!data.ok) {{
-        message.textContent = `候选心得操作失败：${{data.error || "unknown"}}`;
-        return;
-      }}
-      loadCandidates();
+      loadReview();
     }}
 
     function renderAll() {{
@@ -1263,29 +1203,6 @@ def render_weekly_review_workbench_html() -> str:
       }}).join("")}}</div>`;
     }}
 
-    function renderCandidates(items) {{
-      if (!items.length) {{
-        slot("candidates").innerHTML = `<div class="empty">暂无待确认候选心得。</div>`;
-        return;
-      }}
-      slot("candidates").innerHTML = `<table><thead><tr><th>心得</th><th>标签</th><th>操作</th></tr></thead><tbody>
-        ${{items.map((item) => `<tr><td>${{escapeHtml(item.insight)}}</td><td>${{escapeHtml((item.tags || []).join("、"))}}</td><td><button onclick="decideCandidate(${{item.id}}, 'confirm')">确认</button> <button onclick="decideCandidate(${{item.id}}, 'reject')">拒绝</button></td></tr>`).join("")}}
-      </tbody></table>`;
-    }}
-
-    function setBusy(busy) {{
-      $("#generate").disabled = busy;
-      $("#refresh").disabled = busy;
-      $("#save").disabled = busy;
-    }}
-    function authHeaders() {{
-      const token = $("#api-token").value.trim();
-      return token ? {{ "Authorization": `Bearer ${{token}}` }} : {{}};
-    }}
-    function persistToken() {{
-      const token = $("#api-token").value.trim();
-      if (token) localStorage.setItem("weekly_review_web_token", token);
-    }}
     function statusText(item) {{
       if (!item) return "缺失";
       const status = item.status || "unknown";

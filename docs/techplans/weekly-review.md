@@ -624,3 +624,29 @@ Still follow-up product/tech work:
 
 - External index, macro, news/theme, and opportunity-list providers remain out of scope for this fix and should stay visible as source gaps.
 - Full local smoke verification requires PostgreSQL on `localhost:55432`; in this task that database was unavailable, so only syntax and no-database weekly Web contract checks ran locally.
+
+### 2026-07-16 public Web authorization regression fix
+
+The public Weekly Review surface now follows an explicit public-read / privileged-write contract:
+
+| Endpoint or surface | Access contract | Public page exposure |
+| --- | --- | --- |
+| `GET /weekly-review` | Public | Read-only week navigation, rendered report sections, holder-attribution cards, and report Markdown |
+| `GET /api/weekly-review?week_start=YYYY-MM-DD` | Public | Used by the public page to read an existing report or a safe missing-report state |
+| `POST /api/weekly-review/generate` | Authenticated | Not exposed |
+| `POST /api/weekly-review/refresh` | Authenticated | Not exposed |
+| `POST /api/weekly-review/save` | Authenticated | Not exposed |
+| Candidate-insight reads and confirm/reject decisions | Authenticated | Not exposed |
+| Command Workbench parse/execute | Authenticated | Remains on its controlled surface |
+
+Security reasoning: Weekly Review acceptance is a public read journey, so the browser must not ask users to discover, enter, or persist a service secret. Generation, force refresh, arbitrary save, and candidate decisions can mutate durable data or trigger provider work; they remain authenticated APIs for controlled internal flows. The public page is therefore intentionally read-only and displays a clear missing-report state instead of offering controls that would predictably fail with `401`.
+
+Implementation and verification evidence:
+
+- Removed the read authorization guard from `GET /api/weekly-review` while preserving the existing guards on all privileged endpoints.
+- Candidate-insight reads now fail closed when no write token is configured, matching the existing fail-closed mutation behavior.
+- Removed the Weekly Review token input, browser `localStorage` token persistence, generate/refresh/save controls, and candidate-decision controls from the public page.
+- Added `tests/test_weekly_review_web_auth.py` using `ThreadingHTTPServer` to verify the contract at the HTTP boundary with configured service tokens.
+- TDD RED: the new suite initially observed `401` for tokenless Weekly read and found the token/write UX in the public HTML.
+- TDD GREEN: the suite verifies tokenless Weekly read `200`, privileged operations `401`, read-only holder-attribution HTML without secret UX, and tokenless Daily Market Brief read `200`.
+- A cloud deploy and independent acceptance retest remain required before this regression is ready for user acceptance.
