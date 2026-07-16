@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 import importlib
 import logging
+import math
 from threading import Event
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -98,6 +99,11 @@ SINA_FINANCE_PROVIDER = "sina_finance"
 CN_MIN_TURNOVER = 50_000_000
 HK_MIN_TURNOVER = 20_000_000
 US_MIN_TURNOVER = 10_000_000
+MARKET_CAP_THRESHOLDS = {
+    "CN": 3_500_000_000,
+    "HK": 4_000_000_000,
+    "US": 500_000_000,
+}
 _SCHEDULER_STATE: dict[str, Any] = {
     "started": False,
     "interval_seconds": None,
@@ -910,7 +916,7 @@ def _eastmoney_cn_gainers() -> list[dict[str, Any]]:
             "fltt": "2",
             "invt": "2",
             "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-            "fields": "f12,f14,f3,f6",
+            "fields": "f12,f14,f3,f6,f20",
         }
     )
     normalized = [
@@ -919,6 +925,7 @@ def _eastmoney_cn_gainers() -> list[dict[str, Any]]:
             "名称": row.get("f14"),
             "涨跌幅": row.get("f3"),
             "成交额": row.get("f6"),
+            "总市值": row.get("f20"),
         }
         for row in rows
     ]
@@ -1022,6 +1029,7 @@ def _normalize_sina_hk_gainers(rows: list[dict[str, Any]]) -> list[dict[str, Any
             "名称": row.get("name"),
             "涨跌幅": row.get("changepercent"),
             "成交额": row.get("amount"),
+            "总市值": row.get("mktcap"),
         }
         for row in rows
     ]
@@ -1031,6 +1039,7 @@ def _normalize_sina_hk_gainers(rows: list[dict[str, Any]]) -> list[dict[str, Any
         ),
         provider=SINA_FINANCE_PROVIDER,
         min_turnover=HK_MIN_TURNOVER,
+        market="HK",
     )
 
 
@@ -1045,6 +1054,7 @@ def _normalize_sina_us_gainers(rows: list[dict[str, Any]]) -> list[dict[str, Any
                 "名称": row.get("cname") or row.get("name"),
                 "涨跌幅": row.get("chg"),
                 "成交额": price * volume if price is not None and volume is not None else None,
+                "总市值": row.get("mktcap"),
             }
         )
     return _with_gainer_provider(
@@ -1053,16 +1063,19 @@ def _normalize_sina_us_gainers(rows: list[dict[str, Any]]) -> list[dict[str, Any
         ),
         provider=SINA_FINANCE_PROVIDER,
         min_turnover=US_MIN_TURNOVER,
+        market="US",
     )
 
 
 def _with_gainer_provider(
-    rows: list[dict[str, Any]], *, provider: str, min_turnover: float
+    rows: list[dict[str, Any]], *, provider: str, min_turnover: float, market: str
 ) -> list[dict[str, Any]]:
     for row in rows:
         row["provider"] = provider
-        row["metric"] = (
-            f"{provider}_turnover_filtered_change_pct_min_{int(min_turnover)}"
+        row["metric"] = _gainer_metric(
+            min_turnover=min_turnover,
+            min_market_cap=MARKET_CAP_THRESHOLDS[market],
+            provider=provider,
         )
     return rows
 
@@ -1080,7 +1093,7 @@ def _eastmoney_market_gainers(
             "fltt": "2",
             "invt": "2",
             "fs": market_filter,
-            "fields": "f12,f14,f3,f6",
+            "fields": "f12,f14,f3,f6,f20",
         }
     )
     normalized = [
@@ -1089,6 +1102,7 @@ def _eastmoney_market_gainers(
             "名称": row.get("f14"),
             "涨跌幅": row.get("f3"),
             "成交额": row.get("f6"),
+            "总市值": row.get("f20"),
         }
         for row in rows
     ]
@@ -1097,8 +1111,10 @@ def _eastmoney_market_gainers(
     )
     for row in gainers:
         row["provider"] = EASTMONEY_HTTP_PROVIDER
-        row["metric"] = (
-            f"eastmoney_turnover_filtered_change_pct_min_{int(min_turnover)}"
+        row["metric"] = _gainer_metric(
+            min_turnover=min_turnover,
+            min_market_cap=MARKET_CAP_THRESHOLDS[market],
+            provider=EASTMONEY_HTTP_PROVIDER,
         )
     return gainers
 
@@ -1136,15 +1152,17 @@ def _sina_cn_gainers() -> list[dict[str, Any]]:
             "名称": row.get("name"),
             "涨跌幅": row.get("changepercent"),
             "成交额": row.get("amount"),
+            "总市值": row.get("mktcap"),
         }
         for row in rows
         if isinstance(row, dict)
     ]
-    gainers = _akshare_stock_gainers(normalized, market="CN", min_turnover=CN_MIN_TURNOVER)
-    for row in gainers:
-        row["provider"] = SINA_FINANCE_PROVIDER
-        row["metric"] = f"sina_turnover_filtered_change_pct_min_{CN_MIN_TURNOVER}"
-    return gainers
+    return _with_gainer_provider(
+        _akshare_stock_gainers(normalized, market="CN", min_turnover=CN_MIN_TURNOVER),
+        provider=SINA_FINANCE_PROVIDER,
+        min_turnover=CN_MIN_TURNOVER,
+        market="CN",
+    )
 
 
 def _eastmoney_cn_capital_flow() -> list[dict[str, Any]]:
@@ -1233,13 +1251,19 @@ def _akshare_stock_gainers(frame: Any, *, market: str, min_turnover: float) -> l
         name = _text(_first_value(row, "名称", "股票简称"))
         change_pct = _number(_first_value(row, "涨跌幅", "涨幅"))
         turnover = _number(_first_value(row, "成交额", "金额"))
+        market_cap = _number(
+            _first_value(row, "总市值", "Total Market Value", "Market Cap", "market_cap", "mktcap")
+        )
         if not code or not name or change_pct is None:
             continue
         if turnover is not None and turnover < min_turnover:
             continue
-        if market == "CN" and ("ST" in name.upper() or "退" in name):
-            continue
-        if market == "US" and _looks_like_us_warrant(code, name):
+        if not _eligible_common_equity(
+            market=market,
+            code=code,
+            name=name,
+            market_cap=market_cap,
+        ):
             continue
         cleaned.append(
             {
@@ -1248,8 +1272,12 @@ def _akshare_stock_gainers(frame: Any, *, market: str, min_turnover: float) -> l
                 "name": name,
                 "change_pct": change_pct,
                 "turnover": turnover,
+                "market_cap": market_cap,
                 "provider": AKSHARE_PROVIDER,
-                "metric": f"turnover_filtered_change_pct_min_{int(min_turnover)}",
+                "metric": _gainer_metric(
+                    min_turnover=min_turnover,
+                    min_market_cap=MARKET_CAP_THRESHOLDS[market],
+                ),
             }
         )
     return _ranked_top(sorted(cleaned, key=lambda item: item["change_pct"], reverse=True)[:5])
@@ -1309,10 +1337,59 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+def _eligible_common_equity(*, market: str, code: str, name: str, market_cap: float | None) -> bool:
+    min_market_cap = MARKET_CAP_THRESHOLDS.get(market)
+    if min_market_cap is None or market_cap is None or not math.isfinite(market_cap):
+        return False
+    if market_cap < min_market_cap:
+        return False
+    if market == "CN" and ("ST" in name.upper() or "退" in name):
+        return False
+    if _looks_like_non_common_equity(code, name):
+        return False
+    return not (market == "US" and _looks_like_us_warrant(code, name))
+
+
+def _looks_like_non_common_equity(code: str, name: str) -> bool:
+    del code
+    upper_name = name.upper()
+    markers = (
+        "ETF",
+        "ETN",
+        "FUND",
+        "LEVERAGED",
+        "INVERSE",
+        "WARRANT",
+        " RIGHT",
+        "UNIT",
+        "PREFERRED",
+        " PREF",
+        " BULL",
+        " BEAR",
+        " SHORT",
+        " 2X",
+        " 3X",
+        "基金",
+        "杠杆",
+        "反向",
+        "权证",
+        "优先股",
+    )
+    return any(marker in upper_name for marker in markers)
+
+
 def _looks_like_us_warrant(code: str, name: str) -> bool:
     symbol = code.split(".")[-1].upper()
     upper_name = name.upper()
-    return symbol.endswith(("W", "WS", "WT")) or any(word in upper_name for word in (" WARRANT", " WT", " RIGHT"))
+    return symbol.endswith(("WS", "WT")) or any(word in upper_name for word in (" WARRANT", " WT", " RIGHT"))
+
+
+def _gainer_metric(*, min_turnover: float, min_market_cap: float, provider: str | None = None) -> str:
+    prefix = f"{provider}_" if provider else ""
+    return (
+        f"{prefix}turnover_filtered_change_pct_turnover_min_{int(min_turnover)}_"
+        f"market_cap_min_{int(min_market_cap)}"
+    )
 
 
 def _empty_activity(market: str, *, provider: str = "not_configured", status: str = "provider_unavailable", message: str | None = None) -> dict[str, Any]:

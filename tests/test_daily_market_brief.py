@@ -129,13 +129,13 @@ class FakeAkshareModule(types.SimpleNamespace):
     def stock_zh_a_spot_em(self) -> FakeFrame:
         return FakeFrame(
             [
-                {"代码": "300001", "名称": "样本科技", "涨跌幅": 12.4, "成交额": 180_000_000},
-                {"代码": "600001", "名称": "样本制造", "涨跌幅": 10.2, "成交额": 95_000_000},
-                {"代码": "000001", "名称": "样本银行", "涨跌幅": 7.1, "成交额": 80_000_000},
-                {"代码": "002001", "名称": "样本消费", "涨跌幅": 6.8, "成交额": 70_000_000},
-                {"代码": "688001", "名称": "样本芯片", "涨跌幅": 6.1, "成交额": 60_000_000},
-                {"代码": "000002", "名称": "ST样本", "涨跌幅": 20.0, "成交额": 100_000_000},
-                {"代码": "000003", "名称": "低流动性", "涨跌幅": 19.0, "成交额": 1_000_000},
+                {"代码": "300001", "名称": "样本科技", "涨跌幅": 12.4, "成交额": 180_000_000, "总市值": 10_000_000_000},
+                {"代码": "600001", "名称": "样本制造", "涨跌幅": 10.2, "成交额": 95_000_000, "总市值": 9_000_000_000},
+                {"代码": "000001", "名称": "样本银行", "涨跌幅": 7.1, "成交额": 80_000_000, "总市值": 8_000_000_000},
+                {"代码": "002001", "名称": "样本消费", "涨跌幅": 6.8, "成交额": 70_000_000, "总市值": 7_000_000_000},
+                {"代码": "688001", "名称": "样本芯片", "涨跌幅": 6.1, "成交额": 60_000_000, "总市值": 6_000_000_000},
+                {"代码": "000002", "名称": "ST样本", "涨跌幅": 20.0, "成交额": 100_000_000, "总市值": 10_000_000_000},
+                {"代码": "000003", "名称": "低流动性", "涨跌幅": 19.0, "成交额": 1_000_000, "总市值": 10_000_000_000},
             ]
         )
 
@@ -318,54 +318,145 @@ class DailyMarketBriefTests(unittest.TestCase):
                 activity["source_status"]["gainers"]["fallback_from"],
             )
 
+    def test_akshare_gainers_require_common_equity_and_market_cap(self) -> None:
+        cases = (
+            (
+                "CN",
+                dmb.CN_MIN_TURNOVER,
+                3_500_000_000,
+                "CN.ORDINARY",
+                "示例股份",
+                "Total Market Value",
+            ),
+            (
+                "HK",
+                dmb.HK_MIN_TURNOVER,
+                4_000_000_000,
+                "HK.ORDINARY",
+                "Example Holdings",
+                "Market Cap",
+            ),
+            (
+                "US",
+                dmb.US_MIN_TURNOVER,
+                500_000_000,
+                "US.ORDINARY",
+                "Example Corporation",
+                "总市值",
+            ),
+        )
+
+        for market, min_turnover, min_market_cap, ordinary_code, ordinary_name, market_cap_key in cases:
+            rows = [
+                {
+                    "代码": ordinary_code,
+                    "名称": ordinary_name,
+                    "涨跌幅": 125.0,
+                    "成交额": min_turnover,
+                    market_cap_key: min_market_cap,
+                },
+                {
+                    "代码": f"{market}.LOWCAP",
+                    "名称": "Low Cap Company",
+                    "涨跌幅": 99.0,
+                    "成交额": min_turnover,
+                    "Market Cap": min_market_cap - 1,
+                },
+                {
+                    "代码": f"{market}.NOCAP",
+                    "名称": "Missing Cap Company",
+                    "涨跌幅": 98.0,
+                    "成交额": min_turnover,
+                },
+                {
+                    "代码": f"{market}.ETF",
+                    "名称": "Direxion Daily 3X Bull ETF",
+                    "涨跌幅": 150.0,
+                    "成交额": min_turnover,
+                    "Market Cap": min_market_cap * 2,
+                },
+            ]
+
+            gainers = dmb._akshare_stock_gainers(rows, market=market, min_turnover=min_turnover)
+
+            self.assertEqual([ordinary_code], [row["code"] for row in gainers])
+            self.assertEqual(125.0, gainers[0]["change_pct"])
+            self.assertEqual(float(min_market_cap), gainers[0]["market_cap"])
+            self.assertIn(f"turnover_min_{int(min_turnover)}", gainers[0]["metric"])
+            self.assertIn(f"market_cap_min_{min_market_cap}", gainers[0]["metric"])
+
+        self.assertEqual(
+            {"CN": 3_500_000_000, "HK": 4_000_000_000, "US": 500_000_000},
+            dmb.MARKET_CAP_THRESHOLDS,
+        )
+
     def test_direct_eastmoney_hk_us_gainers_keep_liquid_common_equities(self) -> None:
         hk_rows = [
-            {"f12": f"00{rank:03d}", "f14": f"港股样本{rank}", "f3": 12 - rank, "f6": 30_000_000}
-            for rank in range(1, 7)
-        ] + [{"f12": "00999", "f14": "低流动性", "f3": 99, "f6": 1_000}]
-        us_rows = [
-            {"f12": f"TEST{rank}", "f14": f"US Sample {rank}", "f3": 12 - rank, "f6": 20_000_000}
+            {"f12": f"00{rank:03d}", "f14": f"港股样本{rank}", "f3": 12 - rank, "f6": 30_000_000, "f20": 4_000_000_000}
             for rank in range(1, 7)
         ] + [
-            {"f12": "TESTW", "f14": "Example Warrant", "f3": 99, "f6": 50_000_000},
-            {"f12": "LOW", "f14": "Low Turnover", "f3": 98, "f6": 1_000},
+            {"f12": "00999", "f14": "低流动性", "f3": 99, "f6": 1_000, "f20": 4_000_000_000},
+            {"f12": "00888", "f14": "Low Cap Company", "f3": 98, "f6": 30_000_000, "f20": 3_999_999_999},
+            {"f12": "00777", "f14": "Leveraged ETF", "f3": 97, "f6": 30_000_000, "f20": 8_000_000_000},
+            {"f12": "00666", "f14": "Missing Cap Company", "f3": 96, "f6": 30_000_000},
         ]
-        with mock.patch.object(dmb, "_eastmoney_clist", side_effect=(hk_rows, us_rows)):
+        us_rows = [
+            {"f12": f"TEST{rank}", "f14": f"US Sample {rank}", "f3": 12 - rank, "f6": 20_000_000, "f20": 500_000_000}
+            for rank in range(1, 7)
+        ] + [
+            {"f12": "TESTW", "f14": "Example Warrant", "f3": 99, "f6": 50_000_000, "f20": 1_000_000_000},
+            {"f12": "TQQQ", "f14": "ProShares UltraPro QQQ ETF", "f3": 98, "f6": 50_000_000, "f20": 1_000_000_000},
+            {"f12": "SMALL", "f14": "Small Company", "f3": 97, "f6": 50_000_000, "f20": 499_999_999},
+            {"f12": "NOCAP", "f14": "Missing Cap Company", "f3": 96, "f6": 50_000_000},
+            {"f12": "LOW", "f14": "Low Turnover", "f3": 95, "f6": 1_000, "f20": 1_000_000_000},
+        ]
+        with mock.patch.object(dmb, "_eastmoney_clist", side_effect=(hk_rows, us_rows)) as clist:
             hk = dmb._eastmoney_hk_gainers()
             us = dmb._eastmoney_us_gainers()
 
         self.assertEqual(5, len(hk))
         self.assertEqual(5, len(us))
-        self.assertNotIn("00999", {row["code"] for row in hk})
-        self.assertNotIn("TESTW", {row["code"] for row in us})
+        self.assertTrue({"00999", "00888", "00777", "00666"}.isdisjoint({row["code"] for row in hk}))
+        self.assertTrue({"TESTW", "TQQQ", "SMALL", "NOCAP", "LOW"}.isdisjoint({row["code"] for row in us}))
         self.assertTrue(
             all(row["provider"] == dmb.EASTMONEY_HTTP_PROVIDER for row in hk + us)
         )
+        self.assertTrue(all("f20" in call.args[0]["fields"] for call in clist.call_args_list))
+        self.assertTrue(all("market_cap_min_" in row["metric"] for row in hk + us))
 
     def test_sina_hk_us_rows_are_normalized_and_filtered(self) -> None:
         hk = dmb._normalize_sina_hk_gainers(
             [
-                {"symbol": f"00{rank:03d}", "name": f"港股样本{rank}", "changepercent": 20 - rank, "amount": 30_000_000}
-                for rank in range(1, 7)
-            ]
-            + [{"symbol": "00999", "name": "低流动性", "changepercent": 99, "amount": 1_000}]
-        )
-        us = dmb._normalize_sina_us_gainers(
-            [
-                {"symbol": f"TEST{rank}", "name": f"US Sample {rank}", "cname": f"美股样本{rank}", "chg": 20 - rank, "price": 10, "volume": 2_000_000}
+                {"symbol": f"00{rank:03d}", "name": f"港股样本{rank}", "changepercent": 20 - rank, "amount": 30_000_000, "mktcap": 4_000_000_000}
                 for rank in range(1, 7)
             ]
             + [
-                {"symbol": "TESTW", "name": "Example Warrant", "cname": "Example Warrant", "chg": 99, "price": 1, "volume": 50_000_000},
-                {"symbol": "LOW", "name": "Low Turnover", "cname": "Low Turnover", "chg": 98, "price": 1, "volume": 1_000},
+                {"symbol": "00999", "name": "低流动性", "changepercent": 99, "amount": 1_000, "mktcap": 4_000_000_000},
+                {"symbol": "00888", "name": "Low Cap Company", "changepercent": 98, "amount": 30_000_000, "mktcap": 3_999_999_999},
+                {"symbol": "00777", "name": "Leveraged ETF", "changepercent": 97, "amount": 30_000_000, "mktcap": 8_000_000_000},
+                {"symbol": "00666", "name": "Missing Cap Company", "changepercent": 96, "amount": 30_000_000},
+            ]
+        )
+        us = dmb._normalize_sina_us_gainers(
+            [
+                {"symbol": f"TEST{rank}", "name": f"US Sample {rank}", "cname": f"美股样本{rank}", "chg": 20 - rank, "price": 10, "volume": 2_000_000, "mktcap": 500_000_000}
+                for rank in range(1, 7)
+            ]
+            + [
+                {"symbol": "TESTW", "name": "Example Warrant", "cname": "Example Warrant", "chg": 99, "price": 1, "volume": 50_000_000, "mktcap": 1_000_000_000},
+                {"symbol": "TQQQ", "name": "ProShares UltraPro QQQ ETF", "cname": "ProShares UltraPro QQQ ETF", "chg": 98, "price": 1, "volume": 50_000_000, "mktcap": 1_000_000_000},
+                {"symbol": "SMALL", "name": "Small Company", "cname": "Small Company", "chg": 97, "price": 1, "volume": 50_000_000, "mktcap": 499_999_999},
+                {"symbol": "NOCAP", "name": "Missing Cap Company", "cname": "Missing Cap Company", "chg": 96, "price": 1, "volume": 50_000_000},
+                {"symbol": "LOW", "name": "Low Turnover", "cname": "Low Turnover", "chg": 95, "price": 1, "volume": 1_000, "mktcap": 1_000_000_000},
             ]
         )
 
         self.assertEqual(5, len(hk))
         self.assertEqual(5, len(us))
-        self.assertNotIn("00999", {row["code"] for row in hk})
-        self.assertNotIn("TESTW", {row["code"] for row in us})
+        self.assertTrue({"00999", "00888", "00777", "00666"}.isdisjoint({row["code"] for row in hk}))
+        self.assertTrue({"TESTW", "TQQQ", "SMALL", "NOCAP", "LOW"}.isdisjoint({row["code"] for row in us}))
         self.assertTrue(all(row["provider"] == dmb.SINA_FINANCE_PROVIDER for row in hk + us))
+        self.assertTrue(all(row["market_cap"] > 0 for row in hk + us))
 
     def test_akshare_missing_dependency_degrades_without_raw_error(self) -> None:
         sys.modules.pop("akshare", None)
