@@ -1,0 +1,32 @@
+# Coordinator Context Packet: Weekly Review Public Web Authorization
+
+- Feature: Weekly review generator — P1 holder-level attribution public Web acceptance
+- Coordinator thread/session: current Feature Coordinator task, delegated from thread `019f3821-3e6c-79b3-96b3-a5e91aaaa184`
+- Owner intent: fix the live Weekly Review authorization regression without asking the user to discover or enter a secret token; preserve privileged write boundaries; keep Daily Market Brief as a regression guard only.
+- Operating model source: `docs/product/Agent-Operating-Model.md`
+- Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
+- Product doc / PRD: `docs/product/PRD-每周复盘.md`, especially the 2026-06-30 holder-level attribution addendum
+- Technical plan: `docs/techplans/weekly-review.md`
+- Feature Registry row: `Weekly review generator`
+- Acceptance Queue rows: historical `AT-2026-06-25-001`, historical `AT-2026-06-30-001`, regression `AT-2026-07-16-001`
+- Delivery Queue row: `DQ-2026-07-16-001`
+- Current authoritative branch/ref: `origin/main@492afde77b5a2dfc52267ba308bbeb24938555b1`
+- Related coordinator branch/ref: `codex/weekly-review-public-web-auth`
+- Current deployed ref or deploy event: `/health` reports `1d45daeb66a27527fabf3f51eaf692aa4c5d3f42`; latest-main deployment evidence must be refreshed after the fix.
+- User-facing surface: `http://47.84.190.191:8010/weekly-review`
+- Current state: live regression reproduced. `GET /weekly-review` returns `200`, but its tokenless `GET /api/weekly-review?week_start=2026-06-22` returns `401 {"ok": false, "error": "unauthorized"}`. The comparison surface `GET /api/daily-market-brief?...` returns `200` without a token.
+- Known blockers: no product decision blocker. The Web API still enforces the legacy Weekly Review token contract, and the page exposes a secret-token input. The cloud service also reports an older release SHA, but current `main` contains the same Weekly Review read guard, so deployment drift alone cannot fix the regression.
+- Active child threads or role sessions: Development Agent to be dispatched from this coordinator.
+- Watch contract:
+  - Watched item: Development Agent return for `DQ-2026-07-16-001`.
+  - Wake event or cadence: active coordinator mailbox watch until the child returns; after integration/deploy, poll shared deploy status and the cloud page/API until stable.
+  - Expected return artifact: branch/commit, failing-then-passing tests, narrow verification, exact public-versus-privileged endpoint contract, and deploy classification.
+  - Coordinator action on wake: apply the Coordinator Return Gate, integrate or reject the return, record Deploy Intent, deploy through the shared serialized path if accepted, run cloud smoke, then dispatch independent Acceptance Testing.
+- Next owner: Development Agent
+- Next handoff: make Weekly Review read and safe bounded generation usable without a user-managed token; keep force refresh, arbitrary save, candidate decisions, and Command Workbench privileged; remove secret-token UX from the public Weekly Review page and add regression tests.
+- Deploy needed: yes, after an accepted Development return.
+- Deploy decision: `self_deploy` after integration to an authoritative pushed ref, using the shared serialized deploy path for `weekly-review-web`; no ad hoc restart or direct Compose action.
+- Escalation target: not required; this is routine feature-local routing.
+- User decision needed: none before implementation and retest; final user acceptance remains pending.
+- Completion gate: independent cloud acceptance passes for Weekly Review page/API, holder-attribution cards and the 2026-06-22 report, with no raw secrets/internal errors and Daily Market Brief unchanged.
+- Role learning check: pending final evidence.
