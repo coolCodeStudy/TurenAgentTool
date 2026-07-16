@@ -15,22 +15,22 @@ PRIMARY_DESTINATIONS: Final = (
 
 _ACCESS_ERRORS: Final = {
     "access_required": {
-        "message": "此操作需要私有访问权限。",
+        "message": "Private access is required for this operation.",
         "next_action": "enter_access",
         "retryable": True,
     },
     "access_rejected": {
-        "message": "当前访问凭据未被接受，请更新后重试。",
+        "message": "The saved access credential was rejected. Enter the current credential and try again.",
         "next_action": "replace_access",
         "retryable": True,
     },
     "access_not_configured": {
-        "message": "私有访问服务暂未配置，请稍后重试。",
+        "message": "Private access is temporarily unavailable because the service is not configured.",
         "next_action": "wait_for_service",
         "retryable": False,
     },
     "request_failed": {
-        "message": "请求暂时失败，请重试。",
+        "message": "The request failed. Try again.",
         "next_action": "retry",
         "retryable": True,
     },
