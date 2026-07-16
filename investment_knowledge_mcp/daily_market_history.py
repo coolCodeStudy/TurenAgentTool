@@ -262,6 +262,7 @@ def _load_universe(
             code=provider_symbol,
             name=name,
             market_cap=current_market_cap,
+            row=row,
         ):
             continue
         candidates.append(
@@ -455,7 +456,9 @@ def _unsupported_section_status(section: str) -> dict[str, Any]:
     }
 
 
-def _eligible_common_equity(*, market: str, code: str, name: str, market_cap: float | None) -> bool:
+def _eligible_common_equity(
+    *, market: str, code: str, name: str, market_cap: float | None, row: dict[str, Any]
+) -> bool:
     min_market_cap = MARKET_CAP_THRESHOLDS.get(market)
     if min_market_cap is None or market_cap is None or not math.isfinite(market_cap):
         return False
@@ -463,9 +466,17 @@ def _eligible_common_equity(*, market: str, code: str, name: str, market_cap: fl
         return False
     if market == "CN" and ("ST" in name.upper() or "退" in name):
         return False
+    if _looks_like_non_common_security_type(row):
+        return False
     if _looks_like_non_common_equity(market=market, code=code, name=name):
         return False
     return not (market == "US" and _looks_like_us_warrant(code, name))
+
+
+def _looks_like_non_common_security_type(row: dict[str, Any]) -> bool:
+    security_type = _text(_first_value(row, "证券类型", "类型", "type", "Type")).upper()
+    markers = ("WARRANT", "RIGHT", "UNIT", "PREFERRED", "ETF", "ETN", "FUND", "LEVERAGED", "INVERSE")
+    return any(marker in security_type for marker in markers)
 
 
 def _looks_like_non_common_equity(*, market: str, code: str, name: str) -> bool:

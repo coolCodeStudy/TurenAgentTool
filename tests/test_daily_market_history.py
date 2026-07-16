@@ -609,6 +609,8 @@ class HistoricalActivityProviderTests(unittest.TestCase):
         for market, min_market_cap, turnover, ordinary_code, ordinary_name, market_cap_key in cases:
             missing_cap_code = f"{market}.NOCAP"
             low_cap_code = f"{market}.LOWCAP"
+            invalid_cap_code = f"{market}.INVALIDCAP"
+            nan_cap_code = f"{market}.NANCAP"
             non_common_code = "106.TESTW" if market == "US" else f"{market}.ETF"
             fake = FakeHistoricalAkshare(
                 universe=[
@@ -626,6 +628,18 @@ class HistoricalActivityProviderTests(unittest.TestCase):
                         "Market Cap": min_market_cap - 1,
                     },
                     {
+                        "代码": invalid_cap_code,
+                        "名称": "Invalid Cap Company",
+                        "成交额": turnover,
+                        "Market Cap": "invalid",
+                    },
+                    {
+                        "代码": nan_cap_code,
+                        "名称": "NaN Cap Company",
+                        "成交额": turnover,
+                        "Market Cap": "NaN",
+                    },
+                    {
                         "代码": non_common_code,
                         "名称": "Leveraged ETF" if market != "US" else "Example Holdings",
                         "成交额": turnover,
@@ -639,6 +653,8 @@ class HistoricalActivityProviderTests(unittest.TestCase):
                     ],
                     missing_cap_code: history_rows(turnover=turnover),
                     low_cap_code: history_rows(turnover=turnover),
+                    invalid_cap_code: history_rows(turnover=turnover),
+                    nan_cap_code: history_rows(turnover=turnover),
                     non_common_code: history_rows(turnover=turnover),
                 },
                 market_cap_default=None,
@@ -655,13 +671,49 @@ class HistoricalActivityProviderTests(unittest.TestCase):
             self.assertIn("current_market_cap_min_", result.gainers[0]["metric"])
             self.assertIn("current spot market capitalization", result.source_status["gainers"]["message"].lower())
 
+    def test_historical_candidates_reject_non_common_security_types_before_history_query(self) -> None:
+        type_labels = ("Warrant", "Right", "Unit", "Preferred", "ETF", "ETN", "Fund", "Leveraged", "Inverse")
+        typed_codes = [f"105.TYPE{index:02d}" for index in range(1, len(type_labels) + 1)]
+        fake = FakeHistoricalAkshare(
+            universe=[
+                {"代码": "106.DOW", "名称": "Dow Inc", "成交额": 20_000_000, "总市值": 1_000_000_000},
+                *[
+                    {
+                        "代码": code,
+                        "名称": "Example Holdings",
+                        "成交额": 20_000_000,
+                        "总市值": 1_000_000_000,
+                        "证券类型": type_label,
+                    }
+                    for code, type_label in zip(typed_codes, type_labels)
+                ],
+            ],
+            histories={
+                "106.DOW": history_rows(turnover=20_000_000),
+                **{code: history_rows(turnover=20_000_000) for code in typed_codes},
+            },
+        )
+
+        result = load_historical_market_activity("US", date(2026, 7, 9), akshare_module=fake)
+
+        self.assertEqual(["106.DOW"], [row["code"] for row in result.gainers])
+        self.assertEqual(["106.DOW"], [call[1]["symbol"] for call in fake.history_calls])
+
     def test_dow_is_eligible_while_warrant_metadata_is_excluded(self) -> None:
         fake = FakeHistoricalAkshare(
             universe=[
                 {"代码": "106.DOW", "名称": "Dow Inc", "成交额": 20_000_000},
-                {"代码": "105.TESTW", "名称": "Example Warrant", "成交额": 30_000_000},
+                {
+                    "代码": "105.TEST1",
+                    "名称": "Example Holdings",
+                    "成交额": 30_000_000,
+                    "证券类型": "Warrant",
+                },
             ],
-            histories={"106.DOW": history_rows(turnover=20_000_000)},
+            histories={
+                "106.DOW": history_rows(turnover=20_000_000),
+                "105.TEST1": history_rows(turnover=30_000_000),
+            },
         )
 
         result = load_historical_market_activity("US", date(2026, 7, 9), akshare_module=fake)
