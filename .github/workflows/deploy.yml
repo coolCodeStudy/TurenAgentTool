@@ -441,8 +441,10 @@ jobs:
           archive="dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz"
           docker save investment-knowledge-app:${{ github.sha }} | gzip > "$archive"
           archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "archive_bytes=$archive_bytes" >> "$GITHUB_OUTPUT"
+          echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
           ls -lh "$archive"
 
       - name: Remote deploy_preflight.py resource gate
@@ -580,6 +582,7 @@ jobs:
           EMERGENCY_REASON: ${{ needs.plan.outputs.emergency_reason }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
+          ARCHIVE_SHA256: ${{ steps.archive.outputs.archive_sha256 }}
         run: |
           set -euo pipefail
 
@@ -592,6 +595,7 @@ jobs:
               "mode": "full_image",
               "targets": json.loads(os.environ["TARGETS_JSON"]),
               "archive_path": os.environ["REMOTE_ARCHIVE"],
+              "archive_sha256": os.environ["ARCHIVE_SHA256"],
               "feature_routes": ["/daily-market-brief"],
               "source": "github_actions",
               "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",

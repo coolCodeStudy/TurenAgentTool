@@ -13,8 +13,10 @@ from scripts.deploy_state import (
     SourcePolicyError,
     SourceRefreshError,
     StateFormatError,
+    load_event,
     load_state,
     resolve_production_target,
+    update_event_artifact_cleanup,
     write_event,
     write_state,
 )
@@ -259,6 +261,42 @@ class DeployStateTests(TestCase):
         self.assertEqual(events_dir / "event-1.json", path)
         self.assertEqual(event.event_id, json.loads(path.read_text(encoding="utf-8"))["event_id"])
         self.assertFalse((events_dir / "event-1.json.tmp").exists())
+
+    def test_legacy_event_load_and_cleanup_update_use_canonical_schema(self) -> None:
+        events_dir = self.directory / "events"
+        path = write_event(events_dir, sample_event())
+        legacy = json.loads(path.read_text(encoding="utf-8"))
+        legacy.pop("archive_sha256")
+        legacy.pop("artifact_cleanup_status")
+        legacy["rollback_status"] = "not_needed|cleanup:complete|archive_removed"
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        loaded = load_event(events_dir, "event-1")
+        self.assertIsNone(loaded.archive_sha256)
+        self.assertEqual("removed", loaded.artifact_cleanup_status)
+
+        update_event_artifact_cleanup(events_dir, "event-1", "failed")
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual("failed", persisted["artifact_cleanup_status"])
+        self.assertEqual(
+            "not_needed|cleanup:complete|archive_cleanup:failed",
+            persisted["rollback_status"],
+        )
+        self.assertIsNone(persisted["archive_sha256"])
+
+    def test_event_rejects_invalid_archive_digest_and_cleanup_status(self) -> None:
+        events_dir = self.directory / "events"
+
+        with self.assertRaisesRegex(StateFormatError, "archive_sha256"):
+            write_event(
+                events_dir,
+                replace(sample_event(), archive_sha256="A" * 64),
+            )
+        with self.assertRaisesRegex(StateFormatError, "artifact_cleanup_status"):
+            write_event(
+                events_dir,
+                replace(sample_event(), artifact_cleanup_status="failed|forged"),
+            )
 
     def test_write_event_rejects_path_traversal_event_ids(self) -> None:
         event = sample_event()

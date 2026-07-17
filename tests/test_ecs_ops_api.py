@@ -5,6 +5,7 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+import hashlib
 import json
 import os
 import re
@@ -25,6 +26,10 @@ from scripts.deploy_support import CommandResult
 
 TARGET_SHA = "b" * 40
 PREVIOUS_SHA = "a" * 40
+
+
+def _archive_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @contextmanager
@@ -174,6 +179,12 @@ class FakeEngine:
                     stability_seconds=30,
                     affected_services=self.outcome.activated_services,
                     route_smoke_checks=("weekly-review-web:/health",),
+                    archive_sha256=request.archive_sha256,
+                    artifact_cleanup_status=(
+                        "complete"
+                        if request.archive_path is not None
+                        else "not_applicable"
+                    ),
                 ),
             )
         return self.outcome
@@ -484,6 +495,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                     if archive is not None:
                         payload["ref"] = TARGET_SHA
                         payload["archive_path"] = str(archive)
+                        payload["archive_sha256"] = _archive_sha256(archive)
 
                     with (
                         patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
@@ -523,6 +535,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         "mode": "full",
                         "targets": ["weekly-review-web"],
                         "archive_path": str(archive),
+                        "archive_sha256": _archive_sha256(archive),
                     }
                 )
 
@@ -560,6 +573,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                                     "mode": "full_image",
                                     "targets": ["weekly-review-web"],
                                     "archive_path": archive_path,
+                                    "archive_sha256": "0" * 64,
                                 },
                             )
                         self.assertEqual(422, status)
@@ -589,6 +603,49 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual(422, status)
         self.assertEqual("deployment_rejected", payload["error"])
         self.assertEqual([], engine.requests)
+
+    def test_full_image_requires_lowercase_archive_sha256_before_dispatch(self) -> None:
+        engine = FakeEngine()
+        invalid_digests = (None, "A" * 64, "a" * 63, "not-a-digest")
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            for digest in invalid_digests:
+                with self.subTest(digest=digest):
+                    with _managed_archive() as archive:
+                        payload = {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                        }
+                        if digest is not None:
+                            payload["archive_sha256"] = digest
+                        status, response = self._post_json("/deploy", payload)
+
+                    self.assertEqual(422, status)
+                    self.assertEqual("deployment_rejected", response["error"])
+
+        self.assertEqual([], engine.requests)
+
+    def test_digest_mismatch_rejects_claim_before_engine_dispatch(self) -> None:
+        engine = FakeEngine()
+        with _managed_archive() as archive:
+            with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                        "archive_sha256": "0" * 64,
+                    },
+                )
+
+        self.assertEqual(503, status)
+        self.assertEqual("deployment_artifact_claim_failed", payload["error"])
+        self.assertEqual([], engine.requests)
+        self.assertFalse(any(self.artifacts_dir.iterdir()))
 
     def test_sensitive_feature_route_is_rejected_before_dispatch_without_leak(self) -> None:
         engine = FakeEngine()
@@ -684,6 +741,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         "mode": "full_image",
                         "targets": ["weekly-review-web"],
                         "archive_path": str(archive),
+                        "archive_sha256": _archive_sha256(archive),
                     },
                 )
                 self.assertFalse(archive.exists())
@@ -721,6 +779,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                             "mode": "full_image",
                             "targets": ["weekly-review-web"],
                             "archive_path": str(archive),
+                            "archive_sha256": _archive_sha256(archive),
                         },
                     )
                     self.assertFalse(archive.exists())
@@ -736,8 +795,9 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
     def test_duplicate_claim_collision_never_deletes_winning_artifact(self) -> None:
         with _managed_archive() as archive:
-            first = ops._validate_full_image_archive(TARGET_SHA, archive)
-            second = ops._validate_full_image_archive(TARGET_SHA, archive)
+            digest = _archive_sha256(archive)
+            first = ops._validate_full_image_archive(TARGET_SHA, archive, digest)
+            second = ops._validate_full_image_archive(TARGET_SHA, archive, digest)
             with (
                 patch.object(ops.time, "time_ns", return_value=123456789),
                 patch.object(ops.secrets, "token_hex", return_value="fixedcollision"),
@@ -751,21 +811,50 @@ class EcsOpsApiDeployTests(unittest.TestCase):
             self.assertEqual([winner.path], list(self.artifacts_dir.iterdir()))
             self.assertEqual("removed", ops._cleanup_claimed_upload(winner))
 
+    def test_claim_copies_to_new_inode_and_source_fd_mutation_cannot_change_private_bytes(self) -> None:
+        with _managed_archive() as archive:
+            original = archive.read_bytes()
+            digest = _archive_sha256(archive)
+            validated = ops._validate_full_image_archive(TARGET_SHA, archive, digest)
+            with archive.open("r+b") as writable_source:
+                source_inode = os.fstat(writable_source.fileno()).st_ino
+                claimed = ops._claim_validated_upload(validated)
+                writable_source.seek(0)
+                writable_source.write(b"mutated after claim")
+                writable_source.truncate()
+                writable_source.flush()
+
+            self.assertNotEqual(source_inode, claimed.inode)
+            self.assertEqual(original, claimed.path.read_bytes())
+            self.assertEqual(digest, _archive_sha256(claimed.path))
+            self.assertEqual(digest, claimed.archive_sha256)
+            self.assertEqual("removed", ops._cleanup_claimed_upload(claimed))
+
+    def test_claim_stream_copy_does_not_depend_on_cross_filesystem_hard_link(self) -> None:
+        with _managed_archive() as archive:
+            digest = _archive_sha256(archive)
+            validated = ops._validate_full_image_archive(TARGET_SHA, archive, digest)
+            with patch.object(
+                ops.os,
+                "link",
+                side_effect=OSError("EXDEV simulated cross-filesystem boundary"),
+            ):
+                claimed = ops._claim_validated_upload(validated)
+
+            self.assertEqual(digest, _archive_sha256(claimed.path))
+            self.assertEqual("removed", ops._cleanup_claimed_upload(claimed))
+
     def test_claim_failure_with_private_cleanup_failure_is_typed_and_blocked(self) -> None:
         engine = FakeEngine()
-        real_chmod = os.chmod
-
-        def fail_artifact_chmod(path: object, mode: int) -> None:
-            candidate = Path(path)
-            if candidate.parent == self.artifacts_dir and candidate.name.endswith(".tar.gz"):
-                raise OSError("TOKEN=chmod-secret")
-            real_chmod(path, mode)
+        def fail_artifact_fchmod(fd: int, mode: int) -> None:
+            del fd, mode
+            raise OSError("TOKEN=chmod-secret")
 
         try:
             with _managed_archive() as archive:
                 with (
                     patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
-                    patch.object(ops.os, "chmod", side_effect=fail_artifact_chmod),
+                    patch.object(ops.os, "fchmod", side_effect=fail_artifact_fchmod),
                     patch.object(ops, "_remove_exact_private_artifact", return_value="failed"),
                 ):
                     status, payload = self._post_json(
@@ -775,6 +864,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                             "mode": "full_image",
                             "targets": ["weekly-review-web"],
                             "archive_path": str(archive),
+                            "archive_sha256": _archive_sha256(archive),
                         },
                     )
 
@@ -812,6 +902,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                             "mode": "full_image",
                             "targets": ["weekly-review-web"],
                             "archive_path": str(archive),
+                            "archive_sha256": _archive_sha256(archive),
                         },
                     )
 
@@ -833,6 +924,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         "mode": "full_image",
                         "targets": ["weekly-review-web"],
                         "archive_path": str(archive),
+                        "archive_sha256": _archive_sha256(archive),
                     },
                 )
 
@@ -858,6 +950,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         "mode": "full_image",
                         "targets": ["weekly-review-web"],
                         "archive_path": str(archive),
+                        "archive_sha256": _archive_sha256(archive),
                     },
                 )
                 self.assertFalse(archive.exists())
@@ -874,24 +967,29 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         engine = FakeEngine()
         victim = Path("/tmp") / f"claim-victim-{os.getpid()}-{threading.get_ident()}"
         victim.write_bytes(b"victim survives")
-        real_link = os.link
+        real_open = os.open
 
         try:
             with _managed_archive() as archive:
-                def swap_then_link(
-                    source: object,
-                    destination: object,
-                    **kwargs: object,
-                ) -> None:
-                    source_path = Path(source)
-                    source_path.unlink()
-                    source_path.symlink_to(victim)
-                    real_link(source_path, destination, **kwargs)
+                swapped = False
+
+                def swap_then_open(
+                    path: object,
+                    flags: int,
+                    mode: int = 0o777,
+                ) -> int:
+                    nonlocal swapped
+                    source_path = Path(path)
+                    if source_path == archive and not swapped:
+                        swapped = True
+                        source_path.unlink()
+                        source_path.symlink_to(victim)
+                    return real_open(path, flags, mode)
 
                 with (
                     patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
                     patch.object(ops, "_new_deploy_event_id", wraps=ops._new_deploy_event_id) as event_id,
-                    patch.object(ops.os, "link", side_effect=swap_then_link),
+                    patch.object(ops.os, "open", side_effect=swap_then_open),
                 ):
                     status, payload = self._post_json(
                         "/deploy",
@@ -900,6 +998,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                             "mode": "full_image",
                             "targets": ["weekly-review-web"],
                             "archive_path": str(archive),
+                            "archive_sha256": _archive_sha256(archive),
                         },
                     )
 
@@ -934,6 +1033,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         "mode": "full_image",
                         "targets": ["weekly-review-web"],
                         "archive_path": str(archive),
+                        "archive_sha256": _archive_sha256(archive),
                     },
                 )
                 self.assertFalse(archive.exists())
@@ -990,6 +1090,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                             "mode": "full_image",
                             "targets": ["weekly-review-web"],
                             "archive_path": str(archive),
+                            "archive_sha256": _archive_sha256(archive),
                         },
                     )
                 self.assertEqual(422, status)
@@ -1350,6 +1451,110 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual(["weekly-review-web"], data["evidence"]["affected_services"])
         self.assertEqual(["/weekly-review"], data["evidence"]["feature_routes"])
         self.assertEqual("healthy", data["evidence"]["route_smoke"]["status"])
+
+    def test_two_failed_cleanup_attempts_persist_audit_blocker_for_post_and_get(self) -> None:
+        event_id = 91
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=True,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.FULL_IMAGE,
+                activated_services=("weekly-review-web",),
+                rolled_back_services=(),
+                message="deployment completed and remained healthy",
+            )
+        )
+        calls = 0
+
+        def fail_cleanup(_upload: object) -> str:
+            nonlocal calls
+            calls += 1
+            return "failed"
+
+        try:
+            with _managed_archive() as archive:
+                digest = _archive_sha256(archive)
+                with (
+                    patch.object(ops, "_new_deploy_event_id", return_value=event_id),
+                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                    patch.object(ops, "_cleanup_claimed_upload", side_effect=fail_cleanup),
+                ):
+                    status, payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                            "archive_sha256": digest,
+                        },
+                    )
+                    get_status, get_payload = self._get_json(
+                        f"/ops/deploy-status?id={event_id}"
+                    )
+
+            self.assertEqual(2, calls)
+            self.assertEqual(503, status)
+            self.assertEqual("deployment_artifact_cleanup_failed", payload["error"])
+            self.assertEqual("blocked_with_owner", payload["data"]["return_to_coordinator"]["decision"])
+            self.assertEqual("audit_incomplete", payload["data"]["evidence"]["status"])
+            self.assertEqual("failed", payload["data"]["evidence"]["metadata"]["artifact_cleanup_status"])
+            self.assertEqual(200, get_status)
+            self.assertEqual(payload["data"]["evidence"], get_payload["data"])
+        finally:
+            if self.artifacts_dir.exists():
+                for artifact in self.artifacts_dir.iterdir():
+                    artifact.unlink(missing_ok=True)
+
+    def test_cleanup_retry_success_is_persisted_before_accept_and_route(self) -> None:
+        event_id = 92
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=True,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.FULL_IMAGE,
+                activated_services=("weekly-review-web",),
+                rolled_back_services=(),
+                message="deployment completed and remained healthy",
+            )
+        )
+        real_cleanup = ops._cleanup_claimed_upload
+        calls = 0
+
+        def retry_cleanup(upload: object) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return "failed"
+            return real_cleanup(upload)
+
+        with _managed_archive() as archive:
+            digest = _archive_sha256(archive)
+            with (
+                patch.object(ops, "_new_deploy_event_id", return_value=event_id),
+                patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                patch.object(ops, "_cleanup_claimed_upload", side_effect=retry_cleanup),
+            ):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                        "archive_sha256": digest,
+                    },
+                )
+                get_status, get_payload = self._get_json(
+                    f"/ops/deploy-status?id={event_id}"
+                )
+
+        self.assertEqual(2, calls)
+        self.assertEqual(200, status)
+        self.assertEqual("accept_and_route", payload["data"]["return_to_coordinator"]["decision"])
+        self.assertEqual("removed_after_dispatch", payload["data"]["evidence"]["metadata"]["artifact_cleanup_status"])
+        self.assertEqual(200, get_status)
+        self.assertEqual(payload["data"]["evidence"], get_payload["data"])
 
     def test_full_image_without_image_diff_requires_emergency_reason(self) -> None:
         engine = FakeEngine()

@@ -93,6 +93,14 @@ class DeployWorkflowContractTests(TestCase):
         self.assertNotIn("dist/investment-knowledge-release.tar.gz", self.workflow)
         self.assertNotIn("investment-knowledge-images.tar.gz", self.workflow)
 
+    def test_full_image_binds_archive_sha256_into_ops_payload(self) -> None:
+        full_block = self.workflow[self.workflow.index("  full_image:"):]
+
+        self.assertIn('archive_sha256="$(sha256sum "$archive" | awk \'{print $1}\')"', full_block)
+        self.assertIn('echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"', full_block)
+        self.assertIn("ARCHIVE_SHA256: ${{ steps.archive.outputs.archive_sha256 }}", full_block)
+        self.assertIn('"archive_sha256": os.environ["ARCHIVE_SHA256"]', full_block)
+
     def test_request_only_shared_deploy_does_not_checkout_code(self) -> None:
         shared_start = self.workflow.index("  shared_deploy:")
         full_start = self.workflow.index("  full_image:")

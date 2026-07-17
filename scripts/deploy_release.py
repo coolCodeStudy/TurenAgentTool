@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -103,6 +105,7 @@ _MANAGED_ARCHIVE_NAME = re.compile(
     r"investment-knowledge-app-(?P<sha>[0-9a-f]{40})-"
     r"(?P<suffix>[A-Za-z0-9][A-Za-z0-9._-]{0,127})\.tar\.gz"
 )
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SAFE_FEATURE_ROUTE = re.compile(
     r"/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)?"
 )
@@ -145,6 +148,19 @@ def is_managed_image_archive(
     if match is None:
         return False
     return expected_sha is None or match.group("sha") == expected_sha
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_cleanup_from_rollback(rollback_status: str) -> str:
+    match = re.search(r"(?:^|\|)archive_cleanup:([^|]+)", rollback_status)
+    return match.group(1) if match is not None else "not_applicable"
 
 
 class HealthChecker(Protocol):
@@ -355,12 +371,22 @@ class DeployRequest:
     external_event_id: str | None = None
     source: str = "direct"
     requested_by: str = "unspecified"
+    archive_sha256: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "requested_targets", tuple(sorted(set(self.requested_targets))))
         object.__setattr__(self, "feature_routes", tuple(dict.fromkeys(self.feature_routes)))
         if any(not is_safe_feature_route(route) for route in self.feature_routes):
             raise ValueError("feature routes must be absolute local paths")
+        if self.requested_mode is DeployMode.FULL_IMAGE:
+            if self.archive_sha256 is None or not _SHA256_PATTERN.fullmatch(
+                self.archive_sha256
+            ):
+                raise ValueError(
+                    "full image deployment requires a 64-character lowercase archive SHA-256"
+                )
+        elif self.archive_sha256 is not None:
+            raise ValueError("archive SHA-256 is supported only for full image deployment")
         for name in ("source", "requested_by"):
             value = getattr(self, name)
             valid = (
@@ -1015,6 +1041,15 @@ class DeploymentEngine:
         )
         before = self.runner.run(inspect)
         before_id = before.stdout.strip() if before.returncode == 0 else ""
+        expected_digest = context.request.archive_sha256
+        if expected_digest is None:
+            raise DeploymentError("candidate image archive digest is required")
+        try:
+            observed_digest = _sha256_file(archive_path)
+        except OSError as error:
+            raise DeploymentError("candidate image archive digest could not be verified") from error
+        if not hmac.compare_digest(observed_digest, expected_digest):
+            raise DeploymentError("candidate image archive digest does not match admitted artifact")
         try:
             loaded = self.runner.run(("docker", "load", "--input", str(archive_path)))
         except Exception as error:
@@ -1535,6 +1570,8 @@ class DeploymentEngine:
             stability_seconds=(60 if plan.mode is DeployMode.FULL_IMAGE else 30),
             affected_services=affected_services,
             route_smoke_checks=deployment_route_smoke_checks(request.feature_routes),
+            archive_sha256=request.archive_sha256,
+            artifact_cleanup_status=_artifact_cleanup_from_rollback(rollback_status),
         )
 
     def _preflight_observations(
@@ -2044,6 +2081,7 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", required=True, choices=[mode.value for mode in DeployMode])
     parser.add_argument("--targets")
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--archive-sha256")
     parser.add_argument("--emergency-reason")
     parser.add_argument("--feature-routes")
     parser.add_argument("--external-event-id")
@@ -2072,6 +2110,7 @@ def main(argv: list[str] | None = None) -> int:
         emergency_reason=arguments.emergency_reason,
         feature_routes=feature_routes,
         external_event_id=arguments.external_event_id,
+        archive_sha256=arguments.archive_sha256,
     )
     engine = DeploymentEngine(
         repo=arguments.repo.resolve(),

@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from datetime import datetime
 from dataclasses import dataclass, replace
 import fcntl
+import hashlib
 import hmac
 import json
 import os
@@ -40,6 +41,7 @@ try:
         is_allowed_deploy_source,
         is_safe_deploy_label,
         load_state,
+        update_event_artifact_cleanup,
         write_event,
     )
     from scripts.deploy_support import CommandResult, SubprocessRunner
@@ -62,6 +64,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
         is_allowed_deploy_source,
         is_safe_deploy_label,
         load_state,
+        update_event_artifact_cleanup,
         write_event,
     )
     from deploy_support import CommandResult, SubprocessRunner
@@ -170,6 +173,7 @@ class ValidatedDeploymentUpload:
     expected_sha: str
     device: int
     inode: int
+    archive_sha256: str
 
 
 @dataclass(frozen=True)
@@ -178,6 +182,7 @@ class ClaimedDeploymentUpload:
     expected_sha: str
     device: int
     inode: int
+    archive_sha256: str
 
 
 class OpsRequestHandler(BaseHTTPRequestHandler):
@@ -458,6 +463,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         or payload.get("archive")
         or payload.get("full_image_archive_path")
     )
+    archive_sha256 = _optional_archive_sha256(payload.get("archive_sha256"))
     feature_routes = _validate_feature_routes(payload.get("feature_routes"))
     source = _validate_deploy_label(payload.get("source"), "source", "direct")
     requested_by = _validate_deploy_label(
@@ -468,8 +474,18 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
 
     validated_upload: ValidatedDeploymentUpload | None = None
     if mode is DeployMode.FULL_IMAGE:
-        validated_upload = _validate_full_image_archive(ref, archive_path)
-    elif archive_path is not None:
+        if archive_sha256 is None:
+            raise DeployApiError(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "deployment_rejected",
+                "full_image requires archive_sha256 as 64 lowercase hexadecimal characters",
+            )
+        validated_upload = _validate_full_image_archive(
+            ref,
+            archive_path,
+            archive_sha256,
+        )
+    elif archive_path is not None or archive_sha256 is not None:
         raise DeployApiError(
             HTTPStatus.UNPROCESSABLE_ENTITY,
             "deployment_rejected",
@@ -485,6 +501,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         feature_routes=feature_routes,
         source=source,
         requested_by=requested_by,
+        archive_sha256=archive_sha256,
     )
     try:
         engine = build_deployment_engine()
@@ -573,18 +590,30 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 message="deployment engine failed before a product-safe result was returned",
             )
 
-        final_cleanup = _cleanup_claimed_upload(claimed_upload)
-        if _is_shared_lock_contention(outcome) and final_cleanup == "removed":
+        api_cleanup, cleanup_attempts = _finalize_claimed_cleanup(claimed_upload)
+        if _is_shared_lock_contention(outcome) and api_cleanup == "removed":
+            final_cleanup = "removed_after_lock_rejection"
             outcome = replace(
                 outcome,
-                archive_cleanup="removed_after_lock_rejection",
+                archive_cleanup=final_cleanup,
             )
-        elif final_cleanup == "removed":
-            outcome = replace(outcome, archive_cleanup="removed_after_dispatch")
-        elif (
-            final_cleanup not in {"not_applicable", "already_removed"}
-            and outcome.archive_cleanup in {"not_applicable", "deferred_lock_unavailable"}
-        ):
+        elif api_cleanup == "removed":
+            final_cleanup = "removed_after_dispatch"
+            outcome = replace(outcome, archive_cleanup=final_cleanup)
+        elif api_cleanup == "already_removed":
+            final_cleanup = (
+                outcome.archive_cleanup
+                if outcome.archive_cleanup
+                in {
+                    "complete",
+                    "removed",
+                    "removed_after_dispatch",
+                    "removed_after_lock_rejection",
+                }
+                else "already_removed"
+            )
+        else:
+            final_cleanup = api_cleanup
             outcome = replace(outcome, archive_cleanup=final_cleanup)
 
         _ensure_terminal_deploy_event(
@@ -592,6 +621,18 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             request=request,
             outcome=outcome,
         )
+        if claimed_upload is not None:
+            try:
+                update_event_artifact_cleanup(
+                    DEPLOY_EVENTS_DIR,
+                    str(deploy_event_id),
+                    final_cleanup,
+                )
+            except Exception as exc:
+                raise _audit_persistence_error(
+                    outcome,
+                    "terminal artifact cleanup evidence could not be persisted",
+                ) from exc
         evidence = _terminal_deploy_evidence(
             deploy_event_id,
             outcome=outcome,
@@ -599,6 +640,22 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             requested_targets=targets,
             feature_routes=feature_routes,
         )
+
+        if not _durable_artifact_cleanup_succeeded(final_cleanup):
+            cleanup_error = _artifact_cleanup_error(
+                claimed_upload,
+                final_cleanup,
+            )
+            cleanup_error.data.update(
+                {
+                    "cleanup_attempts": list(cleanup_attempts),
+                    "outcome": _deploy_outcome_payload(outcome),
+                    "deploy_event_id": deploy_event_id,
+                    "status_url": f"/ops/deploy-status?id={deploy_event_id}",
+                    "evidence": evidence,
+                }
+            )
+            raise cleanup_error
 
         if engine_error is not None:
             raise DeployApiError(
@@ -671,7 +728,6 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             },
         }
     finally:
-        _cleanup_claimed_upload(claimed_upload)
         DEPLOY_MUTEX.release()
 
 
@@ -911,9 +967,15 @@ def _read_shared_deploy_event(event_id: str) -> dict[str, Any] | None:
 def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict[str, Any]:
     final_health = str(payload.get("final_health") or "")
     rollback_status = str(payload.get("rollback_status") or "")
+    artifact_cleanup_status = str(
+        payload.get("artifact_cleanup_status")
+        or _archive_cleanup_from_rollback(rollback_status)
+    )
     if final_health == "not_required":
         status = "not_required"
-    elif "pending" in rollback_status:
+    elif "pending" in rollback_status or not _durable_artifact_cleanup_succeeded(
+        artifact_cleanup_status
+    ):
         status = "audit_incomplete"
     else:
         status = "succeeded" if final_health == "healthy" else "failed"
@@ -940,6 +1002,12 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
         "final_health": final_health or "unknown",
         "rollback_status": rollback_status,
         "archive_cleanup": _archive_cleanup_from_rollback(rollback_status),
+        "artifact_cleanup_status": artifact_cleanup_status,
+        "archive_sha256": (
+            payload.get("archive_sha256")
+            if isinstance(payload.get("archive_sha256"), str)
+            else None
+        ),
         "source": str(payload.get("source") or "direct"),
         "requested_by": str(payload.get("requested_by") or "unspecified"),
         "failure_category": str(payload.get("failure_category") or ""),
@@ -1226,9 +1294,22 @@ def _optional_path(raw: object) -> Path | None:
     return Path(value) if value else None
 
 
+def _optional_archive_sha256(raw: object) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or re.fullmatch(r"[0-9a-f]{64}", raw) is None:
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "archive_sha256 must be 64 lowercase hexadecimal characters",
+        )
+    return raw
+
+
 def _validate_full_image_archive(
     ref: str,
     archive_path: Path | None,
+    archive_sha256: str,
 ) -> ValidatedDeploymentUpload:
     if not re.fullmatch(r"[0-9a-f]{40}", ref):
         raise DeployApiError(
@@ -1264,6 +1345,7 @@ def _validate_full_image_archive(
         expected_sha=ref,
         device=observed.st_dev,
         inode=observed.st_ino,
+        archive_sha256=archive_sha256,
     )
 
 
@@ -1306,36 +1388,67 @@ def _claim_validated_upload(
             f"investment-knowledge-app-{upload.expected_sha}-{suffix}.tar.gz"
         )
         with ARTIFACT_CLAIM_MUTEX:
-            source_status = os.lstat(upload.path)
-            if (
-                not stat.S_ISREG(source_status.st_mode)
-                or source_status.st_dev != upload.device
-                or source_status.st_ino != upload.inode
-            ):
-                raise OSError("validated artifact identity changed before claim")
-            os.link(upload.path, destination, follow_symlinks=False)
-            destination_owned = True
-            observed = os.lstat(destination)
-            if (
-                not stat.S_ISREG(observed.st_mode)
-                or observed.st_dev != upload.device
-                or observed.st_ino != upload.inode
-            ):
-                raise OSError("claimed artifact identity changed")
-            source_after_claim = os.lstat(upload.path)
-            if (
-                not stat.S_ISREG(source_after_claim.st_mode)
-                or source_after_claim.st_dev != upload.device
-                or source_after_claim.st_ino != upload.inode
-            ):
-                raise OSError("public artifact identity changed during claim")
-            os.chmod(destination, 0o600)
-            upload.path.unlink()
+            source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            destination_flags = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            source_fd = os.open(upload.path, source_flags)
+            try:
+                source_status = os.fstat(source_fd)
+                if (
+                    not stat.S_ISREG(source_status.st_mode)
+                    or source_status.st_dev != upload.device
+                    or source_status.st_ino != upload.inode
+                ):
+                    raise OSError("validated artifact identity changed before claim")
+                destination_fd = os.open(destination, destination_flags, 0o600)
+                destination_owned = True
+                try:
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(source_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                        view = memoryview(chunk)
+                        while view:
+                            written = os.write(destination_fd, view)
+                            view = view[written:]
+                    os.fsync(destination_fd)
+                    observed = os.fstat(destination_fd)
+                    if (
+                        not stat.S_ISREG(observed.st_mode)
+                        or observed.st_uid != _effective_service_uid()
+                        or (
+                            observed.st_dev == source_status.st_dev
+                            and observed.st_ino == source_status.st_ino
+                        )
+                    ):
+                        raise OSError("claimed artifact is not a new private regular file")
+                    if not hmac.compare_digest(digest.hexdigest(), upload.archive_sha256):
+                        raise OSError("claimed artifact digest does not match archive_sha256")
+                    source_after_claim = os.lstat(upload.path)
+                    if (
+                        not stat.S_ISREG(source_after_claim.st_mode)
+                        or source_after_claim.st_dev != upload.device
+                        or source_after_claim.st_ino != upload.inode
+                    ):
+                        raise OSError("public artifact identity changed during claim")
+                    os.fchmod(destination_fd, 0o600)
+                    upload.path.unlink()
+                finally:
+                    os.close(destination_fd)
+            finally:
+                os.close(source_fd)
         return ClaimedDeploymentUpload(
             path=destination,
             expected_sha=upload.expected_sha,
             device=observed.st_dev,
             inode=observed.st_ino,
+            archive_sha256=upload.archive_sha256,
         )
     except Exception as exc:
         private_cleanup = "not_applicable"
@@ -1349,6 +1462,7 @@ def _claim_validated_upload(
                     expected_sha=upload.expected_sha,
                     device=upload.device,
                     inode=upload.inode,
+                    archive_sha256=upload.archive_sha256,
                 ),
                 private_cleanup,
                 source_cleanup=source_cleanup,
@@ -1423,6 +1537,18 @@ def _cleanup_claimed_upload(upload: ClaimedDeploymentUpload | None) -> str:
     return "removed"
 
 
+def _finalize_claimed_cleanup(
+    upload: ClaimedDeploymentUpload | None,
+) -> tuple[str, tuple[str, ...]]:
+    first = _cleanup_claimed_upload(upload)
+    attempts = [first]
+    if not _private_cleanup_succeeded(first):
+        second = _cleanup_claimed_upload(upload)
+        attempts.append(second)
+        return second, tuple(attempts)
+    return first, tuple(attempts)
+
+
 def _remove_exact_private_artifact(path: Path) -> str:
     if path.parent != DEPLOY_ARTIFACTS_DIR:
         return "rejected_unmanaged"
@@ -1443,6 +1569,17 @@ def _remove_exact_private_artifact(path: Path) -> str:
 
 def _private_cleanup_succeeded(status: str) -> bool:
     return status in {"not_applicable", "removed", "already_removed"}
+
+
+def _durable_artifact_cleanup_succeeded(status: str) -> bool:
+    return status in {
+        "not_applicable",
+        "complete",
+        "removed",
+        "already_removed",
+        "removed_after_dispatch",
+        "removed_after_lock_rejection",
+    }
 
 
 def _artifact_cleanup_error(
@@ -1592,6 +1729,10 @@ def _ensure_terminal_deploy_event(
         affected_services=outcome.activated_services,
         route_smoke_checks=(
             () if no_deploy else deployment_route_smoke_checks(request.feature_routes)
+        ),
+        archive_sha256=request.archive_sha256,
+        artifact_cleanup_status=(
+            "not_applicable" if no_deploy else outcome.archive_cleanup
         ),
     )
     try:

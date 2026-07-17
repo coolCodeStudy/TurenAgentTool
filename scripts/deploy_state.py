@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -75,9 +75,13 @@ class DeploymentEvent:
     stability_seconds: int = 0
     affected_services: tuple[str, ...] = ()
     route_smoke_checks: tuple[str, ...] = ()
+    archive_sha256: str | None = None
+    artifact_cleanup_status: str = "not_applicable"
 
 
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_CLEANUP_STATUS_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,79}")
 _STATE_FIELDS = tuple(field.name for field in fields(DeploymentState))
 _PREFLIGHT_OBSERVATION_TYPES: dict[str, type | tuple[type, ...]] = {
     "disk_available_bytes": int,
@@ -229,6 +233,72 @@ def write_event(events_dir: Path, event: DeploymentEvent) -> Path:
     return path
 
 
+def load_event(events_dir: Path, event_id: str) -> DeploymentEvent:
+    if not event_id or Path(event_id).name != event_id:
+        raise ValueError("event_id must be a single path component")
+    path = events_dir / f"{event_id}.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise StateFormatError(f"invalid deployment event JSON: {path}") from error
+    except OSError:
+        raise
+    if not isinstance(payload, dict):
+        raise StateFormatError(f"deployment event must be an object: {path}")
+    normalized = dict(payload)
+    for name in (
+        "changed_image_inputs",
+        "targets",
+        "feature_routes",
+        "affected_services",
+        "route_smoke_checks",
+    ):
+        if isinstance(normalized.get(name), list):
+            normalized[name] = tuple(normalized[name])
+    normalized.setdefault("archive_sha256", None)
+    normalized.setdefault(
+        "artifact_cleanup_status",
+        _artifact_cleanup_from_rollback(str(normalized.get("rollback_status") or "")),
+    )
+    try:
+        event = DeploymentEvent(**normalized)
+    except (TypeError, ValueError) as error:
+        raise StateFormatError(f"deployment event has invalid fields: {path}") from error
+    _validate_event(event)
+    return event
+
+
+def update_event_artifact_cleanup(
+    events_dir: Path,
+    event_id: str,
+    cleanup_status: str,
+) -> Path:
+    if _CLEANUP_STATUS_PATTERN.fullmatch(cleanup_status) is None:
+        raise StateFormatError("artifact cleanup status is invalid")
+    event = load_event(events_dir, event_id)
+    canonical = "|".join(
+        segment
+        for segment in event.rollback_status.split("|")
+        if segment
+        and not segment.startswith("archive_cleanup:")
+        and re.fullmatch(r"archive_[A-Za-z0-9_-]+", segment) is None
+    )
+    rollback_status = (
+        f"{canonical}|archive_cleanup:{cleanup_status}"
+        if canonical
+        else f"archive_cleanup:{cleanup_status}"
+    )
+    return write_event(
+        events_dir,
+        replace(
+            event,
+            rollback_status=rollback_status,
+            artifact_cleanup_status=cleanup_status,
+        ),
+    )
+
+
 def _state_payload(state: DeploymentState) -> dict[str, Any]:
     _validate_state(state)
     payload = asdict(state)
@@ -245,6 +315,14 @@ def _event_payload(event: DeploymentEvent) -> dict[str, Any]:
     payload["affected_services"] = list(event.affected_services)
     payload["route_smoke_checks"] = list(event.route_smoke_checks)
     return payload
+
+
+def _artifact_cleanup_from_rollback(rollback_status: str) -> str:
+    match = re.search(r"(?:^|\|)archive_cleanup:([^|]+)", rollback_status)
+    if match is not None:
+        return match.group(1)
+    legacy = re.search(r"(?:^|\|)archive_([A-Za-z0-9_-]+)(?:\||$)", rollback_status)
+    return legacy.group(1) if legacy is not None else "not_applicable"
 
 
 def _state_from_payload(payload: object, path: Path) -> DeploymentState:
@@ -324,6 +402,12 @@ def _validate_event(event: DeploymentEvent) -> None:
     _deploy_label(event.source, "source", allowed_source=True)
     _deploy_label(event.requested_by, "requested_by")
     _optional_string(event.failure_category, "failure_category")
+    if event.archive_sha256 is not None and not _SHA256_PATTERN.fullmatch(
+        event.archive_sha256
+    ):
+        raise StateFormatError("archive_sha256 must be 64 lowercase hexadecimal characters or null")
+    if not _CLEANUP_STATUS_PATTERN.fullmatch(event.artifact_cleanup_status):
+        raise StateFormatError("artifact_cleanup_status must be a safe cleanup status")
     _string_tuple(event.changed_image_inputs, "changed_image_inputs")
     _string_tuple(event.targets, "targets")
     _string_tuple(event.feature_routes, "feature_routes")
