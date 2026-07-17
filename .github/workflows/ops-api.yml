@@ -71,19 +71,32 @@ jobs:
             UPLOAD_DIR=/tmp/ops-api-${{ github.run_id }}
             MODE="${{ inputs.mode }}"
             DEPLOY_LOCK_PATH="$APP_DIR/shared/deploy.lock"
+            sudo install -d -m 0755 "$APP_DIR/shared"
 
             run_under_deploy_lock() {
               sudo flock --exclusive --wait 600 "$DEPLOY_LOCK_PATH" "$@"
             }
 
             stop_ops_api_under_deploy_lock() {
-              run_under_deploy_lock /bin/bash -c \
-                'systemctl stop investment-ops-api.service || true'
+              run_under_deploy_lock /bin/bash -c '
+                set -euo pipefail
+                if ! systemctl cat investment-ops-api.service >/dev/null 2>&1; then
+                  exit 0
+                fi
+                systemctl stop investment-ops-api.service
+                if systemctl is-active --quiet investment-ops-api.service; then
+                  echo "investment-ops-api.service remained active after stop" >&2
+                  exit 1
+                fi
+              '
             }
 
             case "$MODE" in
               install)
+                # Phase 1: drain and stop the existing Ops API while holding the host lock.
                 stop_ops_api_under_deploy_lock
+                # Phase 2: bootstrap reacquires the host lock after the Ops API is down;
+                # production-deploy concurrency remains held for the whole workflow job.
                 sudo BOOTSTRAP_REF="${{ github.sha }}" \
                   APP_ROOT="$APP_DIR" \
                   OPS_HOME=/opt/investment-ops \
@@ -147,8 +160,8 @@ jobs:
                 '
                 ;;
               stop)
-                run_under_deploy_lock /bin/bash -c \
-                  'systemctl disable --now investment-ops-api.service || true'
+                stop_ops_api_under_deploy_lock
+                sudo systemctl disable investment-ops-api.service
                 ;;
               *)
                 echo "Unknown mode: $MODE"

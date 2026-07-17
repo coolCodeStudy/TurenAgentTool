@@ -713,6 +713,12 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(request)
 
         self.assertTrue(outcome.ok)
+        self.assertEqual(
+            1,
+            self.runner.commands.count(
+                ("git", "-C", str(self.repo), "fetch", "origin", "main")
+            ),
+        )
 
     def test_no_deploy_does_not_read_or_rewrite_image_selector(self) -> None:
         self.plan = DeploymentPlan(
@@ -1142,8 +1148,11 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(request)
 
         self.assertFalse(outcome.ok)
+        self.assertEqual("source_policy_rejected", outcome.failure_category)
         self.assertEqual([], self.stage_calls)
         self.assertFalse(any(command[:3] == ("docker", "compose", "up") for command in self.runner.commands))
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual("source_policy_rejected", event["failure_category"])
 
     def test_preflight_failure_happens_before_staging_or_runtime_mutation(self) -> None:
         from scripts.deploy_preflight import ResourceSnapshot
@@ -1166,11 +1175,30 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(self.targeted_request)
 
         self.assertFalse(outcome.ok)
+        self.assertIsNone(outcome.failure_category)
         self.assertNotIn("token", outcome.message.lower())
         self.assertEqual("recorded", outcome.audit_status)
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertEqual("unhealthy", event["final_health"])
         self.assertEqual("targeted_quick", event["requested_mode"])
+
+    def test_deploy_event_persists_sanitized_source_and_requester_labels(self) -> None:
+        request = replace(
+            self.targeted_request,
+            source="github_actions",
+            requested_by="weekly_review_coordinator",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual("github_actions", event["source"])
+        self.assertEqual("weekly_review_coordinator", event["requested_by"])
+
+    def test_deploy_request_rejects_secret_shaped_source_labels(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source"):
+            replace(self.targeted_request, source="TOKEN=hidden-value")
 
     def test_runtime_failure_records_failed_event(self) -> None:
         self.engine.runtime_validator = lambda runner, compose: (_ for _ in ()).throw(

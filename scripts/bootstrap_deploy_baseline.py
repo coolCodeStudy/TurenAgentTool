@@ -19,7 +19,12 @@ try:
         _compose_environment,
         _json_rows,
     )
-    from scripts.deploy_state import DeploymentState, load_state, resolve_production_target, write_state
+    from scripts.deploy_state import (
+        DeploymentState,
+        load_state,
+        resolve_historical_production_target,
+        write_state,
+    )
     from scripts.deploy_support import CommandRunner, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/bootstrap_deploy_baseline.py.
     from deploy_contract import APPLICATION_SERVICES
@@ -33,7 +38,12 @@ except ModuleNotFoundError:  # Direct execution through scripts/bootstrap_deploy
         _compose_environment,
         _json_rows,
     )
-    from deploy_state import DeploymentState, load_state, resolve_production_target, write_state
+    from deploy_state import (
+        DeploymentState,
+        load_state,
+        resolve_historical_production_target,
+        write_state,
+    )
     from deploy_support import CommandRunner, SubprocessRunner
 
 
@@ -118,7 +128,7 @@ def _initialize_locked(
         return state
 
     legacy_sha = _deployed_sha(app_root, runner)
-    resolved_sha = resolve_production_target(repo, legacy_sha, runner)
+    resolved_sha = resolve_historical_production_target(repo, legacy_sha, runner)
     if resolved_sha != legacy_sha:
         raise DeploymentError("legacy deployment commit resolution changed unexpectedly")
 

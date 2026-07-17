@@ -38,6 +38,8 @@ try:
     from scripts.deploy_state import (
         DeploymentEvent,
         DeploymentState,
+        SourcePolicyError,
+        SourceRefreshError,
         load_state,
         resolve_production_target,
         write_event,
@@ -68,6 +70,8 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
     from deploy_state import (
         DeploymentEvent,
         DeploymentState,
+        SourcePolicyError,
+        SourceRefreshError,
         load_state,
         resolve_production_target,
         write_event,
@@ -88,6 +92,7 @@ _SENSITIVE_REASON = re.compile(
     r"(?i)(?:\b(?:token|password|passwd|secret|credential|authorization|api[_-]?key)\b|"
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
 )
+_DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
 _APPLICATION_TARGETS = set(APPLICATION_SERVICES)
 
 
@@ -297,12 +302,22 @@ class DeployRequest:
     emergency_reason: str | None
     feature_routes: tuple[str, ...] = ()
     external_event_id: str | None = None
+    source: str = "direct"
+    requested_by: str = "unspecified"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "requested_targets", tuple(sorted(set(self.requested_targets))))
         object.__setattr__(self, "feature_routes", tuple(dict.fromkeys(self.feature_routes)))
         if any(not route.startswith("/") or route.startswith("//") for route in self.feature_routes):
             raise ValueError("feature routes must be absolute local paths")
+        for name in ("source", "requested_by"):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, str)
+                or not _DEPLOY_LABEL.fullmatch(value)
+                or _SENSITIVE_REASON.search(value)
+            ):
+                raise ValueError(f"{name} must be a safe non-secret deployment label")
 
 
 @dataclass(frozen=True)
@@ -321,6 +336,7 @@ class DeployOutcome:
     disk_used_after: float = -1.0
     cleanup_reclaimed_bytes: int = -1
     cleanup_status: str = "not_applicable"
+    failure_category: str | None = None
 
 
 @dataclass
@@ -476,10 +492,6 @@ class DeploymentEngine:
 
     def _execute_locked(self, context: DeploymentContext) -> DeployOutcome:
         request = context.request
-        self._run_checked(
-            ("git", "-C", str(self.repo), "fetch", "origin", "main"),
-            "production source refresh failed",
-        )
         context.target_sha = resolve_production_target(
             self.repo, request.requested_ref, self.runner
         )
@@ -1107,6 +1119,11 @@ class DeploymentEngine:
                     ),
                     started_at=context.started_at,
                     completed_at=completed_at,
+                    failure_category=(
+                        "source_policy_rejected"
+                        if isinstance(error, SourcePolicyError)
+                        else None
+                    ),
                 ),
             )
         except Exception:
@@ -1135,6 +1152,11 @@ class DeploymentEngine:
             disk_used_after=context.disk_used_after,
             cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
             cleanup_status=context.cleanup_status,
+            failure_category=(
+                "source_policy_rejected"
+                if isinstance(error, SourcePolicyError)
+                else None
+            ),
         )
 
     def _validate_request(
@@ -1397,6 +1419,7 @@ class DeploymentEngine:
         final_health: str,
         started_at: str,
         completed_at: str,
+        failure_category: str | None = None,
     ) -> DeploymentEvent:
         return DeploymentEvent(
             event_id=event_id,
@@ -1420,6 +1443,9 @@ class DeploymentEngine:
             final_health=final_health,
             started_at=started_at,
             completed_at=completed_at,
+            source=request.source,
+            requested_by=request.requested_by,
+            failure_category=failure_category,
         )
 
     def _preflight_observations(
@@ -1808,7 +1834,7 @@ class DeploymentEngine:
             return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def _safe_message(self, error: Exception) -> str:
-        if isinstance(error, DeploymentError):
+        if isinstance(error, (DeploymentError, SourcePolicyError, SourceRefreshError)):
             return str(error)
         return "deployment failed; inspect the product-safe deployment event"
 

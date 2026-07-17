@@ -126,6 +126,11 @@ SENSITIVE_PATTERNS = [
     (re.compile(r"(?i)SSL:\s*[A-Z0-9_:-]+"), "SSL:<redacted>"),
     (re.compile(r"(?i)certificate[_\s-]*verify[_\s-]*failed"), "certificate verification failed"),
 ]
+_DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
+_DEPLOY_LABEL_SENSITIVE = re.compile(
+    r"(?i)(?:\b(?:token|password|passwd|secret|credential|authorization|api[_-]?key)\b|"
+    r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
+)
 
 
 class DeploymentBusy(RuntimeError):
@@ -428,6 +433,12 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             or payload.get("full_image_archive_path")
         )
         feature_routes = _validate_feature_routes(payload.get("feature_routes"))
+        source = _validate_deploy_label(payload.get("source"), "source", "direct")
+        requested_by = _validate_deploy_label(
+            payload.get("requested_by"),
+            "requested_by",
+            "unspecified",
+        )
 
         if (
             mode is DeployMode.FULL_IMAGE
@@ -449,6 +460,8 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             emergency_reason=emergency_reason,
             feature_routes=feature_routes,
             external_event_id=str(deploy_event_id),
+            source=source,
+            requested_by=requested_by,
         )
         engine = build_deployment_engine()
         try:
@@ -460,12 +473,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 sanitize_text(str(exc)),
             ) from exc
         if not outcome.ok:
-            if (
-                not outcome.target_sha
-                and outcome.audit_status == "recorded"
-                and outcome.manual_recovery is None
-                and not _is_shared_lock_contention(outcome)
-            ):
+            if outcome.failure_category == "source_policy_rejected":
                 raise DeployApiError(
                     HTTPStatus.BAD_REQUEST,
                     "source_policy_rejected",
@@ -500,6 +508,8 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         "commit_sha": outcome.target_sha,
         "mode": outcome.mode.value,
         "targets": list(outcome.activated_services or targets),
+        "source": source,
+        "requested_by": requested_by,
         "status": "completed",
         "summary": sanitize_text(outcome.message),
         "status_url": f"/ops/deploy-status?id={deploy_event_id}",
@@ -750,6 +760,9 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
         "preflight": payload.get("preflight") if isinstance(payload.get("preflight"), dict) else {},
         "final_health": final_health or "unknown",
         "rollback_status": str(payload.get("rollback_status") or ""),
+        "source": str(payload.get("source") or "direct"),
+        "requested_by": str(payload.get("requested_by") or "unspecified"),
+        "failure_category": str(payload.get("failure_category") or ""),
     }
     return _sanitize_payload(
         {
@@ -954,6 +967,25 @@ def _optional_path(raw: object) -> Path | None:
     return Path(value) if value else None
 
 
+def _validate_deploy_label(raw: object, name: str, default: str) -> str:
+    if raw is None:
+        return default
+    if not isinstance(raw, str):
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            f"{name} must be a safe non-secret deployment label",
+        )
+    value = raw.strip()
+    if not _DEPLOY_LABEL.fullmatch(value) or _DEPLOY_LABEL_SENSITIVE.search(value):
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            f"{name} must be a safe non-secret deployment label",
+        )
+    return value
+
+
 def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:
     return _sanitize_payload(
         {
@@ -971,6 +1003,7 @@ def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:
             "disk_used_after": outcome.disk_used_after,
             "cleanup_reclaimed_bytes": outcome.cleanup_reclaimed_bytes,
             "cleanup_status": outcome.cleanup_status,
+            "failure_category": outcome.failure_category,
         }
     )
 

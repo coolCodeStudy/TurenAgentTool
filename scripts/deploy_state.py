@@ -17,6 +17,10 @@ class SourcePolicyError(ValueError):
     """Raised when a production deployment target is not trusted."""
 
 
+class SourceRefreshError(RuntimeError):
+    """Raised when authoritative repository state cannot be refreshed or resolved."""
+
+
 class StateFormatError(ValueError):
     """Raised when durable deployment state or events do not match the schema."""
 
@@ -64,6 +68,9 @@ class DeploymentEvent:
     final_health: str
     started_at: str
     completed_at: str
+    source: str = "direct"
+    requested_by: str = "unspecified"
+    failure_category: str | None = None
 
 
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
@@ -92,6 +99,7 @@ _AUTHENTICATED_URI = re.compile(
 _BARE_CREDENTIAL = re.compile(
     r"(?i)(?<![A-Za-z0-9_.-])[^\s/:@]+:[^\s/@]+@[^\s]+"
 )
+_DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
 
 
 def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRunner) -> str:
@@ -101,14 +109,14 @@ def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRun
 
     refreshed = runner.run(("git", "-C", str(repo), "fetch", "origin", "main"))
     if refreshed.returncode != 0:
-        raise SourcePolicyError("failed to refresh origin/main")
+        raise SourceRefreshError("production source refresh failed")
 
     result = runner.run(("git", "-C", str(repo), "rev-parse", "origin/main"))
     if result.returncode != 0:
-        raise SourcePolicyError("failed to resolve origin/main")
+        raise SourceRefreshError("production source resolution failed")
     authoritative_sha = result.stdout.strip()
     if not _SHA_PATTERN.fullmatch(authoritative_sha):
-        raise SourcePolicyError("failed to resolve origin/main to a 40-character SHA")
+        raise SourceRefreshError("production source resolution failed")
 
     if requested_ref != "main" and requested_ref != authoritative_sha:
         raise SourcePolicyError(
@@ -116,6 +124,37 @@ def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRun
             "into authoritative main, push main, and dispatch the new main tip"
         )
     return authoritative_sha
+
+
+def resolve_historical_production_target(
+    repo: Path,
+    deployed_sha: str,
+    runner: CommandRunner,
+) -> str:
+    """Trust an existing deployed baseline only when it remains on origin/main history."""
+    if not _SHA_PATTERN.fullmatch(deployed_sha):
+        raise SourcePolicyError("historical production baseline must be a 40-character SHA")
+
+    refreshed = runner.run(("git", "-C", str(repo), "fetch", "origin", "main"))
+    if refreshed.returncode != 0:
+        raise SourceRefreshError("production source refresh failed")
+
+    reachable = runner.run(
+        (
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            deployed_sha,
+            "origin/main",
+        )
+    )
+    if reachable.returncode != 0:
+        raise SourcePolicyError(
+            "historical production baseline is not reachable from authoritative origin/main"
+        )
+    return deployed_sha
 
 
 def load_state(path: Path) -> DeploymentState:
@@ -235,6 +274,9 @@ def _validate_event(event: DeploymentEvent) -> None:
         _required_string(getattr(event, name), name)
     _optional_string(event.deployed_sha, "deployed_sha")
     _optional_string(event.emergency_reason, "emergency_reason")
+    _deploy_label(event.source, "source")
+    _deploy_label(event.requested_by, "requested_by")
+    _optional_string(event.failure_category, "failure_category")
     _string_tuple(event.changed_image_inputs, "changed_image_inputs")
     _string_tuple(event.targets, "targets")
     _metrics_dict(event.preflight, "preflight")
@@ -260,6 +302,13 @@ def _required_string(value: object, name: str) -> str:
         raise StateFormatError(f"{name} must be a string")
     _reject_sensitive_material(value, name)
     return value
+
+
+def _deploy_label(value: object, name: str) -> str:
+    validated = _required_string(value, name)
+    if not _DEPLOY_LABEL.fullmatch(validated):
+        raise StateFormatError(f"{name} must be a safe deployment label")
+    return validated
 
 
 def _optional_string(value: object, name: str) -> str | None:

@@ -124,11 +124,51 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                     "ref": TARGET_SHA,
                     "mode": "targeted_quick",
                     "targets": ["weekly-review-web"],
+                    "source": "github_actions",
+                    "requested_by": "weekly_review_coordinator",
                 }
             )
 
         self.assertEqual(TARGET_SHA, result["commit_sha"])
         self.assertEqual(TARGET_SHA, engine.requests[0].requested_ref)
+        self.assertEqual("github_actions", engine.requests[0].source)
+        self.assertEqual("weekly_review_coordinator", engine.requests[0].requested_by)
+
+    def test_secret_shaped_deploy_labels_are_rejected_before_engine_dispatch(self) -> None:
+        engine = FakeEngine()
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {
+                    "ref": TARGET_SHA,
+                    "mode": "targeted_quick",
+                    "targets": ["weekly-review-web"],
+                    "source": "github_actions",
+                    "requested_by": "TOKEN=hidden-value",
+                },
+            )
+
+        self.assertEqual(422, status)
+        self.assertEqual("deployment_rejected", payload["error"])
+        self.assertEqual([], engine.requests)
+        self.assertNotIn("hidden-value", json.dumps(payload))
+
+    def test_invalid_non_secret_deploy_label_is_rejected_before_dispatch(self) -> None:
+        engine = FakeEngine()
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            with self.assertRaisesRegex(ops.DeployApiError, "source"):
+                ops.deploy_ref(
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "targeted_quick",
+                        "targets": ["weekly-review-web"],
+                        "source": "invalid label with spaces",
+                    }
+                )
+
+        self.assertEqual([], engine.requests)
 
     def test_locked_source_rejection_returns_typed_integration_recovery(self) -> None:
         engine = FakeEngine(
@@ -140,6 +180,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 rolled_back_services=(),
                 message="deployment failed; inspect the product-safe deployment event",
                 audit_status="recorded",
+                failure_category="source_policy_rejected",
             )
         )
 
@@ -167,6 +208,28 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 rolled_back_services=(),
                 message="deployment is locked out pending manual recovery",
                 manual_recovery={"action": "inspect durable lockout evidence"},
+            )
+        )
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(422, status)
+        self.assertEqual("deployment_rejected", payload["error"])
+
+    def test_repository_failure_without_source_category_is_not_misclassified(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment failed; inspect the product-safe deployment event",
+                audit_status="recorded",
             )
         )
 
@@ -435,6 +498,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 rolled_back_services=(),
                 message="deployment failed; inspect the product-safe deployment event",
                 audit_status="recorded",
+                failure_category="source_policy_rejected",
             )
         )
 
@@ -533,6 +597,8 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         "deployed_sha": TARGET_SHA,
                         "target_sha": TARGET_SHA,
                         "targets": ["weekly-review-web"],
+                        "source": "github_actions",
+                        "requested_by": "weekly_review_coordinator",
                         "preflight": {"disk_used_percent": 40.0},
                         "rollback_status": "not_needed",
                         "final_health": "healthy",
@@ -554,6 +620,8 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual("succeeded", event["status"])
         self.assertEqual(TARGET_SHA, event["commit_sha"])
         self.assertEqual(2.0, event["duration_seconds"])
+        self.assertEqual("github_actions", event["metadata"]["source"])
+        self.assertEqual("weekly_review_coordinator", event["metadata"]["requested_by"])
 
     def test_command_error_summary_prefers_traceback_exception_tail(self) -> None:
         text = "\n".join(

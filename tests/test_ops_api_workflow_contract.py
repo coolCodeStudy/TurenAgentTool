@@ -26,6 +26,12 @@ class OpsApiWorkflowContractTests(TestCase):
 
     def test_control_plane_mutations_use_the_host_deploy_lock(self) -> None:
         self.assertIn('DEPLOY_LOCK_PATH="$APP_DIR/shared/deploy.lock"', self.workflow)
+        shared_directory = 'install -d -m 0755 "$APP_DIR/shared"'
+        self.assertIn(shared_directory, self.workflow)
+        self.assertLess(
+            self.workflow.index(shared_directory),
+            self.workflow.index("run_under_deploy_lock()"),
+        )
         self.assertIn("stop_ops_api_under_deploy_lock", self.workflow)
         self.assertIn(
             'flock --exclusive --wait 600 "$DEPLOY_LOCK_PATH"',
@@ -39,15 +45,25 @@ class OpsApiWorkflowContractTests(TestCase):
             "run_under_deploy_lock systemctl disable --now investment-ops-api.service || true",
             self.workflow,
         )
-        self.assertIn(
-            "'systemctl stop investment-ops-api.service || true'",
-            self.workflow,
-        )
         install_case = self.workflow.split("install)", 1)[1].split(";;", 1)[0]
         self.assertLess(
             install_case.index("stop_ops_api_under_deploy_lock"),
             install_case.index("bootstrap_ops_api_v2_on_ecs.sh"),
         )
+
+    def test_ops_stop_handoff_distinguishes_absent_unit_from_real_failure(self) -> None:
+        helper = self.workflow.split("stop_ops_api_under_deploy_lock()", 1)[1].split("}", 1)[0]
+        self.assertIn("systemctl cat investment-ops-api.service", helper)
+        self.assertIn("systemctl stop investment-ops-api.service", helper)
+        self.assertIn("systemctl is-active --quiet investment-ops-api.service", helper)
+        self.assertNotIn("systemctl stop investment-ops-api.service || true", helper)
+
+    def test_ops_update_documents_two_phase_serialization_without_nested_lock(self) -> None:
+        self.assertIn("Phase 1: drain and stop the existing Ops API while holding the host lock", self.workflow)
+        self.assertIn("Phase 2: bootstrap reacquires the host lock after the Ops API is down", self.workflow)
+        install_case = self.workflow.split("install)", 1)[1].split(";;", 1)[0]
+        self.assertEqual(1, install_case.count("stop_ops_api_under_deploy_lock"))
+        self.assertNotIn("run_under_deploy_lock bash", install_case)
 
     def test_bootstrap_initializes_deploy_baseline_before_ops_api_install(self) -> None:
         bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(encoding="utf-8")

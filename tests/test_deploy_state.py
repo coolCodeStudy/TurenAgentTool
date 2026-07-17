@@ -6,10 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import TestCase
 
+import scripts.deploy_state as deploy_state
 from scripts.deploy_state import (
     DeploymentEvent,
     DeploymentState,
     SourcePolicyError,
+    SourceRefreshError,
     StateFormatError,
     load_state,
     resolve_production_target,
@@ -116,6 +118,29 @@ class DeployStateTests(TestCase):
             runner.calls,
         )
 
+    def test_historical_baseline_accepts_a_reachable_origin_main_ancestor(self) -> None:
+        deployed_sha = "a" * 40
+        runner = FakeRunner(
+            {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
+                (
+                    "git",
+                    "-C",
+                    "/repo",
+                    "merge-base",
+                    "--is-ancestor",
+                    deployed_sha,
+                    "origin/main",
+                ): ok(""),
+            }
+        )
+
+        resolved = deploy_state.resolve_historical_production_target(
+            Path("/repo"), deployed_sha, runner
+        )
+
+        self.assertEqual(deployed_sha, resolved)
+
     def test_rejects_feature_branch_and_stale_origin_main_ancestor(self) -> None:
         runner = FakeRunner({})
         with self.assertRaisesRegex(SourcePolicyError, "main or a 40-character SHA"):
@@ -145,7 +170,7 @@ class DeployStateTests(TestCase):
                 )
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main") as caught:
+        with self.assertRaisesRegex(SourceRefreshError, "source resolution") as caught:
             resolve_production_target(Path("/repo"), "main", runner)
         self.assertNotIn("source-secret", str(caught.exception))
 
@@ -155,7 +180,7 @@ class DeployStateTests(TestCase):
                 ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("not-a-sha"),
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main"):
+        with self.assertRaisesRegex(SourceRefreshError, "source resolution"):
             resolve_production_target(Path("/repo"), "main", runner)
 
     def test_rejects_target_when_origin_main_cannot_be_refreshed(self) -> None:
@@ -167,7 +192,7 @@ class DeployStateTests(TestCase):
             }
         )
 
-        with self.assertRaisesRegex(SourcePolicyError, "refresh origin/main"):
+        with self.assertRaisesRegex(SourceRefreshError, "source refresh"):
             resolve_production_target(Path("/repo"), "main", runner)
 
     def test_state_round_trip_is_atomic_and_preserves_previous(self) -> None:
@@ -299,6 +324,26 @@ class DeployStateTests(TestCase):
         path = write_event(self.directory / "events", replace(sample_event(), emergency_reason=reason))
 
         self.assertEqual(reason, json.loads(path.read_text(encoding="utf-8"))["emergency_reason"])
+
+    def test_write_event_persists_safe_source_and_requester_labels(self) -> None:
+        event = replace(
+            sample_event(),
+            source="github_actions",
+            requested_by="weekly_review_coordinator",
+        )
+
+        path = write_event(self.directory / "events", event)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual("github_actions", payload["source"])
+        self.assertEqual("weekly_review_coordinator", payload["requested_by"])
+
+    def test_write_event_rejects_secret_shaped_source_label(self) -> None:
+        with self.assertRaisesRegex(StateFormatError, "source"):
+            write_event(
+                self.directory / "events",
+                replace(sample_event(), source="TOKEN=hidden-value"),
+            )
 
 
 def _as_json(value: DeploymentState) -> dict[str, object]:
