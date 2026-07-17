@@ -597,22 +597,27 @@ def render_command_workbench_html() -> str:
       display: grid;
       grid-template-columns: minmax(0, 1fr) 92px;
       gap: 8px;
+      align-items: end;
       margin-bottom: 14px;
+    }
+    .command-entry {
+      display: grid;
+      gap: 5px;
     }
     input, select, button, textarea {
       font: inherit;
+      min-height: 44px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #fff;
       color: var(--ink);
     }
     input, select {
-      height: 38px;
+      height: 44px;
       padding: 0 10px;
       min-width: 0;
     }
     button {
-      min-height: 34px;
       padding: 0 11px;
       cursor: pointer;
       font-weight: 650;
@@ -719,11 +724,10 @@ def render_command_workbench_html() -> str:
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 8px;
       align-items: center;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
     }
+    .candidate:first-child { border-top: 0; }
     .form-grid {
       display: grid;
       gap: 8px;
@@ -818,20 +822,26 @@ def render_command_workbench_html() -> str:
       <h1>Command Workbench</h1>
       <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
       <div class="input-row">
-        <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
+        <label for="smart-input" class="command-entry">
+          <span class="label">Command</span>
+          <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
+        </label>
         <button id="parse" class="primary">Preview</button>
       </div>
       <section id="access-panel" aria-labelledby="access-title" hidden>
-        <h2 id="access-title">Private access</h2>
+        <h2 id="access-title">Request recovery</h2>
         <p id="access-message" role="alert">Enter the private access credential to continue.</p>
-        <label class="form-row" for="access-token">
-          <span class="label">Access credential</span>
-          <input id="access-token" type="password" autocomplete="current-password">
-        </label>
-        <div class="access-actions">
-          <button id="access-continue" class="primary">Continue</button>
-          <button id="access-forget" class="secondary">Forget access</button>
+        <div id="access-credential-fields" hidden>
+          <label class="form-row" for="access-token">
+            <span class="label">Access credential</span>
+            <input id="access-token" type="password" autocomplete="current-password">
+          </label>
+          <div class="access-actions">
+            <button id="access-continue" class="primary">Continue</button>
+            <button id="access-forget" class="secondary">Forget access</button>
+          </div>
         </div>
+        <button id="request-retry" class="primary" hidden>Retry request</button>
       </section>
       <section id="preview-section">
         <h2>Parsed Preview</h2>
@@ -843,7 +853,7 @@ def render_command_workbench_html() -> str:
       </section>
       <section>
         <h2>Execution Result / 执行结果</h2>
-        <div id="result"><span class="label">No command has run in this session.</span></div>
+        <div id="result" role="status" aria-live="polite"><span class="label">No command has run in this session.</span></div>
       </section>
         </main>
         <aside>
@@ -866,7 +876,19 @@ def render_command_workbench_html() -> str:
       preview: null,
       activeAction: null,
       selectedTarget: null,
-      pendingAccessRetry: null
+      pendingRequest: null
+    };
+    const recoveryCopy = {
+      access_required: "Private access is required for this operation.",
+      access_rejected: "The saved access credential was rejected. Enter the current credential and try again.",
+      access_not_configured: "Private access is temporarily unavailable because the service is not configured.",
+      request_failed: "The request failed. Try again."
+    };
+    const recoveryTitles = {
+      access_required: "Private access",
+      access_rejected: "Replace access",
+      access_not_configured: "Service unavailable",
+      request_failed: "Request failed"
     };
     const storage = {
       recent: "command_workbench_recent",
@@ -875,11 +897,12 @@ def render_command_workbench_html() -> str:
 
     const accessResolution = access.resolve();
     if (accessResolution.status === "legacy_conflict") {
-      showAccessPanel("Saved access credentials conflict. Forget access, then enter the current credential.");
+      showRecovery("access_rejected", "Saved access credentials conflict. Forget access, then enter the current credential.");
     }
     $("#parse").addEventListener("click", () => parseSmartInput());
     $("#access-continue").addEventListener("click", continueWithAccess);
     $("#access-forget").addEventListener("click", forgetAccess);
+    $("#request-retry").addEventListener("click", retryPendingRequest);
     $("#smart-input").addEventListener("keydown", (event) => {
       if (event.key === "Enter") parseSmartInput();
     });
@@ -902,95 +925,117 @@ def render_command_workbench_html() -> str:
     }
 
     async function parseSmartInput(extra = {}) {
-      state.pendingAccessRetry = () => parseSmartInput(extra);
-      setBusy(true);
-      try {
-        const payload = {
-          text: $("#smart-input").value,
-          action_id: extra.action_id || null,
-          fields: extra.fields || {},
-          selected_target: extra.selected_target || state.selectedTarget || null
-        };
-        const data = await postJson("/api/command-workbench/parse", payload);
+      const payload = {
+        text: $("#smart-input").value,
+        action_id: extra.action_id || null,
+        fields: extra.fields || {},
+        selected_target: extra.selected_target || state.selectedTarget || null
+      };
+      const request = createRequest("/api/command-workbench/parse", payload, (data) => {
         state.preview = data.preview;
         state.activeAction = payload.action_id;
-        state.pendingAccessRetry = null;
-        hideAccessPanel();
         renderPreview(data.preview);
-      } catch (error) {
-        if (!error.accessFailure) showResult({ ok: false, error: error.message });
-      } finally {
-        setBusy(false);
-      }
+      });
+      return submitRequest(request);
     }
 
     async function runPreview() {
       if (!state.preview) return;
-      state.pendingAccessRetry = () => runPreview();
-      setBusy(true);
-      try {
-        const data = await postJson("/api/command-workbench/execute", {
-          text: state.preview.raw_input || $("#smart-input").value,
-          action_id: state.preview.action_id,
-          fields: state.preview.fields || {},
-          selected_target: state.preview.target || state.selectedTarget || null,
-          confirmed: true
-        });
-        state.preview = data.preview || state.preview;
-        state.pendingAccessRetry = null;
-        hideAccessPanel();
+      const retainedPreview = JSON.parse(JSON.stringify(state.preview));
+      const payload = {
+        text: retainedPreview.raw_input || $("#smart-input").value,
+        action_id: retainedPreview.action_id,
+        fields: retainedPreview.fields || {},
+        selected_target: retainedPreview.target || state.selectedTarget || null,
+        confirmed: true
+      };
+      const request = createRequest("/api/command-workbench/execute", payload, (data) => {
+        state.preview = data.preview || retainedPreview;
         showResult(data);
         addRecent(data);
+      });
+      return submitRequest(request);
+    }
+
+    function createRequest(endpoint, payload, onSuccess) {
+      return Object.freeze({
+        endpoint,
+        serializedPayload: JSON.stringify(payload),
+        onSuccess
+      });
+    }
+
+    async function submitRequest(request) {
+      state.pendingRequest = request;
+      setBusy(true);
+      try {
+        const data = await postJson(request.endpoint, request.serializedPayload);
+        request.onSuccess(data);
+        state.pendingRequest = null;
+        hideRecovery();
       } catch (error) {
-        if (!error.accessFailure) showResult({ ok: false, error: error.message });
+        const recoveryStatus = error.recoveryStatus || "request_failed";
+        if (recoveryStatus === "access_not_configured") state.pendingRequest = null;
+        showRecovery(recoveryStatus, error.publicMessage || recoveryCopy[recoveryStatus]);
       } finally {
         setBusy(false);
       }
     }
 
-    async function postJson(url, payload) {
+    async function postJson(url, serializedPayload) {
       const response = await fetch(url, {
         method: "POST",
         headers: { ...access.authorizationHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: serializedPayload
       });
       const data = await response.json();
-      const accessStatus = access.classifyResponse(response.status, data).status;
-      if (["access_required", "access_rejected", "access_not_configured"].includes(accessStatus)) {
-        showAccessPanel(data.message || "Private access is required for this operation.");
-        const error = new Error(accessStatus);
-        error.accessFailure = true;
+      const recoveryStatus = access.classifyResponse(response.status, data).status;
+      if (recoveryStatus !== "ready") {
+        const error = new Error(recoveryStatus);
+        error.recoveryStatus = recoveryStatus;
+        error.publicMessage = recoveryStatus === "request_failed"
+          ? recoveryCopy.request_failed
+          : data.message || recoveryCopy[recoveryStatus];
         throw error;
       }
-      if (!response.ok && !data.preview) throw new Error(data.error || "Request failed");
       return data;
     }
 
-    function showAccessPanel(message) {
+    function showRecovery(status, message) {
+      const needsCredential = ["access_required", "access_rejected"].includes(status);
+      $("#access-title").textContent = recoveryTitles[status] || recoveryTitles.request_failed;
       $("#access-message").textContent = message;
+      $("#access-credential-fields").hidden = !needsCredential;
+      $("#request-retry").hidden = status !== "request_failed";
       $("#access-panel").hidden = false;
+      if (needsCredential) $("#access-token").focus();
     }
 
-    function hideAccessPanel() {
+    function hideRecovery() {
       $("#access-panel").hidden = true;
     }
 
     function continueWithAccess() {
       const resolution = access.remember($("#access-token").value);
       if (resolution.status !== "ready") {
-        showAccessPanel("Enter the private access credential to continue.");
+        showRecovery("access_required", "Enter the private access credential to continue.");
         return;
       }
       $("#access-token").value = "";
-      hideAccessPanel();
-      const retry = state.pendingAccessRetry;
-      if (retry) retry();
+      hideRecovery();
+      const request = state.pendingRequest;
+      if (request) return submitRequest(request);
     }
 
     function forgetAccess() {
       access.forget();
       $("#access-token").value = "";
-      showAccessPanel("Saved access has been forgotten. Enter the current credential to continue.");
+      showRecovery("access_required", "Saved access has been forgotten. Enter the current credential to continue.");
+    }
+
+    function retryPendingRequest() {
+      const request = state.pendingRequest;
+      if (request) return submitRequest(request);
     }
 
     function renderCatalog() {
