@@ -1288,6 +1288,7 @@ def render_daily_market_brief_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>InvestmentKnowledge 每日市场简报</title>
   <style>
+    {render_experience_css()}
     :root {{
       color-scheme: light;
       --bg: #f5f7f9;
@@ -1487,13 +1488,16 @@ def render_daily_market_brief_html() -> str:
   </style>
 </head>
 <body>
-  <div class="shell">
+  <div class="experience-shell">
+    {render_primary_navigation("daily_market_brief")}
+    <div class="experience-main">
+      <div class="shell">
     <aside class="sidebar">
       <p class="brand">InvestmentKnowledge</p>
-      <nav class="nav" aria-label="主导航">
-        <a href="/weekly-review">本周复盘</a>
-        <a class="active" href="/daily-market-brief">每日市场简报</a>
-        <a href="/command">Command</a>
+      <nav class="nav" aria-label="On this page">
+        <a href="#history-jobs">历史生成任务</a>
+        <a href="#source-status">数据状态</a>
+        <a href="#markdown">Markdown 原文</a>
       </nav>
     </aside>
     <main>
@@ -1525,6 +1529,8 @@ def render_daily_market_brief_html() -> str:
       <section><h2>数据状态</h2><div id="source-status"></div></section>
       <section><h2>Markdown 原文</h2><textarea id="markdown" class="markdown" spellcheck="false"></textarea></section>
     </main>
+      </div>
+    </div>
   </div>
   <script>
     const state = {{

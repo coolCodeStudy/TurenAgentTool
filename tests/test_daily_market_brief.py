@@ -512,6 +512,44 @@ class DailyMarketBriefTests(unittest.TestCase):
         )
         self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
 
+    def test_daily_brief_uses_shared_shell_and_remains_tokenless(self) -> None:
+        html = render_daily_market_brief_html()
+
+        self.assertIn('href="/daily-market-brief" aria-current="page"', html)
+        self.assertEqual(1, html.count('aria-label="主导航"'))
+        self.assertIn('href="/weekly-review"', html)
+        self.assertIn('href="/command"', html)
+        daily_index = html.index('href="/daily-market-brief" aria-current="page"')
+        weekly_index = html.index('href="/weekly-review"')
+        command_index = html.index('href="/command"')
+        self.assertLess(daily_index, weekly_index)
+        self.assertLess(weekly_index, command_index)
+        self.assertIn('<div class="experience-shell">', html)
+        self.assertIn('<div class="experience-main">', html)
+        self.assertEqual(1, html.count("<main>"))
+        self.assertEqual(1, html.count("</main>"))
+
+        local_nav_marker = '<nav class="nav" aria-label="On this page">'
+        self.assertIn(local_nav_marker, html)
+        local_nav = html.split(local_nav_marker, 1)[1].split("</nav>", 1)[0]
+        self.assertEqual(3, local_nav.count("<a "))
+        self.assertEqual(3, local_nav.count('href="#'))
+        self.assertNotIn('href="/', local_nav)
+        self.assertIn('href="#history-jobs"', local_nav)
+        self.assertIn('href="#source-status"', local_nav)
+        self.assertIn('href="#markdown"', local_nav)
+
+        self.assertIn("@media (max-width: 760px)", html)
+        self.assertIn("overflow-x: auto;", html)
+        self.assertNotIn("investment_knowledge_access_token", html)
+        self.assertNotIn("command_workbench_token", html)
+        self.assertNotIn("weekly_review_web_token", html)
+        self.assertNotIn("InvestmentKnowledgeAccess", html)
+        self.assertNotIn("authorizationHeaders", html)
+        self.assertNotIn("localStorage", html)
+        self.assertNotIn("Authorization", html)
+        self.assertNotIn('id="api-token"', html)
+
     def test_page_generation_progress_supports_background_history_jobs(self) -> None:
         html = render_daily_market_brief_html()
 
