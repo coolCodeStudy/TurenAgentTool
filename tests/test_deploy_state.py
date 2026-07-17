@@ -345,6 +345,29 @@ class DeployStateTests(TestCase):
                 replace(sample_event(), source="TOKEN=hidden-value"),
             )
 
+    def test_write_event_rejects_source_outside_explicit_allowlist(self) -> None:
+        with self.assertRaisesRegex(StateFormatError, "source"):
+            write_event(
+                self.directory / "events",
+                replace(sample_event(), source="rogue_dispatcher"),
+            )
+
+    def test_write_event_rejects_synthetic_credential_label_shapes(self) -> None:
+        shapes = (
+            "github_pat_" + "A" * 24,
+            "sk-" + "B" * 32,
+            "AKIA" + "C" * 16,
+            "eyJ" + "D" * 12 + "." + "E" * 12 + "." + "F" * 12,
+        )
+
+        for index, label in enumerate(shapes):
+            with self.subTest(shape=index):
+                with self.assertRaisesRegex(StateFormatError, "requested_by"):
+                    write_event(
+                        self.directory / "events",
+                        replace(sample_event(), requested_by=label),
+                    )
+
 
 def _as_json(value: DeploymentState) -> dict[str, object]:
     return {

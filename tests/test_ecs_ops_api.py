@@ -170,6 +170,47 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
         self.assertEqual([], engine.requests)
 
+    def test_deploy_source_must_use_explicit_allowlist(self) -> None:
+        engine = FakeEngine()
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            with self.assertRaisesRegex(ops.DeployApiError, "source"):
+                ops.deploy_ref(
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "targeted_quick",
+                        "targets": ["weekly-review-web"],
+                        "source": "rogue_dispatcher",
+                    }
+                )
+
+        self.assertEqual([], engine.requests)
+
+    def test_api_rejects_synthetic_credential_label_shapes(self) -> None:
+        engine = FakeEngine()
+        shapes = (
+            "github_pat_" + "A" * 24,
+            "sk-" + "B" * 32,
+            "AKIA" + "C" * 16,
+            "eyJ" + "D" * 12 + "." + "E" * 12 + "." + "F" * 12,
+        )
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            for index, label in enumerate(shapes):
+                with self.subTest(shape=index):
+                    with self.assertRaisesRegex(ops.DeployApiError, "requested_by"):
+                        ops.deploy_ref(
+                            {
+                                "ref": TARGET_SHA,
+                                "mode": "targeted_quick",
+                                "targets": ["weekly-review-web"],
+                                "source": "github_actions",
+                                "requested_by": label,
+                            }
+                        )
+
+        self.assertEqual([], engine.requests)
+
     def test_locked_source_rejection_returns_typed_integration_recovery(self) -> None:
         engine = FakeEngine(
             DeployOutcome(
@@ -241,6 +282,36 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
         self.assertEqual(422, status)
         self.assertEqual("deployment_rejected", payload["error"])
+
+    def test_manual_recovery_and_audit_failure_override_source_policy_guidance(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment is locked out pending manual recovery",
+                manual_recovery={"action": "inspect durable lockout evidence"},
+                audit_status="failed_durable",
+                failure_category="source_policy_rejected",
+            )
+        )
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(422, status)
+        self.assertEqual("deployment_rejected", payload["error"])
+        self.assertIn("locked out", payload["message"])
+        self.assertNotIn("authoritative main", payload["message"])
+        self.assertEqual(
+            "inspect durable lockout evidence",
+            payload["data"]["outcome"]["manual_recovery"]["action"],
+        )
 
     def test_deploy_recomputes_plan_and_dispatches_shared_engine(self) -> None:
         engine = FakeEngine()

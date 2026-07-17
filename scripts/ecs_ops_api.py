@@ -29,7 +29,11 @@ try:
         DockerHealthChecker,
         SystemClock,
     )
-    from scripts.deploy_state import load_state
+    from scripts.deploy_state import (
+        is_allowed_deploy_source,
+        is_safe_deploy_label,
+        load_state,
+    )
     from scripts.deploy_support import CommandResult, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
     from deploy_contract import DeployMode
@@ -42,7 +46,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
         DockerHealthChecker,
         SystemClock,
     )
-    from deploy_state import load_state
+    from deploy_state import is_allowed_deploy_source, is_safe_deploy_label, load_state
     from deploy_support import CommandResult, SubprocessRunner
 
 
@@ -126,13 +130,6 @@ SENSITIVE_PATTERNS = [
     (re.compile(r"(?i)SSL:\s*[A-Z0-9_:-]+"), "SSL:<redacted>"),
     (re.compile(r"(?i)certificate[_\s-]*verify[_\s-]*failed"), "certificate verification failed"),
 ]
-_DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
-_DEPLOY_LABEL_SENSITIVE = re.compile(
-    r"(?i)(?:\b(?:token|password|passwd|secret|credential|authorization|api[_-]?key)\b|"
-    r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
-)
-
-
 class DeploymentBusy(RuntimeError):
     pass
 
@@ -473,7 +470,10 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 sanitize_text(str(exc)),
             ) from exc
         if not outcome.ok:
-            if outcome.failure_category == "source_policy_rejected":
+            if (
+                outcome.failure_category == "source_policy_rejected"
+                and not _recovery_evidence_takes_precedence(outcome)
+            ):
                 raise DeployApiError(
                     HTTPStatus.BAD_REQUEST,
                     "source_policy_rejected",
@@ -977,7 +977,12 @@ def _validate_deploy_label(raw: object, name: str, default: str) -> str:
             f"{name} must be a safe non-secret deployment label",
         )
     value = raw.strip()
-    if not _DEPLOY_LABEL.fullmatch(value) or _DEPLOY_LABEL_SENSITIVE.search(value):
+    valid = (
+        is_allowed_deploy_source(value)
+        if name == "source"
+        else is_safe_deploy_label(value)
+    )
+    if not valid:
         raise DeployApiError(
             HTTPStatus.UNPROCESSABLE_ENTITY,
             "deployment_rejected",
@@ -1015,6 +1020,14 @@ def _is_shared_lock_contention(outcome: DeployOutcome) -> bool:
         or "deployment lock could not be acquired" in message
         or "another deployment is active" in message
         or "deployment is already running" in message
+    )
+
+
+def _recovery_evidence_takes_precedence(outcome: DeployOutcome) -> bool:
+    return bool(
+        outcome.manual_recovery is not None
+        or outcome.audit_status.startswith("failed_")
+        or "locked out" in outcome.message.lower()
     )
 
 

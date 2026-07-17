@@ -100,6 +100,35 @@ _BARE_CREDENTIAL = re.compile(
     r"(?i)(?<![A-Za-z0-9_.-])[^\s/:@]+:[^\s/@]+@[^\s]+"
 )
 _DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
+_CREDENTIAL_SHAPE = re.compile(
+    r"(?:\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{8,}\b|"
+    r"\bsk-[A-Za-z0-9_-]{8,}\b|"
+    r"\bAKIA[A-Z0-9]{16}\b|"
+    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)",
+    re.IGNORECASE,
+)
+ALLOWED_DEPLOY_SOURCES = frozenset(
+    {
+        "direct",
+        "github_actions",
+        "ops_client",
+        "mcp",
+        "codex_app",
+        "verification",
+    }
+)
+
+
+def is_safe_deploy_label(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and _DEPLOY_LABEL.fullmatch(value)
+        and not _has_sensitive_material(value)
+    )
+
+
+def is_allowed_deploy_source(value: object) -> bool:
+    return bool(is_safe_deploy_label(value) and value in ALLOWED_DEPLOY_SOURCES)
 
 
 def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRunner) -> str:
@@ -274,7 +303,7 @@ def _validate_event(event: DeploymentEvent) -> None:
         _required_string(getattr(event, name), name)
     _optional_string(event.deployed_sha, "deployed_sha")
     _optional_string(event.emergency_reason, "emergency_reason")
-    _deploy_label(event.source, "source")
+    _deploy_label(event.source, "source", allowed_source=True)
     _deploy_label(event.requested_by, "requested_by")
     _optional_string(event.failure_category, "failure_category")
     _string_tuple(event.changed_image_inputs, "changed_image_inputs")
@@ -304,9 +333,19 @@ def _required_string(value: object, name: str) -> str:
     return value
 
 
-def _deploy_label(value: object, name: str) -> str:
+def _deploy_label(
+    value: object,
+    name: str,
+    *,
+    allowed_source: bool = False,
+) -> str:
     validated = _required_string(value, name)
-    if not _DEPLOY_LABEL.fullmatch(validated):
+    valid = (
+        is_allowed_deploy_source(validated)
+        if allowed_source
+        else is_safe_deploy_label(validated)
+    )
+    if not valid:
         raise StateFormatError(f"{name} must be a safe deployment label")
     return validated
 
@@ -350,6 +389,7 @@ def _has_sensitive_material(value: str) -> bool:
         or _ASSIGNMENT.search(value)
         or _AUTHENTICATED_URI.search(value)
         or _BARE_CREDENTIAL.search(value)
+        or _CREDENTIAL_SHAPE.search(value)
     )
 
 

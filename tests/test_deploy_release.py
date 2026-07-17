@@ -1200,6 +1200,36 @@ class DeploymentEngineTests(TestCase):
         with self.assertRaisesRegex(ValueError, "source"):
             replace(self.targeted_request, source="TOKEN=hidden-value")
 
+    def test_deploy_request_rejects_source_outside_explicit_allowlist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source"):
+            replace(self.targeted_request, source="rogue_dispatcher")
+
+    def test_deploy_request_accepts_supported_source_allowlist(self) -> None:
+        for source in (
+            "direct",
+            "github_actions",
+            "ops_client",
+            "mcp",
+            "codex_app",
+            "verification",
+        ):
+            with self.subTest(source=source):
+                request = replace(self.targeted_request, source=source)
+                self.assertEqual(source, request.source)
+
+    def test_deploy_request_rejects_synthetic_credential_label_shapes(self) -> None:
+        shapes = (
+            "github_pat_" + "A" * 24,
+            "sk-" + "B" * 32,
+            "AKIA" + "C" * 16,
+            "eyJ" + "D" * 12 + "." + "E" * 12 + "." + "F" * 12,
+        )
+
+        for index, label in enumerate(shapes):
+            with self.subTest(shape=index):
+                with self.assertRaisesRegex(ValueError, "requested_by"):
+                    replace(self.targeted_request, requested_by=label)
+
     def test_runtime_failure_records_failed_event(self) -> None:
         self.engine.runtime_validator = lambda runner, compose: (_ for _ in ()).throw(
             RuntimeError("PASSWORD=runtime-secret")

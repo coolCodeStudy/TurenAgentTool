@@ -77,18 +77,37 @@ jobs:
               sudo flock --exclusive --wait 600 "$DEPLOY_LOCK_PATH" "$@"
             }
 
-            stop_ops_api_under_deploy_lock() {
+            mutate_ops_api_service_under_deploy_lock() {
+              local action="$1"
               run_under_deploy_lock /bin/bash -c '
                 set -euo pipefail
-                if ! systemctl cat investment-ops-api.service >/dev/null 2>&1; then
-                  exit 0
-                fi
+                action="$1"
+                load_state="$(systemctl show investment-ops-api.service --property=LoadState --value)"
+                case "$load_state" in
+                  "not-found") exit 0 ;;
+                  "loaded") ;;
+                  *)
+                    echo "investment-ops-api.service has unsafe load state: $load_state" >&2
+                    exit 1
+                    ;;
+                esac
                 systemctl stop investment-ops-api.service
                 if systemctl is-active --quiet investment-ops-api.service; then
                   echo "investment-ops-api.service remained active after stop" >&2
                   exit 1
                 fi
-              '
+                if [ "$action" = "disable" ]; then
+                  systemctl disable investment-ops-api.service
+                fi
+              ' _ "$action"
+            }
+
+            stop_ops_api_under_deploy_lock() {
+              mutate_ops_api_service_under_deploy_lock stop
+            }
+
+            disable_ops_api_under_deploy_lock() {
+              mutate_ops_api_service_under_deploy_lock disable
             }
 
             case "$MODE" in
@@ -160,8 +179,7 @@ jobs:
                 '
                 ;;
               stop)
-                stop_ops_api_under_deploy_lock
-                sudo systemctl disable investment-ops-api.service
+                disable_ops_api_under_deploy_lock
                 ;;
               *)
                 echo "Unknown mode: $MODE"

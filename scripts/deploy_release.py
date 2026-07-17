@@ -40,6 +40,8 @@ try:
         DeploymentState,
         SourcePolicyError,
         SourceRefreshError,
+        is_allowed_deploy_source,
+        is_safe_deploy_label,
         load_state,
         resolve_production_target,
         write_event,
@@ -72,6 +74,8 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
         DeploymentState,
         SourcePolicyError,
         SourceRefreshError,
+        is_allowed_deploy_source,
+        is_safe_deploy_label,
         load_state,
         resolve_production_target,
         write_event,
@@ -92,7 +96,6 @@ _SENSITIVE_REASON = re.compile(
     r"(?i)(?:\b(?:token|password|passwd|secret|credential|authorization|api[_-]?key)\b|"
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
 )
-_DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
 _APPLICATION_TARGETS = set(APPLICATION_SERVICES)
 
 
@@ -312,11 +315,12 @@ class DeployRequest:
             raise ValueError("feature routes must be absolute local paths")
         for name in ("source", "requested_by"):
             value = getattr(self, name)
-            if (
-                not isinstance(value, str)
-                or not _DEPLOY_LABEL.fullmatch(value)
-                or _SENSITIVE_REASON.search(value)
-            ):
+            valid = (
+                is_allowed_deploy_source(value)
+                if name == "source"
+                else is_safe_deploy_label(value)
+            )
+            if not valid:
                 raise ValueError(f"{name} must be a safe non-secret deployment label")
 
 
