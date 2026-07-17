@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
@@ -253,7 +254,7 @@ def write_event_audit_overlay(
     if not overlay.event_id or Path(overlay.event_id).name != overlay.event_id:
         raise ValueError("event_id must be a single path component")
     path = events_dir / f"{overlay.event_id}.audit-incomplete.json"
-    _atomic_write(path, asdict(overlay))
+    _atomic_write_private(path, asdict(overlay))
     return path
 
 
@@ -486,7 +487,11 @@ def _validate_event(event: DeploymentEvent) -> None:
 
 
 def _validate_event_audit_overlay(overlay: DeploymentEventAuditOverlay) -> None:
-    if overlay.schema_version != 1 or isinstance(overlay.schema_version, bool):
+    if (
+        not isinstance(overlay.schema_version, int)
+        or isinstance(overlay.schema_version, bool)
+        or overlay.schema_version != 1
+    ):
         raise StateFormatError("deployment audit overlay schema_version must be 1")
     _required_string(overlay.event_id, "event_id")
     if not overlay.event_id or Path(overlay.event_id).name != overlay.event_id:
@@ -495,7 +500,10 @@ def _validate_event_audit_overlay(overlay: DeploymentEventAuditOverlay) -> None:
         raise StateFormatError("deployment audit overlay status is invalid")
     if overlay.reason != _AUDIT_OVERLAY_REASON:
         raise StateFormatError("deployment audit overlay reason is invalid")
-    if _CLEANUP_STATUS_PATTERN.fullmatch(overlay.artifact_cleanup_status) is None:
+    if (
+        not isinstance(overlay.artifact_cleanup_status, str)
+        or _CLEANUP_STATUS_PATTERN.fullmatch(overlay.artifact_cleanup_status) is None
+    ):
         raise StateFormatError("deployment audit overlay cleanup status is invalid")
 
 
@@ -594,3 +602,52 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
             temporary_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def _atomic_write_private(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    descriptor: int | None = None
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        for _attempt in range(16):
+            candidate = path.with_name(
+                f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            )
+            try:
+                descriptor = os.open(candidate, flags, 0o600)
+            except FileExistsError:
+                continue
+            temporary_path = candidate
+            break
+        else:
+            raise FileExistsError("could not allocate a unique deployment audit temp file")
+
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_descriptor = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass

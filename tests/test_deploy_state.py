@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from dataclasses import replace
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 import scripts.deploy_state as deploy_state
 from scripts.deploy_state import (
@@ -317,6 +319,86 @@ class DeployStateTests(TestCase):
 
         with self.assertRaisesRegex(StateFormatError, "invalid schema"):
             load_event_audit_overlay(events_dir, "event-1")
+
+    def test_audit_overlay_atomic_write_ignores_predictable_temp_symlink(self) -> None:
+        events_dir = self.directory / "events"
+        events_dir.mkdir()
+        victim = self.directory / "victim.txt"
+        victim.write_bytes(b"victim remains unchanged")
+        final_path = events_dir / "event-1.audit-incomplete.json"
+        predictable_temp = final_path.with_name(f"{final_path.name}.tmp")
+        predictable_temp.symlink_to(victim)
+        overlay = DeploymentEventAuditOverlay(
+            schema_version=1,
+            event_id="event-1",
+            status="audit_incomplete",
+            reason="artifact_cleanup_event_update_failed",
+            artifact_cleanup_status="failed",
+        )
+
+        with patch.object(
+            deploy_state.os,
+            "replace",
+            side_effect=OSError("simulated sidecar replace failure"),
+        ):
+            with self.assertRaisesRegex(OSError, "replace failure"):
+                write_event_audit_overlay(events_dir, overlay)
+
+        self.assertEqual(b"victim remains unchanged", victim.read_bytes())
+        self.assertTrue(predictable_temp.is_symlink())
+        self.assertEqual([predictable_temp], list(events_dir.iterdir()))
+
+        real_open = os.open
+        real_fsync = os.fsync
+        with (
+            patch.object(deploy_state.os, "open", wraps=real_open) as secure_open,
+            patch.object(deploy_state.os, "fsync", wraps=real_fsync) as secure_fsync,
+        ):
+            path = write_event_audit_overlay(events_dir, overlay)
+
+        self.assertEqual(final_path, path)
+        self.assertEqual(b"victim remains unchanged", victim.read_bytes())
+        self.assertTrue(predictable_temp.is_symlink())
+        self.assertTrue(path.is_file())
+        self.assertFalse(path.is_symlink())
+        self.assertEqual(0o600, path.stat().st_mode & 0o777)
+        self.assertEqual(overlay, load_event_audit_overlay(events_dir, "event-1"))
+        temporary_open = next(
+            call
+            for call in secure_open.call_args_list
+            if str(call.args[0]).endswith(".tmp")
+        )
+        flags = temporary_open.args[1]
+        self.assertTrue(flags & os.O_WRONLY)
+        self.assertTrue(flags & os.O_CREAT)
+        self.assertTrue(flags & os.O_EXCL)
+        if hasattr(os, "O_NOFOLLOW"):
+            self.assertTrue(flags & os.O_NOFOLLOW)
+        self.assertEqual(0o600, temporary_open.args[2])
+        self.assertEqual(2, secure_fsync.call_count)
+
+    def test_audit_overlay_rejects_non_integer_schema_and_non_string_cleanup(self) -> None:
+        events_dir = self.directory / "events"
+        base = DeploymentEventAuditOverlay(
+            schema_version=1,
+            event_id="event-1",
+            status="audit_incomplete",
+            reason="artifact_cleanup_event_update_failed",
+            artifact_cleanup_status="failed",
+        )
+
+        for invalid_version in (1.0, True):
+            with self.subTest(schema_version=invalid_version):
+                with self.assertRaisesRegex(StateFormatError, "schema_version"):
+                    write_event_audit_overlay(
+                        events_dir,
+                        replace(base, schema_version=invalid_version),
+                    )
+        with self.assertRaisesRegex(StateFormatError, "cleanup status"):
+            write_event_audit_overlay(
+                events_dir,
+                replace(base, artifact_cleanup_status=123),
+            )
 
     def test_event_rejects_invalid_archive_digest_and_cleanup_status(self) -> None:
         events_dir = self.directory / "events"
