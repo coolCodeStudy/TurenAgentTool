@@ -990,7 +990,11 @@ def render_command_workbench_html() -> str:
       });
       const data = await response.json();
       const recoveryStatus = access.classifyResponse(response.status, data).status;
-      if (recoveryStatus !== "ready") {
+      const isAccessRecovery = ["access_required", "access_rejected", "access_not_configured"]
+        .includes(recoveryStatus);
+      const isCompletedBusinessResponse = [400, 409].includes(response.status)
+        && Boolean(data && data.preview);
+      if (isAccessRecovery || (recoveryStatus === "request_failed" && !isCompletedBusinessResponse)) {
         const error = new Error(recoveryStatus);
         error.recoveryStatus = recoveryStatus;
         error.publicMessage = recoveryStatus === "request_failed"

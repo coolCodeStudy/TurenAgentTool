@@ -465,6 +465,84 @@ assert.equal(localStorage.values.has("investment_knowledge_access_token"), false
 """
         )
 
+    def test_command_409_preview_blocker_flows_through_execution_result_handler(self) -> None:
+        _run_command_script(
+            r"""
+const blockerPreview = {
+  status: "parsed",
+  raw_input: "本周复盘",
+  action_id: "weekly_current",
+  fields: {},
+  target: null,
+  supports_execution: true,
+  confirmation_required: true,
+};
+let requestCount = 0;
+fetchHandler = async () => {
+  requestCount += 1;
+  return response(409, {
+    ok: false,
+    error: "Confirmation is required before running this command.",
+    preview: blockerPreview,
+  });
+};
+workbench.state.preview = {
+  ...blockerPreview,
+  confirmation_required: false,
+};
+
+await workbench.runPreview();
+
+assert.equal(requestCount, 1);
+assert.deepEqual(workbench.state.preview, blockerPreview);
+assert.match(nodes.get("#result").innerHTML, /Confirmation is required/);
+assert.equal(nodes.get("#access-panel").hidden, true);
+assert.equal(nodes.get("#request-retry").hidden, true);
+assert.equal(workbench.state.pendingRequest, null);
+"""
+        )
+
+    def test_command_400_preview_result_is_completed_without_duplicate_retry(self) -> None:
+        _run_command_script(
+            r"""
+const failedPreview = {
+  status: "parsed",
+  raw_input: "系统状态",
+  action_id: "system_status",
+  fields: {},
+  target: null,
+  supports_execution: true,
+  confirmation_required: false,
+};
+let requestCount = 0;
+fetchHandler = async () => {
+  requestCount += 1;
+  return response(400, {
+    ok: false,
+    message: "The command completed with a business failure.",
+    preview: failedPreview,
+    executed_command: "系统状态",
+    raw_input: "系统状态",
+    event_id: 41,
+  });
+};
+workbench.state.preview = failedPreview;
+
+await workbench.runPreview();
+
+assert.equal(requestCount, 1);
+assert.deepEqual(workbench.state.preview, failedPreview);
+assert.match(nodes.get("#result").innerHTML, /completed with a business failure/);
+const recent = JSON.parse(localStorage.getItem("command_workbench_recent"));
+assert.equal(recent.length, 1);
+assert.equal(recent[0].exact_command, "系统状态");
+assert.equal(recent[0].ok, false);
+assert.equal(nodes.get("#access-panel").hidden, true);
+assert.equal(nodes.get("#request-retry").hidden, true);
+assert.equal(workbench.state.pendingRequest, null);
+"""
+        )
+
     def test_command_accessibility_and_recovery_markup_is_explicit(self) -> None:
         from investment_knowledge_mcp.command_workbench import render_command_workbench_html
 
