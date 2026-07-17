@@ -381,6 +381,7 @@ jobs:
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           DEPLOY_MODE: ${{ needs.plan.outputs.mode }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
 
@@ -392,6 +393,9 @@ jobs:
               "ref": os.environ["TARGET_SHA"],
               "mode": os.environ["DEPLOY_MODE"],
               "targets": json.loads(os.environ["TARGETS_JSON"]),
+              "feature_routes": ["/daily-market-brief"],
+              "source": "github_actions",
+              "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",
           }
           print(json.dumps(payload, separators=(",", ":")))
           PY
@@ -434,7 +438,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          archive="dist/investment-knowledge-app-${{ github.sha }}.tar.gz"
+          archive="dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz"
           docker save investment-knowledge-app:${{ github.sha }} | gzip > "$archive"
           archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
@@ -446,33 +450,26 @@ jobs:
         env:
           ARCHIVE_BYTES: ${{ steps.archive.outputs.archive_bytes }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
           command_timeout: 15m
-          envs: ARCHIVE_BYTES,TARGET_SHA
+          envs: ARCHIVE_BYTES,TARGET_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
           script: |
             set -euo pipefail
 
-            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
             DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
-            APP_ROOT=/opt/investment-knowledge
-
-            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
-            if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
-              git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
-              git -C "$DEPLOY_REPO_DIR" fetch --prune origin
-            else
-              rm -rf "$DEPLOY_REPO_DIR"
-              git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
-            fi
-            git -C "$DEPLOY_REPO_DIR" checkout --detach "$TARGET_SHA"
+            PREFLIGHT_REPO="$(mktemp -d "/tmp/investment-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")"
+            trap 'rm -rf "$PREFLIGHT_REPO"' EXIT
+            git clone --filter=blob:none --no-checkout "$DEPLOY_REPO_URL" "$PREFLIGHT_REPO"
+            git -C "$PREFLIGHT_REPO" checkout --detach "$TARGET_SHA"
 
             echo "Running deploy_preflight.py before image archive upload."
-            python3 - "$DEPLOY_REPO_DIR" "$ARCHIVE_BYTES" <<'PY'
+            python3 - "$PREFLIGHT_REPO" "$ARCHIVE_BYTES" <<'PY'
             from pathlib import Path
             import sys
 
@@ -501,7 +498,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          source: "dist/investment-knowledge-app-${{ github.sha }}.tar.gz"
+          source: "dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz"
           target: "/tmp"
           strip_components: 1
           overwrite: true
@@ -581,7 +578,8 @@ jobs:
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}
           EMERGENCY_REASON: ${{ needs.plan.outputs.emergency_reason }}
-          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}.tar.gz
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
         run: |
           set -euo pipefail
 
@@ -594,6 +592,9 @@ jobs:
               "mode": "full_image",
               "targets": json.loads(os.environ["TARGETS_JSON"]),
               "archive_path": os.environ["REMOTE_ARCHIVE"],
+              "feature_routes": ["/daily-market-brief"],
+              "source": "github_actions",
+              "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",
           }
           reason = os.environ.get("EMERGENCY_REASON", "").strip()
           if reason:

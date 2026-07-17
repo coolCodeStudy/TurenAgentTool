@@ -24,15 +24,20 @@ try:
     from scripts.deploy_release import (
         DeployOutcome,
         DeployRequest,
+        deployment_route_smoke_checks,
         DeploymentEngine,
         DeploymentError,
         DockerHealthChecker,
+        is_managed_image_archive,
+        is_safe_feature_route,
         SystemClock,
     )
     from scripts.deploy_state import (
+        DeploymentEvent,
         is_allowed_deploy_source,
         is_safe_deploy_label,
         load_state,
+        write_event,
     )
     from scripts.deploy_support import CommandResult, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
@@ -41,12 +46,21 @@ except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
     from deploy_release import (
         DeployOutcome,
         DeployRequest,
+        deployment_route_smoke_checks,
         DeploymentEngine,
         DeploymentError,
         DockerHealthChecker,
+        is_managed_image_archive,
+        is_safe_feature_route,
         SystemClock,
     )
-    from deploy_state import is_allowed_deploy_source, is_safe_deploy_label, load_state
+    from deploy_state import (
+        DeploymentEvent,
+        is_allowed_deploy_source,
+        is_safe_deploy_label,
+        load_state,
+        write_event,
+    )
     from deploy_support import CommandResult, SubprocessRunner
 
 
@@ -437,15 +451,13 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             "unspecified",
         )
 
-        if (
-            mode is DeployMode.FULL_IMAGE
-            and archive_path is None
-            and (emergency_reason is None or len(emergency_reason.strip()) < 20)
-        ):
+        if mode is DeployMode.FULL_IMAGE:
+            _validate_full_image_archive(ref, archive_path)
+        elif archive_path is not None:
             raise DeployApiError(
                 HTTPStatus.UNPROCESSABLE_ENTITY,
                 "deployment_rejected",
-                "emergency reason must be at least 20 characters",
+                "archive path is supported only for full_image deployment",
             )
 
         deploy_event_id = _new_deploy_event_id()
@@ -464,9 +476,22 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             outcome = engine.deploy(request)
         except DeploymentError as exc:
+            outcome = DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=mode,
+                activated_services=(),
+                rolled_back_services=(),
+                message=sanitize_text(str(exc)),
+            )
+            _ensure_terminal_deploy_event(
+                deploy_event_id,
+                request=request,
+                outcome=outcome,
+            )
             evidence = _terminal_deploy_evidence(
                 deploy_event_id,
-                outcome=None,
+                outcome=outcome,
                 mode=mode,
                 requested_targets=targets,
                 feature_routes=feature_routes,
@@ -477,14 +502,29 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 sanitize_text(str(exc)),
                 _failed_deploy_handoff(deploy_event_id, evidence),
             ) from exc
-        if not outcome.ok:
-            evidence = _terminal_deploy_evidence(
-                deploy_event_id,
-                outcome=outcome,
-                mode=mode,
-                requested_targets=targets,
-                feature_routes=feature_routes,
+        _ensure_terminal_deploy_event(
+            deploy_event_id,
+            request=request,
+            outcome=outcome,
+        )
+        evidence = _terminal_deploy_evidence(
+            deploy_event_id,
+            outcome=outcome,
+            mode=mode,
+            requested_targets=targets,
+            feature_routes=feature_routes,
+        )
+        if outcome.audit_status == "cleanup_event_failed" or evidence.get("status") == "audit_incomplete":
+            raise DeployApiError(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "audit_incomplete",
+                "deployment services are healthy but terminal audit evidence is incomplete",
+                {
+                    "outcome": _deploy_outcome_payload(outcome),
+                    **_blocked_deploy_handoff(deploy_event_id, evidence),
+                },
             )
+        if not outcome.ok:
             failure_data = {
                 "outcome": _deploy_outcome_payload(outcome),
                 **_failed_deploy_handoff(deploy_event_id, evidence),
@@ -786,7 +826,13 @@ def _read_shared_deploy_event(event_id: str) -> dict[str, Any] | None:
 
 def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict[str, Any]:
     final_health = str(payload.get("final_health") or "")
-    status = "succeeded" if final_health == "healthy" else "failed"
+    rollback_status = str(payload.get("rollback_status") or "")
+    if final_health == "not_required":
+        status = "not_required"
+    elif "pending" in rollback_status:
+        status = "audit_incomplete"
+    else:
+        status = "succeeded" if final_health == "healthy" else "failed"
     completed_at = str(payload.get("completed_at") or "")
     started_at = str(payload.get("started_at") or "")
     requested_services = (
@@ -808,7 +854,7 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
         "affected_services": affected_services,
         "preflight": payload.get("preflight") if isinstance(payload.get("preflight"), dict) else {},
         "final_health": final_health or "unknown",
-        "rollback_status": str(payload.get("rollback_status") or ""),
+        "rollback_status": rollback_status,
         "source": str(payload.get("source") or "direct"),
         "requested_by": str(payload.get("requested_by") or "unspecified"),
         "failure_category": str(payload.get("failure_category") or ""),
@@ -829,6 +875,23 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
         "disk_used_before": payload.get("disk_used_before"),
         "disk_used_after": payload.get("disk_used_after"),
         "cleanup_reclaimed_bytes": payload.get("cleanup_reclaimed_bytes"),
+        "route_smoke_checks": (
+            payload.get("route_smoke_checks")
+            if isinstance(payload.get("route_smoke_checks"), list)
+            else list(
+                deployment_route_smoke_checks(
+                    tuple(
+                        route
+                        for route in (
+                            payload.get("feature_routes")
+                            if isinstance(payload.get("feature_routes"), list)
+                            else []
+                        )
+                        if isinstance(route, str)
+                    )
+                )
+            )
+        ),
     }
     return _sanitize_payload(
         {
@@ -845,22 +908,31 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
             "feature_routes": metadata["feature_routes"],
             "preflight": metadata["preflight"],
             "stable_health": {
-                "status": "healthy" if status == "succeeded" else "failed",
-                "window_seconds": metadata["stability_seconds"],
+                "status": (
+                    "not_applicable"
+                    if status == "not_required"
+                    else "healthy"
+                    if final_health == "healthy"
+                    else "failed"
+                ),
+                "window_seconds": (
+                    0 if status == "not_required" else metadata["stability_seconds"]
+                ),
                 "observed_seconds": (
-                    metadata["stability_seconds"] if status == "succeeded" else 0
+                    metadata["stability_seconds"] if final_health == "healthy" else 0
                 ),
                 "final_health": metadata["final_health"],
             },
             "route_smoke": {
                 "status": (
-                    "healthy"
-                    if status == "succeeded" and metadata["feature_routes"]
+                    "not_applicable"
+                    if status == "not_required"
+                    else "healthy"
+                    if final_health == "healthy"
                     else "failed"
-                    if metadata["feature_routes"]
-                    else "not_requested"
                 ),
                 "routes": metadata["feature_routes"],
+                "checks": metadata["route_smoke_checks"],
             },
             "rollback_status": metadata["rollback_status"],
             "target_durations_ms": metadata["target_durations_ms"],
@@ -1034,7 +1106,7 @@ def _validate_feature_routes(raw: object) -> tuple[str, ...]:
     if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
         raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "feature_routes must be a list of strings")
     routes = tuple(dict.fromkeys(item.strip() for item in raw if item.strip()))
-    if any(not route.startswith("/") or route.startswith("//") for route in routes):
+    if any(not is_safe_feature_route(route) for route in routes):
         raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "feature routes must be absolute local paths")
     return routes
 
@@ -1055,6 +1127,24 @@ def _optional_path(raw: object) -> Path | None:
         raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "archive path must be a string")
     value = raw.strip()
     return Path(value) if value else None
+
+
+def _validate_full_image_archive(ref: str, archive_path: Path | None) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", ref):
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "full_image requires the explicit authoritative 40-character SHA",
+        )
+    if archive_path is None or not is_managed_image_archive(
+        archive_path,
+        expected_sha=ref,
+    ):
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "full_image archive must be a SHA-bound non-symlink regular file directly under /tmp",
+        )
 
 
 def _validate_deploy_label(raw: object, name: str, default: str) -> str:
@@ -1103,6 +1193,106 @@ def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:
     )
 
 
+def _ensure_terminal_deploy_event(
+    deploy_event_id: int,
+    *,
+    request: DeployRequest,
+    outcome: DeployOutcome,
+) -> None:
+    if _read_shared_deploy_event(str(deploy_event_id)) is not None:
+        return
+
+    now = datetime.now().astimezone().isoformat()
+    no_deploy = outcome.mode is DeployMode.NO_DEPLOY
+    audit_incomplete = outcome.audit_status == "cleanup_event_failed"
+    final_health = (
+        "not_required" if no_deploy else "healthy" if outcome.ok else "unhealthy"
+    )
+    stability_seconds = (
+        0
+        if no_deploy or not outcome.ok
+        else 60
+        if outcome.mode is DeployMode.FULL_IMAGE
+        else 30
+    )
+    archive_bytes: int | None = None
+    if request.archive_path is not None:
+        try:
+            archive_bytes = request.archive_path.stat().st_size
+        except OSError:
+            archive_bytes = None
+    event = DeploymentEvent(
+        event_id=str(deploy_event_id),
+        requested_mode=request.requested_mode.value,
+        computed_mode=outcome.mode.value,
+        deployed_sha=outcome.target_sha if outcome.ok and not no_deploy else None,
+        target_sha=outcome.target_sha or request.requested_ref,
+        changed_image_inputs=(),
+        targets=request.requested_targets,
+        preflight={},
+        archive_bytes=archive_bytes,
+        image_count_before=-1,
+        image_count_after=outcome.image_count_after,
+        disk_used_before=-1.0,
+        disk_used_after=outcome.disk_used_after,
+        target_durations_ms={},
+        rollback_status=(
+            "not_applicable"
+            if no_deploy
+            else "not_needed|cleanup:pending|audit:incomplete"
+            if audit_incomplete
+            else "not_needed|cleanup:recorded"
+            if outcome.ok
+            else f"not_started|archive_cleanup:{outcome.archive_cleanup}"
+        ),
+        cleanup_reclaimed_bytes=outcome.cleanup_reclaimed_bytes,
+        emergency_override=request.emergency_reason is not None,
+        emergency_reason=request.emergency_reason,
+        final_health=final_health,
+        started_at=now,
+        completed_at=now,
+        source=request.source,
+        requested_by=request.requested_by,
+        failure_category=outcome.failure_category,
+        feature_routes=request.feature_routes,
+        stability_seconds=stability_seconds,
+        affected_services=outcome.activated_services,
+        route_smoke_checks=(
+            () if no_deploy else deployment_route_smoke_checks(request.feature_routes)
+        ),
+    )
+    try:
+        write_event(DEPLOY_EVENTS_DIR, event)
+    except Exception as exc:
+        raise DeployApiError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "audit_persistence_failed",
+            "terminal deployment evidence could not be persisted",
+            {
+                "outcome": _deploy_outcome_payload(outcome),
+                "return_to_coordinator": {
+                    "decision": "blocked_with_owner",
+                    "owner": "Infrastructure & Release Reliability Expert",
+                    "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
+                },
+            },
+        ) from exc
+    if _read_shared_deploy_event(str(deploy_event_id)) is None:
+        raise DeployApiError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "audit_persistence_failed",
+            "terminal deployment evidence could not be verified",
+            {
+                "outcome": _deploy_outcome_payload(outcome),
+                "return_to_coordinator": {
+                    "decision": "blocked_with_owner",
+                    "owner": "Infrastructure & Release Reliability Expert",
+                    "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
+                },
+            },
+        )
+
+
 def _terminal_deploy_evidence(
     deploy_event_id: int,
     *,
@@ -1116,13 +1306,18 @@ def _terminal_deploy_evidence(
         return durable
 
     ok = bool(outcome is not None and outcome.ok)
+    no_deploy = bool(outcome is not None and outcome.mode is DeployMode.NO_DEPLOY)
     affected_services = list(outcome.activated_services) if outcome is not None else []
-    final_health = "healthy" if ok else "failed"
+    final_health = "not_applicable" if no_deploy else "healthy" if ok else "failed"
+    window_seconds = (
+        0 if no_deploy or not ok else 60 if mode is DeployMode.FULL_IMAGE else 30
+    )
+    checks = [] if no_deploy else list(deployment_route_smoke_checks(feature_routes))
     return _sanitize_payload(
         {
             "id": deploy_event_id,
             "deploy_mode": outcome.mode.value if outcome is not None else mode.value,
-            "status": "succeeded" if ok else "failed",
+            "status": "not_required" if no_deploy else "succeeded" if ok else "failed",
             "commit_sha": outcome.target_sha if outcome is not None else "",
             "requested_services": list(requested_targets),
             "affected_services": affected_services,
@@ -1130,18 +1325,21 @@ def _terminal_deploy_evidence(
             "preflight": {},
             "stable_health": {
                 "status": final_health,
-                "window_seconds": 60 if mode is DeployMode.FULL_IMAGE else 30,
-                "observed_seconds": (
-                    (60 if mode is DeployMode.FULL_IMAGE else 30) if ok else 0
-                ),
+                "window_seconds": window_seconds,
+                "observed_seconds": window_seconds if ok and not no_deploy else 0,
                 "final_health": final_health,
             },
             "route_smoke": {
-                "status": final_health if feature_routes else "not_requested",
+                "status": final_health,
                 "routes": list(feature_routes),
+                "checks": checks,
             },
             "rollback_status": (
-                "not_needed" if ok else "see outcome and durable status event"
+                "not_applicable"
+                if no_deploy
+                else "not_needed"
+                if ok
+                else "see outcome and durable status event"
             ),
             "outcome": _deploy_outcome_payload(outcome) if outcome is not None else {},
         }
@@ -1161,6 +1359,25 @@ def _failed_deploy_handoff(
             "action": (
                 "Return this typed failure and durable event evidence to the originating "
                 "coordinator; do not dispatch a second deployment channel."
+            ),
+        },
+    }
+
+
+def _blocked_deploy_handoff(
+    deploy_event_id: int,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "deploy_event_id": deploy_event_id,
+        "status_url": f"/ops/deploy-status?id={deploy_event_id}",
+        "evidence": evidence,
+        "return_to_coordinator": {
+            "decision": "blocked_with_owner",
+            "owner": "Infrastructure & Release Reliability Expert",
+            "action": (
+                "Preserve the healthy service state, repair terminal audit persistence, "
+                "and reconcile this event before another deployment dispatch."
             ),
         },
     }

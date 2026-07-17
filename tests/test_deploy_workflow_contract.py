@@ -86,7 +86,10 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("--base-sha \"$base_sha\"", authoritative_block)
 
     def test_full_image_uploads_only_immutable_app_image_archive(self) -> None:
-        self.assertIn("dist/investment-knowledge-app-${{ github.sha }}.tar.gz", self.workflow)
+        self.assertIn(
+            "dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz",
+            self.workflow,
+        )
         self.assertNotIn("dist/investment-knowledge-release.tar.gz", self.workflow)
         self.assertNotIn("investment-knowledge-images.tar.gz", self.workflow)
 
@@ -106,3 +109,26 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("cache-from: type=gha", full_block)
         self.assertIn("cache-to: type=gha,mode=max", full_block)
         self.assertIn("docker save investment-knowledge-app:${{ github.sha }}", full_block)
+
+    def test_ops_payloads_include_provenance_requester_and_daily_market_route(self) -> None:
+        self.assertEqual(2, self.workflow.count('"source": "github_actions"'))
+        self.assertEqual(2, self.workflow.count('f"github_run_{os.environ[\'GITHUB_RUN_ID\']}"'))
+        self.assertGreaterEqual(self.workflow.count('"/daily-market-brief"'), 2)
+        self.assertGreaterEqual(
+            self.workflow.count("GITHUB_RUN_ID: ${{ github.run_id }}"),
+            3,
+        )
+
+    def test_full_preflight_uses_isolated_run_scoped_tmp_checkout(self) -> None:
+        full_start = self.workflow.index("  full_image:")
+        preflight_start = self.workflow.index("Remote deploy_preflight.py resource gate", full_start)
+        upload_start = self.workflow.index("Upload immutable application image archive", preflight_start)
+        block = self.workflow[preflight_start:upload_start]
+
+        self.assertIn("mktemp -d", block)
+        self.assertIn("/tmp/investment-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}", block)
+        self.assertIn("trap", block)
+        self.assertIn("git clone", block)
+        self.assertIn("checkout --detach \"$TARGET_SHA\"", block)
+        self.assertNotIn("/opt/investment-knowledge-repo", block)
+        self.assertNotIn("git -C \"$DEPLOY_REPO_DIR\" fetch", block)

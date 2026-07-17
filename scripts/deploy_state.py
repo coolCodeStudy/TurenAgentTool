@@ -74,6 +74,7 @@ class DeploymentEvent:
     feature_routes: tuple[str, ...] = ()
     stability_seconds: int = 0
     affected_services: tuple[str, ...] = ()
+    route_smoke_checks: tuple[str, ...] = ()
 
 
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
@@ -242,6 +243,7 @@ def _event_payload(event: DeploymentEvent) -> dict[str, Any]:
     payload["targets"] = list(event.targets)
     payload["feature_routes"] = list(event.feature_routes)
     payload["affected_services"] = list(event.affected_services)
+    payload["route_smoke_checks"] = list(event.route_smoke_checks)
     return payload
 
 
@@ -326,6 +328,7 @@ def _validate_event(event: DeploymentEvent) -> None:
     _string_tuple(event.targets, "targets")
     _string_tuple(event.feature_routes, "feature_routes")
     _string_tuple(event.affected_services, "affected_services")
+    _string_tuple(event.route_smoke_checks, "route_smoke_checks")
     _metrics_dict(event.preflight, "preflight")
     if event.archive_bytes is not None and not _integer(event.archive_bytes):
         raise StateFormatError("archive_bytes must be an integer or null")

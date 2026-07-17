@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 import json
 import os
 import re
@@ -25,6 +25,25 @@ from scripts.deploy_support import CommandResult
 
 TARGET_SHA = "b" * 40
 PREVIOUS_SHA = "a" * 40
+
+
+@contextmanager
+def _managed_archive(sha: str = TARGET_SHA):
+    with NamedTemporaryFile(
+        prefix=f"investment-knowledge-app-{sha}-test-",
+        suffix=".tar.gz",
+        dir="/tmp",
+        delete=False,
+    ) as handle:
+        handle.write(b"candidate image archive")
+        path = Path(handle.name)
+    try:
+        yield path
+    finally:
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            path.rmdir()
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
@@ -107,6 +126,20 @@ class FakeEngine:
 
 
 class EcsOpsApiDeployTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.events_tmp = TemporaryDirectory()
+        self.events_patch = patch.object(
+            ops,
+            "DEPLOY_EVENTS_DIR",
+            Path(self.events_tmp.name),
+            create=True,
+        )
+        self.events_patch.start()
+
+    def tearDown(self) -> None:
+        self.events_patch.stop()
+        self.events_tmp.cleanup()
+
     def test_handler_leaves_authoritative_source_resolution_to_locked_engine(self) -> None:
         engine = FakeEngine()
 
@@ -257,9 +290,15 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 "/deploy",
                 {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
             )
+            event_id = payload["data"]["deploy_event_id"]
+            get_status, get_payload = self._get_json(
+                f"/ops/deploy-status?id={event_id}"
+            )
 
         self.assertEqual(422, status)
         self.assertEqual("deployment_rejected", payload["error"])
+        self.assertEqual(200, get_status)
+        self.assertEqual(payload["data"]["evidence"], get_payload["data"])
 
     def test_repository_failure_without_source_category_is_not_misclassified(self) -> None:
         engine = FakeEngine(
@@ -370,14 +409,19 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                     "mode": raw_mode,
                     "targets": targets,
                 }
-                if expected_mode is DeployMode.FULL_IMAGE:
-                    payload["archive_path"] = "/tmp/candidate-image.tar"
+                archive_context = (
+                    _managed_archive() if expected_mode is DeployMode.FULL_IMAGE else nullcontext(None)
+                )
+                with archive_context as archive:
+                    if archive is not None:
+                        payload["ref"] = TARGET_SHA
+                        payload["archive_path"] = str(archive)
 
-                with (
-                    patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
-                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
-                ):
-                    status, response = self._post_json("/deploy", payload)
+                    with (
+                        patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+                        patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                    ):
+                        status, response = self._post_json("/deploy", payload)
 
                 self.assertEqual(200, status)
                 self.assertTrue(response["ok"])
@@ -399,23 +443,246 @@ class EcsOpsApiDeployTests(unittest.TestCase):
             )
         )
 
+        with _managed_archive() as archive:
+            with (
+                patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+                patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+            ):
+                status, response = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                    }
+                )
+
+        self.assertEqual(200, status)
+        self.assertTrue(response["ok"])
+        self.assertEqual(DeployMode.FULL_IMAGE, engine.requests[0].requested_mode)
+
+    def test_full_image_archive_path_is_sha_bound_regular_tmp_file(self) -> None:
+        engine = FakeEngine()
+        outside_dir = TemporaryDirectory()
+        outside = Path(outside_dir.name) / f"investment-knowledge-app-{TARGET_SHA}-outside.tar.gz"
+        outside.write_bytes(b"outside")
+        try:
+            with _managed_archive(PREVIOUS_SHA) as mismatched, _managed_archive() as symlink_path, _managed_archive() as directory_path:
+                symlink_target = Path(symlink_path.parent) / f"symlink-target-{symlink_path.name}"
+                symlink_target.write_bytes(b"target")
+                symlink_path.unlink()
+                symlink_path.symlink_to(symlink_target)
+                directory_path.unlink()
+                directory_path.mkdir()
+                cases = (
+                    "relative-archive.tar.gz",
+                    str(outside),
+                    str(mismatched),
+                    str(symlink_path),
+                    str(directory_path),
+                )
+                for archive_path in cases:
+                    with self.subTest(archive_path=archive_path):
+                        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                            status, payload = self._post_json(
+                                "/deploy",
+                                {
+                                    "ref": TARGET_SHA,
+                                    "mode": "full_image",
+                                    "targets": ["weekly-review-web"],
+                                    "archive_path": archive_path,
+                                },
+                            )
+                        self.assertEqual(422, status)
+                        self.assertEqual("deployment_rejected", payload["error"])
+                self.assertEqual([], engine.requests)
+                self.assertTrue(outside.exists())
+                self.assertTrue(symlink_target.exists())
+                symlink_target.unlink()
+        finally:
+            outside_dir.cleanup()
+
+    def test_full_image_requires_explicit_sha_even_with_valid_archive(self) -> None:
+        engine = FakeEngine()
+
+        with _managed_archive() as archive:
+            with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": "main",
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                    },
+                )
+
+        self.assertEqual(422, status)
+        self.assertEqual("deployment_rejected", payload["error"])
+        self.assertEqual([], engine.requests)
+
+    def test_sensitive_feature_route_is_rejected_before_dispatch_without_leak(self) -> None:
+        engine = FakeEngine()
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {
+                    "ref": TARGET_SHA,
+                    "mode": "targeted_quick",
+                    "targets": ["weekly-review-web"],
+                    "feature_routes": ["/health?access_token=do-not-leak"],
+                },
+            )
+
+        self.assertEqual(422, status)
+        self.assertEqual("deployment_rejected", payload["error"])
+        self.assertEqual([], engine.requests)
+        self.assertNotIn("do-not-leak", json.dumps(payload))
+
+    def test_missing_engine_event_is_persisted_and_post_get_evidence_matches(self) -> None:
+        engine = FakeEngine()
+
         with (
-            patch.object(ops, "_resolve_deploy_source_policy", return_value=TARGET_SHA, create=True),
+            patch.object(ops, "_new_deploy_event_id", return_value=42),
             patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
         ):
             status, response = self._post_json(
                 "/deploy",
                 {
-                    "ref": "main",
-                    "mode": "full",
+                    "ref": TARGET_SHA,
+                    "mode": "targeted_quick",
                     "targets": ["weekly-review-web"],
-                    "archive_path": "/tmp/candidate-image.tar",
-                }
+                    "source": "github_actions",
+                    "requested_by": "github_run_123",
+                },
             )
+            get_status, get_response = self._get_json("/ops/deploy-status?id=42")
 
         self.assertEqual(200, status)
-        self.assertTrue(response["ok"])
-        self.assertEqual(DeployMode.FULL_IMAGE, engine.requests[0].requested_mode)
+        self.assertEqual(200, get_status)
+        self.assertTrue((Path(self.events_tmp.name) / "42.json").is_file())
+        self.assertEqual(response["data"]["evidence"], get_response["data"])
+        checks = response["data"]["evidence"]["route_smoke"]["checks"]
+        self.assertIn("weekly-review-web:/health", checks)
+        self.assertIn("command-api:auth-boundary", checks)
+        self.assertIn("mcp:transport-boundary", checks)
+
+    def test_no_deploy_persists_truthful_not_required_terminal_event(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=True,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.NO_DEPLOY,
+                activated_services=(),
+                rolled_back_services=(),
+                message="server classification requires no deployment",
+            )
+        )
+
+        with (
+            patch.object(ops, "_new_deploy_event_id", return_value=43),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            status, response = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "no_deploy", "targets": []},
+            )
+            get_status, get_response = self._get_json("/ops/deploy-status?id=43")
+
+        self.assertEqual(200, status)
+        self.assertEqual(200, get_status)
+        evidence = response["data"]["evidence"]
+        self.assertEqual("not_required", evidence["status"])
+        self.assertEqual("not_applicable", evidence["stable_health"]["status"])
+        self.assertEqual(0, evidence["stable_health"]["window_seconds"])
+        self.assertEqual(0, evidence["stable_health"]["observed_seconds"])
+        self.assertEqual("not_applicable", evidence["route_smoke"]["status"])
+        self.assertEqual(evidence, get_response["data"])
+
+    def test_event_persistence_failure_returns_typed_audit_blocker_without_status_claim(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment lock could not be acquired",
+                archive_cleanup="deferred_lock_unavailable",
+            )
+        )
+
+        with (
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+            patch.object(ops, "write_event", side_effect=OSError("TOKEN=do-not-leak"), create=True),
+        ):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(503, status)
+        self.assertEqual("audit_persistence_failed", payload["error"])
+        self.assertEqual("blocked_with_owner", payload["data"]["return_to_coordinator"]["decision"])
+        self.assertNotIn("deploy_event_id", payload["data"])
+        self.assertNotIn("status_url", payload["data"])
+        self.assertNotIn("do-not-leak", json.dumps(payload))
+
+    def test_cleanup_event_rewrite_failure_is_audit_incomplete_and_blocked(self) -> None:
+        event_id = 44
+        (Path(self.events_tmp.name) / f"{event_id}.json").write_text(
+            json.dumps(
+                {
+                    "event_id": str(event_id),
+                    "requested_mode": "targeted_quick",
+                    "computed_mode": "targeted_quick",
+                    "deployed_sha": TARGET_SHA,
+                    "target_sha": TARGET_SHA,
+                    "targets": ["weekly-review-web"],
+                    "affected_services": ["weekly-review-web"],
+                    "feature_routes": ["/daily-market-brief"],
+                    "preflight": {"available_memory_bytes": 1024**3},
+                    "rollback_status": "not_needed|cleanup:pending|archive_cleanup:pending",
+                    "final_health": "healthy",
+                    "stability_seconds": 30,
+                    "started_at": "2026-07-10T00:00:00+00:00",
+                    "completed_at": "2026-07-10T00:00:30+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=True,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=("weekly-review-web",),
+                rolled_back_services=(),
+                message="deployment completed and remained healthy; post-success cleanup incomplete",
+                audit_status="cleanup_event_failed",
+                cleanup_status="release_completed|image_not_applicable|archive_not_applicable|event_failed",
+            )
+        )
+
+        with (
+            patch.object(ops, "_new_deploy_event_id", return_value=event_id),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+            get_status, get_payload = self._get_json(f"/ops/deploy-status?id={event_id}")
+
+        self.assertEqual(503, status)
+        self.assertEqual("audit_incomplete", payload["error"])
+        self.assertEqual("audit_incomplete", payload["data"]["evidence"]["status"])
+        self.assertEqual("healthy", payload["data"]["evidence"]["stable_health"]["status"])
+        self.assertEqual("blocked_with_owner", payload["data"]["return_to_coordinator"]["decision"])
+        self.assertEqual(200, get_status)
+        self.assertEqual("audit_incomplete", get_payload["data"]["status"])
 
     def test_legacy_ops_deploy_response_preserves_event_status_contract(self) -> None:
         engine = FakeEngine()
@@ -509,10 +776,16 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 "/deploy",
                 {"ref": "main", "mode": "targeted_quick", "targets": ["weekly-review-web"]},
             )
+            event_id = payload["data"]["deploy_event_id"]
+            get_status, get_payload = self._get_json(
+                f"/ops/deploy-status?id={event_id}"
+            )
 
         self.assertEqual(409, status)
         self.assertEqual("deployment_busy", payload["error"])
         self.assertEqual(1, len(engine.requests))
+        self.assertEqual(200, get_status)
+        self.assertEqual(payload["data"]["evidence"], get_payload["data"])
         text = json.dumps(payload)
         self.assertNotIn("secret", text)
 

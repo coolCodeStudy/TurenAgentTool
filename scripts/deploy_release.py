@@ -99,6 +99,51 @@ _SENSITIVE_REASON = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
 )
 _APPLICATION_TARGETS = set(APPLICATION_SERVICES)
+_MANAGED_ARCHIVE_NAME = re.compile(
+    r"investment-knowledge-app-(?P<sha>[0-9a-f]{40})-"
+    r"(?P<suffix>[A-Za-z0-9][A-Za-z0-9._-]{0,127})\.tar\.gz"
+)
+_BUILTIN_ROUTE_SMOKE_CHECKS = (
+    "weekly-review-web:/health",
+    "weekly-review-web:/weekly-review",
+    "weekly-review-web:/command",
+    "command-api:/health",
+    "command-api:auth-boundary",
+    "mcp:transport-boundary",
+)
+
+
+def deployment_route_smoke_checks(
+    feature_routes: tuple[str, ...],
+) -> tuple[str, ...]:
+    extras = tuple(f"weekly-review-web:{route}" for route in feature_routes)
+    return tuple(dict.fromkeys((*_BUILTIN_ROUTE_SMOKE_CHECKS, *extras)))
+
+
+def is_safe_feature_route(route: object) -> bool:
+    return bool(
+        isinstance(route, str)
+        and 1 <= len(route) <= 256
+        and route.startswith("/")
+        and not route.startswith("//")
+        and not any(character in route for character in ("?", "#", "\\", "\r", "\n"))
+        and not _SENSITIVE_REASON.search(route)
+    )
+
+
+def is_managed_image_archive(
+    archive_path: Path,
+    *,
+    expected_sha: str | None = None,
+) -> bool:
+    if not archive_path.is_absolute() or archive_path.parent != Path("/tmp"):
+        return False
+    if archive_path.is_symlink() or not archive_path.is_file():
+        return False
+    match = _MANAGED_ARCHIVE_NAME.fullmatch(archive_path.name)
+    if match is None:
+        return False
+    return expected_sha is None or match.group("sha") == expected_sha
 
 
 class HealthChecker(Protocol):
@@ -313,7 +358,7 @@ class DeployRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "requested_targets", tuple(sorted(set(self.requested_targets))))
         object.__setattr__(self, "feature_routes", tuple(dict.fromkeys(self.feature_routes)))
-        if any(not route.startswith("/") or route.startswith("//") for route in self.feature_routes):
+        if any(not is_safe_feature_route(route) for route in self.feature_routes):
             raise ValueError("feature routes must be absolute local paths")
         for name in ("source", "requested_by"):
             value = getattr(self, name)
@@ -536,6 +581,17 @@ class DeploymentEngine:
         if context.plan.mode is DeployMode.FULL_IMAGE and request.archive_path is None:
             raise DeploymentError(
                 "full image deployment requires an immutable image archive"
+            )
+        if (
+            context.plan.mode is DeployMode.FULL_IMAGE
+            and request.archive_path is not None
+            and not is_managed_image_archive(
+                request.archive_path,
+                expected_sha=context.target_sha,
+            )
+        ):
+            raise DeploymentError(
+                "full image archive must be a SHA-bound managed regular file under /tmp"
             )
         try:
             context.archive_bytes = (
@@ -974,6 +1030,8 @@ class DeploymentEngine:
     def _cleanup_archive_safe(self, archive_path: Path | None) -> str:
         if archive_path is None:
             return "not_applicable"
+        if not is_managed_image_archive(archive_path):
+            return "rejected_unmanaged"
         try:
             existed = archive_path.exists() or archive_path.is_symlink()
             self._remove_archive(archive_path)
@@ -1466,6 +1524,7 @@ class DeploymentEngine:
             feature_routes=request.feature_routes,
             stability_seconds=(60 if plan.mode is DeployMode.FULL_IMAGE else 30),
             affected_services=affected_services,
+            route_smoke_checks=deployment_route_smoke_checks(request.feature_routes),
         )
 
     def _preflight_observations(
