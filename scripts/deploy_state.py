@@ -79,10 +79,22 @@ class DeploymentEvent:
     artifact_cleanup_status: str = "not_applicable"
 
 
+@dataclass(frozen=True)
+class DeploymentEventAuditOverlay:
+    schema_version: int
+    event_id: str
+    status: str
+    reason: str
+    artifact_cleanup_status: str
+
+
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _CLEANUP_STATUS_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,79}")
 _STATE_FIELDS = tuple(field.name for field in fields(DeploymentState))
+_AUDIT_OVERLAY_FIELDS = tuple(field.name for field in fields(DeploymentEventAuditOverlay))
+_AUDIT_OVERLAY_STATUS = "audit_incomplete"
+_AUDIT_OVERLAY_REASON = "artifact_cleanup_event_update_failed"
 _PREFLIGHT_OBSERVATION_TYPES: dict[str, type | tuple[type, ...]] = {
     "disk_available_bytes": int,
     "disk_used_percent": (int, float),
@@ -233,6 +245,44 @@ def write_event(events_dir: Path, event: DeploymentEvent) -> Path:
     return path
 
 
+def write_event_audit_overlay(
+    events_dir: Path,
+    overlay: DeploymentEventAuditOverlay,
+) -> Path:
+    _validate_event_audit_overlay(overlay)
+    if not overlay.event_id or Path(overlay.event_id).name != overlay.event_id:
+        raise ValueError("event_id must be a single path component")
+    path = events_dir / f"{overlay.event_id}.audit-incomplete.json"
+    _atomic_write(path, asdict(overlay))
+    return path
+
+
+def load_event_audit_overlay(
+    events_dir: Path,
+    event_id: str,
+) -> DeploymentEventAuditOverlay | None:
+    if not event_id or Path(event_id).name != event_id:
+        raise ValueError("event_id must be a single path component")
+    path = events_dir / f"{event_id}.audit-incomplete.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise StateFormatError(f"invalid deployment audit overlay JSON: {path}") from error
+    if not isinstance(payload, dict) or set(payload) != set(_AUDIT_OVERLAY_FIELDS):
+        raise StateFormatError(f"deployment audit overlay has an invalid schema: {path}")
+    try:
+        overlay = DeploymentEventAuditOverlay(**payload)
+    except (TypeError, ValueError) as error:
+        raise StateFormatError(f"deployment audit overlay has invalid fields: {path}") from error
+    _validate_event_audit_overlay(overlay)
+    if overlay.event_id != event_id:
+        raise StateFormatError("deployment audit overlay event_id does not match its path")
+    return overlay
+
+
 def load_event(events_dir: Path, event_id: str) -> DeploymentEvent:
     if not event_id or Path(event_id).name != event_id:
         raise ValueError("event_id must be a single path component")
@@ -289,7 +339,7 @@ def update_event_artifact_cleanup(
         if canonical
         else f"archive_cleanup:{cleanup_status}"
     )
-    return write_event(
+    path = write_event(
         events_dir,
         replace(
             event,
@@ -297,6 +347,8 @@ def update_event_artifact_cleanup(
             artifact_cleanup_status=cleanup_status,
         ),
     )
+    (events_dir / f"{event_id}.audit-incomplete.json").unlink(missing_ok=True)
+    return path
 
 
 def _state_payload(state: DeploymentState) -> dict[str, Any]:
@@ -431,6 +483,20 @@ def _validate_event(event: DeploymentEvent) -> None:
         raise StateFormatError("emergency_override must be a boolean")
     if not _integer(event.stability_seconds) or event.stability_seconds < 0:
         raise StateFormatError("stability_seconds must be a non-negative integer")
+
+
+def _validate_event_audit_overlay(overlay: DeploymentEventAuditOverlay) -> None:
+    if overlay.schema_version != 1 or isinstance(overlay.schema_version, bool):
+        raise StateFormatError("deployment audit overlay schema_version must be 1")
+    _required_string(overlay.event_id, "event_id")
+    if not overlay.event_id or Path(overlay.event_id).name != overlay.event_id:
+        raise StateFormatError("deployment audit overlay event_id is invalid")
+    if overlay.status != _AUDIT_OVERLAY_STATUS:
+        raise StateFormatError("deployment audit overlay status is invalid")
+    if overlay.reason != _AUDIT_OVERLAY_REASON:
+        raise StateFormatError("deployment audit overlay reason is invalid")
+    if _CLEANUP_STATUS_PATTERN.fullmatch(overlay.artifact_cleanup_status) is None:
+        raise StateFormatError("deployment audit overlay cleanup status is invalid")
 
 
 def _required_string(value: object, name: str) -> str:

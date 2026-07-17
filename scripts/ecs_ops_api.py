@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 import fcntl
 import hashlib
 import hmac
@@ -38,11 +38,14 @@ try:
     )
     from scripts.deploy_state import (
         DeploymentEvent,
+        DeploymentEventAuditOverlay,
         is_allowed_deploy_source,
         is_safe_deploy_label,
+        load_event_audit_overlay,
         load_state,
         update_event_artifact_cleanup,
         write_event,
+        write_event_audit_overlay,
     )
     from scripts.deploy_support import CommandResult, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
@@ -61,11 +64,14 @@ except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
     )
     from deploy_state import (
         DeploymentEvent,
+        DeploymentEventAuditOverlay,
         is_allowed_deploy_source,
         is_safe_deploy_label,
+        load_event_audit_overlay,
         load_state,
         update_event_artifact_cleanup,
         write_event,
+        write_event_audit_overlay,
     )
     from deploy_support import CommandResult, SubprocessRunner
 
@@ -629,9 +635,34 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                     final_cleanup,
                 )
             except Exception as exc:
+                try:
+                    write_event_audit_overlay(
+                        DEPLOY_EVENTS_DIR,
+                        DeploymentEventAuditOverlay(
+                            schema_version=1,
+                            event_id=str(deploy_event_id),
+                            status="audit_incomplete",
+                            reason="artifact_cleanup_event_update_failed",
+                            artifact_cleanup_status=final_cleanup,
+                        ),
+                    )
+                except Exception as overlay_exc:
+                    raise _audit_persistence_error(
+                        outcome,
+                        "terminal artifact cleanup evidence could not be persisted",
+                    ) from overlay_exc
+                evidence = _terminal_deploy_evidence(
+                    deploy_event_id,
+                    outcome=outcome,
+                    mode=mode,
+                    requested_targets=targets,
+                    feature_routes=feature_routes,
+                )
                 raise _audit_persistence_error(
                     outcome,
                     "terminal artifact cleanup evidence could not be persisted",
+                    deploy_event_id=deploy_event_id,
+                    evidence=evidence,
                 ) from exc
         evidence = _terminal_deploy_evidence(
             deploy_event_id,
@@ -961,17 +992,41 @@ def _read_shared_deploy_event(event_id: str) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    return _shared_event_status_payload(payload, event_id)
+    try:
+        audit_overlay = load_event_audit_overlay(DEPLOY_EVENTS_DIR, event_id)
+    except Exception:
+        audit_overlay = None
+        audit_overlay_unreadable = True
+    else:
+        audit_overlay_unreadable = False
+    return _shared_event_status_payload(
+        payload,
+        event_id,
+        audit_overlay=audit_overlay,
+        audit_overlay_unreadable=audit_overlay_unreadable,
+    )
 
 
-def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict[str, Any]:
+def _shared_event_status_payload(
+    payload: dict[str, Any],
+    event_id: str,
+    *,
+    audit_overlay: DeploymentEventAuditOverlay | None = None,
+    audit_overlay_unreadable: bool = False,
+) -> dict[str, Any]:
     final_health = str(payload.get("final_health") or "")
     rollback_status = str(payload.get("rollback_status") or "")
     artifact_cleanup_status = str(
-        payload.get("artifact_cleanup_status")
+        audit_overlay.artifact_cleanup_status
+        if audit_overlay is not None
+        else payload.get("artifact_cleanup_status")
         or _archive_cleanup_from_rollback(rollback_status)
     )
-    if final_health == "not_required":
+    if audit_overlay is not None or audit_overlay_unreadable:
+        status = "audit_incomplete"
+        if "audit:incomplete" not in rollback_status.split("|"):
+            rollback_status = f"{rollback_status}|audit:incomplete".strip("|")
+    elif final_health == "not_required":
         status = "not_required"
     elif "pending" in rollback_status or not _durable_artifact_cleanup_succeeded(
         artifact_cleanup_status
@@ -1046,6 +1101,11 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
             )
         ),
     }
+    if audit_overlay is not None:
+        metadata["audit_overlay"] = asdict(audit_overlay)
+        metadata["archive_cleanup"] = audit_overlay.artifact_cleanup_status
+    elif audit_overlay_unreadable:
+        metadata["audit_overlay_status"] = "unreadable"
     return _sanitize_payload(
         {
             "id": int(event_id) if event_id.isdigit() else event_id,
@@ -1752,19 +1812,25 @@ def _ensure_terminal_deploy_event(
 def _audit_persistence_error(
     outcome: DeployOutcome,
     message: str,
+    *,
+    deploy_event_id: int | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> DeployApiError:
+    data: dict[str, Any] = {
+        "outcome": _deploy_outcome_payload(outcome),
+        "return_to_coordinator": {
+            "decision": "blocked_with_owner",
+            "owner": "Infrastructure & Release Reliability Expert",
+            "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
+        },
+    }
+    if deploy_event_id is not None and evidence is not None:
+        data.update(_blocked_deploy_handoff(deploy_event_id, evidence))
     return DeployApiError(
         HTTPStatus.SERVICE_UNAVAILABLE,
         "audit_persistence_failed",
         message,
-        {
-            "outcome": _deploy_outcome_payload(outcome),
-            "return_to_coordinator": {
-                "decision": "blocked_with_owner",
-                "owner": "Infrastructure & Release Reliability Expert",
-                "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
-            },
-        },
+        data,
     )
 
 

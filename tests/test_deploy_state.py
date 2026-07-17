@@ -9,15 +9,18 @@ from unittest import TestCase
 import scripts.deploy_state as deploy_state
 from scripts.deploy_state import (
     DeploymentEvent,
+    DeploymentEventAuditOverlay,
     DeploymentState,
     SourcePolicyError,
     SourceRefreshError,
     StateFormatError,
+    load_event_audit_overlay,
     load_event,
     load_state,
     resolve_production_target,
     update_event_artifact_cleanup,
     write_event,
+    write_event_audit_overlay,
     write_state,
 )
 from scripts.deploy_support import CommandResult
@@ -274,6 +277,15 @@ class DeployStateTests(TestCase):
         loaded = load_event(events_dir, "event-1")
         self.assertIsNone(loaded.archive_sha256)
         self.assertEqual("removed", loaded.artifact_cleanup_status)
+        overlay = DeploymentEventAuditOverlay(
+            schema_version=1,
+            event_id="event-1",
+            status="audit_incomplete",
+            reason="artifact_cleanup_event_update_failed",
+            artifact_cleanup_status="failed",
+        )
+        write_event_audit_overlay(events_dir, overlay)
+        self.assertEqual(overlay, load_event_audit_overlay(events_dir, "event-1"))
 
         update_event_artifact_cleanup(events_dir, "event-1", "failed")
         persisted = json.loads(path.read_text(encoding="utf-8"))
@@ -283,6 +295,28 @@ class DeployStateTests(TestCase):
             persisted["rollback_status"],
         )
         self.assertIsNone(persisted["archive_sha256"])
+        self.assertIsNone(load_event_audit_overlay(events_dir, "event-1"))
+
+    def test_audit_overlay_rejects_unknown_schema_fields(self) -> None:
+        events_dir = self.directory / "events"
+        events_dir.mkdir()
+        path = events_dir / "event-1.audit-incomplete.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "event_id": "event-1",
+                    "status": "audit_incomplete",
+                    "reason": "artifact_cleanup_event_update_failed",
+                    "artifact_cleanup_status": "failed",
+                    "fabricated_success": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StateFormatError, "invalid schema"):
+            load_event_audit_overlay(events_dir, "event-1")
 
     def test_event_rejects_invalid_archive_digest_and_cleanup_status(self) -> None:
         events_dir = self.directory / "events"

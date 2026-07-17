@@ -1556,6 +1556,84 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual(200, get_status)
         self.assertEqual(payload["data"]["evidence"], get_payload["data"])
 
+    def test_cleanup_event_update_failure_uses_durable_post_get_audit_overlay(self) -> None:
+        event_id = 93
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=True,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.FULL_IMAGE,
+                activated_services=("weekly-review-web",),
+                rolled_back_services=(),
+                message="deployment completed and remained healthy",
+            )
+        )
+
+        with _managed_archive() as archive:
+            digest = _archive_sha256(archive)
+            with (
+                patch.object(ops, "_new_deploy_event_id", return_value=event_id),
+                patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                patch.object(
+                    ops,
+                    "update_event_artifact_cleanup",
+                    side_effect=OSError("TOKEN=event-rewrite-secret"),
+                ),
+            ):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                        "archive_sha256": digest,
+                    },
+                )
+                get_status, get_payload = self._get_json(
+                    f"/ops/deploy-status?id={event_id}"
+                )
+
+        self.assertEqual(503, status)
+        self.assertEqual("audit_persistence_failed", payload["error"])
+        self.assertEqual(event_id, payload["data"]["deploy_event_id"])
+        self.assertEqual(
+            f"/ops/deploy-status?id={event_id}",
+            payload["data"]["status_url"],
+        )
+        self.assertEqual(
+            "blocked_with_owner",
+            payload["data"]["return_to_coordinator"]["decision"],
+        )
+        self.assertEqual("audit_incomplete", payload["data"]["evidence"]["status"])
+        self.assertEqual(TARGET_SHA, payload["data"]["evidence"]["commit_sha"])
+        self.assertEqual(
+            "healthy",
+            payload["data"]["evidence"]["stable_health"]["status"],
+        )
+        self.assertEqual(
+            "removed_after_dispatch",
+            payload["data"]["evidence"]["metadata"]["artifact_cleanup_status"],
+        )
+        self.assertEqual(200, get_status)
+        self.assertEqual(payload["data"]["evidence"], get_payload["data"])
+        overlay = json.loads(
+            (Path(self.events_tmp.name) / f"{event_id}.audit-incomplete.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "event_id": str(event_id),
+                "status": "audit_incomplete",
+                "reason": "artifact_cleanup_event_update_failed",
+                "artifact_cleanup_status": "removed_after_dispatch",
+            },
+            overlay,
+        )
+        self.assertNotIn("event-rewrite-secret", json.dumps(payload))
+
     def test_full_image_without_image_diff_requires_emergency_reason(self) -> None:
         engine = FakeEngine()
 
