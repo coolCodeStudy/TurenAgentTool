@@ -22,6 +22,7 @@ from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.display import build_stock_decision_card
 from investment_knowledge_mcp.futu_provider import get_futu_positions
 from investment_knowledge_mcp.ops_client import (
+    OpsClientError,
     deploy_cloud_ref,
     fetch_cloud_deploy_status,
     fetch_cloud_system_status,
@@ -548,11 +549,42 @@ def cloud_coding_status() -> dict[str, Any]:
 
 
 @mcp.tool()
-def cloud_deploy(ref: str, mode: str = "quick", render: bool = True) -> dict[str, Any]:
-    """Deploy a pushed Git ref on ECS through the controlled Ops API."""
-    if render:
-        return {"ok": True, "message": render_cloud_deploy(ref=ref, mode=mode)}
-    return {"ok": True, "data": deploy_cloud_ref(ref=ref, mode=mode)}
+def cloud_deploy(
+    ref: str,
+    mode: str = "quick",
+    render: bool = True,
+    targets: list[str] | None = None,
+    feature_routes: list[str] | None = None,
+    source: str = "mcp",
+    requested_by: str = "mcp",
+) -> dict[str, Any]:
+    """Deploy an authoritative pushed ref through the synchronous controlled Ops API."""
+    try:
+        if render:
+            return {
+                "ok": True,
+                "message": render_cloud_deploy(
+                    ref=ref,
+                    mode=mode,
+                    targets=targets,
+                    feature_routes=feature_routes,
+                    source=source,
+                    requested_by=requested_by,
+                ),
+            }
+        return {
+            "ok": True,
+            "data": deploy_cloud_ref(
+                ref=ref,
+                mode=mode,
+                targets=targets,
+                feature_routes=feature_routes,
+                source=source,
+                requested_by=requested_by,
+            ),
+        }
+    except OpsClientError as exc:
+        return exc.as_payload()
 
 
 @mcp.tool()

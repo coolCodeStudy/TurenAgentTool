@@ -130,7 +130,7 @@ def get_config() -> AppConfig:
         futu_position_cache_seconds=int(os.getenv("FUTU_POSITION_CACHE_SECONDS", "20")),
         futu_position_refresh_cache=_get_bool("FUTU_POSITION_REFRESH_CACHE", default=True),
         ops_api_url=os.getenv("OPS_API_URL") or None,
-        ops_api_token=os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or None,
+        ops_api_token=os.getenv("OPS_API_TOKEN") or None,
         ops_api_timeout_seconds=float(os.getenv("OPS_API_TIMEOUT_SECONDS", "8")),
         ops_api_deploy_timeout_seconds=float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600")),
     )
