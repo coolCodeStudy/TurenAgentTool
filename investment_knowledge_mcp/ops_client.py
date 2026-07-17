@@ -60,6 +60,11 @@ _APPLICATION_DEPLOY_TARGETS = frozenset(
     }
 )
 _DEPLOY_STATUS_URL = re.compile(r"/ops/deploy-status\?id=[1-9][0-9]*\Z")
+_RFC1918_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
 
 
 class OpsClientError(RuntimeError):
@@ -272,7 +277,7 @@ def _is_private_ops_host(host: str) -> bool:
         address = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return address.is_loopback or (address.version == 4 and address.is_private)
+    return address.is_loopback or any(address in network for network in _RFC1918_NETWORKS)
 
 
 def _invalid_ops_api_url() -> OpsClientError:
@@ -491,7 +496,7 @@ def _validated_terminal_deploy_response(response: object) -> dict[str, Any]:
     event_id = response.get("deploy_event_id")
     valid = (
         response.get("status") == "completed"
-        and isinstance(event_id, int)
+        and type(event_id) is int
         and event_id > 0
         and isinstance(response.get("status_url"), str)
         and _DEPLOY_STATUS_URL.fullmatch(response["status_url"]) is not None

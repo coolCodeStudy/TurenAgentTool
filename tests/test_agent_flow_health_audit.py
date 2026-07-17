@@ -8,6 +8,7 @@ from scripts.audit_agent_flow_health import (
     DeliveryRow,
     RegistryRow,
     audit_flow_health,
+    blocker_bucket,
     has_blocker_findings,
 )
 
@@ -132,7 +133,7 @@ class AgentFlowHealthAuditTests(unittest.TestCase):
             [],
             [
                 acceptance_row("AT-2026-07-01-001", "Command Workbench", "blocked", findings="COMMAND_API_TOKEN missing"),
-                acceptance_row("AT-2026-07-02-001", "Stock valuation research", "blocked", findings="private token unavailable"),
+                acceptance_row("AT-2026-07-02-001", "Stock valuation research", "blocked", findings="Command Workbench access token unavailable"),
             ],
             [],
             stale_days=2,
@@ -141,6 +142,68 @@ class AgentFlowHealthAuditTests(unittest.TestCase):
 
         repeated = [finding for finding in findings if finding.category == "repeated_blocker"]
         self.assertTrue(any(finding.item == "command workbench token/access" for finding in repeated))
+
+    def test_keeps_browser_access_and_internal_ops_credentials_in_separate_buckets(self) -> None:
+        self.assertEqual(
+            "internal ops credentials",
+            blocker_bucket("OPS_API_TOKEN is missing from the private deployment workflow"),
+        )
+        self.assertEqual(
+            "browser access policy",
+            blocker_bucket("Public read returned unauthorized and requested an access token"),
+        )
+
+    def test_not_required_deploy_decision_does_not_create_parallel_deploy_conflict(self) -> None:
+        findings = audit_flow_health(
+            [
+                delivery_row(
+                    "DQ-2026-07-16-101",
+                    "Governance",
+                    "Feature Coordinator",
+                    "needs_deploy",
+                    next_action="Deploy decision: not_required; docs-only state reconciliation.",
+                ),
+                delivery_row(
+                    "DQ-2026-07-16-102",
+                    "Weekly review",
+                    "Feature Coordinator self-deploy",
+                    "needs_deploy",
+                    next_action="Deploy decision: self_deploy; watch owner is this coordinator.",
+                ),
+            ],
+            [],
+            [],
+            stale_days=2,
+            today=date(2026, 7, 17),
+        )
+        self.assertNotIn("deploy_conflict", {finding.category for finding in findings})
+
+    def test_precise_blocked_recovery_counts_as_visible_acceptance_followup(self) -> None:
+        findings = audit_flow_health(
+            [
+                delivery_row(
+                    "DQ-2026-07-16-103",
+                    "Weekly review public Web authorization regression",
+                    "Infrastructure & Release Reliability Expert",
+                    "blocked",
+                    next_action=(
+                        "blocked_with_owner: provision OPS_API_TOKEN, bootstrap the independent Ops API, "
+                        "then dispatch the authoritative main ref through the serialized workflow."
+                    ),
+                )
+            ],
+            [
+                acceptance_row(
+                    "AT-2026-07-16-103",
+                    "Weekly review public Web authorization regression",
+                    "failed",
+                )
+            ],
+            [registry_row("Weekly review public Web authorization regression")],
+            stale_days=2,
+            today=date(2026, 7, 17),
+        )
+        self.assertNotIn("context_required", {finding.category for finding in findings})
 
     def test_unhealthy_acceptance_without_delivery_followup_requires_context(self) -> None:
         findings = audit_flow_health(

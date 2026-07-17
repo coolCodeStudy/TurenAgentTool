@@ -62,7 +62,7 @@ MCP_PORT=8000
 MCP_HOST_PORT=8000
 MCP_PATH=/mcp
 OPS_API_URL=http://host.docker.internal:8767
-OPS_API_TOKEN=<same-as-command-api-token-or-dedicated-token>
+OPS_API_TOKEN=<distinct-private-ops-token>
 ```
 
 连接后，Codex App 应该可以调用：

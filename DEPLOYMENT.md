@@ -82,6 +82,7 @@ COMMAND_API_HOST=0.0.0.0
 COMMAND_API_PORT=8001
 COMMAND_API_HOST_PORT=8001
 COMMAND_API_TOKEN=<strong-command-token>
+OPS_API_TOKEN=<distinct-private-ops-token>
 DINGTALK_API_HOST=0.0.0.0
 DINGTALK_API_PORT=8002
 DINGTALK_API_HOST_PORT=8002
@@ -96,7 +97,7 @@ DINGTALK_STREAM_WRITE_ALLOWED_SENDERS=<senderStaffId-or-senderId>
 OPENAI_API_KEY=<openai-api-key>
 ```
 
-`scripts/generate_prod_env.py` 会自动生成强 `POSTGRES_PASSWORD` 和 `COMMAND_API_TOKEN`，但仍需人工确认是否要填 `OPENAI_API_KEY`、`DINGTALK_STREAM_CLIENT_ID` 和 `DINGTALK_STREAM_CLIENT_SECRET`。
+`scripts/generate_prod_env.py` 会自动生成互不相同的强 `POSTGRES_PASSWORD`、`COMMAND_API_TOKEN` 和 `OPS_API_TOKEN`。Ops token only authorizes the private control plane; it must not be reused as a browser token or command API token. Still confirm whether to fill `OPENAI_API_KEY`, `DINGTALK_STREAM_CLIENT_ID`, and `DINGTALK_STREAM_CLIENT_SECRET`.
 
 如果第一版只使用钉钉 Stream Mode，可以保留：
 
@@ -281,7 +282,7 @@ Every ECS-touching mode fails before activation when any gate is unsafe:
 
 - root filesystem has less than 8 GiB free;
 - root filesystem usage is above 80%;
-- available memory is below 512 MiB;
+- quick/config available memory is below 512 MiB; full-image start reserve is below 768 MiB, or its post-load/pre-activation reserve is below 512 MiB;
 - Docker does not respond within 10 seconds;
 - PostgreSQL is not running and healthy;
 - the global production deployment lock is held;
@@ -358,22 +359,27 @@ acceptance as accepted.
 
 ## GitHub Actions Deployment Role
 
-The current P0 workflow does not use GitHub Actions as the normal production
-operator path. Daily production deployment is:
+GitHub Actions is the coordinator-facing production dispatch path. The private
+Ops API is the single internal admission/execution service; it is not a second
+operator channel. Daily production deployment is:
 
 ```text
-Codex/local verification
-  -> commit and push
-  -> Ops API /ops/deploy with no_deploy, targeted_quick, config_restart, or full_image
+Feature Coordinator verification
+  -> integrate and push authoritative main
+  -> GitHub Actions production-deploy concurrency
+  -> private tunnel to Ops API /ops/deploy
   -> shared deploy core validates source policy, preflight, target mapping, activation, rollback, and retention
 ```
 
-GitHub Actions remains CI plus the controlled builder/transport for
-`full_image` app-image artifacts when the shared deploy core requires an image
-input release. It must use the same source policy, mode names, preflight gates,
-immutable image tag, and retention rules as the Ops API. It is not a separate
-operator runbook and must not be used to bypass `/ops/deploy`, the global lock,
-PostgreSQL immutability, or cloud acceptance gates.
+For `targeted_quick` and `config_restart`, the request-only workflow reuses the
+current immutable image and does not check out/build application artifacts.
+`full_image` is selected only by image-input changes (Dockerfile, dependency,
+base-image, or Compose image/build semantics); GitHub Buildx builds/caches the
+SHA-bound archive, and the Ops API verifies/loads it after mode-specific gates.
+An old deployed baseline can therefore make a newest code-only commit classify
+as full-image when the accumulated deployed-baseline-to-target diff contains an
+image input. This is intentional and must not be bypassed by relabelling the
+request as quick.
 
 Required GitHub repository secrets for CI and controlled release workflows:
 
@@ -383,6 +389,7 @@ ECS_USERNAME
 ECS_PASSWORD
 POSTGRES_PASSWORD
 COMMAND_API_TOKEN
+OPS_API_TOKEN
 OPENAI_API_KEY
 DINGTALK_STREAM_CLIENT_ID
 DINGTALK_STREAM_CLIENT_SECRET
