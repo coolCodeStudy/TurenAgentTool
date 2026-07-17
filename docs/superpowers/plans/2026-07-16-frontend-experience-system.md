@@ -503,6 +503,14 @@ git add scripts/smoke_test.py docs/project-management/Feature-Registry.md docs/p
 git commit -m "docs: record frontend experience verification"
 ```
 
+#### Task 6 implementation traceability (2026-07-17)
+
+- Tasks 1-5 are implemented and independently reviewed with no remaining review findings; their exact commits and Return Gates are recorded in `docs/project-management/Delivery-Queue.md`.
+- Task 6 cross-page renderer coverage is committed at `0a0b86b7ab43ca36da48ff2fa059a50d3cd32e22`. It renders Command Workbench, Weekly Review, and Daily Market Brief through their production renderer functions; every page contains all three primary routes, while the canonical browser-access key is present only in Command Workbench.
+- Narrow verification recorded 139 passed, 1 PostgreSQL class-level skip because the configured `localhost:55432` database refused connections, and 0 failures/errors. The full database-backed smoke was attempted once and stopped at `run_schema()` for that same environment limit; it is not considered passed. The explicit DB-independent three-renderer smoke, Python compilation, rendered-JavaScript syntax for all pages, token/access leakage scans, and diff check passed.
+- Deployment classifier result is `mode=targeted_quick` and `deploy_mode=quick`, targeting `account-snapshot-scheduler`, `command-api`, `daily-market-brief-history-worker`, `daily-market-brief-scheduler`, `dingtalk-api`, `dingtalk-stream-bot`, `ipo-reminder-scheduler`, `mcp`, and `weekly-review-web`.
+- Deployment status remains not started. Task 6 handoff decision is `dispatch_deploy_owner`; the Feature Coordinator must review/push the ref, retain the active watch in `DQ-2026-07-04-020`, and use one serialized deploy path. `AT-2026-07-16-002` and user acceptance remain `pending`; move the acceptance row to `needs_retest` only after deployment.
+
 ### Task 7: Serialized Deploy, Cloud Smoke, and Independent Acceptance
 
 **Files:**
