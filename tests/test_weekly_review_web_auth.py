@@ -143,6 +143,15 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertNotIn("/api/weekly-review/save", html)
         self.assertNotIn("/api/candidate-insights", html)
 
+    def test_public_weekly_page_uses_shared_shell_without_token_control(self) -> None:
+        html = web.render_weekly_review_workbench_html()
+        self.assertIn('href="/weekly-review" aria-current="page"', html)
+        self.assertIn('href="/daily-market-brief"', html)
+        self.assertIn('href="/command"', html)
+        self.assertNotIn('id="api-token"', html)
+        self.assertNotIn("investment_knowledge_access_token", html)
+        self.assertIn("公开只读", html)
+
     def test_daily_market_brief_read_remains_public_when_tokens_are_configured(self) -> None:
         status, _, body = self.request("GET", "/api/daily-market-brief?market=HK&date=2026-06-22")
 

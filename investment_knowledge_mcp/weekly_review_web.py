@@ -37,7 +37,11 @@ from investment_knowledge_mcp.daily_market_jobs import (
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
-from investment_knowledge_mcp.web_experience import access_error_payload
+from investment_knowledge_mcp.web_experience import (
+    access_error_payload,
+    render_experience_css,
+    render_primary_navigation,
+)
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -681,6 +685,7 @@ def render_weekly_review_workbench_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>InvestmentKnowledge 周复盘</title>
   <style>
+    {render_experience_css()}
     :root {{
       color-scheme: light;
       --bg: #f6f7f9;
@@ -982,7 +987,10 @@ def render_weekly_review_workbench_html() -> str:
   </style>
 </head>
 <body>
-  <div class="shell">
+  <div class="experience-shell">
+    {render_primary_navigation("weekly_review")}
+    <div class="experience-main">
+      <div class="shell">
     <aside class="sidebar">
       <p class="brand">InvestmentKnowledge</p>
       <nav class="nav" aria-label="主导航">
@@ -1027,6 +1035,8 @@ def render_weekly_review_workbench_html() -> str:
       <a href="#attribution">7. 持仓归因卡</a>
       <a href="#source-status">数据源状态</a>
     </aside>
+      </div>
+    </div>
   </div>
   <script>
     const state = {{ context: null, markdown: "", holdings: [], week: null, reportStatus: "loading" }};
