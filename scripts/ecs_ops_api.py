@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime
+from dataclasses import dataclass, replace
 import fcntl
 import hmac
 import json
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -70,6 +72,9 @@ REPO_DIR = Path(os.getenv("OPS_DEPLOY_REPO_DIR", "/opt/investment-knowledge-repo
 RELEASE_ROOT = Path(os.getenv("OPS_DEPLOY_RELEASE_ROOT", str(APP_ROOT / "releases")))
 DEPLOY_STATE_PATH = Path(os.getenv("OPS_DEPLOY_STATE_PATH", str(APP_ROOT / "shared" / "deploy-state.json")))
 DEPLOY_EVENTS_DIR = Path(os.getenv("OPS_DEPLOY_EVENTS_DIR", str(APP_ROOT / "shared" / "deploy-events")))
+DEPLOY_ARTIFACTS_DIR = Path(
+    os.getenv("OPS_DEPLOY_ARTIFACTS_DIR", str(APP_ROOT / "shared" / "deploy-artifacts"))
+)
 COMPOSE_FILE = APP_DIR / "docker-compose.prod.yml"
 COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "turenagenttool_prod")
 COMPOSE_ENV_FILE = Path(os.getenv("COMPOSE_ENV_FILE", str(APP_ROOT / ".env")))
@@ -154,6 +159,22 @@ class DeployApiError(ValueError):
         self.status = status
         self.error_code = error_code
         self.data = data or {}
+
+
+@dataclass(frozen=True)
+class ValidatedDeploymentUpload:
+    path: Path
+    expected_sha: str
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
+class ClaimedDeploymentUpload:
+    path: Path
+    expected_sha: str
+    device: int
+    inode: int
 
 
 class OpsRequestHandler(BaseHTTPRequestHandler):
@@ -425,57 +446,104 @@ def control_service(service: str, action: str) -> dict[str, Any]:
 
 
 def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
+    ref = _validate_deploy_ref(str(payload.get("ref") or ""))
+    mode = _validate_deploy_mode(str(payload.get("mode") or "targeted_quick"))
+    targets = _validate_deploy_targets(payload.get("targets"))
+    emergency_reason = _optional_text(payload.get("emergency_reason"))
+    archive_path = _optional_path(
+        payload.get("archive_path")
+        or payload.get("archive")
+        or payload.get("full_image_archive_path")
+    )
+    feature_routes = _validate_feature_routes(payload.get("feature_routes"))
+    source = _validate_deploy_label(payload.get("source"), "source", "direct")
+    requested_by = _validate_deploy_label(
+        payload.get("requested_by"),
+        "requested_by",
+        "unspecified",
+    )
+
+    validated_upload: ValidatedDeploymentUpload | None = None
+    if mode is DeployMode.FULL_IMAGE:
+        validated_upload = _validate_full_image_archive(ref, archive_path)
+    elif archive_path is not None:
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "archive path is supported only for full_image deployment",
+        )
+
+    request_template = DeployRequest(
+        requested_ref=ref,
+        requested_mode=mode,
+        requested_targets=targets,
+        archive_path=None,
+        emergency_reason=emergency_reason,
+        feature_routes=feature_routes,
+        source=source,
+        requested_by=requested_by,
+    )
+    try:
+        engine = build_deployment_engine()
+    except Exception as exc:
+        cleanup = _cleanup_validated_upload(validated_upload)
+        raise DeployApiError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "deployment_engine_unavailable",
+            "deployment engine could not be initialized",
+            {
+                "archive_cleanup": cleanup,
+                "return_to_coordinator": {
+                    "decision": "blocked_with_owner",
+                    "owner": "Infrastructure & Release Reliability Expert",
+                    "action": "Repair the Ops API deployment engine before retrying this ref.",
+                },
+            },
+        ) from exc
+
     if not DEPLOY_MUTEX.acquire(blocking=False):
+        cleanup = _cleanup_validated_upload(validated_upload)
         raise DeployApiError(
             HTTPStatus.CONFLICT,
             "deployment_busy",
             "deployment is already running",
-            {"status": "busy"},
+            {"status": "busy", "archive_cleanup": cleanup},
         )
 
+    claimed_upload: ClaimedDeploymentUpload | None = None
     try:
-        ref = _validate_deploy_ref(str(payload.get("ref") or ""))
-        mode = _validate_deploy_mode(str(payload.get("mode") or "targeted_quick"))
-        targets = _validate_deploy_targets(payload.get("targets"))
-        emergency_reason = _optional_text(payload.get("emergency_reason"))
-        archive_path = _optional_path(
-            payload.get("archive_path")
-            or payload.get("archive")
-            or payload.get("full_image_archive_path")
-        )
-        feature_routes = _validate_feature_routes(payload.get("feature_routes"))
-        source = _validate_deploy_label(payload.get("source"), "source", "direct")
-        requested_by = _validate_deploy_label(
-            payload.get("requested_by"),
-            "requested_by",
-            "unspecified",
-        )
-
-        if mode is DeployMode.FULL_IMAGE:
-            _validate_full_image_archive(ref, archive_path)
-        elif archive_path is not None:
+        if validated_upload is not None:
+            claimed_upload = _claim_validated_upload(validated_upload)
+        try:
+            deploy_event_id = _new_deploy_event_id()
+        except Exception as exc:
+            cleanup = _cleanup_claimed_upload(claimed_upload)
             raise DeployApiError(
-                HTTPStatus.UNPROCESSABLE_ENTITY,
-                "deployment_rejected",
-                "archive path is supported only for full_image deployment",
-            )
-
-        deploy_event_id = _new_deploy_event_id()
-        request = DeployRequest(
-            requested_ref=ref,
-            requested_mode=mode,
-            requested_targets=targets,
-            archive_path=archive_path,
-            emergency_reason=emergency_reason,
-            feature_routes=feature_routes,
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "deployment_event_allocation_failed",
+                "deployment event identity could not be allocated",
+                {
+                    "archive_cleanup": cleanup,
+                    "return_to_coordinator": {
+                        "decision": "blocked_with_owner",
+                        "owner": "Infrastructure & Release Reliability Expert",
+                        "action": "Repair deploy-event allocation before retrying this ref.",
+                    },
+                },
+            ) from exc
+        request = replace(
+            request_template,
+            archive_path=(claimed_upload.path if claimed_upload is not None else None),
             external_event_id=str(deploy_event_id),
-            source=source,
-            requested_by=requested_by,
         )
-        engine = build_deployment_engine()
+
+        engine_error: Exception | None = None
+        engine_error_code = "deployment_rejected"
+        engine_error_status = HTTPStatus.UNPROCESSABLE_ENTITY
         try:
             outcome = engine.deploy(request)
         except DeploymentError as exc:
+            engine_error = exc
             outcome = DeployOutcome(
                 ok=False,
                 target_sha="",
@@ -484,24 +552,33 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 rolled_back_services=(),
                 message=sanitize_text(str(exc)),
             )
-            _ensure_terminal_deploy_event(
-                deploy_event_id,
-                request=request,
-                outcome=outcome,
-            )
-            evidence = _terminal_deploy_evidence(
-                deploy_event_id,
-                outcome=outcome,
+        except Exception as exc:
+            engine_error = exc
+            engine_error_code = "deployment_engine_failed"
+            engine_error_status = HTTPStatus.SERVICE_UNAVAILABLE
+            outcome = DeployOutcome(
+                ok=False,
+                target_sha="",
                 mode=mode,
-                requested_targets=targets,
-                feature_routes=feature_routes,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment engine failed before a product-safe result was returned",
             )
-            raise DeployApiError(
-                HTTPStatus.UNPROCESSABLE_ENTITY,
-                "deployment_rejected",
-                sanitize_text(str(exc)),
-                _failed_deploy_handoff(deploy_event_id, evidence),
-            ) from exc
+
+        final_cleanup = _cleanup_claimed_upload(claimed_upload)
+        if _is_shared_lock_contention(outcome) and final_cleanup == "removed":
+            outcome = replace(
+                outcome,
+                archive_cleanup="removed_after_lock_rejection",
+            )
+        elif final_cleanup == "removed":
+            outcome = replace(outcome, archive_cleanup="removed_after_dispatch")
+        elif (
+            final_cleanup not in {"not_applicable", "already_removed"}
+            and outcome.archive_cleanup in {"not_applicable", "deferred_lock_unavailable"}
+        ):
+            outcome = replace(outcome, archive_cleanup=final_cleanup)
+
         _ensure_terminal_deploy_event(
             deploy_event_id,
             request=request,
@@ -514,6 +591,17 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             requested_targets=targets,
             feature_routes=feature_routes,
         )
+
+        if engine_error is not None:
+            raise DeployApiError(
+                engine_error_status,
+                engine_error_code,
+                outcome.message,
+                {
+                    "outcome": _deploy_outcome_payload(outcome),
+                    **_failed_deploy_handoff(deploy_event_id, evidence),
+                },
+            ) from engine_error
         if outcome.audit_status == "cleanup_event_failed" or evidence.get("status") == "audit_incomplete":
             raise DeployApiError(
                 HTTPStatus.SERVICE_UNAVAILABLE,
@@ -550,46 +638,33 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 if status is HTTPStatus.CONFLICT
                 else "deployment_rejected"
             )
-            raise DeployApiError(
-                status,
-                error_code,
-                outcome.message,
-                failure_data,
-            )
-    except Exception:
-        DEPLOY_MUTEX.release()
-        raise
-    DEPLOY_MUTEX.release()
+            raise DeployApiError(status, error_code, outcome.message, failure_data)
 
-    evidence = _terminal_deploy_evidence(
-        deploy_event_id,
-        outcome=outcome,
-        mode=mode,
-        requested_targets=targets,
-        feature_routes=feature_routes,
-    )
-    return {
-        "deploy_event_id": deploy_event_id,
-        "ref": ref,
-        "commit_sha": outcome.target_sha,
-        "mode": outcome.mode.value,
-        "targets": list(outcome.activated_services or targets),
-        "source": source,
-        "requested_by": requested_by,
-        "status": "completed",
-        "summary": sanitize_text(outcome.message),
-        "status_url": f"/ops/deploy-status?id={deploy_event_id}",
-        "aggregate_status_url": "/deploy/status",
-        "outcome": _deploy_outcome_payload(outcome),
-        "evidence": evidence,
-        "return_to_coordinator": {
-            "decision": "accept_and_route",
-            "action": (
-                "Apply the Coordinator Return Gate with this event, health, service, and "
-                "route evidence; then route the originating acceptance or follow-up work."
-            ),
-        },
-    }
+        return {
+            "deploy_event_id": deploy_event_id,
+            "ref": ref,
+            "commit_sha": outcome.target_sha,
+            "mode": outcome.mode.value,
+            "targets": list(outcome.activated_services or targets),
+            "source": source,
+            "requested_by": requested_by,
+            "status": "completed",
+            "summary": sanitize_text(outcome.message),
+            "status_url": f"/ops/deploy-status?id={deploy_event_id}",
+            "aggregate_status_url": "/deploy/status",
+            "outcome": _deploy_outcome_payload(outcome),
+            "evidence": evidence,
+            "return_to_coordinator": {
+                "decision": "accept_and_route",
+                "action": (
+                    "Apply the Coordinator Return Gate with this event, health, service, and "
+                    "route evidence; then route the originating acceptance or follow-up work."
+                ),
+            },
+        }
+    finally:
+        _cleanup_claimed_upload(claimed_upload)
+        DEPLOY_MUTEX.release()
 
 
 def build_deployment_engine() -> DeploymentEngine:
@@ -606,6 +681,7 @@ def build_deployment_engine() -> DeploymentEngine:
         clock=SystemClock(),
         compose_project_name=COMPOSE_PROJECT_NAME,
         env_file=COMPOSE_ENV_FILE,
+        artifact_staging_dir=DEPLOY_ARTIFACTS_DIR,
     )
 
 
@@ -855,6 +931,7 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
         "preflight": payload.get("preflight") if isinstance(payload.get("preflight"), dict) else {},
         "final_health": final_health or "unknown",
         "rollback_status": rollback_status,
+        "archive_cleanup": _archive_cleanup_from_rollback(rollback_status),
         "source": str(payload.get("source") or "direct"),
         "requested_by": str(payload.get("requested_by") or "unspecified"),
         "failure_category": str(payload.get("failure_category") or ""),
@@ -939,6 +1016,11 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
             "logs_tail": "",
         }
     )
+
+
+def _archive_cleanup_from_rollback(rollback_status: str) -> str:
+    match = re.search(r"(?:^|\|)archive_cleanup:([^|]+)", rollback_status)
+    return match.group(1) if match is not None else "not_applicable"
 
 
 def _new_deploy_event_id() -> int:
@@ -1105,9 +1187,13 @@ def _validate_feature_routes(raw: object) -> tuple[str, ...]:
         return ()
     if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
         raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "feature_routes must be a list of strings")
-    routes = tuple(dict.fromkeys(item.strip() for item in raw if item.strip()))
+    routes = tuple(dict.fromkeys(raw))
     if any(not is_safe_feature_route(route) for route in routes):
-        raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "feature routes must be absolute local paths")
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "feature routes must be canonical ASCII local paths",
+        )
     return routes
 
 
@@ -1129,7 +1215,10 @@ def _optional_path(raw: object) -> Path | None:
     return Path(value) if value else None
 
 
-def _validate_full_image_archive(ref: str, archive_path: Path | None) -> None:
+def _validate_full_image_archive(
+    ref: str,
+    archive_path: Path | None,
+) -> ValidatedDeploymentUpload:
     if not re.fullmatch(r"[0-9a-f]{40}", ref):
         raise DeployApiError(
             HTTPStatus.UNPROCESSABLE_ENTITY,
@@ -1145,6 +1234,154 @@ def _validate_full_image_archive(ref: str, archive_path: Path | None) -> None:
             "deployment_rejected",
             "full_image archive must be a SHA-bound non-symlink regular file directly under /tmp",
         )
+    try:
+        observed = os.lstat(archive_path)
+    except OSError as exc:
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "full_image archive is unavailable",
+        ) from exc
+    if not stat.S_ISREG(observed.st_mode):
+        raise DeployApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "deployment_rejected",
+            "full_image archive must be a regular file",
+        )
+    return ValidatedDeploymentUpload(
+        path=archive_path,
+        expected_sha=ref,
+        device=observed.st_dev,
+        inode=observed.st_ino,
+    )
+
+
+def _cleanup_validated_upload(upload: ValidatedDeploymentUpload | None) -> str:
+    if upload is None:
+        return "not_applicable"
+    if upload.path.parent != Path("/tmp"):
+        return "rejected_unmanaged"
+    try:
+        observed = os.lstat(upload.path)
+    except FileNotFoundError:
+        return "already_removed"
+    except OSError:
+        return "failed"
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or observed.st_dev != upload.device
+        or observed.st_ino != upload.inode
+    ):
+        return "skipped_identity_changed"
+    try:
+        upload.path.unlink()
+    except OSError:
+        return "failed"
+    return "removed"
+
+
+def _claim_validated_upload(
+    upload: ValidatedDeploymentUpload,
+) -> ClaimedDeploymentUpload:
+    destination: Path | None = None
+    try:
+        if not DEPLOY_ARTIFACTS_DIR.is_absolute():
+            raise OSError("artifact staging directory must be absolute")
+        DEPLOY_ARTIFACTS_DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory_status = os.lstat(DEPLOY_ARTIFACTS_DIR)
+        if not stat.S_ISDIR(directory_status.st_mode):
+            raise OSError("artifact staging path is not a directory")
+        os.chmod(DEPLOY_ARTIFACTS_DIR, 0o700)
+        suffix = f"claimed-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"
+        destination = DEPLOY_ARTIFACTS_DIR / (
+            f"investment-knowledge-app-{upload.expected_sha}-{suffix}.tar.gz"
+        )
+        source_status = os.lstat(upload.path)
+        if (
+            not stat.S_ISREG(source_status.st_mode)
+            or source_status.st_dev != upload.device
+            or source_status.st_ino != upload.inode
+        ):
+            raise OSError("validated artifact identity changed before claim")
+        os.replace(upload.path, destination)
+        observed = os.lstat(destination)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or observed.st_dev != upload.device
+            or observed.st_ino != upload.inode
+        ):
+            raise OSError("claimed artifact identity changed")
+        os.chmod(destination, 0o600)
+        return ClaimedDeploymentUpload(
+            path=destination,
+            expected_sha=upload.expected_sha,
+            device=observed.st_dev,
+            inode=observed.st_ino,
+        )
+    except Exception as exc:
+        if destination is not None:
+            _remove_exact_private_artifact(destination)
+        source_cleanup = _cleanup_validated_upload(upload)
+        raise DeployApiError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "deployment_artifact_claim_failed",
+            "full_image archive could not be claimed into private staging",
+            {
+                "archive_cleanup": source_cleanup,
+                "return_to_coordinator": {
+                    "decision": "blocked_with_owner",
+                    "owner": "Infrastructure & Release Reliability Expert",
+                    "action": "Repair private artifact staging before retrying the full image deploy.",
+                },
+            },
+        ) from exc
+
+
+def _cleanup_claimed_upload(upload: ClaimedDeploymentUpload | None) -> str:
+    if upload is None:
+        return "not_applicable"
+    if upload.path.parent != DEPLOY_ARTIFACTS_DIR:
+        return "rejected_unmanaged"
+    try:
+        observed = os.lstat(upload.path)
+    except FileNotFoundError:
+        return "already_removed"
+    except OSError:
+        return "failed"
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or observed.st_dev != upload.device
+        or observed.st_ino != upload.inode
+    ):
+        removal = _remove_exact_private_artifact(upload.path)
+        return (
+            "removed_identity_changed"
+            if removal == "removed"
+            else f"identity_changed_{removal}"
+        )
+    try:
+        upload.path.unlink()
+    except OSError:
+        return "failed"
+    return "removed"
+
+
+def _remove_exact_private_artifact(path: Path) -> str:
+    if path.parent != DEPLOY_ARTIFACTS_DIR:
+        return "rejected_unmanaged"
+    try:
+        observed = os.lstat(path)
+    except FileNotFoundError:
+        return "already_removed"
+    except OSError:
+        return "failed"
+    if stat.S_ISDIR(observed.st_mode):
+        return "rejected_directory"
+    try:
+        path.unlink()
+    except OSError:
+        return "failed"
+    return "removed"
 
 
 def _validate_deploy_label(raw: object, name: str, default: str) -> str:
@@ -1201,6 +1438,12 @@ def _ensure_terminal_deploy_event(
 ) -> None:
     if _read_shared_deploy_event(str(deploy_event_id)) is not None:
         return
+
+    if outcome.ok and outcome.mode is not DeployMode.NO_DEPLOY:
+        raise _audit_persistence_error(
+            outcome,
+            "successful deployment did not produce a durable terminal event",
+        )
 
     now = datetime.now().astimezone().isoformat()
     no_deploy = outcome.mode is DeployMode.NO_DEPLOY
@@ -1264,33 +1507,34 @@ def _ensure_terminal_deploy_event(
     try:
         write_event(DEPLOY_EVENTS_DIR, event)
     except Exception as exc:
-        raise DeployApiError(
-            HTTPStatus.SERVICE_UNAVAILABLE,
-            "audit_persistence_failed",
+        raise _audit_persistence_error(
+            outcome,
             "terminal deployment evidence could not be persisted",
-            {
-                "outcome": _deploy_outcome_payload(outcome),
-                "return_to_coordinator": {
-                    "decision": "blocked_with_owner",
-                    "owner": "Infrastructure & Release Reliability Expert",
-                    "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
-                },
-            },
         ) from exc
     if _read_shared_deploy_event(str(deploy_event_id)) is None:
-        raise DeployApiError(
-            HTTPStatus.SERVICE_UNAVAILABLE,
-            "audit_persistence_failed",
+        raise _audit_persistence_error(
+            outcome,
             "terminal deployment evidence could not be verified",
-            {
-                "outcome": _deploy_outcome_payload(outcome),
-                "return_to_coordinator": {
-                    "decision": "blocked_with_owner",
-                    "owner": "Infrastructure & Release Reliability Expert",
-                    "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
-                },
-            },
         )
+
+
+def _audit_persistence_error(
+    outcome: DeployOutcome,
+    message: str,
+) -> DeployApiError:
+    return DeployApiError(
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "audit_persistence_failed",
+        message,
+        {
+            "outcome": _deploy_outcome_payload(outcome),
+            "return_to_coordinator": {
+                "decision": "blocked_with_owner",
+                "owner": "Infrastructure & Release Reliability Expert",
+                "action": "Repair durable deploy-event persistence before any new deployment dispatch.",
+            },
+        },
+    )
 
 
 def _terminal_deploy_evidence(

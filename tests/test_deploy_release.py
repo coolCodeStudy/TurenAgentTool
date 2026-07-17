@@ -311,10 +311,12 @@ class DeploymentEngineTests(TestCase):
         return release
 
     def _managed_archive(self, contents: bytes = b"candidate") -> Path:
+        artifacts_dir = self.shared_dir / "deploy-artifacts"
+        artifacts_dir.mkdir(mode=0o700, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
             prefix=f"investment-knowledge-app-{TARGET_SHA}-test-",
             suffix=".tar.gz",
-            dir="/tmp",
+            dir=artifacts_dir,
             delete=False,
         )
         try:
@@ -1340,6 +1342,23 @@ class DeploymentEngineTests(TestCase):
                 with self.assertRaisesRegex(ValueError, "requested_by"):
                     replace(self.targeted_request, requested_by=label)
 
+    def test_deploy_request_rejects_noncanonical_or_control_feature_routes(self) -> None:
+        invalid_routes = (
+            " /health",
+            "/health ",
+            "/health\x00hidden",
+            "/health\nnext",
+            "/weekly-review//detail",
+            "/weekly-review/../health",
+            "/health?token=value",
+            "/café",
+        )
+
+        for route in invalid_routes:
+            with self.subTest(route=repr(route)):
+                with self.assertRaisesRegex(ValueError, "feature routes"):
+                    replace(self.targeted_request, feature_routes=(route,))
+
     def test_runtime_failure_records_failed_event(self) -> None:
         self.engine.runtime_validator = lambda runner, compose: (_ for _ in ()).throw(
             RuntimeError("PASSWORD=runtime-secret")
@@ -1414,6 +1433,40 @@ class DeploymentEngineTests(TestCase):
 
         self.assertFalse(outcome.ok)
         self.assertFalse(archive.exists())
+
+    def test_engine_rejects_unclaimed_tmp_archive_without_deleting_it(self) -> None:
+        handle = tempfile.NamedTemporaryFile(
+            prefix=f"investment-knowledge-app-{TARGET_SHA}-unclaimed-",
+            suffix=".tar.gz",
+            dir="/tmp",
+            delete=False,
+        )
+        try:
+            handle.write(b"unclaimed")
+        finally:
+            handle.close()
+        archive = Path(handle.name)
+        self.addCleanup(lambda: archive.unlink(missing_ok=True))
+        self.plan = replace(
+            self.plan,
+            mode=DeployMode.FULL_IMAGE,
+            image_input_files=("requirements.txt",),
+        )
+        request = replace(
+            self.targeted_request,
+            requested_mode=DeployMode.FULL_IMAGE,
+            archive_path=archive,
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("private staging", outcome.message)
+        self.assertTrue(archive.is_file())
+        self.assertNotIn(
+            ("docker", "load", "--input", str(archive)),
+            self.runner.commands,
+        )
 
     def test_archive_cleanup_refuses_unmanaged_paths(self) -> None:
         archive = self.directory / "unmanaged-archive.tar.gz"

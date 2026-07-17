@@ -608,3 +608,27 @@ jobs:
             --header "Content-Type: application/json" \
             --data @deploy-payload.json \
             "$OPS_API_URL/deploy"
+
+      - name: Cleanup exact remote image archive
+        if: always()
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          TARGET_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          envs: TARGET_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,REMOTE_ARCHIVE
+          script: |
+            set -euo pipefail
+
+            expected="/tmp/investment-knowledge-app-${TARGET_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+            if [ "$REMOTE_ARCHIVE" != "$expected" ]; then
+              echo "::error::Refusing to clean a non-run-scoped image archive."
+              exit 1
+            fi
+            rm -f -- "$REMOTE_ARCHIVE"

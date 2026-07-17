@@ -103,6 +103,9 @@ _MANAGED_ARCHIVE_NAME = re.compile(
     r"investment-knowledge-app-(?P<sha>[0-9a-f]{40})-"
     r"(?P<suffix>[A-Za-z0-9][A-Za-z0-9._-]{0,127})\.tar\.gz"
 )
+_SAFE_FEATURE_ROUTE = re.compile(
+    r"/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)?"
+)
 _BUILTIN_ROUTE_SMOKE_CHECKS = (
     "weekly-review-web:/health",
     "weekly-review-web:/weekly-review",
@@ -121,22 +124,20 @@ def deployment_route_smoke_checks(
 
 
 def is_safe_feature_route(route: object) -> bool:
-    return bool(
-        isinstance(route, str)
-        and 1 <= len(route) <= 256
-        and route.startswith("/")
-        and not route.startswith("//")
-        and not any(character in route for character in ("?", "#", "\\", "\r", "\n"))
-        and not _SENSITIVE_REASON.search(route)
-    )
+    if not isinstance(route, str) or not 1 <= len(route) <= 256:
+        return False
+    if _SAFE_FEATURE_ROUTE.fullmatch(route) is None or _SENSITIVE_REASON.search(route):
+        return False
+    return all(segment not in {".", ".."} for segment in route.split("/")[1:])
 
 
 def is_managed_image_archive(
     archive_path: Path,
     *,
     expected_sha: str | None = None,
+    allowed_parent: Path = Path("/tmp"),
 ) -> bool:
-    if not archive_path.is_absolute() or archive_path.parent != Path("/tmp"):
+    if not archive_path.is_absolute() or archive_path.parent != allowed_parent:
         return False
     if archive_path.is_symlink() or not archive_path.is_file():
         return False
@@ -476,6 +477,7 @@ class DeploymentEngine:
         referenced_image_ids: ReferencedImageIds | None = None,
         compose_project_name: str = "turenagenttool_prod",
         env_file: Path | None = None,
+        artifact_staging_dir: Path | None = None,
         lock_factory: LockFactory = deployment_lock,
     ) -> None:
         self.repo = repo
@@ -498,6 +500,7 @@ class DeploymentEngine:
         self.env_file = env_file or app_root / ".env"
         self.state_path = self.shared_dir / "deploy-state.json"
         self.events_dir = self.shared_dir / "deploy-events"
+        self.artifacts_dir = artifact_staging_dir or self.shared_dir / "deploy-artifacts"
         self.lock_path = self.shared_dir / "deploy.lock"
         self.lockout_path = self.shared_dir / "deploy.lockout"
 
@@ -588,10 +591,11 @@ class DeploymentEngine:
             and not is_managed_image_archive(
                 request.archive_path,
                 expected_sha=context.target_sha,
+                allowed_parent=self.artifacts_dir,
             )
         ):
             raise DeploymentError(
-                "full image archive must be a SHA-bound managed regular file under /tmp"
+                "full image archive must be a SHA-bound managed regular file in private staging"
             )
         try:
             context.archive_bytes = (
@@ -1030,7 +1034,10 @@ class DeploymentEngine:
     def _cleanup_archive_safe(self, archive_path: Path | None) -> str:
         if archive_path is None:
             return "not_applicable"
-        if not is_managed_image_archive(archive_path):
+        if not is_managed_image_archive(
+            archive_path,
+            allowed_parent=self.artifacts_dir,
+        ):
             return "rejected_unmanaged"
         try:
             existed = archive_path.exists() or archive_path.is_symlink()
@@ -2050,7 +2057,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _argument_parser()
     arguments = parser.parse_args(argv)
     feature_routes = _csv_values(arguments.feature_routes)
-    if any(not route.startswith("/") or route.startswith("//") for route in feature_routes):
+    if any(not is_safe_feature_route(route) for route in feature_routes):
         parser.error("feature routes must be absolute local paths")
 
     runner = SubprocessRunner()

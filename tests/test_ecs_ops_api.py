@@ -19,7 +19,7 @@ import scripts.ecs_ops_api as ops
 from scripts.deploy_contract import DeployMode
 from scripts.deploy_preflight import ResourceSnapshot
 from scripts.deploy_release import DeployOutcome, DeployRequest
-from scripts.deploy_state import DeploymentState, write_state
+from scripts.deploy_state import DeploymentEvent, DeploymentState, write_event, write_state
 from scripts.deploy_support import CommandResult
 
 
@@ -107,8 +107,14 @@ class OpsApiInstallLayoutTests(unittest.TestCase):
 
 
 class FakeEngine:
-    def __init__(self, outcome: DeployOutcome | None = None) -> None:
+    def __init__(
+        self,
+        outcome: DeployOutcome | None = None,
+        *,
+        write_success_event: bool = True,
+    ) -> None:
         self.requests: list[DeployRequest] = []
+        self.write_success_event = write_success_event
         self.outcome = outcome or DeployOutcome(
             ok=True,
             target_sha=TARGET_SHA,
@@ -122,6 +128,47 @@ class FakeEngine:
 
     def deploy(self, request: DeployRequest) -> DeployOutcome:
         self.requests.append(request)
+        if (
+            self.write_success_event
+            and self.outcome.ok
+            and self.outcome.mode is not DeployMode.NO_DEPLOY
+            and request.external_event_id
+            and not (
+                ops.DEPLOY_EVENTS_DIR / f"{request.external_event_id}.json"
+            ).exists()
+        ):
+            write_event(
+                ops.DEPLOY_EVENTS_DIR,
+                DeploymentEvent(
+                    event_id=request.external_event_id,
+                    requested_mode=request.requested_mode.value,
+                    computed_mode=self.outcome.mode.value,
+                    deployed_sha=self.outcome.target_sha,
+                    target_sha=self.outcome.target_sha,
+                    changed_image_inputs=(),
+                    targets=request.requested_targets,
+                    preflight={},
+                    archive_bytes=None,
+                    image_count_before=0,
+                    image_count_after=0,
+                    disk_used_before=0.0,
+                    disk_used_after=0.0,
+                    target_durations_ms={target: 1 for target in request.requested_targets},
+                    rollback_status="not_needed|cleanup:complete|archive_cleanup:complete",
+                    cleanup_reclaimed_bytes=0,
+                    emergency_override=False,
+                    emergency_reason=None,
+                    final_health="healthy",
+                    started_at="2026-07-10T00:00:00+00:00",
+                    completed_at="2026-07-10T00:00:30+00:00",
+                    source=request.source,
+                    requested_by=request.requested_by,
+                    feature_routes=request.feature_routes,
+                    stability_seconds=30,
+                    affected_services=self.outcome.activated_services,
+                    route_smoke_checks=("weekly-review-web:/health",),
+                ),
+            )
         return self.outcome
 
 
@@ -135,8 +182,17 @@ class EcsOpsApiDeployTests(unittest.TestCase):
             create=True,
         )
         self.events_patch.start()
+        self.artifacts_dir = Path(self.events_tmp.name) / "shared" / "deploy-artifacts"
+        self.artifacts_patch = patch.object(
+            ops,
+            "DEPLOY_ARTIFACTS_DIR",
+            self.artifacts_dir,
+            create=True,
+        )
+        self.artifacts_patch.start()
 
     def tearDown(self) -> None:
+        self.artifacts_patch.stop()
         self.events_patch.stop()
         self.events_tmp.cleanup()
 
@@ -541,8 +597,37 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual([], engine.requests)
         self.assertNotIn("do-not-leak", json.dumps(payload))
 
-    def test_missing_engine_event_is_persisted_and_post_get_evidence_matches(self) -> None:
+    def test_noncanonical_or_control_feature_routes_are_rejected_before_dispatch(self) -> None:
         engine = FakeEngine()
+        invalid_routes = (
+            " /health",
+            "/health ",
+            "/health\x00hidden",
+            "/health\tnext",
+            "/weekly-review//detail",
+            "/weekly-review/../health",
+            "/café",
+        )
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            for route in invalid_routes:
+                with self.subTest(route=repr(route)):
+                    status, payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "targeted_quick",
+                            "targets": ["weekly-review-web"],
+                            "feature_routes": [route],
+                        },
+                    )
+                    self.assertEqual(422, status)
+                    self.assertEqual("deployment_rejected", payload["error"])
+
+        self.assertEqual([], engine.requests)
+
+    def test_missing_success_event_is_audit_blocked_without_fabricated_evidence(self) -> None:
+        engine = FakeEngine(write_success_event=False)
 
         with (
             patch.object(ops, "_new_deploy_event_id", return_value=42),
@@ -558,16 +643,231 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                     "requested_by": "github_run_123",
                 },
             )
-            get_status, get_response = self._get_json("/ops/deploy-status?id=42")
 
-        self.assertEqual(200, status)
-        self.assertEqual(200, get_status)
-        self.assertTrue((Path(self.events_tmp.name) / "42.json").is_file())
-        self.assertEqual(response["data"]["evidence"], get_response["data"])
-        checks = response["data"]["evidence"]["route_smoke"]["checks"]
-        self.assertIn("weekly-review-web:/health", checks)
-        self.assertIn("command-api:auth-boundary", checks)
-        self.assertIn("mcp:transport-boundary", checks)
+        self.assertEqual(503, status)
+        self.assertEqual("audit_persistence_failed", response["error"])
+        self.assertEqual(
+            "blocked_with_owner",
+            response["data"]["return_to_coordinator"]["decision"],
+        )
+        self.assertNotIn("deploy_event_id", response["data"])
+        self.assertNotIn("status_url", response["data"])
+        self.assertFalse((Path(self.events_tmp.name) / "42.json").exists())
+
+    def test_engine_build_failure_precedes_event_allocation_and_cleans_upload(self) -> None:
+        with _managed_archive() as archive:
+            with (
+                patch.object(ops, "_new_deploy_event_id", wraps=ops._new_deploy_event_id) as event_id,
+                patch.object(
+                    ops,
+                    "build_deployment_engine",
+                    side_effect=RuntimeError("TOKEN=engine-secret"),
+                    create=True,
+                ),
+            ):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                    },
+                )
+                self.assertFalse(archive.exists())
+
+        self.assertEqual(503, status)
+        self.assertEqual("deployment_engine_unavailable", payload["error"])
+        self.assertEqual("removed", payload["data"]["archive_cleanup"])
+        self.assertNotIn("deploy_event_id", payload["data"])
+        self.assertNotIn("status_url", payload["data"])
+        self.assertNotIn("engine-secret", json.dumps(payload))
+        event_id.assert_not_called()
+
+    def test_busy_request_cleans_only_validated_run_archive_before_dispatch(self) -> None:
+        engine = FakeEngine()
+        self.assertTrue(ops.DEPLOY_MUTEX.acquire(blocking=False))
+        try:
+            with _managed_archive() as archive:
+                with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                    status, payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                        },
+                    )
+                    self.assertFalse(archive.exists())
+        finally:
+            ops.DEPLOY_MUTEX.release()
+
+        self.assertEqual(409, status)
+        self.assertEqual("deployment_busy", payload["error"])
+        self.assertEqual("removed", payload["data"]["archive_cleanup"])
+        self.assertEqual([], engine.requests)
+
+    def test_event_allocation_failure_after_claim_cleans_private_artifact(self) -> None:
+        engine = FakeEngine()
+        with _managed_archive() as archive:
+            with (
+                patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                patch.object(
+                    ops,
+                    "_new_deploy_event_id",
+                    side_effect=RuntimeError("TOKEN=event-secret"),
+                ),
+            ):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                    },
+                )
+                self.assertFalse(archive.exists())
+
+        self.assertEqual(503, status)
+        self.assertEqual("deployment_event_allocation_failed", payload["error"])
+        self.assertNotIn("deploy_event_id", payload["data"])
+        self.assertNotIn("status_url", payload["data"])
+        self.assertNotIn("event-secret", json.dumps(payload))
+        self.assertEqual([], engine.requests)
+        self.assertFalse(any(self.artifacts_dir.glob("*.tar.gz")))
+
+    def test_archive_swap_during_atomic_claim_leaves_no_private_symlink(self) -> None:
+        engine = FakeEngine()
+        victim = Path("/tmp") / f"claim-victim-{os.getpid()}-{threading.get_ident()}"
+        victim.write_bytes(b"victim survives")
+        real_replace = os.replace
+
+        try:
+            with _managed_archive() as archive:
+                def swap_then_replace(source: object, destination: object) -> None:
+                    source_path = Path(source)
+                    source_path.unlink()
+                    source_path.symlink_to(victim)
+                    real_replace(source_path, destination)
+
+                with (
+                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                    patch.object(ops, "_new_deploy_event_id", wraps=ops._new_deploy_event_id) as event_id,
+                    patch.object(ops.os, "replace", side_effect=swap_then_replace),
+                ):
+                    status, payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                        },
+                    )
+
+            self.assertEqual(503, status)
+            self.assertEqual("deployment_artifact_claim_failed", payload["error"])
+            self.assertEqual(b"victim survives", victim.read_bytes())
+            self.assertFalse(any(self.artifacts_dir.iterdir()))
+            self.assertEqual([], engine.requests)
+            event_id.assert_not_called()
+        finally:
+            victim.unlink(missing_ok=True)
+
+    def test_host_lock_rejection_cleans_claimed_private_archive_and_records_it(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.FULL_IMAGE,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment lock could not be acquired",
+                archive_cleanup="deferred_lock_unavailable",
+            )
+        )
+
+        with _managed_archive() as archive:
+            with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                    },
+                )
+                self.assertFalse(archive.exists())
+
+        claimed = engine.requests[0].archive_path
+        self.assertIsNotNone(claimed)
+        self.assertEqual(self.artifacts_dir, claimed.parent)
+        self.assertEqual(0o700, self.artifacts_dir.stat().st_mode & 0o777)
+        self.assertFalse(claimed.exists())
+        self.assertEqual(409, status)
+        self.assertEqual(
+            "removed_after_lock_rejection",
+            payload["data"]["outcome"]["archive_cleanup"],
+        )
+        self.assertEqual(
+            "removed_after_lock_rejection",
+            payload["data"]["evidence"]["metadata"]["archive_cleanup"],
+        )
+
+    def test_tmp_path_swap_after_claim_cannot_change_loaded_or_deleted_artifact(self) -> None:
+        victim = Path("/tmp") / f"artifact-victim-{os.getpid()}-{threading.get_ident()}"
+        victim.write_bytes(b"victim survives")
+        original_path: Path | None = None
+
+        class SwapEngine:
+            def __init__(self) -> None:
+                self.requests: list[DeployRequest] = []
+                self.loaded = b""
+
+            def deploy(self, request: DeployRequest) -> DeployOutcome:
+                self.requests.append(request)
+                assert request.archive_path is not None
+                assert original_path is not None
+                original_path.symlink_to(victim)
+                self.loaded = request.archive_path.read_bytes()
+                return DeployOutcome(
+                    ok=False,
+                    target_sha=TARGET_SHA,
+                    mode=DeployMode.FULL_IMAGE,
+                    activated_services=(),
+                    rolled_back_services=(),
+                    message="deployment resource preflight failed",
+                )
+
+        engine = SwapEngine()
+        try:
+            with _managed_archive() as archive:
+                original_path = archive
+                with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                    status, _payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                        },
+                    )
+                self.assertEqual(422, status)
+                self.assertEqual(b"candidate image archive", engine.loaded)
+                self.assertTrue(original_path.is_symlink())
+                self.assertEqual(b"victim survives", victim.read_bytes())
+                claimed = engine.requests[0].archive_path
+                self.assertIsNotNone(claimed)
+                self.assertEqual(self.artifacts_dir, claimed.parent)
+                self.assertFalse(claimed.exists())
+        finally:
+            if original_path is not None and original_path.is_symlink():
+                original_path.unlink()
+            victim.unlink(missing_ok=True)
 
     def test_no_deploy_persists_truthful_not_required_terminal_event(self) -> None:
         engine = FakeEngine(

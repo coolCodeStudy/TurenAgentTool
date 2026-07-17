@@ -132,3 +132,19 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("checkout --detach \"$TARGET_SHA\"", block)
         self.assertNotIn("/opt/investment-knowledge-repo", block)
         self.assertNotIn("git -C \"$DEPLOY_REPO_DIR\" fetch", block)
+
+    def test_full_image_always_cleans_only_the_exact_run_archive(self) -> None:
+        full_block = self.workflow[self.workflow.index("  full_image:"):]
+        delegate = full_block.index("Delegate full image deployment to Ops API")
+        cleanup = full_block.index("Cleanup exact remote image archive")
+        cleanup_block = full_block[cleanup:]
+
+        self.assertLess(delegate, cleanup)
+        self.assertIn("if: always()", cleanup_block)
+        self.assertIn(
+            "/tmp/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz",
+            cleanup_block,
+        )
+        self.assertIn('rm -f -- "$REMOTE_ARCHIVE"', cleanup_block)
+        self.assertNotIn("rm -rf /tmp", cleanup_block)
+        self.assertNotIn("find /tmp", cleanup_block)
