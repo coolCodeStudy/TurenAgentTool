@@ -95,7 +95,7 @@ _BARE_CREDENTIAL = re.compile(
 
 
 def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRunner) -> str:
-    """Resolve an approved production ref and prove it is reachable from origin/main."""
+    """Resolve an approved production ref to the freshly fetched origin/main tip."""
     if requested_ref != "main" and not _SHA_PATTERN.fullmatch(requested_ref):
         raise SourcePolicyError("production ref must be main or a 40-character SHA")
 
@@ -103,22 +103,19 @@ def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRun
     if refreshed.returncode != 0:
         raise SourcePolicyError("failed to refresh origin/main")
 
-    if requested_ref == "main":
-        result = runner.run(("git", "-C", str(repo), "rev-parse", "origin/main"))
-        if result.returncode != 0:
-            raise SourcePolicyError(f"failed to resolve origin/main: {result.stderr.strip()}")
-        sha = result.stdout.strip()
-        if not _SHA_PATTERN.fullmatch(sha):
-            raise SourcePolicyError("failed to resolve origin/main to a 40-character SHA")
-    else:
-        sha = requested_ref
-
-    result = runner.run(
-        ("git", "-C", str(repo), "merge-base", "--is-ancestor", sha, "origin/main")
-    )
+    result = runner.run(("git", "-C", str(repo), "rev-parse", "origin/main"))
     if result.returncode != 0:
-        raise SourcePolicyError(f"{sha} is not reachable from origin/main")
-    return sha
+        raise SourcePolicyError("failed to resolve origin/main")
+    authoritative_sha = result.stdout.strip()
+    if not _SHA_PATTERN.fullmatch(authoritative_sha):
+        raise SourcePolicyError("failed to resolve origin/main to a 40-character SHA")
+
+    if requested_ref != "main" and requested_ref != authoritative_sha:
+        raise SourcePolicyError(
+            "production ref must equal the current origin/main tip; integrate the commit "
+            "into authoritative main, push main, and dispatch the new main tip"
+        )
+    return authoritative_sha
 
 
 def load_state(path: Path) -> DeploymentState:

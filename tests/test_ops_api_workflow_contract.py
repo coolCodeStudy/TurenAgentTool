@@ -19,6 +19,36 @@ class OpsApiWorkflowContractTests(TestCase):
         self.assertIn("workflow_dispatch:", self.workflow)
         self.assertIn('MODE="${{ inputs.mode }}"', self.workflow)
 
+    def test_control_plane_mutations_share_production_deploy_concurrency(self) -> None:
+        self.assertIn("concurrency:", self.workflow)
+        self.assertIn("group: production-deploy", self.workflow)
+        self.assertIn("cancel-in-progress: false", self.workflow)
+
+    def test_control_plane_mutations_use_the_host_deploy_lock(self) -> None:
+        self.assertIn('DEPLOY_LOCK_PATH="$APP_DIR/shared/deploy.lock"', self.workflow)
+        self.assertIn("stop_ops_api_under_deploy_lock", self.workflow)
+        self.assertIn(
+            'flock --exclusive --wait 600 "$DEPLOY_LOCK_PATH"',
+            self.workflow,
+        )
+        self.assertNotIn(
+            "run_under_deploy_lock systemctl stop investment-ops-api.service || true",
+            self.workflow,
+        )
+        self.assertNotIn(
+            "run_under_deploy_lock systemctl disable --now investment-ops-api.service || true",
+            self.workflow,
+        )
+        self.assertIn(
+            "'systemctl stop investment-ops-api.service || true'",
+            self.workflow,
+        )
+        install_case = self.workflow.split("install)", 1)[1].split(";;", 1)[0]
+        self.assertLess(
+            install_case.index("stop_ops_api_under_deploy_lock"),
+            install_case.index("bootstrap_ops_api_v2_on_ecs.sh"),
+        )
+
     def test_bootstrap_initializes_deploy_baseline_before_ops_api_install(self) -> None:
         bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(encoding="utf-8")
         initialize_position = bootstrap.index("bootstrap_deploy_baseline.py")

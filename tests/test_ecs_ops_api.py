@@ -107,6 +107,78 @@ class FakeEngine:
 
 
 class EcsOpsApiDeployTests(unittest.TestCase):
+    def test_handler_leaves_authoritative_source_resolution_to_locked_engine(self) -> None:
+        engine = FakeEngine()
+
+        with (
+            patch.object(
+                ops,
+                "_resolve_deploy_source_policy",
+                side_effect=AssertionError("handler must not resolve outside the engine lock"),
+                create=True,
+            ),
+            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+        ):
+            result = ops.deploy_ref(
+                {
+                    "ref": TARGET_SHA,
+                    "mode": "targeted_quick",
+                    "targets": ["weekly-review-web"],
+                }
+            )
+
+        self.assertEqual(TARGET_SHA, result["commit_sha"])
+        self.assertEqual(TARGET_SHA, engine.requests[0].requested_ref)
+
+    def test_locked_source_rejection_returns_typed_integration_recovery(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment failed; inspect the product-safe deployment event",
+                audit_status="recorded",
+            )
+        )
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(400, status)
+        self.assertEqual("source_policy_rejected", payload["error"])
+        self.assertRegex(
+            payload["message"],
+            r"integrate.*authoritative main.*push.*new main tip",
+        )
+        self.assertEqual((), engine.requests[0].feature_routes)
+
+    def test_lockout_without_a_target_is_not_misclassified_as_source_policy(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment is locked out pending manual recovery",
+                manual_recovery={"action": "inspect durable lockout evidence"},
+            )
+        )
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
+            )
+
+        self.assertEqual(422, status)
+        self.assertEqual("deployment_rejected", payload["error"])
+
     def test_deploy_recomputes_plan_and_dispatches_shared_engine(self) -> None:
         engine = FakeEngine()
 
@@ -353,13 +425,20 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual("deployment_rejected", payload["error"])
         self.assertEqual([], engine.requests)
 
-    def test_unreachable_sha_is_rejected_before_engine_dispatch(self) -> None:
-        engine = FakeEngine()
+    def test_stale_sha_is_rejected_by_the_locked_engine(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha="",
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment failed; inspect the product-safe deployment event",
+                audit_status="recorded",
+            )
+        )
 
-        with (
-            patch.object(ops, "_resolve_deploy_source_policy", side_effect=ValueError("unreachable ref"), create=True),
-            patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
-        ):
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
             status, payload = self._post_json(
                 "/deploy",
                 {"ref": TARGET_SHA, "mode": "targeted_quick", "targets": ["weekly-review-web"]},
@@ -367,7 +446,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
         self.assertEqual(400, status)
         self.assertEqual("source_policy_rejected", payload["error"])
-        self.assertEqual([], engine.requests)
+        self.assertEqual(1, len(engine.requests))
 
     def test_deploy_status_exposes_state_resources_and_sanitized_last_outcome(self) -> None:
         with TemporaryDirectory() as tmp:

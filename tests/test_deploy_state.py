@@ -93,26 +93,17 @@ class DeployStateTests(TestCase):
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
                 ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("a" * 40),
-                (
-                    "git",
-                    "-C",
-                    "/repo",
-                    "merge-base",
-                    "--is-ancestor",
-                    "a" * 40,
-                    "origin/main",
-                ): ok(""),
             }
         )
 
         self.assertEqual("a" * 40, resolve_production_target(Path("/repo"), "main", runner))
 
-    def test_resolves_a_reachable_full_sha_without_rev_parse(self) -> None:
+    def test_resolves_only_the_current_origin_main_full_sha(self) -> None:
         sha = "b" * 40
         runner = FakeRunner(
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
-                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"): ok("")
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): ok(sha),
             }
         )
 
@@ -120,12 +111,12 @@ class DeployStateTests(TestCase):
         self.assertEqual(
             [
                 ("git", "-C", "/repo", "fetch", "origin", "main"),
-                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"),
+                ("git", "-C", "/repo", "rev-parse", "origin/main"),
             ],
             runner.calls,
         )
 
-    def test_rejects_feature_branch_and_unreachable_sha(self) -> None:
+    def test_rejects_feature_branch_and_stale_origin_main_ancestor(self) -> None:
         runner = FakeRunner({})
         with self.assertRaisesRegex(SourcePolicyError, "main or a 40-character SHA"):
             resolve_production_target(Path("/repo"), "feature/daily", runner)
@@ -134,23 +125,29 @@ class DeployStateTests(TestCase):
         runner = FakeRunner(
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
-                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"): CommandResult(
-                    1, "", "not reachable"
-                )
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("d" * 40),
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "not reachable from origin/main"):
+        with self.assertRaisesRegex(
+            SourcePolicyError,
+            "integrate.*authoritative main.*push.*new main tip",
+        ):
             resolve_production_target(Path("/repo"), sha, runner)
 
     def test_rejects_failed_or_malformed_origin_main_resolution(self) -> None:
         runner = FakeRunner(
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
-                ("git", "-C", "/repo", "rev-parse", "origin/main"): CommandResult(1, "", "missing ref")
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): CommandResult(
+                    1,
+                    "",
+                    "missing ref TOKEN=source-secret",
+                )
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main"):
+        with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main") as caught:
             resolve_production_target(Path("/repo"), "main", runner)
+        self.assertNotIn("source-secret", str(caught.exception))
 
         runner = FakeRunner(
             {

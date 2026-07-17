@@ -29,7 +29,7 @@ try:
         DockerHealthChecker,
         SystemClock,
     )
-    from scripts.deploy_state import SourcePolicyError, load_state, resolve_production_target
+    from scripts.deploy_state import load_state
     from scripts.deploy_support import CommandResult, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
     from deploy_contract import DeployMode
@@ -42,7 +42,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
         DockerHealthChecker,
         SystemClock,
     )
-    from deploy_state import SourcePolicyError, load_state, resolve_production_target
+    from deploy_state import load_state
     from deploy_support import CommandResult, SubprocessRunner
 
 
@@ -440,16 +440,6 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 "emergency reason must be at least 20 characters",
             )
 
-        try:
-            target_sha = _resolve_deploy_source_policy(ref)
-        except DeployApiError:
-            raise
-        except ValueError as exc:
-            raise DeployApiError(
-                HTTPStatus.BAD_REQUEST,
-                "source_policy_rejected",
-                sanitize_text(str(exc)),
-            ) from exc
         deploy_event_id = _new_deploy_event_id()
         request = DeployRequest(
             requested_ref=ref,
@@ -470,6 +460,19 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 sanitize_text(str(exc)),
             ) from exc
         if not outcome.ok:
+            if (
+                not outcome.target_sha
+                and outcome.audit_status == "recorded"
+                and outcome.manual_recovery is None
+                and not _is_shared_lock_contention(outcome)
+            ):
+                raise DeployApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    "source_policy_rejected",
+                    "production ref was rejected by the locked deployment engine; integrate "
+                    "the commit into authoritative main, push main, and dispatch the new main tip",
+                    {"outcome": _deploy_outcome_payload(outcome)},
+                )
             status = (
                 HTTPStatus.CONFLICT
                 if _is_shared_lock_contention(outcome)
@@ -494,7 +497,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "deploy_event_id": deploy_event_id,
         "ref": ref,
-        "commit_sha": outcome.target_sha or target_sha,
+        "commit_sha": outcome.target_sha,
         "mode": outcome.mode.value,
         "targets": list(outcome.activated_services or targets),
         "status": "completed",
@@ -949,23 +952,6 @@ def _optional_path(raw: object) -> Path | None:
         raise DeployApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "deployment_rejected", "archive path must be a string")
     value = raw.strip()
     return Path(value) if value else None
-
-
-def _resolve_deploy_source_policy(ref: str) -> str:
-    try:
-        return resolve_production_target(REPO_DIR, ref, SubprocessRunner())
-    except SourcePolicyError as exc:
-        raise DeployApiError(
-            HTTPStatus.BAD_REQUEST,
-            "source_policy_rejected",
-            sanitize_text(str(exc)),
-        ) from exc
-    except Exception as exc:
-        raise DeployApiError(
-            HTTPStatus.BAD_REQUEST,
-            "source_policy_rejected",
-            sanitize_text(str(exc)),
-        ) from exc
 
 
 def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:

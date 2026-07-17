@@ -17,6 +17,10 @@ on:
           - recover-lockout
           - remove-legacy-gateway
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   ops_api:
     runs-on: ubuntu-latest
@@ -66,22 +70,33 @@ jobs:
             APP_DIR=/opt/investment-knowledge
             UPLOAD_DIR=/tmp/ops-api-${{ github.run_id }}
             MODE="${{ inputs.mode }}"
+            DEPLOY_LOCK_PATH="$APP_DIR/shared/deploy.lock"
+
+            run_under_deploy_lock() {
+              sudo flock --exclusive --wait 600 "$DEPLOY_LOCK_PATH" "$@"
+            }
+
+            stop_ops_api_under_deploy_lock() {
+              run_under_deploy_lock /bin/bash -c \
+                'systemctl stop investment-ops-api.service || true'
+            }
 
             case "$MODE" in
               install)
+                stop_ops_api_under_deploy_lock
                 sudo BOOTSTRAP_REF="${{ github.sha }}" \
                   APP_ROOT="$APP_DIR" \
                   OPS_HOME=/opt/investment-ops \
                   bash "$UPLOAD_DIR/bootstrap_ops_api_v2_on_ecs.sh"
                 ;;
               start)
-                sudo systemctl restart investment-ops-api.service
+                run_under_deploy_lock systemctl restart investment-ops-api.service
                 ;;
               status)
                 true
                 ;;
               verify-deploy-events)
-                sudo /bin/bash -c '
+                run_under_deploy_lock /bin/bash -c '
                 set -euo pipefail
 
                 APP_DIR=/opt/investment-knowledge
@@ -115,6 +130,7 @@ jobs:
                 '
                 ;;
               recover-lockout)
+                stop_ops_api_under_deploy_lock
                 sudo BOOTSTRAP_REF="${{ github.sha }}" \
                   APP_ROOT="$APP_DIR" \
                   OPS_HOME=/opt/investment-ops \
@@ -122,14 +138,17 @@ jobs:
                   bash "$UPLOAD_DIR/bootstrap_ops_api_v2_on_ecs.sh"
                 ;;
               remove-legacy-gateway)
-                sudo systemctl disable --now hermes-gateway.service || true
-                sudo rm -f /etc/systemd/system/hermes-gateway.service
-                sudo systemctl daemon-reload
-                sudo rm -rf /opt/hermes-agent /root/.hermes
+                run_under_deploy_lock /bin/bash -c '
+                systemctl disable --now hermes-gateway.service || true
+                rm -f /etc/systemd/system/hermes-gateway.service
+                systemctl daemon-reload
+                rm -rf /opt/hermes-agent /root/.hermes
                 echo "legacy gateway removed"
+                '
                 ;;
               stop)
-                sudo systemctl disable --now investment-ops-api.service || true
+                run_under_deploy_lock /bin/bash -c \
+                  'systemctl disable --now investment-ops-api.service || true'
                 ;;
               *)
                 echo "Unknown mode: $MODE"
