@@ -173,7 +173,7 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
                 if raw_event_id is None:
                     self._write_json(HTTPStatus.OK, {"ok": True, "data": build_deploy_status()})
                 else:
-                    event_id = _required_int_query(query, "id", minimum=1, maximum=10**12)
+                    event_id = _required_int_query(query, "id", minimum=1, maximum=10**15)
                     event = read_deploy_event(event_id)
                     if event is None:
                         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "deploy_event_not_found"})
@@ -203,7 +203,7 @@ class OpsRequestHandler(BaseHTTPRequestHandler):
                 action = str(payload.get("action") or "")
                 self._write_json(HTTPStatus.OK, {"ok": True, "data": control_service(service=service, action=action)})
             elif parsed.path in {"/ops/deploy", "/deploy"}:
-                self._write_json(HTTPStatus.ACCEPTED, {"ok": True, "data": deploy_ref(payload)})
+                self._write_json(HTTPStatus.OK, {"ok": True, "data": deploy_ref(payload)})
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except DeployApiError as exc:
@@ -464,12 +464,31 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             outcome = engine.deploy(request)
         except DeploymentError as exc:
+            evidence = _terminal_deploy_evidence(
+                deploy_event_id,
+                outcome=None,
+                mode=mode,
+                requested_targets=targets,
+                feature_routes=feature_routes,
+            )
             raise DeployApiError(
                 HTTPStatus.UNPROCESSABLE_ENTITY,
                 "deployment_rejected",
                 sanitize_text(str(exc)),
+                _failed_deploy_handoff(deploy_event_id, evidence),
             ) from exc
         if not outcome.ok:
+            evidence = _terminal_deploy_evidence(
+                deploy_event_id,
+                outcome=outcome,
+                mode=mode,
+                requested_targets=targets,
+                feature_routes=feature_routes,
+            )
+            failure_data = {
+                "outcome": _deploy_outcome_payload(outcome),
+                **_failed_deploy_handoff(deploy_event_id, evidence),
+            }
             if (
                 outcome.failure_category == "source_policy_rejected"
                 and not _recovery_evidence_takes_precedence(outcome)
@@ -479,7 +498,7 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                     "source_policy_rejected",
                     "production ref was rejected by the locked deployment engine; integrate "
                     "the commit into authoritative main, push main, and dispatch the new main tip",
-                    {"outcome": _deploy_outcome_payload(outcome)},
+                    failure_data,
                 )
             status = (
                 HTTPStatus.CONFLICT
@@ -495,13 +514,20 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
                 status,
                 error_code,
                 outcome.message,
-                {"outcome": _deploy_outcome_payload(outcome)},
+                failure_data,
             )
     except Exception:
         DEPLOY_MUTEX.release()
         raise
     DEPLOY_MUTEX.release()
 
+    evidence = _terminal_deploy_evidence(
+        deploy_event_id,
+        outcome=outcome,
+        mode=mode,
+        requested_targets=targets,
+        feature_routes=feature_routes,
+    )
     return {
         "deploy_event_id": deploy_event_id,
         "ref": ref,
@@ -515,6 +541,14 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
         "status_url": f"/ops/deploy-status?id={deploy_event_id}",
         "aggregate_status_url": "/deploy/status",
         "outcome": _deploy_outcome_payload(outcome),
+        "evidence": evidence,
+        "return_to_coordinator": {
+            "decision": "accept_and_route",
+            "action": (
+                "Apply the Coordinator Return Gate with this event, health, service, and "
+                "route evidence; then route the originating acceptance or follow-up work."
+            ),
+        },
     }
 
 
@@ -755,14 +789,46 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
     status = "succeeded" if final_health == "healthy" else "failed"
     completed_at = str(payload.get("completed_at") or "")
     started_at = str(payload.get("started_at") or "")
+    requested_services = (
+        payload.get("targets") if isinstance(payload.get("targets"), list) else []
+    )
+    affected_services = (
+        payload.get("affected_services")
+        if isinstance(payload.get("affected_services"), list)
+        else requested_services
+        if status == "succeeded"
+        else list(
+            (payload.get("target_durations_ms") or {}).keys()
+            if isinstance(payload.get("target_durations_ms"), dict)
+            else ()
+        )
+    )
     metadata = {
-        "targets": payload.get("targets") if isinstance(payload.get("targets"), list) else [],
+        "targets": requested_services,
+        "affected_services": affected_services,
         "preflight": payload.get("preflight") if isinstance(payload.get("preflight"), dict) else {},
         "final_health": final_health or "unknown",
         "rollback_status": str(payload.get("rollback_status") or ""),
         "source": str(payload.get("source") or "direct"),
         "requested_by": str(payload.get("requested_by") or "unspecified"),
         "failure_category": str(payload.get("failure_category") or ""),
+        "feature_routes": (
+            payload.get("feature_routes")
+            if isinstance(payload.get("feature_routes"), list)
+            else []
+        ),
+        "stability_seconds": int(payload.get("stability_seconds") or 0),
+        "target_durations_ms": (
+            payload.get("target_durations_ms")
+            if isinstance(payload.get("target_durations_ms"), dict)
+            else {}
+        ),
+        "archive_bytes": payload.get("archive_bytes"),
+        "image_count_before": payload.get("image_count_before"),
+        "image_count_after": payload.get("image_count_after"),
+        "disk_used_before": payload.get("disk_used_before"),
+        "disk_used_after": payload.get("disk_used_after"),
+        "cleanup_reclaimed_bytes": payload.get("cleanup_reclaimed_bytes"),
     }
     return _sanitize_payload(
         {
@@ -774,6 +840,30 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
             "duration_seconds": _duration_seconds(started_at, completed_at),
             "summary": f"shared deployment event {status}",
             "metadata": metadata,
+            "requested_services": requested_services,
+            "affected_services": affected_services,
+            "feature_routes": metadata["feature_routes"],
+            "preflight": metadata["preflight"],
+            "stable_health": {
+                "status": "healthy" if status == "succeeded" else "failed",
+                "window_seconds": metadata["stability_seconds"],
+                "observed_seconds": (
+                    metadata["stability_seconds"] if status == "succeeded" else 0
+                ),
+                "final_health": metadata["final_health"],
+            },
+            "route_smoke": {
+                "status": (
+                    "healthy"
+                    if status == "succeeded" and metadata["feature_routes"]
+                    else "failed"
+                    if metadata["feature_routes"]
+                    else "not_requested"
+                ),
+                "routes": metadata["feature_routes"],
+            },
+            "rollback_status": metadata["rollback_status"],
+            "target_durations_ms": metadata["target_durations_ms"],
             "logs_tail": "",
         }
     )
@@ -1011,6 +1101,69 @@ def _deploy_outcome_payload(outcome: DeployOutcome) -> dict[str, Any]:
             "failure_category": outcome.failure_category,
         }
     )
+
+
+def _terminal_deploy_evidence(
+    deploy_event_id: int,
+    *,
+    outcome: DeployOutcome | None,
+    mode: DeployMode,
+    requested_targets: tuple[str, ...],
+    feature_routes: tuple[str, ...],
+) -> dict[str, Any]:
+    durable = _read_shared_deploy_event(str(deploy_event_id))
+    if durable is not None:
+        return durable
+
+    ok = bool(outcome is not None and outcome.ok)
+    affected_services = list(outcome.activated_services) if outcome is not None else []
+    final_health = "healthy" if ok else "failed"
+    return _sanitize_payload(
+        {
+            "id": deploy_event_id,
+            "deploy_mode": outcome.mode.value if outcome is not None else mode.value,
+            "status": "succeeded" if ok else "failed",
+            "commit_sha": outcome.target_sha if outcome is not None else "",
+            "requested_services": list(requested_targets),
+            "affected_services": affected_services,
+            "feature_routes": list(feature_routes),
+            "preflight": {},
+            "stable_health": {
+                "status": final_health,
+                "window_seconds": 60 if mode is DeployMode.FULL_IMAGE else 30,
+                "observed_seconds": (
+                    (60 if mode is DeployMode.FULL_IMAGE else 30) if ok else 0
+                ),
+                "final_health": final_health,
+            },
+            "route_smoke": {
+                "status": final_health if feature_routes else "not_requested",
+                "routes": list(feature_routes),
+            },
+            "rollback_status": (
+                "not_needed" if ok else "see outcome and durable status event"
+            ),
+            "outcome": _deploy_outcome_payload(outcome) if outcome is not None else {},
+        }
+    )
+
+
+def _failed_deploy_handoff(
+    deploy_event_id: int,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "deploy_event_id": deploy_event_id,
+        "status_url": f"/ops/deploy-status?id={deploy_event_id}",
+        "evidence": evidence,
+        "return_to_coordinator": {
+            "decision": "reject_and_return",
+            "action": (
+                "Return this typed failure and durable event evidence to the originating "
+                "coordinator; do not dispatch a second deployment channel."
+            ),
+        },
+    }
 
 
 def _is_shared_lock_contention(outcome: DeployOutcome) -> bool:

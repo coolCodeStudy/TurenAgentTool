@@ -15,6 +15,7 @@ from scripts.deploy_preflight import (
     collect_resources,
     deployment_lock,
     evaluate_preflight,
+    required_available_memory_bytes,
     validate_runtime,
 )
 from scripts.deploy_support import CommandResult
@@ -62,6 +63,57 @@ class PreflightTests(TestCase):
         )
 
         self.assertTrue(evaluate_preflight(snapshot, DeployMode.TARGETED_QUICK, None).ok)
+
+    def test_config_restart_accepts_exact_512_mib_memory_reserve(self) -> None:
+        snapshot = ResourceSnapshot(8 * GIB, 80.0, 512 * MIB)
+
+        self.assertTrue(evaluate_preflight(snapshot, DeployMode.CONFIG_RESTART, None).ok)
+        self.assertEqual(
+            512 * MIB,
+            required_available_memory_bytes(DeployMode.CONFIG_RESTART),
+        )
+
+    def test_full_image_start_requires_provisional_768_mib_reserve(self) -> None:
+        archive_bytes = GIB
+        exact = ResourceSnapshot(8 * GIB, 80.0, 768 * MIB)
+        below = ResourceSnapshot(8 * GIB, 80.0, 768 * MIB - 1)
+
+        self.assertTrue(evaluate_preflight(exact, DeployMode.FULL_IMAGE, archive_bytes).ok)
+        result = evaluate_preflight(below, DeployMode.FULL_IMAGE, archive_bytes)
+        self.assertFalse(result.ok)
+        self.assertIn("available memory must be at least 768 MiB", result.errors)
+        self.assertEqual(
+            768 * MIB,
+            required_available_memory_bytes(DeployMode.FULL_IMAGE),
+        )
+
+    def test_full_image_activation_phase_uses_512_mib_reserve(self) -> None:
+        exact = ResourceSnapshot(8 * GIB, 80.0, 512 * MIB)
+        below = ResourceSnapshot(8 * GIB, 80.0, 512 * MIB - 1)
+
+        self.assertTrue(
+            evaluate_preflight(
+                exact,
+                DeployMode.FULL_IMAGE,
+                GIB,
+                memory_phase="before_activation",
+            ).ok
+        )
+        result = evaluate_preflight(
+            below,
+            DeployMode.FULL_IMAGE,
+            GIB,
+            memory_phase="before_activation",
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("available memory must be at least 512 MiB", result.errors)
+        self.assertEqual(
+            512 * MIB,
+            required_available_memory_bytes(
+                DeployMode.FULL_IMAGE,
+                memory_phase="before_activation",
+            ),
+        )
 
     def test_full_accepts_exact_archive_headroom(self) -> None:
         archive_bytes = 3 * GIB

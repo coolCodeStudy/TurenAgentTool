@@ -331,6 +331,7 @@ class DeploymentEngineTests(TestCase):
                     str(staged_compose),
                     "up",
                     "-d",
+                    "--no-build",
                     "--no-deps",
                     "--force-recreate",
                     "command-api",
@@ -342,6 +343,7 @@ class DeploymentEngineTests(TestCase):
                     str(staged_compose),
                     "up",
                     "-d",
+                    "--no-build",
                     "--no-deps",
                     "--force-recreate",
                     "weekly-review-web",
@@ -364,6 +366,7 @@ class DeploymentEngineTests(TestCase):
                 str(staged_compose),
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "command-api",
@@ -386,6 +389,7 @@ class DeploymentEngineTests(TestCase):
                 str(previous_compose),
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "command-api",
@@ -607,6 +611,7 @@ class DeploymentEngineTests(TestCase):
             "compose",
             "up",
             "-d",
+            "--no-build",
             "--no-deps",
             "--force-recreate",
             "command-api",
@@ -1166,6 +1171,103 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(any(command[:3] == ("docker", "compose", "up") for command in self.runner.commands))
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
         self.assertEqual("recorded", outcome.audit_status)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual(1, event["preflight"]["available_memory_bytes"])
+        self.assertEqual(512 * 1024**2, event["preflight"]["required_available_memory_bytes"])
+        self.assertEqual(1, event["preflight"]["minimum_available_memory_bytes"])
+        self.assertEqual("targeted_quick", event["preflight"]["memory_policy_mode"])
+
+    def test_full_image_rechecks_memory_after_load_before_selector_mutation(self) -> None:
+        from scripts.deploy_preflight import GIB, MIB, ResourceSnapshot
+
+        archive = self.directory / "candidate.tar"
+        archive.write_bytes(b"candidate")
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api",),
+            changed_files=("Dockerfile",),
+            image_input_files=("Dockerfile",),
+            reasons=("image input",),
+        )
+        request = DeployRequest(
+            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+        )
+        snapshots = iter(
+            (
+                ResourceSnapshot(16 * GIB, 40.0, 768 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+            )
+        )
+        self.engine.resource_collector = lambda runner: next(snapshots)
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("post-load", outcome.message)
+        self.assertFalse(
+            any(_without_compose_file(command)[:3] == ("docker", "compose", "up") for command in self.runner.commands)
+        )
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual(768 * MIB, event["preflight"]["start_available_memory_bytes"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["post_load_available_memory_bytes"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["minimum_available_memory_bytes"])
+        self.assertEqual("not_started", event["rollback_status"].split("|")[0])
+
+    def test_full_image_rechecks_memory_before_each_activation_and_rolls_back(self) -> None:
+        from scripts.deploy_preflight import GIB, MIB, ResourceSnapshot
+
+        archive = self.directory / "candidate.tar"
+        archive.write_bytes(b"candidate")
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api", "weekly-review-web"),
+            changed_files=("Dockerfile",),
+            image_input_files=("Dockerfile",),
+            reasons=("image input",),
+        )
+        request = DeployRequest(
+            "main",
+            DeployMode.FULL_IMAGE,
+            ("command-api", "weekly-review-web"),
+            archive,
+            None,
+        )
+        snapshots = iter(
+            (
+                ResourceSnapshot(16 * GIB, 40.0, 768 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 700 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 600 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+            )
+        )
+        self.engine.resource_collector = lambda runner: next(snapshots)
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("before activation", outcome.message)
+        self.assertEqual(("command-api",), outcome.activated_services)
+        self.assertEqual(("command-api",), outcome.rolled_back_services)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual(2, event["preflight"]["activation_memory_check_count"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["before_activation_available_memory_bytes"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["minimum_available_memory_bytes"])
+
+    def test_every_compose_activation_and_rollback_uses_no_build(self) -> None:
+        self.health.fail_for("weekly-review-web")
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertFalse(outcome.ok)
+        compose_up_commands = [
+            _without_compose_file(command)
+            for command in self.runner.commands
+            if _without_compose_file(command)[:3] == ("docker", "compose", "up")
+        ]
+        self.assertGreaterEqual(len(compose_up_commands), 2)
+        self.assertTrue(all("--no-build" in command for command in compose_up_commands))
 
     def test_source_failure_records_sanitized_failed_event(self) -> None:
         self.runner.results[("git", "-C", str(self.repo), "fetch", "origin", "main")] = CommandResult(
@@ -1356,7 +1458,7 @@ class DeploymentEngineTests(TestCase):
         rendered = [" ".join(_without_compose_file(command)) for command in self.runner.commands]
         self.assertTrue(
             any(
-                "docker compose up -d --no-deps --force-recreate daily-market-brief-history-worker"
+                "docker compose up -d --no-build --no-deps --force-recreate daily-market-brief-history-worker"
                 in command
                 for command in rendered
             )
@@ -1385,6 +1487,7 @@ class DeploymentEngineTests(TestCase):
             "compose",
             "up",
             "-d",
+            "--no-build",
             "--no-deps",
             "--force-recreate",
             "command-api",
@@ -1518,6 +1621,8 @@ class DeploymentEngineTests(TestCase):
         self.engine.referenced_image_ids = lambda: {"target-id"}
         resources = [
             ResourceSnapshot(16 * 1024**3, 40.0, 1024 * 1024**2),
+            ResourceSnapshot(16 * 1024**3, 39.0, 1000 * 1024**2),
+            ResourceSnapshot(16 * 1024**3, 38.0, 900 * 1024**2),
             ResourceSnapshot(17 * 1024**3, 35.0, 1100 * 1024**2),
         ]
         self.engine.resource_collector = lambda runner: resources.pop(0)
@@ -1546,6 +1651,7 @@ class DeploymentEngineTests(TestCase):
                 "compose",
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "command-api",
@@ -1555,6 +1661,7 @@ class DeploymentEngineTests(TestCase):
                 "compose",
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "weekly-review-web",

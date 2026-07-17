@@ -379,7 +379,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 ):
                     status, response = self._post_json("/deploy", payload)
 
-                self.assertEqual(202, status)
+                self.assertEqual(200, status)
                 self.assertTrue(response["ok"])
                 data = response["data"]
                 self.assertEqual("completed", data["status"])
@@ -413,7 +413,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 }
             )
 
-        self.assertEqual(202, status)
+        self.assertEqual(200, status)
         self.assertTrue(response["ok"])
         self.assertEqual(DeployMode.FULL_IMAGE, engine.requests[0].requested_mode)
 
@@ -429,7 +429,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 {"ref": "main", "mode": "targeted_quick", "targets": ["weekly-review-web"]},
             )
 
-        self.assertEqual(202, status)
+        self.assertEqual(200, status)
         data = response["data"]
         self.assertIsInstance(data["deploy_event_id"], int)
         self.assertGreater(data["deploy_event_id"], 0)
@@ -448,7 +448,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                 {"ref": "main", "mode": "quick", "targets": ["weekly-review-web"]},
             )
 
-        self.assertEqual(202, status)
+        self.assertEqual(200, status)
         self.assertTrue(response["ok"])
         self.assertEqual(DeployMode.TARGETED_QUICK, engine.requests[0].requested_mode)
 
@@ -542,6 +542,105 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertIn("deployment_rejected", text)
         self.assertNotIn("secret", text)
         self.assertNotIn("CERTIFICATE_VERIFY_FAILED", text)
+        data = payload["data"]
+        self.assertIsInstance(data["deploy_event_id"], int)
+        self.assertEqual(
+            f"/ops/deploy-status?id={data['deploy_event_id']}",
+            data["status_url"],
+        )
+        self.assertEqual("reject_and_return", data["return_to_coordinator"]["decision"])
+        self.assertEqual("failed", data["evidence"]["status"])
+        self.assertEqual(["weekly-review-web"], data["evidence"]["requested_services"])
+        self.assertEqual([], data["evidence"]["affected_services"])
+
+    def test_low_memory_failure_returns_durable_actual_and_required_evidence(self) -> None:
+        engine = FakeEngine(
+            DeployOutcome(
+                ok=False,
+                target_sha=TARGET_SHA,
+                mode=DeployMode.TARGETED_QUICK,
+                activated_services=(),
+                rolled_back_services=(),
+                message="deployment resource preflight failed: available memory must be at least 512 MiB",
+                audit_status="recorded",
+            )
+        )
+        with TemporaryDirectory() as tmp:
+            events_dir = Path(tmp)
+            (events_dir / "42.json").write_text(
+                json.dumps(
+                    {
+                        "event_id": "42",
+                        "requested_mode": "targeted_quick",
+                        "computed_mode": "targeted_quick",
+                        "deployed_sha": None,
+                        "target_sha": TARGET_SHA,
+                        "targets": ["weekly-review-web"],
+                        "affected_services": [],
+                        "feature_routes": ["/weekly-review"],
+                        "preflight": {
+                            "available_memory_bytes": 400 * 1024**2,
+                            "required_available_memory_bytes": 512 * 1024**2,
+                            "minimum_available_memory_bytes": 400 * 1024**2,
+                        },
+                        "rollback_status": "not_started",
+                        "final_health": "unhealthy",
+                        "stability_seconds": 30,
+                        "started_at": "2026-07-10T00:00:00+00:00",
+                        "completed_at": "2026-07-10T00:00:01+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(ops, "DEPLOY_EVENTS_DIR", events_dir, create=True),
+                patch.object(ops, "_new_deploy_event_id", return_value=42),
+                patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+            ):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "targeted_quick",
+                        "targets": ["weekly-review-web"],
+                        "feature_routes": ["/weekly-review"],
+                    },
+                )
+
+        self.assertEqual(422, status)
+        evidence = payload["data"]["evidence"]
+        self.assertEqual(400 * 1024**2, evidence["preflight"]["available_memory_bytes"])
+        self.assertEqual(
+            512 * 1024**2,
+            evidence["preflight"]["required_available_memory_bytes"],
+        )
+        self.assertEqual([], evidence["affected_services"])
+        self.assertEqual("failed", evidence["route_smoke"]["status"])
+        self.assertEqual(0, evidence["stable_health"]["observed_seconds"])
+
+    def test_terminal_success_returns_durable_evidence_and_coordinator_action(self) -> None:
+        engine = FakeEngine()
+
+        with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+            status, payload = self._post_json(
+                "/deploy",
+                {
+                    "ref": TARGET_SHA,
+                    "mode": "targeted_quick",
+                    "targets": ["weekly-review-web"],
+                    "feature_routes": ["/weekly-review"],
+                },
+            )
+
+        self.assertEqual(200, status)
+        data = payload["data"]
+        self.assertEqual("completed", data["status"])
+        self.assertEqual("accept_and_route", data["return_to_coordinator"]["decision"])
+        self.assertEqual("succeeded", data["evidence"]["status"])
+        self.assertEqual(["weekly-review-web"], data["evidence"]["requested_services"])
+        self.assertEqual(["weekly-review-web"], data["evidence"]["affected_services"])
+        self.assertEqual(["/weekly-review"], data["evidence"]["feature_routes"])
+        self.assertEqual("healthy", data["evidence"]["route_smoke"]["status"])
 
     def test_full_image_without_image_diff_requires_emergency_reason(self) -> None:
         engine = FakeEngine()
@@ -655,6 +754,20 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         payload = '{"id": 42, "status": "started"}'
         with patch.object(ops, "_run", return_value=CommandResult(0, payload, "")):
             self.assertEqual(ops.read_deploy_event(42), {"id": 42, "status": "started"})
+
+    def test_generated_event_id_is_accepted_by_the_stable_status_url(self) -> None:
+        event_id = ops._new_deploy_event_id()
+
+        with patch.object(
+            ops,
+            "read_deploy_event",
+            return_value={"id": event_id, "status": "succeeded"},
+        ) as read_event:
+            status, payload = self._get_json(f"/ops/deploy-status?id={event_id}")
+
+        self.assertEqual(200, status)
+        self.assertEqual(event_id, payload["data"]["id"])
+        read_event.assert_called_once_with(event_id)
 
     def test_read_deploy_event_bridges_shared_engine_event_file(self) -> None:
         with TemporaryDirectory() as tmp:

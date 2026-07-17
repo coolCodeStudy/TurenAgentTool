@@ -71,6 +71,9 @@ class DeploymentEvent:
     source: str = "direct"
     requested_by: str = "unspecified"
     failure_category: str | None = None
+    feature_routes: tuple[str, ...] = ()
+    stability_seconds: int = 0
+    affected_services: tuple[str, ...] = ()
 
 
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
@@ -87,6 +90,17 @@ _PREFLIGHT_OBSERVATION_TYPES: dict[str, type | tuple[type, ...]] = {
     "lock_valid": str,
     "archive_bytes": int,
     "required_free_bytes": int,
+    "memory_policy_mode": str,
+    "required_available_memory_bytes": int,
+    "start_required_available_memory_bytes": int,
+    "runtime_required_available_memory_bytes": int,
+    "minimum_available_memory_bytes": int,
+    "start_available_memory_bytes": int,
+    "post_load_available_memory_bytes": int,
+    "post_load_required_available_memory_bytes": int,
+    "before_activation_available_memory_bytes": int,
+    "before_activation_required_available_memory_bytes": int,
+    "activation_memory_check_count": int,
 }
 _SENSITIVE_TEXT = re.compile(
     r"(?i)\b(?:database[_-]?url|password|passwd|token|api[_-]?key|secret|credential|"
@@ -226,6 +240,8 @@ def _event_payload(event: DeploymentEvent) -> dict[str, Any]:
     payload = asdict(event)
     payload["changed_image_inputs"] = list(event.changed_image_inputs)
     payload["targets"] = list(event.targets)
+    payload["feature_routes"] = list(event.feature_routes)
+    payload["affected_services"] = list(event.affected_services)
     return payload
 
 
@@ -308,6 +324,8 @@ def _validate_event(event: DeploymentEvent) -> None:
     _optional_string(event.failure_category, "failure_category")
     _string_tuple(event.changed_image_inputs, "changed_image_inputs")
     _string_tuple(event.targets, "targets")
+    _string_tuple(event.feature_routes, "feature_routes")
+    _string_tuple(event.affected_services, "affected_services")
     _metrics_dict(event.preflight, "preflight")
     if event.archive_bytes is not None and not _integer(event.archive_bytes):
         raise StateFormatError("archive_bytes must be an integer or null")
@@ -324,6 +342,8 @@ def _validate_event(event: DeploymentEvent) -> None:
         raise StateFormatError("target_durations_ms must map strings to integers")
     if not isinstance(event.emergency_override, bool):
         raise StateFormatError("emergency_override must be a boolean")
+    if not _integer(event.stability_seconds) or event.stability_seconds < 0:
+        raise StateFormatError("stability_seconds must be a non-negative integer")
 
 
 def _required_string(value: object, name: str) -> str:

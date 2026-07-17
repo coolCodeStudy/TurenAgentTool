@@ -27,6 +27,7 @@ try:
         collect_resources,
         deployment_lock,
         evaluate_preflight,
+        required_available_memory_bytes,
         validate_runtime,
     )
     from scripts.deploy_retention import (
@@ -61,6 +62,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
         collect_resources,
         deployment_lock,
         evaluate_preflight,
+        required_available_memory_bytes,
         validate_runtime,
     )
     from deploy_retention import (
@@ -541,16 +543,16 @@ class DeploymentEngine:
             )
         except OSError as error:
             raise DeploymentError("full image archive is unavailable") from error
-        result = evaluate_preflight(
-            snapshot, context.plan.mode, context.archive_bytes
+        context.preflight = self._preflight_observations(
+            snapshot,
+            context.archive_bytes,
+            context.plan.mode,
         )
+        result = evaluate_preflight(snapshot, context.plan.mode, context.archive_bytes)
         if not result.ok:
             raise DeploymentError(
                 "deployment resource preflight failed: " + "; ".join(result.errors)
             )
-        context.preflight = self._preflight_observations(
-            snapshot, context.archive_bytes
-        )
         current_compose = self.current_link / "docker-compose.prod.yml"
         with _compose_environment(self.compose_project_name):
             labels = self.runtime_validator(self.runner, current_compose)
@@ -585,9 +587,15 @@ class DeploymentEngine:
             self._load_candidate_archive(
                 context, request.archive_path, selected_image
             )
+            self._record_full_image_memory_phase(context, "post_load")
 
         self._switch_selectors(context, release, selected_image)
         for target in context.plan.targets:
+            if context.plan.mode is DeployMode.FULL_IMAGE:
+                self._record_full_image_memory_phase(
+                    context,
+                    "before_activation",
+                )
             started = self.clock.monotonic()
             context.touched_services.append(target)
             self._activate_target(target, release)
@@ -641,6 +649,7 @@ class DeploymentEngine:
                 cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
                 rollback_status="not_needed|cleanup:pending|archive_cleanup:pending",
                 final_health="healthy",
+                affected_services=tuple(context.touched_services),
                 started_at=context.started_at,
                 completed_at=completed_at,
             ),
@@ -699,6 +708,7 @@ class DeploymentEngine:
                         f"not_needed|cleanup:{context.cleanup_status}"
                     ),
                     final_health="healthy",
+                    affected_services=tuple(context.touched_services),
                     started_at=context.started_at,
                     completed_at=cleanup_completed_at,
                 ),
@@ -1121,6 +1131,7 @@ class DeploymentEngine:
                         if rollback_attempted and not rollback.ok
                         else "unhealthy"
                     ),
+                    affected_services=tuple(context.touched_services),
                     started_at=context.started_at,
                     completed_at=completed_at,
                     failure_category=(
@@ -1252,6 +1263,7 @@ class DeploymentEngine:
                     str(release / "docker-compose.prod.yml"),
                     "up",
                     "-d",
+                    "--no-build",
                     "--no-deps",
                     "--force-recreate",
                     target,
@@ -1421,6 +1433,7 @@ class DeploymentEngine:
         cleanup_reclaimed_bytes: int,
         rollback_status: str,
         final_health: str,
+        affected_services: tuple[str, ...],
         started_at: str,
         completed_at: str,
         failure_category: str | None = None,
@@ -1450,22 +1463,70 @@ class DeploymentEngine:
             source=request.source,
             requested_by=request.requested_by,
             failure_category=failure_category,
+            feature_routes=request.feature_routes,
+            stability_seconds=(60 if plan.mode is DeployMode.FULL_IMAGE else 30),
+            affected_services=affected_services,
         )
 
     def _preflight_observations(
-        self, snapshot: ResourceSnapshot, archive_bytes: int | None
+        self,
+        snapshot: ResourceSnapshot,
+        archive_bytes: int | None,
+        mode: DeployMode,
     ) -> dict[str, int | float | str]:
+        start_required = required_available_memory_bytes(mode)
         observations: dict[str, int | float | str] = {
             "disk_available_bytes": snapshot.free_disk_bytes,
             "disk_used_percent": snapshot.disk_used_percent,
             "available_memory_bytes": snapshot.available_memory_bytes,
+            "minimum_available_memory_bytes": snapshot.available_memory_bytes,
+            "start_available_memory_bytes": snapshot.available_memory_bytes,
+            "memory_policy_mode": mode.value,
+            "required_available_memory_bytes": start_required,
+            "start_required_available_memory_bytes": start_required,
             "source_valid": "valid",
             "lock_valid": "held",
             "required_free_bytes": 8 * 1024**3,
         }
         if archive_bytes is not None:
             observations["archive_bytes"] = archive_bytes
+        if mode is DeployMode.FULL_IMAGE:
+            observations["runtime_required_available_memory_bytes"] = (
+                required_available_memory_bytes(
+                    mode,
+                    memory_phase="before_activation",
+                )
+            )
         return observations
+
+    def _record_full_image_memory_phase(
+        self,
+        context: DeploymentContext,
+        memory_phase: str,
+    ) -> None:
+        snapshot = self.resource_collector(self.runner)
+        available = snapshot.available_memory_bytes
+        required = required_available_memory_bytes(
+            DeployMode.FULL_IMAGE,
+            memory_phase=memory_phase,
+        )
+        context.disk_used_after = snapshot.disk_used_percent
+        context.preflight[f"{memory_phase}_available_memory_bytes"] = available
+        context.preflight[f"{memory_phase}_required_available_memory_bytes"] = required
+        context.preflight["minimum_available_memory_bytes"] = min(
+            int(context.preflight.get("minimum_available_memory_bytes", available)),
+            available,
+        )
+        if memory_phase == "before_activation":
+            context.preflight["activation_memory_check_count"] = (
+                int(context.preflight.get("activation_memory_check_count", 0)) + 1
+            )
+        if available < required:
+            label = "post-load" if memory_phase == "post_load" else "before activation"
+            raise DeploymentError(
+                "deployment resource preflight failed "
+                f"{label}: available memory must be at least {required // (1024**2)} MiB"
+            )
 
     def _runtime_observations(self, labels: tuple[str, ...]) -> dict[str, str]:
         available = set(labels)

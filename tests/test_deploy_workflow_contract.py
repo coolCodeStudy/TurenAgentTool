@@ -89,3 +89,20 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("dist/investment-knowledge-app-${{ github.sha }}.tar.gz", self.workflow)
         self.assertNotIn("dist/investment-knowledge-release.tar.gz", self.workflow)
         self.assertNotIn("investment-knowledge-images.tar.gz", self.workflow)
+
+    def test_request_only_shared_deploy_does_not_checkout_code(self) -> None:
+        shared_start = self.workflow.index("  shared_deploy:")
+        full_start = self.workflow.index("  full_image:")
+        shared_block = self.workflow[shared_start:full_start]
+
+        self.assertNotIn("actions/checkout", shared_block)
+        self.assertNotIn("docker/build", shared_block)
+
+    def test_full_image_preserves_github_buildx_cache_and_archive_transport(self) -> None:
+        full_block = self.workflow[self.workflow.index("  full_image:"):]
+
+        self.assertIn("docker/setup-buildx-action@v3", full_block)
+        self.assertIn("docker/build-push-action@v6", full_block)
+        self.assertIn("cache-from: type=gha", full_block)
+        self.assertIn("cache-to: type=gha,mode=max", full_block)
+        self.assertIn("docker save investment-knowledge-app:${{ github.sha }}", full_block)
