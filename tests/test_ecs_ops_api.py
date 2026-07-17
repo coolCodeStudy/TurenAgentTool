@@ -47,6 +47,13 @@ def _managed_archive(sha: str = TARGET_SHA):
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_default_artifact_staging_is_under_independent_ops_home(self) -> None:
+        source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
+
+        self.assertIn('OPS_HOME = Path(os.getenv("OPS_HOME", "/opt/investment-ops"))', source)
+        self.assertIn('str(OPS_HOME / "deploy-artifacts")', source)
+        self.assertNotIn('str(APP_ROOT / "shared" / "deploy-artifacts")', source)
+
     def test_daily_market_brief_history_worker_is_in_ops_health_and_diagnostics(self) -> None:
         source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
 
@@ -182,7 +189,11 @@ class EcsOpsApiDeployTests(unittest.TestCase):
             create=True,
         )
         self.events_patch.start()
-        self.artifacts_dir = Path(self.events_tmp.name) / "shared" / "deploy-artifacts"
+        self.ops_home = Path(self.events_tmp.name) / "ops-home"
+        self.ops_home.mkdir(mode=0o700)
+        self.ops_home_patch = patch.object(ops, "OPS_HOME", self.ops_home, create=True)
+        self.ops_home_patch.start()
+        self.artifacts_dir = self.ops_home / "deploy-artifacts"
         self.artifacts_patch = patch.object(
             ops,
             "DEPLOY_ARTIFACTS_DIR",
@@ -193,6 +204,7 @@ class EcsOpsApiDeployTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.artifacts_patch.stop()
+        self.ops_home_patch.stop()
         self.events_patch.stop()
         self.events_tmp.cleanup()
 
@@ -684,12 +696,24 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertNotIn("engine-secret", json.dumps(payload))
         event_id.assert_not_called()
 
-    def test_busy_request_cleans_only_validated_run_archive_before_dispatch(self) -> None:
+    def test_busy_request_claims_then_cleans_only_its_private_archive(self) -> None:
         engine = FakeEngine()
         self.assertTrue(ops.DEPLOY_MUTEX.acquire(blocking=False))
         try:
             with _managed_archive() as archive:
-                with patch.object(ops, "build_deployment_engine", return_value=engine, create=True):
+                with (
+                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                    patch.object(
+                        ops,
+                        "_claim_validated_upload",
+                        wraps=ops._claim_validated_upload,
+                    ) as claim,
+                    patch.object(
+                        ops,
+                        "_cleanup_validated_upload",
+                        side_effect=AssertionError("busy path must not delete the shared upload"),
+                    ),
+                ):
                     status, payload = self._post_json(
                         "/deploy",
                         {
@@ -700,12 +724,120 @@ class EcsOpsApiDeployTests(unittest.TestCase):
                         },
                     )
                     self.assertFalse(archive.exists())
+                    claim.assert_called_once()
         finally:
             ops.DEPLOY_MUTEX.release()
 
         self.assertEqual(409, status)
         self.assertEqual("deployment_busy", payload["error"])
         self.assertEqual("removed", payload["data"]["archive_cleanup"])
+        self.assertEqual([], engine.requests)
+        self.assertFalse(any(self.artifacts_dir.iterdir()))
+
+    def test_duplicate_claim_collision_never_deletes_winning_artifact(self) -> None:
+        with _managed_archive() as archive:
+            first = ops._validate_full_image_archive(TARGET_SHA, archive)
+            second = ops._validate_full_image_archive(TARGET_SHA, archive)
+            with (
+                patch.object(ops.time, "time_ns", return_value=123456789),
+                patch.object(ops.secrets, "token_hex", return_value="fixedcollision"),
+            ):
+                winner = ops._claim_validated_upload(first)
+                with self.assertRaises(ops.DeployApiError):
+                    ops._claim_validated_upload(second)
+
+            self.assertTrue(winner.path.is_file())
+            self.assertEqual(b"candidate image archive", winner.path.read_bytes())
+            self.assertEqual([winner.path], list(self.artifacts_dir.iterdir()))
+            self.assertEqual("removed", ops._cleanup_claimed_upload(winner))
+
+    def test_claim_failure_with_private_cleanup_failure_is_typed_and_blocked(self) -> None:
+        engine = FakeEngine()
+        real_chmod = os.chmod
+
+        def fail_artifact_chmod(path: object, mode: int) -> None:
+            candidate = Path(path)
+            if candidate.parent == self.artifacts_dir and candidate.name.endswith(".tar.gz"):
+                raise OSError("TOKEN=chmod-secret")
+            real_chmod(path, mode)
+
+        try:
+            with _managed_archive() as archive:
+                with (
+                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                    patch.object(ops.os, "chmod", side_effect=fail_artifact_chmod),
+                    patch.object(ops, "_remove_exact_private_artifact", return_value="failed"),
+                ):
+                    status, payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                        },
+                    )
+
+            self.assertEqual(503, status)
+            self.assertEqual("deployment_artifact_cleanup_failed", payload["error"])
+            self.assertEqual("blocked_with_owner", payload["data"]["return_to_coordinator"]["decision"])
+            basename = payload["data"]["artifact_basename"]
+            self.assertRegex(basename, rf"investment-knowledge-app-{TARGET_SHA}-.*\.tar\.gz")
+            self.assertIn(basename, payload["data"]["return_to_coordinator"]["action"])
+            self.assertEqual("failed", payload["data"]["archive_cleanup"])
+            self.assertNotIn("chmod-secret", json.dumps(payload))
+            self.assertEqual([], engine.requests)
+        finally:
+            if self.artifacts_dir.exists():
+                for artifact in self.artifacts_dir.iterdir():
+                    artifact.unlink(missing_ok=True)
+
+    def test_claim_rejects_symlinked_ops_home(self) -> None:
+        engine = FakeEngine()
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_home = root / "real-home"
+            real_home.mkdir()
+            symlink_home = root / "ops-home"
+            symlink_home.symlink_to(real_home, target_is_directory=True)
+            with _managed_archive() as archive:
+                with (
+                    patch.object(ops, "DEPLOY_ARTIFACTS_DIR", symlink_home / "deploy-artifacts"),
+                    patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+                ):
+                    status, payload = self._post_json(
+                        "/deploy",
+                        {
+                            "ref": TARGET_SHA,
+                            "mode": "full_image",
+                            "targets": ["weekly-review-web"],
+                            "archive_path": str(archive),
+                        },
+                    )
+
+        self.assertEqual(503, status)
+        self.assertEqual("deployment_artifact_claim_failed", payload["error"])
+        self.assertEqual([], engine.requests)
+
+    def test_claim_rejects_staging_parent_not_owned_by_service_uid(self) -> None:
+        engine = FakeEngine()
+        with _managed_archive() as archive:
+            with (
+                patch.object(ops, "_effective_service_uid", return_value=os.geteuid() + 1, create=True),
+                patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
+            ):
+                status, payload = self._post_json(
+                    "/deploy",
+                    {
+                        "ref": TARGET_SHA,
+                        "mode": "full_image",
+                        "targets": ["weekly-review-web"],
+                        "archive_path": str(archive),
+                    },
+                )
+
+        self.assertEqual(503, status)
+        self.assertEqual("deployment_artifact_claim_failed", payload["error"])
         self.assertEqual([], engine.requests)
 
     def test_event_allocation_failure_after_claim_cleans_private_artifact(self) -> None:
@@ -742,20 +874,24 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         engine = FakeEngine()
         victim = Path("/tmp") / f"claim-victim-{os.getpid()}-{threading.get_ident()}"
         victim.write_bytes(b"victim survives")
-        real_replace = os.replace
+        real_link = os.link
 
         try:
             with _managed_archive() as archive:
-                def swap_then_replace(source: object, destination: object) -> None:
+                def swap_then_link(
+                    source: object,
+                    destination: object,
+                    **kwargs: object,
+                ) -> None:
                     source_path = Path(source)
                     source_path.unlink()
                     source_path.symlink_to(victim)
-                    real_replace(source_path, destination)
+                    real_link(source_path, destination, **kwargs)
 
                 with (
                     patch.object(ops, "build_deployment_engine", return_value=engine, create=True),
                     patch.object(ops, "_new_deploy_event_id", wraps=ops._new_deploy_event_id) as event_id,
-                    patch.object(ops.os, "replace", side_effect=swap_then_replace),
+                    patch.object(ops.os, "link", side_effect=swap_then_link),
                 ):
                     status, payload = self._post_json(
                         "/deploy",
@@ -1379,6 +1515,24 @@ class EcsOpsApiDeployTests(unittest.TestCase):
         self.assertEqual(2.0, event["duration_seconds"])
         self.assertEqual("github_actions", event["metadata"]["source"])
         self.assertEqual("weekly_review_coordinator", event["metadata"]["requested_by"])
+
+    def test_shared_event_parser_preserves_legacy_archive_cleanup_format(self) -> None:
+        event = ops._shared_event_status_payload(
+            {
+                "requested_mode": "full_image",
+                "computed_mode": "full_image",
+                "deployed_sha": TARGET_SHA,
+                "target_sha": TARGET_SHA,
+                "targets": ["weekly-review-web"],
+                "rollback_status": "not_needed|cleanup:release_completed|image_completed|archive_removed",
+                "final_health": "healthy",
+                "started_at": "2026-07-10T00:00:00+00:00",
+                "completed_at": "2026-07-10T00:01:00+00:00",
+            },
+            "42",
+        )
+
+        self.assertEqual("removed", event["metadata"]["archive_cleanup"])
 
     def test_command_error_summary_prefers_traceback_exception_tail(self) -> None:
         text = "\n".join(

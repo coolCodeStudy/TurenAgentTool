@@ -947,6 +947,9 @@ class DeploymentEngineTests(TestCase):
             ("docker", "builder", "prune", "--filter", "until=168h", "--force"),
             self.runner.commands,
         )
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertIn("archive_cleanup:removed", event["rollback_status"])
+        self.assertNotIn("|archive_removed", event["rollback_status"])
 
     def test_full_rejects_stale_expected_tag_when_archive_loads_different_image(self) -> None:
         archive = self._managed_archive()

@@ -154,6 +154,26 @@ class OpsApiWorkflowContractTests(TestCase):
         install_position = bootstrap.index("install_ops_api_on_ecs.sh")
         self.assertLess(initialize_position, install_position)
 
+    def test_ops_artifact_staging_is_independent_private_and_bootstrap_wired(self) -> None:
+        installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
+        bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'OPS_DEPLOY_ARTIFACTS_DIR=${OPS_DEPLOY_ARTIFACTS_DIR:-$OPS_HOME/deploy-artifacts}',
+            installer,
+        )
+        self.assertIn('chown root:root "$OPS_HOME" "$OPS_DEPLOY_ARTIFACTS_DIR"', installer)
+        self.assertIn('chmod 0700 "$OPS_HOME" "$OPS_DEPLOY_ARTIFACTS_DIR"', installer)
+        self.assertIn('OPS_DEPLOY_ARTIFACTS_DIR=$OPS_DEPLOY_ARTIFACTS_DIR', installer)
+        self.assertIn(
+            'OPS_DEPLOY_ARTIFACTS_DIR="$OPS_DEPLOY_ARTIFACTS_DIR"',
+            bootstrap,
+        )
+        self.assertNotIn(
+            'OPS_DEPLOY_ARTIFACTS_DIR=${OPS_DEPLOY_ARTIFACTS_DIR:-$APP_ROOT/shared',
+            installer,
+        )
+
     def test_lockout_recovery_is_an_explicit_bootstrap_mode(self) -> None:
         self.assertIn("recover-lockout", self.workflow)
         self.assertIn("RECOVER_DEPLOY_LOCKOUT=true", self.workflow)

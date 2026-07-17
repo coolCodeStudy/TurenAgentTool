@@ -742,8 +742,10 @@ class DeploymentEngine:
             cleanup_statuses.append("image_not_applicable")
 
         context.archive_cleanup = self._cleanup_archive_safe(request.archive_path)
-        cleanup_statuses.append(f"archive_{context.archive_cleanup}")
-        context.cleanup_status = "|".join(cleanup_statuses)
+        cleanup_summary = "|".join(cleanup_statuses)
+        context.cleanup_status = (
+            f"{cleanup_summary}|archive_cleanup:{context.archive_cleanup}"
+        )
         self._collect_post_metrics(context)
         cleanup_completed_at = self._safe_timestamp()
         audit_status = "recorded"
@@ -765,7 +767,8 @@ class DeploymentEngine:
                     target_durations_ms=context.target_durations_ms,
                     cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
                     rollback_status=(
-                        f"not_needed|cleanup:{context.cleanup_status}"
+                        f"not_needed|cleanup:{cleanup_summary}"
+                        f"|archive_cleanup:{context.archive_cleanup}"
                     ),
                     final_health="healthy",
                     affected_services=tuple(context.touched_services),

@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import socket
 import stat
 import subprocess
@@ -68,12 +69,13 @@ except ModuleNotFoundError:  # Direct execution through scripts/ecs_ops_api.py.
 
 APP_ROOT = Path(os.getenv("INVESTMENT_APP_ROOT", "/opt/investment-knowledge"))
 APP_DIR = Path(os.getenv("INVESTMENT_DIR", str(APP_ROOT / "current")))
+OPS_HOME = Path(os.getenv("OPS_HOME", "/opt/investment-ops"))
 REPO_DIR = Path(os.getenv("OPS_DEPLOY_REPO_DIR", "/opt/investment-knowledge-repo"))
 RELEASE_ROOT = Path(os.getenv("OPS_DEPLOY_RELEASE_ROOT", str(APP_ROOT / "releases")))
 DEPLOY_STATE_PATH = Path(os.getenv("OPS_DEPLOY_STATE_PATH", str(APP_ROOT / "shared" / "deploy-state.json")))
 DEPLOY_EVENTS_DIR = Path(os.getenv("OPS_DEPLOY_EVENTS_DIR", str(APP_ROOT / "shared" / "deploy-events")))
 DEPLOY_ARTIFACTS_DIR = Path(
-    os.getenv("OPS_DEPLOY_ARTIFACTS_DIR", str(APP_ROOT / "shared" / "deploy-artifacts"))
+    os.getenv("OPS_DEPLOY_ARTIFACTS_DIR", str(OPS_HOME / "deploy-artifacts"))
 )
 COMPOSE_FILE = APP_DIR / "docker-compose.prod.yml"
 COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "turenagenttool_prod")
@@ -92,6 +94,7 @@ ALLOWED_NAMED_REFS = {
     if ref.strip()
 }
 DEPLOY_MUTEX = threading.Lock()
+ARTIFACT_CLAIM_MUTEX = threading.Lock()
 
 
 COMPOSE_SERVICES = {
@@ -501,8 +504,14 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             },
         ) from exc
 
+    claimed_upload: ClaimedDeploymentUpload | None = None
+    if validated_upload is not None:
+        claimed_upload = _claim_validated_upload(validated_upload)
+
     if not DEPLOY_MUTEX.acquire(blocking=False):
-        cleanup = _cleanup_validated_upload(validated_upload)
+        cleanup = _cleanup_claimed_upload(claimed_upload)
+        if not _private_cleanup_succeeded(cleanup):
+            raise _artifact_cleanup_error(claimed_upload, cleanup)
         raise DeployApiError(
             HTTPStatus.CONFLICT,
             "deployment_busy",
@@ -510,14 +519,13 @@ def deploy_ref(payload: dict[str, Any]) -> dict[str, Any]:
             {"status": "busy", "archive_cleanup": cleanup},
         )
 
-    claimed_upload: ClaimedDeploymentUpload | None = None
     try:
-        if validated_upload is not None:
-            claimed_upload = _claim_validated_upload(validated_upload)
         try:
             deploy_event_id = _new_deploy_event_id()
         except Exception as exc:
             cleanup = _cleanup_claimed_upload(claimed_upload)
+            if not _private_cleanup_succeeded(cleanup):
+                raise _artifact_cleanup_error(claimed_upload, cleanup) from exc
             raise DeployApiError(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 "deployment_event_allocation_failed",
@@ -1020,7 +1028,10 @@ def _shared_event_status_payload(payload: dict[str, Any], event_id: str) -> dict
 
 def _archive_cleanup_from_rollback(rollback_status: str) -> str:
     match = re.search(r"(?:^|\|)archive_cleanup:([^|]+)", rollback_status)
-    return match.group(1) if match is not None else "not_applicable"
+    if match is not None:
+        return match.group(1)
+    legacy = re.search(r"(?:^|\|)archive_([A-Za-z0-9_-]+)(?:\||$)", rollback_status)
+    return legacy.group(1) if legacy is not None else "not_applicable"
 
 
 def _new_deploy_event_id() -> int:
@@ -1284,34 +1295,42 @@ def _claim_validated_upload(
     upload: ValidatedDeploymentUpload,
 ) -> ClaimedDeploymentUpload:
     destination: Path | None = None
+    destination_owned = False
     try:
-        if not DEPLOY_ARTIFACTS_DIR.is_absolute():
-            raise OSError("artifact staging directory must be absolute")
-        DEPLOY_ARTIFACTS_DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
-        directory_status = os.lstat(DEPLOY_ARTIFACTS_DIR)
-        if not stat.S_ISDIR(directory_status.st_mode):
-            raise OSError("artifact staging path is not a directory")
-        os.chmod(DEPLOY_ARTIFACTS_DIR, 0o700)
-        suffix = f"claimed-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"
+        _prepare_artifact_staging()
+        suffix = (
+            f"claimed-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}-"
+            f"{secrets.token_hex(8)}"
+        )
         destination = DEPLOY_ARTIFACTS_DIR / (
             f"investment-knowledge-app-{upload.expected_sha}-{suffix}.tar.gz"
         )
-        source_status = os.lstat(upload.path)
-        if (
-            not stat.S_ISREG(source_status.st_mode)
-            or source_status.st_dev != upload.device
-            or source_status.st_ino != upload.inode
-        ):
-            raise OSError("validated artifact identity changed before claim")
-        os.replace(upload.path, destination)
-        observed = os.lstat(destination)
-        if (
-            not stat.S_ISREG(observed.st_mode)
-            or observed.st_dev != upload.device
-            or observed.st_ino != upload.inode
-        ):
-            raise OSError("claimed artifact identity changed")
-        os.chmod(destination, 0o600)
+        with ARTIFACT_CLAIM_MUTEX:
+            source_status = os.lstat(upload.path)
+            if (
+                not stat.S_ISREG(source_status.st_mode)
+                or source_status.st_dev != upload.device
+                or source_status.st_ino != upload.inode
+            ):
+                raise OSError("validated artifact identity changed before claim")
+            os.link(upload.path, destination, follow_symlinks=False)
+            destination_owned = True
+            observed = os.lstat(destination)
+            if (
+                not stat.S_ISREG(observed.st_mode)
+                or observed.st_dev != upload.device
+                or observed.st_ino != upload.inode
+            ):
+                raise OSError("claimed artifact identity changed")
+            source_after_claim = os.lstat(upload.path)
+            if (
+                not stat.S_ISREG(source_after_claim.st_mode)
+                or source_after_claim.st_dev != upload.device
+                or source_after_claim.st_ino != upload.inode
+            ):
+                raise OSError("public artifact identity changed during claim")
+            os.chmod(destination, 0o600)
+            upload.path.unlink()
         return ClaimedDeploymentUpload(
             path=destination,
             expected_sha=upload.expected_sha,
@@ -1319,9 +1338,21 @@ def _claim_validated_upload(
             inode=observed.st_ino,
         )
     except Exception as exc:
-        if destination is not None:
-            _remove_exact_private_artifact(destination)
+        private_cleanup = "not_applicable"
+        if destination_owned and destination is not None:
+            private_cleanup = _remove_exact_private_artifact(destination)
         source_cleanup = _cleanup_validated_upload(upload)
+        if not _private_cleanup_succeeded(private_cleanup):
+            raise _artifact_cleanup_error(
+                ClaimedDeploymentUpload(
+                    path=destination,
+                    expected_sha=upload.expected_sha,
+                    device=upload.device,
+                    inode=upload.inode,
+                ),
+                private_cleanup,
+                source_cleanup=source_cleanup,
+            ) from exc
         raise DeployApiError(
             HTTPStatus.SERVICE_UNAVAILABLE,
             "deployment_artifact_claim_failed",
@@ -1335,6 +1366,32 @@ def _claim_validated_upload(
                 },
             },
         ) from exc
+
+
+def _effective_service_uid() -> int:
+    return os.geteuid()
+
+
+def _prepare_artifact_staging() -> None:
+    if not DEPLOY_ARTIFACTS_DIR.is_absolute():
+        raise OSError("artifact staging directory must be absolute")
+    trusted_parent = DEPLOY_ARTIFACTS_DIR.parent
+    _require_owned_directory(trusted_parent, "artifact staging parent")
+    try:
+        DEPLOY_ARTIFACTS_DIR.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    _require_owned_directory(DEPLOY_ARTIFACTS_DIR, "artifact staging directory")
+    os.chmod(DEPLOY_ARTIFACTS_DIR, 0o700)
+    _require_owned_directory(DEPLOY_ARTIFACTS_DIR, "artifact staging directory")
+
+
+def _require_owned_directory(path: Path, label: str) -> None:
+    observed = os.lstat(path)
+    if not stat.S_ISDIR(observed.st_mode):
+        raise OSError(f"{label} must be a non-symlink directory")
+    if observed.st_uid != _effective_service_uid():
+        raise OSError(f"{label} must be owned by the effective service uid")
 
 
 def _cleanup_claimed_upload(upload: ClaimedDeploymentUpload | None) -> str:
@@ -1382,6 +1439,39 @@ def _remove_exact_private_artifact(path: Path) -> str:
     except OSError:
         return "failed"
     return "removed"
+
+
+def _private_cleanup_succeeded(status: str) -> bool:
+    return status in {"not_applicable", "removed", "already_removed"}
+
+
+def _artifact_cleanup_error(
+    upload: ClaimedDeploymentUpload | None,
+    cleanup_status: str,
+    *,
+    source_cleanup: str | None = None,
+) -> DeployApiError:
+    basename = upload.path.name if upload is not None else "unknown-artifact"
+    data: dict[str, Any] = {
+        "archive_cleanup": cleanup_status,
+        "artifact_basename": basename,
+        "return_to_coordinator": {
+            "decision": "blocked_with_owner",
+            "owner": "Infrastructure & Release Reliability Expert",
+            "action": (
+                f"Remove only {basename} from the trusted Ops artifact staging directory, "
+                "verify that exact artifact is gone, and then retry the deployment."
+            ),
+        },
+    }
+    if source_cleanup is not None:
+        data["source_archive_cleanup"] = source_cleanup
+    return DeployApiError(
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "deployment_artifact_cleanup_failed",
+        "private deployment artifact cleanup failed",
+        data,
+    )
 
 
 def _validate_deploy_label(raw: object, name: str, default: str) -> str:
