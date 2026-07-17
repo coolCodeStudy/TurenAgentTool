@@ -288,7 +288,7 @@ Every ECS-touching mode fails before activation when any gate is unsafe:
 - Docker does not respond within 10 seconds;
 - PostgreSQL is not running and healthy;
 - the global production deployment lock is held;
-- the target source violates the `main`/reachable-40-char-SHA policy;
+- the target source is not the freshly fetched authoritative `origin/main` tip;
 - rendered Compose config is invalid;
 - `full_image` does not have free disk of at least two times the compressed
   archive size plus 2 GiB.
@@ -322,7 +322,8 @@ df -h /
 free -m
 docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-curl -fsS http://127.0.0.1:8767/ops/deploy-status?id=<event-id> | python3 -m json.tool
+curl -fsS -H "Authorization: Bearer $OPS_API_TOKEN" \
+  "http://127.0.0.1:8767/ops/deploy-status?id=$DEPLOY_EVENT_ID" | python3 -m json.tool
 ```
 
 Also record PostgreSQL container ID and image ID before and after each

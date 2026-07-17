@@ -102,6 +102,9 @@ class DeployWorkflowContractTests(TestCase):
             self.assertNotIn("reachable from\n`origin/main`", document)
             self.assertIn("127.0.0.1:8767/ops/deploy-status", document)
             self.assertNotIn("127.0.0.1:8765/deploy/status", document)
+            self.assertIn('Authorization: Bearer $OPS_API_TOKEN', document)
+            self.assertIn("$DEPLOY_EVENT_ID", document)
+            self.assertNotIn("<event-id>", document)
 
     def test_full_image_uploads_only_immutable_app_image_archive(self) -> None:
         self.assertIn(

@@ -158,7 +158,8 @@ df -h /
 free -m
 docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-curl -fsS http://127.0.0.1:8767/ops/deploy-status?id=<event-id> | python3 -m json.tool
+curl -fsS -H "Authorization: Bearer $OPS_API_TOKEN" \
+  "http://127.0.0.1:8767/ops/deploy-status?id=$DEPLOY_EVENT_ID" | python3 -m json.tool
 ```
 
 ## Maintenance Rule
