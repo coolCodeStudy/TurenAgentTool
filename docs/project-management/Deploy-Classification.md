@@ -21,10 +21,10 @@ small ECS host:
 
 The workflow should succeed for `no_deploy` instead of skipping the workflow. This keeps future required checks green while avoiding production churn.
 
-Production source policy is strict: deployment may target only `main` or a
-40-character commit SHA for which `git merge-base --is-ancestor <sha>
-origin/main` succeeds. Named feature branches and SHAs not reachable from
-`origin/main` are rejected.
+Production source policy is strict: `main` resolves to the freshly fetched
+`origin/main` tip, and an explicit 40-character commit SHA must equal that
+same tip. Named feature branches, unintegrated SHAs, and older ancestors are
+rejected; integrate, push `main`, and dispatch the new authoritative tip.
 
 ## Mode Matrix
 
@@ -158,7 +158,7 @@ df -h /
 free -m
 docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-curl -fsS http://127.0.0.1:8765/deploy/status | python3 -m json.tool
+curl -fsS http://127.0.0.1:8767/ops/deploy-status?id=<event-id> | python3 -m json.tool
 ```
 
 ## Maintenance Rule

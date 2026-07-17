@@ -90,6 +90,19 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("/deploy/status", authoritative_block)
         self.assertIn("--base-sha \"$base_sha\"", authoritative_block)
 
+    def test_operator_docs_match_exact_tip_policy_and_independent_ops_port(self) -> None:
+        deployment = Path("DEPLOYMENT.md").read_text(encoding="utf-8")
+        classification = Path("docs/project-management/Deploy-Classification.md").read_text(
+            encoding="utf-8"
+        )
+
+        for document in (deployment, classification):
+            self.assertIn("freshly fetched", document)
+            self.assertIn("must equal", document)
+            self.assertNotIn("reachable from\n`origin/main`", document)
+            self.assertIn("127.0.0.1:8767/ops/deploy-status", document)
+            self.assertNotIn("127.0.0.1:8765/deploy/status", document)
+
     def test_full_image_uploads_only_immutable_app_image_archive(self) -> None:
         self.assertIn(
             "dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz",

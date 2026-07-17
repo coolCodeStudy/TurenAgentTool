@@ -229,9 +229,11 @@ or an explicitly approved manual recovery, not normal operator deployment.
 
 ## Optimized Pull Deploy Runbook
 
-The P0 production deploy path is pull-based and source-controlled. Production
-may deploy only `main` or a 40-character commit SHA that is reachable from
-`origin/main`; feature branch names and non-main SHAs are rejected.
+The P0 production deploy path is pull-based and source-controlled. `main`
+resolves to the freshly fetched `origin/main` tip; an explicit 40-character
+commit SHA must equal that same tip. A feature branch, an unintegrated SHA, or
+an older ancestor is rejected: integrate it into authoritative `main`, push,
+and dispatch the new tip.
 
 ### Mode Matrix
 
@@ -320,7 +322,7 @@ df -h /
 free -m
 docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-curl -fsS http://127.0.0.1:8765/deploy/status | python3 -m json.tool
+curl -fsS http://127.0.0.1:8767/ops/deploy-status?id=<event-id> | python3 -m json.tool
 ```
 
 Also record PostgreSQL container ID and image ID before and after each
