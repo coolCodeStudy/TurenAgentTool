@@ -145,11 +145,35 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
 
     def test_public_weekly_page_uses_shared_shell_without_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()
+
+        self.assertEqual(1, html.count('aria-label="主导航"'))
         self.assertIn('href="/weekly-review" aria-current="page"', html)
         self.assertIn('href="/daily-market-brief"', html)
         self.assertIn('href="/command"', html)
+        daily_index = html.index('href="/daily-market-brief"')
+        weekly_index = html.index('href="/weekly-review" aria-current="page"')
+        command_index = html.index('href="/command"')
+        self.assertLess(daily_index, weekly_index)
+        self.assertLess(weekly_index, command_index)
+
+        local_nav_marker = '<nav class="nav" aria-label="On this page">'
+        self.assertIn(local_nav_marker, html)
+        local_nav = html.split(local_nav_marker, 1)[1].split("</nav>", 1)[0]
+        self.assertEqual(3, local_nav.count("<a "))
+        self.assertEqual(3, local_nav.count('href="#'))
+        self.assertNotIn('href="/', local_nav)
+        self.assertIn('href="#holdings"', local_nav)
+        self.assertIn('href="#markdown"', local_nav)
+        self.assertIn('href="#source-status"', local_nav)
+
         self.assertNotIn('id="api-token"', html)
         self.assertNotIn("investment_knowledge_access_token", html)
+        self.assertNotIn("command_workbench_token", html)
+        self.assertNotIn("weekly_review_web_token", html)
+        self.assertNotIn("Authorization", html)
+        self.assertNotIn("InvestmentKnowledgeAccess", html)
+        self.assertNotIn("authorizationHeaders", html)
+        self.assertNotIn("localStorage", html)
         self.assertIn("公开只读", html)
 
     def test_daily_market_brief_read_remains_public_when_tokens_are_configured(self) -> None:

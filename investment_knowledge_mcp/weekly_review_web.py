@@ -993,9 +993,7 @@ def render_weekly_review_workbench_html() -> str:
       <div class="shell">
     <aside class="sidebar">
       <p class="brand">InvestmentKnowledge</p>
-      <nav class="nav" aria-label="主导航">
-        <a class="active" href="/weekly-review">本周复盘</a>
-        <a href="/daily-market-brief">每日市场简报</a>
+      <nav class="nav" aria-label="On this page">
         <a href="#holdings">当前持仓</a>
         <a href="#markdown">报告原文</a>
         <a href="#source-status">数据源状态</a>
