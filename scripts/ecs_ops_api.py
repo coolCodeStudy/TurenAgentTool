@@ -91,7 +91,7 @@ COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "turenagenttool_prod")
 COMPOSE_ENV_FILE = Path(os.getenv("COMPOSE_ENV_FILE", str(APP_ROOT / ".env")))
 HOST = os.getenv("OPS_API_HOST", "127.0.0.1")
 PORT = int(os.getenv("OPS_API_PORT", "8767"))
-TOKEN = os.getenv("OPS_API_TOKEN") or os.getenv("COMMAND_API_TOKEN") or ""
+TOKEN = os.getenv("OPS_API_TOKEN") or ""
 MAX_LOG_LINES = 400
 COMMAND_TIMEOUT_SECONDS = float(os.getenv("OPS_API_COMMAND_TIMEOUT_SECONDS", "8"))
 DEPLOY_TIMEOUT_SECONDS = float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600"))
@@ -2203,7 +2203,7 @@ def _required_int_query(query: dict[str, list[str]], key: str, minimum: int, max
 
 def main() -> None:
     if not TOKEN:
-        raise SystemExit("OPS_API_TOKEN or COMMAND_API_TOKEN is required")
+        raise SystemExit("OPS_API_TOKEN is required")
     server = ThreadingHTTPServer((HOST, PORT), OpsRequestHandler)
     print(f"InvestmentKnowledge Ops API listening on {HOST}:{PORT}", flush=True)
     server.serve_forever()

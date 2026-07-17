@@ -194,7 +194,7 @@ jobs:
         if: steps.early_plan.outputs.mode != 'no_deploy'
         env:
           OPS_API_URL: http://127.0.0.1:18767
-          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
           REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
           EMERGENCY_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.emergency_reason || '' }}
@@ -203,7 +203,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "$OPS_API_TOKEN" ]; then
-            echo "::error::OPS_API_TOKEN or COMMAND_API_TOKEN is required."
+            echo "::error::OPS_API_TOKEN is required."
             exit 1
           fi
 
@@ -377,7 +377,7 @@ jobs:
       - name: Delegate deployment to Ops API
         env:
           OPS_API_URL: http://127.0.0.1:18767
-          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           DEPLOY_MODE: ${{ needs.plan.outputs.mode }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}
@@ -576,7 +576,7 @@ jobs:
       - name: Delegate full image deployment to Ops API
         env:
           OPS_API_URL: http://127.0.0.1:18767
-          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}
           EMERGENCY_REASON: ${{ needs.plan.outputs.emergency_reason }}

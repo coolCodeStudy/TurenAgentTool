@@ -15,6 +15,11 @@ OPS_DEPLOY_RELEASE_ROOT=${OPS_DEPLOY_RELEASE_ROOT:-/opt/investment-knowledge/rel
 OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-1800}
 OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
 
+if [ -z "${OPS_API_TOKEN:-}" ]; then
+  echo "OPS_API_TOKEN is required to bootstrap the independent Ops API." >&2
+  exit 1
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "Please run as root on the ECS host." >&2
   exit 1
@@ -77,6 +82,7 @@ OPS_API_DEPLOY_TIMEOUT_SECONDS="$OPS_API_DEPLOY_TIMEOUT_SECONDS" \
 OPS_DEPLOY_ALLOWED_REFS="$OPS_DEPLOY_ALLOWED_REFS" \
 OPS_API_PORT="$OPS_API_PORT" \
 OPS_API_HOST="$OPS_API_HOST" \
+OPS_API_TOKEN="$OPS_API_TOKEN" \
 bash "$REPO_DIR/scripts/install_ops_api_on_ecs.sh" --start
 
 if [ -f /etc/investment-knowledge/ops-api.env ]; then

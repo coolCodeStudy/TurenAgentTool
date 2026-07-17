@@ -555,7 +555,6 @@ def cloud_deploy(
     render: bool = True,
     targets: list[str] | None = None,
     feature_routes: list[str] | None = None,
-    source: str = "mcp",
     requested_by: str = "mcp",
 ) -> dict[str, Any]:
     """Deploy an authoritative pushed ref through the synchronous controlled Ops API."""
@@ -568,7 +567,7 @@ def cloud_deploy(
                     mode=mode,
                     targets=targets,
                     feature_routes=feature_routes,
-                    source=source,
+                    source="mcp",
                     requested_by=requested_by,
                 ),
             }
@@ -579,7 +578,7 @@ def cloud_deploy(
                 mode=mode,
                 targets=targets,
                 feature_routes=feature_routes,
-                source=source,
+                source="mcp",
                 requested_by=requested_by,
             ),
         }

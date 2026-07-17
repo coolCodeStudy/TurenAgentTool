@@ -191,3 +191,8 @@ class OpsApiWorkflowContractTests(TestCase):
             'if [ -f /etc/investment-knowledge/ops-api.env ]; then\n              . /etc/investment-knowledge/ops-api.env',
             self.workflow,
         )
+
+    def test_bootstrap_requires_and_passes_a_dedicated_ops_credential(self) -> None:
+        self.assertIn("OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}", self.workflow)
+        self.assertIn("ECS_USERNAME ECS_PASSWORD OPS_API_TOKEN", self.workflow)
+        self.assertIn('OPS_API_TOKEN="$OPS_API_TOKEN"', self.workflow)

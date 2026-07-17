@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import re
 from collections.abc import Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlparse
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 import json
 
 from investment_knowledge_mcp.config import AppConfig, get_config
@@ -18,8 +19,14 @@ _DEPLOY_TARGET = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 _FEATURE_ROUTE = re.compile(r"/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)?")
 _DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
 _SENSITIVE_ASSIGNMENT = re.compile(
-    r"(?i)\b(?:password|passwd|token|api[_-]?key|secret|credential|authorization)\s*=\s*\S+"
+    r"(?i)\b(?:password|passwd|token|api[_-]?key|secret|credential|authorization|bearer)"
+    r"\s*[:=]\s*(?:bearer\s+)?\S+"
 )
+_SENSITIVE_NAMED_CREDENTIAL = re.compile(
+    r"(?i)\b[A-Za-z0-9_-]*(?:token|api[_-]?key|secret|credential|password|passwd)"
+    r"[A-Za-z0-9_-]*\s*[:=]\s*\S+"
+)
+_BEARER_CREDENTIAL = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]+=*")
 _SENSITIVE_KEY = re.compile(
     r"(?i)(?:password|passwd|token|api[_-]?key|secret|credential|authorization|private[_-]?key)"
 )
@@ -40,6 +47,19 @@ _DEPLOY_MODE_ALIASES = {
     "config_restart": "config_restart",
     "no_deploy": "no_deploy",
 }
+_APPLICATION_DEPLOY_TARGETS = frozenset(
+    {
+        "mcp",
+        "command-api",
+        "daily-market-brief-history-worker",
+        "daily-market-brief-scheduler",
+        "weekly-review-web",
+        "dingtalk-stream-bot",
+        "account-snapshot-scheduler",
+        "ipo-reminder-scheduler",
+    }
+)
+_DEPLOY_STATUS_URL = re.compile(r"/ops/deploy-status\?id=[1-9][0-9]*\Z")
 
 
 class OpsClientError(RuntimeError):
@@ -81,12 +101,15 @@ class OpsClient:
     token: str
     timeout: float = 8.0
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "base_url", _validated_ops_api_base_url(self.base_url))
+
     def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         query = f"?{urlencode(params)}" if params else ""
         url = f"{self.base_url.rstrip('/')}{path}{query}"
         request = Request(url, headers={"Authorization": f"Bearer {self.token}"})
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with _open_no_redirect(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             raise _http_error(exc) from exc
@@ -110,7 +133,7 @@ class OpsClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with _open_no_redirect(request, timeout=self.timeout) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             raise _http_error(exc) from exc
@@ -160,10 +183,14 @@ def _invalid_response_error() -> OpsClientError:
 def _response_data(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise _invalid_response_error()
-    if not payload.get("ok"):
+    if payload.get("ok") is False:
         raise _error_from_payload(payload)
+    if payload.get("ok") is not True:
+        raise _invalid_response_error()
     data = payload.get("data")
-    return data if isinstance(data, dict) else {"value": data}
+    if not isinstance(data, dict):
+        raise _invalid_response_error()
+    return data
 
 
 def _error_from_payload(payload: dict[str, Any], http_status: int | None = None) -> OpsClientError:
@@ -190,8 +217,73 @@ def _sanitize_text(value: object) -> str:
     text = str(value).replace("\r", " ").replace("\n", " ").strip()
     text = _AUTHENTICATED_URI.sub("[redacted-uri]", text)
     text = _SENSITIVE_ASSIGNMENT.sub("[redacted-credential]", text)
+    text = _SENSITIVE_NAMED_CREDENTIAL.sub("[redacted-credential]", text)
+    text = _BEARER_CREDENTIAL.sub("Bearer [redacted-credential]", text)
     text = _CREDENTIAL_SHAPE.sub("[redacted-credential]", text)
     return text[:1000]
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> Request | None:
+        return None
+
+    def http_error_302(
+        self,
+        request: Request,
+        response: object,
+        code: int,
+        message: str,
+        headers: object,
+    ) -> None:
+        raise HTTPError(request.full_url, code, message, headers, response)  # type: ignore[arg-type]
+
+
+def _open_no_redirect(request: Request, *, timeout: float):
+    return build_opener(ProxyHandler({}), _NoRedirectHandler).open(request, timeout=timeout)
+
+
+def _validated_ops_api_base_url(value: object) -> str:
+    if not isinstance(value, str):
+        raise _invalid_ops_api_url()
+    try:
+        parsed = urlparse(value.strip())
+        port = parsed.port
+    except ValueError as exc:
+        raise _invalid_ops_api_url() from exc
+    if (
+        parsed.scheme != "http"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or (port is not None and not 1 <= port <= 65535)
+        or not _is_private_ops_host(parsed.hostname)
+    ):
+        raise _invalid_ops_api_url()
+    return value.strip().rstrip("/")
+
+
+def _is_private_ops_host(host: str) -> bool:
+    if host == "host.docker.internal":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or (address.version == 4 and address.is_private)
+
+
+def _invalid_ops_api_url() -> OpsClientError:
+    return OpsClientError(
+        "Ops API URL must be a clean private HTTP endpoint",
+        error_code="ops_api_url_invalid",
+        next_action=(
+            "Use a loopback, RFC1918, or host.docker.internal HTTP endpoint without credentials, "
+            "query, fragment, or path."
+        ),
+    )
 
 
 def _sanitize_json_value(value: Any) -> Any:
@@ -297,10 +389,11 @@ def deploy_cloud_ref(
         source=source,
         requested_by=requested_by,
     )
-    return get_ops_deploy_client().post(
+    response = get_ops_deploy_client().post(
         "/ops/deploy",
         request,
     )
+    return _validated_terminal_deploy_response(response)
 
 
 def _validated_deploy_request(
@@ -344,6 +437,8 @@ def _validated_deploy_request(
         )
 
     normalized_targets = _validated_targets(targets)
+    if canonical_mode == "no_deploy" and normalized_targets:
+        raise _invalid_deploy_field("targets", "no_deploy requests must not name service targets")
     normalized_routes = _validated_routes(feature_routes)
     normalized_source = source.strip() if isinstance(source, str) else ""
     if normalized_source not in _ALLOWED_DEPLOY_SOURCES:
@@ -378,8 +473,54 @@ def _validated_targets(targets: Sequence[str] | None) -> list[str]:
         value = target.strip() if isinstance(target, str) else ""
         if _DEPLOY_TARGET.fullmatch(value) is None:
             raise _invalid_deploy_field("targets", "Targets must contain safe service names")
+        if value not in _APPLICATION_DEPLOY_TARGETS:
+            raise _invalid_deploy_field("targets", "Targets must name supported application services")
         normalized.append(value)
     return sorted(set(normalized))
+
+
+def _validated_terminal_deploy_response(response: object) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        raise _deployment_contract_error()
+    mode = response.get("mode")
+    no_deploy = mode == "no_deploy"
+    evidence = response.get("evidence")
+    handoff = response.get("return_to_coordinator")
+    stable_health = evidence.get("stable_health") if isinstance(evidence, dict) else None
+    route_smoke = evidence.get("route_smoke") if isinstance(evidence, dict) else None
+    event_id = response.get("deploy_event_id")
+    valid = (
+        response.get("status") == "completed"
+        and isinstance(event_id, int)
+        and event_id > 0
+        and isinstance(response.get("status_url"), str)
+        and _DEPLOY_STATUS_URL.fullmatch(response["status_url"]) is not None
+        and isinstance(evidence, dict)
+        and evidence.get("status") == ("not_required" if no_deploy else "succeeded")
+        and isinstance(evidence.get("requested_services"), list)
+        and isinstance(evidence.get("affected_services"), list)
+        and isinstance(stable_health, dict)
+        and stable_health.get("status") == ("not_applicable" if no_deploy else "healthy")
+        and isinstance(route_smoke, dict)
+        and route_smoke.get("status") == ("not_applicable" if no_deploy else "healthy")
+        and isinstance(handoff, dict)
+        and handoff.get("decision") == "accept_and_route"
+        and isinstance(handoff.get("action"), str)
+        and bool(handoff["action"].strip())
+    )
+    if not valid:
+        raise _deployment_contract_error()
+    return response
+
+
+def _deployment_contract_error() -> OpsClientError:
+    return OpsClientError(
+        "Ops API did not return verified terminal deployment evidence",
+        error_code="deployment_contract_invalid",
+        next_action=(
+            "Inspect the durable deploy event and repair the controlled Ops API response contract before retrying."
+        ),
+    )
 
 
 def _validated_routes(feature_routes: Sequence[str] | None) -> list[str]:

@@ -56,6 +56,7 @@ def main() -> None:
             postgres_password=_secret(32),
             postgres_db=args.postgres_db,
             command_api_token=_secret(40),
+            ops_api_token=_secret(40),
             dingtalk_secret=args.dingtalk_secret,
             dingtalk_send_webhook=args.dingtalk_send_webhook,
             dingtalk_send_secret=args.dingtalk_send_secret,
@@ -88,6 +89,7 @@ def _render_env(
     postgres_password: str,
     postgres_db: str,
     command_api_token: str,
+    ops_api_token: str,
     dingtalk_secret: str,
     dingtalk_send_webhook: str,
     dingtalk_send_secret: str,
@@ -127,6 +129,7 @@ COMMAND_API_HOST=0.0.0.0
 COMMAND_API_PORT=8001
 COMMAND_API_HOST_PORT=8001
 COMMAND_API_TOKEN={command_api_token}
+OPS_API_TOKEN={ops_api_token}
 
 DINGTALK_API_HOST=0.0.0.0
 DINGTALK_API_PORT=8002

@@ -32,7 +32,7 @@ Environment:
   OPS_API_VENV=/opt/investment-ops/.venv
   OPS_API_HOST=...              Optional; defaults to docker0 bridge IP, then 127.0.0.1.
   OPS_API_PORT=8767
-  OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
+  OPS_API_TOKEN=...             Required distinct credential for the private Ops API.
   OPS_DEPLOY_REPO_DIR=...       Optional; defaults to /opt/investment-knowledge-repo.
   OPS_DEPLOY_STATE_PATH=/opt/investment-knowledge/shared/deploy-state.json
   OPS_DEPLOY_LOCK_PATH=/opt/investment-knowledge/shared/deploy.lock
@@ -109,9 +109,9 @@ if [ -z "${OPS_API_HOST:-}" ]; then
 fi
 OPS_API_HOST=${OPS_API_HOST:-127.0.0.1}
 
-OPS_API_TOKEN=${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
+OPS_API_TOKEN=${OPS_API_TOKEN:-}
 if [ -z "$OPS_API_TOKEN" ]; then
-  echo "OPS_API_TOKEN or COMMAND_API_TOKEN is required." >&2
+  echo "OPS_API_TOKEN is required." >&2
   exit 1
 fi
 

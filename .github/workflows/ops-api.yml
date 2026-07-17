@@ -34,9 +34,10 @@ jobs:
           ECS_HOST: ${{ secrets.ECS_HOST }}
           ECS_USERNAME: ${{ secrets.ECS_USERNAME }}
           ECS_PASSWORD: ${{ secrets.ECS_PASSWORD }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
         run: |
           set -e
-          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD
+          for name in ECS_HOST ECS_USERNAME ECS_PASSWORD OPS_API_TOKEN
           do
             if [ -z "${!name}" ]; then
               echo "::error::Missing required GitHub secret: $name"
@@ -58,12 +59,15 @@ jobs:
 
       - name: Run Ops API operation
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
           command_timeout: 10m
+          envs: OPS_API_TOKEN
           script: |
             set -e
 
@@ -117,6 +121,7 @@ jobs:
                 # Phase 2: bootstrap reacquires the host lock after the Ops API is down;
                 # production-deploy concurrency remains held for the whole workflow job.
                 sudo BOOTSTRAP_REF="${{ github.sha }}" \
+                  OPS_API_TOKEN="$OPS_API_TOKEN" \
                   APP_ROOT="$APP_DIR" \
                   OPS_HOME=/opt/investment-ops \
                   bash "$UPLOAD_DIR/bootstrap_ops_api_v2_on_ecs.sh"
@@ -164,6 +169,7 @@ jobs:
               recover-lockout)
                 stop_ops_api_under_deploy_lock
                 sudo BOOTSTRAP_REF="${{ github.sha }}" \
+                  OPS_API_TOKEN="$OPS_API_TOKEN" \
                   APP_ROOT="$APP_DIR" \
                   OPS_HOME=/opt/investment-ops \
                   RECOVER_DEPLOY_LOCKOUT=true \

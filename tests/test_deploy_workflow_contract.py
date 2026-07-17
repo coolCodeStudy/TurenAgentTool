@@ -62,6 +62,11 @@ class DeployWorkflowContractTests(TestCase):
         self.assertLess(shared_tunnel, shared_call)
         self.assertLess(full_tunnel, full_call)
 
+    def test_actions_uses_dedicated_ops_credential_without_command_token_fallback(self) -> None:
+        self.assertIn("OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}", self.workflow)
+        self.assertNotIn("secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN", self.workflow)
+        self.assertNotIn("OPS_API_TOKEN or COMMAND_API_TOKEN is required", self.workflow)
+
     def test_no_deploy_classification_runs_before_ops_credentials_or_status(self) -> None:
         early = self.workflow.index("Classify credential-free no_deploy plan")
         authoritative = self.workflow.index("Build server-authoritative deployment plan")

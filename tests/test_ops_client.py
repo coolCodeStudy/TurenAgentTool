@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
+import inspect
 import json
 import os
 from pathlib import Path
+import threading
 import unittest
 from unittest import mock
 from urllib.error import HTTPError
@@ -13,6 +16,48 @@ from investment_knowledge_mcp import ops_client, server
 
 
 SHA = "a" * 40
+
+
+def _terminal_deploy_data(
+    *,
+    mode: str = "targeted_quick",
+    status: str = "completed",
+    requested_services: list[str] | None = None,
+    affected_services: list[str] | None = None,
+) -> dict[str, object]:
+    no_deploy = mode == "no_deploy"
+    requested = requested_services if requested_services is not None else ["weekly-review-web"]
+    affected = affected_services if affected_services is not None else ([] if no_deploy else list(requested))
+    health_status = "not_applicable" if no_deploy else "healthy"
+    window_seconds = 0 if no_deploy else 30
+    return {
+        "deploy_event_id": 42,
+        "ref": SHA,
+        "commit_sha": SHA,
+        "mode": mode,
+        "status": status,
+        "status_url": "/ops/deploy-status?id=42",
+        "evidence": {
+            "status": "not_required" if no_deploy else "succeeded",
+            "requested_services": requested,
+            "affected_services": affected,
+            "stable_health": {
+                "status": health_status,
+                "window_seconds": window_seconds,
+                "observed_seconds": window_seconds,
+                "final_health": health_status,
+            },
+            "route_smoke": {
+                "status": health_status,
+                "routes": [],
+                "checks": [],
+            },
+        },
+        "return_to_coordinator": {
+            "decision": "accept_and_route",
+            "action": "Apply the Coordinator Return Gate.",
+        },
+    }
 
 
 class OpsClientErrorContractTests(unittest.TestCase):
@@ -36,9 +81,9 @@ class OpsClientErrorContractTests(unittest.TestCase):
             {},
             BytesIO(json.dumps(payload).encode("utf-8")),
         )
-        client = ops_client.OpsClient("http://ops.invalid", "test-token")
+        client = ops_client.OpsClient("http://127.0.0.1:8767", "test-token")
 
-        with mock.patch.object(ops_client, "urlopen", side_effect=error):
+        with mock.patch.object(ops_client, "_open_no_redirect", side_effect=error):
             with self.assertRaises(ops_client.OpsClientError) as raised:
                 client.post("/ops/deploy", {"ref": SHA})
 
@@ -61,9 +106,9 @@ class OpsClientErrorContractTests(unittest.TestCase):
             {},
             BytesIO(b"OPS_API_TOKEN=do-not-print-this"),
         )
-        client = ops_client.OpsClient("http://ops.invalid", "test-token")
+        client = ops_client.OpsClient("http://127.0.0.1:8767", "test-token")
 
-        with mock.patch.object(ops_client, "urlopen", side_effect=error):
+        with mock.patch.object(ops_client, "_open_no_redirect", side_effect=error):
             with self.assertRaises(ops_client.OpsClientError) as raised:
                 client.post("/ops/deploy", {"ref": SHA})
 
@@ -84,15 +129,124 @@ class OpsClientErrorContractTests(unittest.TestCase):
             {},
             BytesIO(json.dumps(payload).encode("utf-8")),
         )
-        client = ops_client.OpsClient("http://ops.invalid", "test-token")
+        client = ops_client.OpsClient("http://127.0.0.1:8767", "test-token")
 
-        with mock.patch.object(ops_client, "urlopen", side_effect=error):
+        with mock.patch.object(ops_client, "_open_no_redirect", side_effect=error):
             with self.assertRaises(ops_client.OpsClientError) as raised:
                 client.post("/ops/deploy", {"ref": SHA})
 
         self.assertNotIn("do-not-print-this", str(raised.exception))
         self.assertEqual("[redacted-credential]", raised.exception.data["OPS_API_TOKEN"])
         self.assertEqual(42, raised.exception.data["deploy_event_id"])
+
+    def test_all_error_surfaces_redact_bearer_and_colon_delimited_secrets(self) -> None:
+        secret = "do-not-print-this-secret"
+        error = ops_client.OpsClientError(
+            f"Authorization: Bearer {secret}",
+            error_code="deployment_rejected",
+            data={
+                "context": {
+                    "innocuous": f"Bearer {secret}",
+                    "detail": f"OPS_API_TOKEN: {secret}",
+                }
+            },
+            next_action=f"secret: {secret}",
+        )
+
+        rendered = json.dumps(error.as_payload(), ensure_ascii=False)
+        self.assertNotIn(secret, rendered)
+        self.assertEqual("deployment_rejected", error.error_code)
+
+
+class OpsClientTransportSecurityTests(unittest.TestCase):
+    def test_only_clean_private_http_base_urls_are_accepted(self) -> None:
+        valid = (
+            "http://127.0.0.1:8767",
+            "http://127.1.2.3",
+            "http://10.2.3.4:8767/",
+            "http://172.16.2.3:8767",
+            "http://192.168.5.4:8767",
+            "http://host.docker.internal:8767",
+            "http://[::1]:8767",
+        )
+        invalid = (
+            "https://127.0.0.1:8767",
+            "http://example.com:8767",
+            "http://8.8.8.8:8767",
+            "http://localhost:8767",
+            "http://user:pass@127.0.0.1:8767",
+            "http://127.0.0.1:8767?token=value",
+            "http://127.0.0.1:8767#fragment",
+            "http://127.0.0.1:8767/ops",
+            "http://127.0.0.1:99999",
+            "ftp://127.0.0.1:8767",
+        )
+
+        for url in valid:
+            with self.subTest(valid=url):
+                self.assertEqual(url.rstrip("/"), ops_client.OpsClient(url, "token").base_url)
+        for url in invalid:
+            with self.subTest(invalid=url):
+                with self.assertRaises(ops_client.OpsClientError) as raised:
+                    ops_client.OpsClient(url, "token")
+                self.assertEqual("ops_api_url_invalid", raised.exception.error_code)
+
+    def test_authorization_is_never_forwarded_across_redirect(self) -> None:
+        received_authorization: list[str | None] = []
+
+        class TargetHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                received_authorization.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true,"data":{}}')
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+        target_thread.start()
+
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{target.server_port}/capture")
+                self.end_headers()
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        redirect_thread = threading.Thread(target=redirect.serve_forever, daemon=True)
+        redirect_thread.start()
+        try:
+            client = ops_client.OpsClient(f"http://127.0.0.1:{redirect.server_port}", "private-token")
+            with self.assertRaises(ops_client.OpsClientError) as raised:
+                client.get("/redirect")
+            self.assertEqual("ops_api_http_error", raised.exception.error_code)
+            self.assertEqual([], received_authorization)
+        finally:
+            redirect.shutdown()
+            redirect.server_close()
+            target.shutdown()
+            target.server_close()
+            redirect_thread.join(timeout=2)
+            target_thread.join(timeout=2)
+
+    def test_success_response_requires_literal_true_and_object_data(self) -> None:
+        invalid_payloads = (
+            {"ok": 1, "data": {}},
+            {"ok": "true", "data": {}},
+            {"ok": True, "data": []},
+            {"ok": True},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ops_client.OpsClientError) as raised:
+                    ops_client._response_data(payload)
+                self.assertEqual("ops_api_invalid_response", raised.exception.error_code)
 
 
 class DeployRequestContractTests(unittest.TestCase):
@@ -112,6 +266,9 @@ class DeployRequestContractTests(unittest.TestCase):
             ({"ref": "feature/not-authoritative"}, "source_policy_rejected"),
             ({"ref": SHA, "mode": "rolling"}, "deployment_request_invalid"),
             ({"ref": SHA, "targets": ["../worker"]}, "deployment_request_invalid"),
+            ({"ref": SHA, "targets": ["postgres"]}, "deployment_request_invalid"),
+            ({"ref": SHA, "targets": ["unknown-service"]}, "deployment_request_invalid"),
+            ({"ref": SHA, "mode": "no_deploy", "targets": ["mcp"]}, "deployment_request_invalid"),
             ({"ref": SHA, "feature_routes": ["https://example.test/health"]}, "deployment_request_invalid"),
             ({"ref": SHA, "feature_routes": ["/token/secret"]}, "deployment_request_invalid"),
             ({"ref": SHA, "source": "unknown_channel"}, "deployment_request_invalid"),
@@ -128,7 +285,10 @@ class DeployRequestContractTests(unittest.TestCase):
 
     def test_supported_fields_are_canonicalized_and_forwarded(self) -> None:
         client = mock.Mock()
-        client.post.return_value = {"status": "completed", "deploy_event_id": 42}
+        client.post.return_value = _terminal_deploy_data(
+            requested_services=["command-api", "weekly-review-web"],
+            affected_services=["command-api", "weekly-review-web"],
+        )
         with mock.patch.object(ops_client, "get_ops_deploy_client", return_value=client):
             result = ops_client.deploy_cloud_ref(
                 SHA.upper(),
@@ -152,18 +312,43 @@ class DeployRequestContractTests(unittest.TestCase):
             },
         )
 
+    def test_deploy_rejects_async_or_incomplete_success_contracts(self) -> None:
+        cases = (
+            {"status": "running", "deploy_event_id": 42},
+            {"status": "completed", "deploy_event_id": 42},
+            {**_terminal_deploy_data(), "deploy_event_id": None},
+            {**_terminal_deploy_data(), "status_url": "https://public.invalid/event/42"},
+            {**_terminal_deploy_data(), "evidence": {}},
+            {
+                **_terminal_deploy_data(),
+                "return_to_coordinator": {"decision": "pending", "action": "Wait."},
+            },
+        )
+        for response in cases:
+            with self.subTest(response=response):
+                client = mock.Mock()
+                client.post.return_value = response
+                with mock.patch.object(ops_client, "get_ops_deploy_client", return_value=client):
+                    with self.assertRaises(ops_client.OpsClientError) as raised:
+                        ops_client.deploy_cloud_ref(SHA, targets=["weekly-review-web"])
+                self.assertEqual("deployment_contract_invalid", raised.exception.error_code)
+
+    def test_no_deploy_accepts_explicit_not_applicable_terminal_evidence(self) -> None:
+        client = mock.Mock()
+        client.post.return_value = _terminal_deploy_data(
+            mode="no_deploy",
+            requested_services=[],
+            affected_services=[],
+        )
+        with mock.patch.object(ops_client, "get_ops_deploy_client", return_value=client):
+            result = ops_client.deploy_cloud_ref(SHA, mode="no_deploy")
+        self.assertEqual("not_required", result["evidence"]["status"])
+
     def test_render_describes_terminal_completion_and_status_handoff(self) -> None:
         with mock.patch.object(
             ops_client,
             "deploy_cloud_ref",
-            return_value={
-                "deploy_event_id": 42,
-                "ref": SHA,
-                "commit_sha": SHA,
-                "mode": "targeted_quick",
-                "status": "completed",
-                "status_url": "/ops/deploy-status?id=42",
-            },
+            return_value=_terminal_deploy_data(),
         ):
             rendered = ops_client.render_cloud_deploy(SHA)
 
@@ -202,13 +387,12 @@ class McpDeployContractTests(unittest.TestCase):
         self.assertEqual({"deploy_event_id": 42}, result["data"])
 
     def test_mcp_forwards_supported_deploy_evidence_fields(self) -> None:
-        with mock.patch.object(server, "deploy_cloud_ref", return_value={"status": "completed"}) as deploy:
+        with mock.patch.object(server, "deploy_cloud_ref", return_value=_terminal_deploy_data()) as deploy:
             result = server.cloud_deploy(
                 SHA,
                 mode="config_restart",
                 targets=["weekly-review-web"],
                 feature_routes=["/weekly-review"],
-                source="mcp",
                 requested_by="weekly-review-coordinator",
                 render=False,
             )
@@ -222,6 +406,9 @@ class McpDeployContractTests(unittest.TestCase):
             source="mcp",
             requested_by="weekly-review-coordinator",
         )
+
+    def test_mcp_source_is_fixed_and_not_caller_controlled(self) -> None:
+        self.assertNotIn("source", inspect.signature(server.cloud_deploy).parameters)
 
 
 class OpsContainerConfigurationContractTests(unittest.TestCase):
@@ -249,6 +436,38 @@ class OpsContainerConfigurationContractTests(unittest.TestCase):
         compose = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
         self.assertNotIn("OPS_API_TOKEN: ${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}", compose)
         self.assertIn("OPS_API_TOKEN: ${OPS_API_TOKEN:-}", compose)
+
+    def test_production_env_generator_creates_a_distinct_ops_token(self) -> None:
+        from scripts import generate_prod_env
+
+        rendered = generate_prod_env._render_env(
+            postgres_user="postgres",
+            postgres_password="postgres-secret",
+            postgres_db="investment_kg",
+            command_api_token="command-secret",
+            ops_api_token="ops-secret",
+            dingtalk_secret="",
+            dingtalk_send_webhook="",
+            dingtalk_send_secret="",
+            dingtalk_stream_client_id="",
+            dingtalk_stream_client_secret="",
+            dingtalk_stream_write_allowed_senders="",
+            dingtalk_stream_allow_write=False,
+            futu_opend_host="127.0.0.1",
+            futu_opend_port="11112",
+            futu_security_firm="FUTUSECURITIES",
+            futu_trade_market="HK",
+            futu_trade_env="REAL",
+            futu_account_id="0",
+            futu_account_index="0",
+            futu_position_cache_seconds="20",
+            futu_position_refresh_cache="true",
+            openai_api_key="",
+            openai_model="gpt-5.2",
+            pip_index_url="https://pypi.org/simple",
+        )
+        self.assertIn("COMMAND_API_TOKEN=command-secret", rendered)
+        self.assertIn("OPS_API_TOKEN=ops-secret", rendered)
 
     def test_deploy_timeout_is_documented_and_propagated_to_containers(self) -> None:
         env_example = Path(".env.example").read_text(encoding="utf-8")

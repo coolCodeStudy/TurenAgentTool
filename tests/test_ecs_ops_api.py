@@ -52,6 +52,18 @@ def _managed_archive(sha: str = TARGET_SHA):
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_ops_server_and_installer_require_dedicated_ops_credential(self) -> None:
+        source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
+        installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
+        bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(encoding="utf-8")
+
+        self.assertIn('TOKEN = os.getenv("OPS_API_TOKEN") or ""', source)
+        self.assertNotIn("COMMAND_API_TOKEN", source)
+        self.assertIn('OPS_API_TOKEN=${OPS_API_TOKEN:-}', installer)
+        self.assertIn("OPS_API_TOKEN is required.", installer)
+        self.assertNotIn("COMMAND_API_TOKEN", installer)
+        self.assertIn('OPS_API_TOKEN="$OPS_API_TOKEN"', bootstrap)
+
     def test_default_artifact_staging_is_under_independent_ops_home(self) -> None:
         source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
 
