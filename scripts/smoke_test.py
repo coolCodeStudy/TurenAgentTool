@@ -67,6 +67,7 @@ from investment_knowledge_mcp.weekly_review import build_weekly_review, build_we
 from investment_knowledge_mcp.weekly_review_web import (
     _resolve_request_range,
     _resolve_week_request,
+    render_daily_market_brief_html,
     render_weekly_review_workbench_html,
 )
 
@@ -86,6 +87,20 @@ SMOKE_ROUTER_STRATEGY_CANDIDATE = "Smoke test verifies command router strategy c
 SMOKE_ROUTER_NATURAL_MEMORY = "我觉得 Smoke Test 的组合管理成本需要被系统识别并沉淀。"
 SMOKE_JOB_SYMBOL = "SMOKEJOB"
 SMOKE_JOB_MARKET = "TEST"
+
+
+def smoke_frontend_experience_renderers() -> tuple[str, str, str]:
+    command_html = render_command_workbench_html()
+    weekly_html = render_weekly_review_workbench_html()
+    daily_html = render_daily_market_brief_html()
+    for path in ("/daily-market-brief", "/weekly-review", "/command"):
+        assert path in command_html
+        assert path in weekly_html
+        assert path in daily_html
+    assert "investment_knowledge_access_token" in command_html
+    assert "investment_knowledge_access_token" not in weekly_html
+    assert "investment_knowledge_access_token" not in daily_html
+    return command_html, weekly_html, daily_html
 
 
 def cleanup_smoke_data() -> None:
@@ -198,6 +213,7 @@ def cleanup_smoke_data() -> None:
 
 
 def main() -> None:
+    command_html, weekly_html, _daily_html = smoke_frontend_experience_renderers()
     run_schema()
     cleanup_smoke_data()
 
@@ -342,8 +358,6 @@ def main() -> None:
             workbench_missing_symbol = parse_workbench_command("决策 TSTZZ", allow_llm=False)
             workbench_bootstrap = parse_workbench_command("创建股票档案 TSTZZ US", allow_llm=False)
             workbench_unknown = parse_workbench_command("乱买英特尔", allow_llm=False)
-            workbench_html = render_command_workbench_html()
-
         router_insight_result = handle_command(
             f"记录心得 {SMOKE_SYMBOL} {SMOKE_MARKET} {SMOKE_ROUTER_INSIGHT}"
         )
@@ -442,13 +456,13 @@ def main() -> None:
         assert workbench_bootstrap["status"] == "parsed"
         assert workbench_bootstrap["exact_command"] == "创建股票档案 TSTZZ US"
         assert workbench_unknown["status"] == "unsupported"
-        assert "Command Workbench" in workbench_html
-        assert 'href="/command" aria-current="page"' in workbench_html
-        assert "investment_knowledge_access_token" in workbench_html
-        assert 'id="api-token"' not in workbench_html
-        assert 'id="access-panel"' in workbench_html
-        assert 'role="alert"' in workbench_html
-        assert "access.authorizationHeaders()" in workbench_html
+        assert "Command Workbench" in command_html
+        assert 'href="/command" aria-current="page"' in command_html
+        assert "investment_knowledge_access_token" in command_html
+        assert 'id="api-token"' not in command_html
+        assert 'id="access-panel"' in command_html
+        assert 'role="alert"' in command_html
+        assert "access.authorizationHeaders()" in command_html
         assert router_insight_result.ok
         assert router_candidate_result.ok
         assert router_duplicate_candidate_result.ok
@@ -730,18 +744,17 @@ def main() -> None:
         assert weekly_command_result.ok
         assert "本周复盘 2020-01-06 至 2020-01-12" in weekly_command_result.message
         assert "已保存周复盘" in weekly_command_result.message
-        weekly_web_html = render_weekly_review_workbench_html()
-        assert "InvestmentKnowledge" in weekly_web_html
-        assert "本周复盘" in weekly_web_html
-        assert "/api/weekly-review/save" in weekly_web_html
-        assert "/api/weekly-review/generate" in weekly_web_html
-        assert "/api/weekly-review/refresh" in weekly_web_html
-        assert "week-date" in weekly_web_html
-        assert "id=\"start\"" not in weekly_web_html
-        assert "id=\"end\"" not in weekly_web_html
-        assert "index provider not configured" not in weekly_web_html
-        assert "external event provider not implemented" not in weekly_web_html
-        assert "data-slot=\"holdings\"" in weekly_web_html
+        assert "InvestmentKnowledge" in weekly_html
+        assert "本周复盘" in weekly_html
+        assert "/api/weekly-review/save" in weekly_html
+        assert "/api/weekly-review/generate" in weekly_html
+        assert "/api/weekly-review/refresh" in weekly_html
+        assert "week-date" in weekly_html
+        assert "id=\"start\"" not in weekly_html
+        assert "id=\"end\"" not in weekly_html
+        assert "index provider not configured" not in weekly_html
+        assert "external event provider not implemented" not in weekly_html
+        assert "data-slot=\"holdings\"" in weekly_html
         web_start, web_end = _resolve_request_range({"start": "2020-01-12", "end": "2020-01-06"})
         assert web_start == weekly_start
         assert web_end == weekly_end
