@@ -98,8 +98,22 @@ def smoke_frontend_experience_renderers() -> tuple[str, str, str]:
         assert path in weekly_html
         assert path in daily_html
     assert "investment_knowledge_access_token" in command_html
-    assert "investment_knowledge_access_token" not in weekly_html
     assert "investment_knowledge_access_token" not in daily_html
+    assert "/api/weekly-review" in weekly_html
+    assert "公开只读" in weekly_html
+    for protected_path in (
+        "/api/weekly-review/generate",
+        "/api/weekly-review/refresh",
+        "/api/weekly-review/save",
+        "/api/candidate-insights",
+    ):
+        assert protected_path not in weekly_html
+    for access_key in (
+        "investment_knowledge_access_token",
+        "command_workbench_token",
+        "weekly_review_web_token",
+    ):
+        assert access_key not in weekly_html
     return command_html, weekly_html, daily_html
 
 
@@ -746,9 +760,6 @@ def main() -> None:
         assert "已保存周复盘" in weekly_command_result.message
         assert "InvestmentKnowledge" in weekly_html
         assert "本周复盘" in weekly_html
-        assert "/api/weekly-review/save" in weekly_html
-        assert "/api/weekly-review/generate" in weekly_html
-        assert "/api/weekly-review/refresh" in weekly_html
         assert "week-date" in weekly_html
         assert "id=\"start\"" not in weekly_html
         assert "id=\"end\"" not in weekly_html
