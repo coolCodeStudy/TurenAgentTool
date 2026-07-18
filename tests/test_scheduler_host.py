@@ -33,6 +33,11 @@ class RecordingExecutor:
         self.shutdown_calls.append((wait, cancel_futures))
 
 
+class FailingSubmitExecutor(RecordingExecutor):
+    def submit(self, callback):
+        raise RuntimeError("sensitive executor detail")
+
+
 class SchedulerHostTests(unittest.TestCase):
     def test_due_jobs_run_independently(self) -> None:
         calls: list[str] = []
@@ -136,8 +141,69 @@ class SchedulerHostTests(unittest.TestCase):
 
         self.assertEqual(states["slow"].last_error, "timeout")
         self.assertTrue(states["slow"].running)
+        self.assertEqual(states["slow"].timed_out_runs, 1)
         self.assertEqual(len(executor.submissions), 2)
         self.assertIsNone(states["other"].last_failure_at)
+
+    def test_submission_failure_does_not_report_job_as_started(self) -> None:
+        host = SchedulerHost(
+            (JobDefinition("daily", 5, lambda: None, 2),),
+            clock=lambda: 0.0,
+            executor=FailingSubmitExecutor(),
+        )
+
+        state = host.tick(0.0)[0]
+
+        self.assertIsNone(state.last_started_at)
+        self.assertEqual(state.last_finished_at, 0.0)
+        self.assertEqual(state.last_failure_at, 0.0)
+        self.assertEqual(state.last_error, "executor:RuntimeError")
+        self.assertEqual(state.next_due_at, 5.0)
+        self.assertNotIn("sensitive", repr(state))
+
+    def test_timed_out_non_overlap_run_must_finish_before_next_start(self) -> None:
+        executor = RecordingExecutor(immediate=False)
+        host = SchedulerHost(
+            (JobDefinition("slow", 1, lambda: None, 2),),
+            clock=lambda: 0.0,
+            executor=executor,
+        )
+
+        host.tick(0.0)
+        timed_out = host.tick(2.0)[0]
+        self.assertTrue(timed_out.running)
+        self.assertEqual(timed_out.active_runs, 1)
+        self.assertEqual(timed_out.timed_out_runs, 1)
+        self.assertEqual(len(executor.submissions), 1)
+
+        executor.run_submission(0)
+        resumed = host.tick(3.0)[0]
+
+        self.assertEqual(len(executor.submissions), 2)
+        self.assertTrue(resumed.running)
+        self.assertEqual(resumed.active_runs, 1)
+        self.assertEqual(resumed.timed_out_runs, 0)
+
+    def test_overlapping_success_does_not_hide_active_timed_out_run(self) -> None:
+        executor = RecordingExecutor(immediate=False)
+        host = SchedulerHost(
+            (JobDefinition("overlap", 1, lambda: None, 2, allow_overlap=True),),
+            clock=lambda: 0.0,
+            executor=executor,
+        )
+
+        host.tick(0.0)
+        timed_out = host.tick(2.0)[0]
+        self.assertEqual(timed_out.active_runs, 2)
+        self.assertEqual(timed_out.timed_out_runs, 1)
+
+        executor.run_submission(1)
+        state = host.tick(2.5)[0]
+
+        self.assertEqual(state.last_success_at, 2.5)
+        self.assertEqual(state.last_error, "timeout")
+        self.assertEqual(state.active_runs, 1)
+        self.assertEqual(state.timed_out_runs, 1)
 
     def test_signal_handler_only_requests_shutdown(self) -> None:
         executor = RecordingExecutor(immediate=False)

@@ -49,9 +49,12 @@ class JobDefinition:
 
 @dataclass(frozen=True)
 class JobState:
+    """Observable state; ``timed_out_runs`` are still-live thread callbacks."""
+
     job_id: str
     running: bool
     active_runs: int
+    timed_out_runs: int
     next_due_at: float
     last_started_at: float | None = None
     last_finished_at: float | None = None
@@ -85,6 +88,11 @@ class SchedulerHost:
     ``tick`` is deliberately deterministic: callers may supply a monotonic
     timestamp and an executor. Worker exceptions are reduced to their type so
     health output cannot expose provider or credential detail.
+
+    Thread timeouts are observation-only: Python cannot safely terminate a
+    running callback. In-process job adapters must therefore be bounded or
+    cooperatively cancellable. Work that requires enforced termination belongs
+    behind a subprocess boundary, not this thread executor.
     """
 
     def __init__(
@@ -143,6 +151,7 @@ class SchedulerHost:
                 job_id=runtime.definition.job_id,
                 running=bool(runtime.active_runs),
                 active_runs=len(runtime.active_runs),
+                timed_out_runs=sum(active.timeout_reported for active in runtime.active_runs),
                 next_due_at=runtime.next_due_at,
                 last_started_at=runtime.last_started_at,
                 last_finished_at=runtime.last_finished_at,
@@ -173,6 +182,13 @@ class SchedulerHost:
             self.close(wait=False)
 
     def close(self, *, wait: bool = False) -> None:
+        """Stop new submissions and close the executor.
+
+        ``wait=False`` does not wait for or terminate callbacks that are already
+        running, so it is not a bounded-shutdown guarantee. Pending callbacks
+        are only cancellation requests delegated to the executor.
+        """
+
         if self._closed:
             return
         self.request_shutdown()
@@ -185,7 +201,6 @@ class SchedulerHost:
         if runtime.active_runs and not runtime.definition.allow_overlap:
             return
 
-        runtime.last_started_at = now
         runtime.next_due_at = now + float(runtime.definition.interval_seconds)
         try:
             future = self._executor.submit(runtime.definition.run_once)
@@ -194,6 +209,7 @@ class SchedulerHost:
             runtime.last_failure_at = now
             runtime.last_error = f"executor:{type(exc).__name__}"
             return
+        runtime.last_started_at = now
         runtime.active_runs.append(_ActiveRun(future=future, started_at=now))
 
     def _reap(self, runtime: _JobRuntime, now: float) -> None:
@@ -220,6 +236,8 @@ class SchedulerHost:
                 runtime.last_error = "timeout"
             remaining.append(active)
         runtime.active_runs = remaining
+        if any(active.timeout_reported for active in remaining):
+            runtime.last_error = "timeout"
 
 
 def _require_positive_finite(value: object, name: str) -> None:
