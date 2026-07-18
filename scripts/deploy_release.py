@@ -175,7 +175,12 @@ def _artifact_cleanup_from_rollback(rollback_status: str) -> str:
 class HealthChecker(Protocol):
     def check_service(self, service: str, feature_routes: tuple[str, ...]) -> None: ...
 
-    def check_aggregate(self, feature_routes: tuple[str, ...]) -> None: ...
+    def check_aggregate(
+        self,
+        feature_routes: tuple[str, ...],
+        *,
+        services: frozenset[str] | None = None,
+    ) -> None: ...
 
 
 class Clock(Protocol):
@@ -236,7 +241,7 @@ class DockerHealthChecker:
         elif service == "mcp":
             self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "MCP transport is unavailable")
         elif service == "scheduler-host":
-            self._checked(
+            self._checked_eventually(
                 (
                     "docker",
                     "compose",
@@ -251,7 +256,12 @@ class DockerHealthChecker:
                 "scheduler host health snapshot is stale or unavailable",
             )
 
-    def check_aggregate(self, feature_routes: tuple[str, ...]) -> None:
+    def check_aggregate(
+        self,
+        feature_routes: tuple[str, ...],
+        *,
+        services: frozenset[str] | None = None,
+    ) -> None:
         self._check_running("postgres")
         self._checked(
             ("docker", "compose", "exec", "-T", "postgres", "pg_isready"),
@@ -260,7 +270,8 @@ class DockerHealthChecker:
         for route in ("/health", "/weekly-review", "/command", *feature_routes):
             self._http_success(f"http://127.0.0.1:8010{route}", "aggregate weekly review route is unavailable")
         self._http_success("http://127.0.0.1:8001/health", "aggregate command API route is unavailable")
-        self._authenticated_negative_check(port=8010)
+        if services is None or "command-api" not in services:
+            self._authenticated_negative_check(port=8010)
         self._authenticated_negative_check(port=8001)
         self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "aggregate MCP route is unavailable")
 
@@ -372,6 +383,20 @@ class DockerHealthChecker:
     def _checked(self, command: tuple[str, ...], message: str) -> None:
         if self._run(command).returncode != 0:
             raise DeploymentHealthError(message)
+
+    def _checked_eventually(
+        self,
+        command: tuple[str, ...],
+        message: str,
+        *,
+        attempts: int = 20,
+    ) -> None:
+        for attempt in range(attempts):
+            if self._run(command).returncode == 0:
+                return
+            if attempt < attempts - 1:
+                self.sleeper(1.0)
+        raise DeploymentHealthError(message)
 
     def _run(self, command: tuple[str, ...]):
         if command[:2] == ("docker", "compose"):
@@ -1574,7 +1599,14 @@ class DeploymentEngine:
 
         aggregate_failed = False
         try:
-            self.health.check_aggregate(context.request.feature_routes)
+            self.health.check_aggregate(
+                context.request.feature_routes,
+                services=(
+                    frozenset(previous_services)
+                    if previous_services is not None
+                    else None
+                ),
+            )
         except Exception:
             aggregate_failed = True
 

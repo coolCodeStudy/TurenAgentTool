@@ -145,6 +145,7 @@ class FakeHealth:
         self.failed_services: set[str] = set()
         self.service_checks: list[tuple[str, tuple[str, ...]]] = []
         self.aggregate_checks = 0
+        self.aggregate_service_sets: list[frozenset[str] | None] = []
         self.fail_aggregate_after: int | None = None
         self.on_check = None
 
@@ -159,11 +160,17 @@ class FakeHealth:
             self.failed_services.remove(service)
             raise DeploymentHealthError(f"{service} failed health verification")
 
-    def check_aggregate(self, feature_routes: tuple[str, ...]) -> None:
+    def check_aggregate(
+        self,
+        feature_routes: tuple[str, ...],
+        *,
+        services: frozenset[str] | None = None,
+    ) -> None:
         if self.on_check is not None:
             self.on_check("aggregate")
         del feature_routes
         self.aggregate_checks += 1
+        self.aggregate_service_sets.append(services)
         if (
             self.fail_aggregate_after is not None
             and self.aggregate_checks > self.fail_aggregate_after
@@ -705,6 +712,13 @@ class DeploymentEngineTests(TestCase):
             "daily-market-brief-scheduler",
             "daily-market-brief-history-worker",
         )
+        previous_topology = (
+            *old_services,
+            "command-api",
+            "weekly-review-web",
+            "mcp",
+            "postgres",
+        )
         self.plan = replace(self.plan, targets=("scheduler-host",))
         request = replace(
             self.targeted_request,
@@ -714,10 +728,14 @@ class DeploymentEngineTests(TestCase):
         target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.runner.results[
             _all_profile_services_command(previous_compose)
-        ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
+        ] = CommandResult(0, "\n".join(previous_topology) + "\n", "")
         self.runner.results[
             _all_profile_services_command(target_compose)
-        ] = CommandResult(0, "postgres\nscheduler-host\n", "")
+        ] = CommandResult(
+            0,
+            "postgres\nscheduler-host\nweekly-review-web\nmcp\n",
+            "",
+        )
 
         def fail_after_obsolete_removal(command: tuple[str, ...]) -> None:
             if command[-4:] == (
@@ -751,6 +769,9 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(
             any("--remove-orphans" in command for command in self.runner.commands)
         )
+        self.assertEqual(frozenset(previous_topology), self.health.aggregate_service_sets[-1])
+        self.assertIsNone(outcome.manual_recovery)
+        self.assertFalse(self.engine.lockout_path.exists())
 
     def test_rollback_requires_each_restored_obsolete_service_to_remain_healthy(self) -> None:
         old_services = (
@@ -2616,6 +2637,29 @@ class DockerHealthCheckerTests(TestCase):
             any("http://127.0.0.1:8002" in command for command in rendered)
         )
 
+    def test_legacy_rollback_aggregate_uses_command_api_auth_boundary(self) -> None:
+        legacy_services = frozenset(
+            {"postgres", "mcp", "command-api", "weekly-review-web"}
+        )
+
+        self.health.check_aggregate((), services=legacy_services)
+
+        rendered = [" ".join(command) for command in self.runner.commands]
+        self.assertTrue(
+            any(
+                "--request POST" in command
+                and "http://127.0.0.1:8001/command" in command
+                for command in rendered
+            )
+        )
+        self.assertFalse(
+            any(
+                "--request POST" in command
+                and "http://127.0.0.1:8010/command" in command
+                for command in rendered
+            )
+        )
+
     def test_dingtalk_target_health_still_checks_its_http_boundaries(self) -> None:
         self.health.check_service("dingtalk-api", ())
 
@@ -2676,6 +2720,32 @@ class DockerHealthCheckerTests(TestCase):
 
         self.assertEqual(2, runner.health_attempts)
         self.assertEqual([1.0], sleeps)
+
+    def test_scheduler_health_waits_for_the_first_snapshot(self) -> None:
+        class FlakySchedulerRunner(HealthRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.health_attempts = 0
+
+            def run(
+                self, command: tuple[str, ...], timeout: int | None = None
+            ) -> CommandResult:
+                if "--check-health" in command:
+                    self.commands.append(command)
+                    self.health_attempts += 1
+                    if self.health_attempts < 3:
+                        return CommandResult(1, "", "")
+                    return CommandResult(0, "", "")
+                return super().run(command, timeout)
+
+        runner = FlakySchedulerRunner()
+        sleeps: list[float] = []
+        health = DockerHealthChecker(runner, self.current, sleeper=sleeps.append)
+
+        health.check_service("scheduler-host", ())
+
+        self.assertEqual(3, runner.health_attempts)
+        self.assertEqual([1.0, 1.0], sleeps)
 
     def test_running_scheduler_ignores_handled_task_traceback(self) -> None:
         logs = (
