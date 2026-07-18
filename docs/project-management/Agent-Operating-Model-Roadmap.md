@@ -45,7 +45,7 @@ Success criteria:
 
 ## P1: Role Skills And Review Lanes
 
-Status: V1 delivered on branch `codex/architecture-code-health-agent`; pending authoritative integration.
+Status: V1 delivered by the authoritative no-deploy integration commit.
 
 Purpose: make common role handoffs repeatable without forcing the Owner to rewrite prompts.
 
