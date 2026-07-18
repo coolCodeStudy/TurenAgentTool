@@ -51,10 +51,14 @@ class FakeChild:
         returncode: int | None = None,
         wait_times_out: bool = False,
         terminate_error: Exception | None = None,
+        kill_error: Exception | None = None,
+        final_wait_times_out: bool = False,
     ) -> None:
         self.returncode = returncode
         self.wait_times_out = wait_times_out
         self.terminate_error = terminate_error
+        self.kill_error = kill_error
+        self.final_wait_times_out = final_wait_times_out
         self.poll_calls = 0
         self.wait_calls: list[float | None] = []
         self.terminate_calls = 0
@@ -68,6 +72,8 @@ class FakeChild:
         self.wait_calls.append(timeout)
         if self.wait_times_out and self.kill_calls == 0:
             raise subprocess.TimeoutExpired("history-child", timeout)
+        if self.final_wait_times_out and self.kill_calls > 0:
+            raise subprocess.TimeoutExpired("history-child", timeout)
         if self.returncode is None:
             self.returncode = -9 if self.kill_calls else -15
         return self.returncode
@@ -79,6 +85,8 @@ class FakeChild:
 
     def kill(self) -> None:
         self.kill_calls += 1
+        if self.kill_error is not None:
+            raise self.kill_error
         self.returncode = -9
 
 
@@ -398,6 +406,67 @@ class HistoryChildSupervisorTests(unittest.TestCase):
         self.assertEqual(0, state.starts)
         self.assertEqual("discard:RuntimeError", state.last_error)
         self.assertNotIn(secret, repr(state))
+
+    def test_unpublished_child_remains_owned_when_fallback_kill_fails(self) -> None:
+        factory_entered = Event()
+        release_factory = Event()
+        child = FakeChild(
+            terminate_error=RuntimeError("private terminate detail"),
+            kill_error=OSError("private kill detail"),
+        )
+
+        def factory() -> FakeChild:
+            factory_entered.set()
+            release_factory.wait(timeout=1.0)
+            return child
+
+        supervisor = HistoryChildSupervisor(lambda: True, factory)
+        polling = Thread(target=supervisor.poll)
+        polling.start()
+        self.assertTrue(factory_entered.wait(timeout=1.0))
+        supervisor.close(timeout_seconds=0.01)
+        release_factory.set()
+        polling.join(timeout=2.0)
+
+        state = supervisor.health()
+        self.assertTrue(state.running)
+        self.assertTrue(state.cleanup_pending)
+        self.assertEqual("discard:RuntimeError|cleanup:OSError", state.last_error)
+        self.assertNotIn("private", repr(state))
+
+        child.terminate_error = None
+        child.kill_error = None
+        recovered = supervisor.close(timeout_seconds=0.1)
+        self.assertFalse(recovered.running)
+        self.assertFalse(recovered.cleanup_pending)
+
+    def test_unpublished_child_remains_owned_when_final_wait_times_out(self) -> None:
+        factory_entered = Event()
+        release_factory = Event()
+        child = FakeChild(wait_times_out=True, final_wait_times_out=True)
+
+        def factory() -> FakeChild:
+            factory_entered.set()
+            release_factory.wait(timeout=1.0)
+            return child
+
+        supervisor = HistoryChildSupervisor(lambda: True, factory)
+        polling = Thread(target=supervisor.poll)
+        polling.start()
+        self.assertTrue(factory_entered.wait(timeout=1.0))
+        supervisor.close(timeout_seconds=0.01)
+        release_factory.set()
+        polling.join(timeout=2.0)
+
+        state = supervisor.health()
+        self.assertTrue(state.running)
+        self.assertTrue(state.cleanup_pending)
+        self.assertEqual("cleanup:TimeoutExpired", state.last_error)
+
+        child.final_wait_times_out = False
+        recovered = supervisor.close(timeout_seconds=0.1)
+        self.assertFalse(recovered.running)
+        self.assertFalse(recovered.cleanup_pending)
 
     def test_pending_work_starts_exactly_one_child_while_it_is_live(self) -> None:
         child = FakeChild()

@@ -42,6 +42,7 @@ class HistoryChildState:
     running: bool
     starts: int
     poll_in_flight: bool = False
+    cleanup_pending: bool = False
     last_exit_code: int | None = None
     last_error: str | None = None
 
@@ -66,6 +67,7 @@ class HistoryChildSupervisor:
         self._last_error: str | None = None
         self._closed = False
         self._poll_in_flight = False
+        self._cleanup_pending = False
         self._condition = Condition()
 
     def poll(self) -> HistoryChildState:
@@ -129,6 +131,7 @@ class HistoryChildSupervisor:
             running=self._child is not None,
             starts=self._starts,
             poll_in_flight=self._poll_in_flight,
+            cleanup_pending=self._cleanup_pending,
             last_exit_code=self._last_exit_code,
             last_error=self._last_error,
         )
@@ -208,7 +211,15 @@ class HistoryChildSupervisor:
             child.kill()
             child.wait(timeout=1.0)
         except Exception as exc:
-            self._set_error(f"discard:{type(exc).__name__}")
+            cleanup_error = f"cleanup:{type(exc).__name__}"
+            with self._condition:
+                self._child = child
+                self._cleanup_pending = True
+                self._last_error = (
+                    f"{first_error}|{cleanup_error}"
+                    if first_error is not None
+                    else cleanup_error
+                )
             return
         if first_error is not None:
             self._set_error(first_error)
@@ -230,6 +241,7 @@ class HistoryChildSupervisor:
         with self._condition:
             if self._child is child:
                 self._child = None
+                self._cleanup_pending = False
             self._last_exit_code = normalized_code
             self._last_error = reap_error or (
                 None if normalized_code == 0 else f"exit:{normalized_code}"
