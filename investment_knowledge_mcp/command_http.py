@@ -68,32 +68,39 @@ def execute_workbench_request(
 ) -> CommandHttpResponse:
     raw_input = str(request.body.get("text") or "").strip()
     action_id = _clean_optional_text(request.body.get("action_id"))
+    sender = _clean_optional_text(request.sender)
     source = _clean_optional_text(request.source)
     fields = request.body.get("fields") if isinstance(request.body.get("fields"), dict) else {}
     selected_target = request.body.get("selected_target") if isinstance(request.body.get("selected_target"), dict) else None
-    preview = parse_workbench_command(
-        raw_input,
-        action_id=action_id,
-        fields=fields,
-        selected_target=selected_target,
-    )
+    event_command = raw_input or f"[action] {action_id or 'unknown'}"
+    try:
+        preview = parse_workbench_command(
+            raw_input,
+            action_id=action_id,
+            fields=fields,
+            selected_target=selected_target,
+        )
+    except Exception:
+        return _safe_workbench_failure_response(command=event_command, sender=sender, source=source)
 
     if not execute:
         event_id = _record_event_id(
-            command=raw_input or f"[action] {action_id or 'unknown'}",
+            command=event_command,
             ok=preview.get("status") == "parsed",
             message=f"parse status={preview.get('status')} action={preview.get('action_id')}",
-            sender=_clean_optional_text(request.sender),
+            sender=sender,
             source=source,
         )
         return CommandHttpResponse(HTTPStatus.OK, {"ok": True, "preview": preview, "event_id": event_id})
 
-    blocker = execution_blocker(preview, confirmed=bool(request.body.get("confirmed")))
+    try:
+        blocker = execution_blocker(preview, confirmed=bool(request.body.get("confirmed")))
+    except Exception:
+        return _safe_workbench_failure_response(command=event_command, sender=sender, source=source)
     if blocker:
         return CommandHttpResponse(HTTPStatus.CONFLICT, {"ok": False, "error": blocker, "preview": preview})
 
     exact_command = str(preview.get("exact_command") or "").strip()
-    sender = _clean_optional_text(request.sender)
     try:
         run_schema()
         result = handle_command(exact_command)
@@ -144,6 +151,25 @@ def _clean_optional_text(value: object) -> str | None:
         return None
     cleaned = str(value).strip()
     return cleaned or None
+
+
+def _safe_workbench_failure_response(
+    *,
+    command: str,
+    sender: str | None,
+    source: str | None,
+) -> CommandHttpResponse:
+    _record_event_id(
+        command=command,
+        ok=False,
+        message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+        sender=sender,
+        source=source,
+    )
+    return CommandHttpResponse(
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        {"ok": False, "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE},
+    )
 
 
 def _record_event_id(

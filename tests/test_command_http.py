@@ -108,6 +108,60 @@ class CommandHttpControllerTests(unittest.TestCase):
             source="parse.source",
         )
 
+    def test_parse_parser_exception_returns_safe_failure_and_records_action_fallback(self) -> None:
+        raw_error = "postgresql://admin:fake-password@db/private"
+        with (
+            mock.patch.object(command_http, "parse_workbench_command", side_effect=RuntimeError(raw_error)),
+            mock.patch.object(command_http, "record_command_event", return_value={"id": 21}) as record,
+        ):
+            response = command_http.execute_workbench_request(
+                self.request(
+                    {"text": "", "action_id": "  system  "},
+                    source="  parse.source  ",
+                    sender="  parser  ",
+                ),
+                execute=False,
+            )
+
+        self.assertEqual(HTTPStatus.INTERNAL_SERVER_ERROR, response.status)
+        self.assertEqual(
+            {"ok": False, "error": command_http.PUBLIC_WORKBENCH_FAILURE_MESSAGE},
+            response.payload,
+        )
+        self.assertNotIn(raw_error, str(response.payload))
+        record.assert_called_once_with(
+            command="[action] system",
+            ok=False,
+            message=command_http.PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+            sender="parser",
+            source="parse.source",
+        )
+
+    def test_execute_parser_exception_returns_safe_failure_and_records_raw_input(self) -> None:
+        raw_error = "token=leaked postgres://admin:fake-password@db/private"
+        with (
+            mock.patch.object(command_http, "parse_workbench_command", side_effect=RuntimeError(raw_error)),
+            mock.patch.object(command_http, "record_command_event", return_value={"id": 22}) as record,
+        ):
+            response = command_http.execute_workbench_request(
+                self.request({"text": "  raw command  "}, source="execute.source", sender="executor"),
+                execute=True,
+            )
+
+        self.assertEqual(HTTPStatus.INTERNAL_SERVER_ERROR, response.status)
+        self.assertEqual(
+            {"ok": False, "error": command_http.PUBLIC_WORKBENCH_FAILURE_MESSAGE},
+            response.payload,
+        )
+        self.assertNotIn(raw_error, str(response.payload))
+        record.assert_called_once_with(
+            command="raw command",
+            ok=False,
+            message=command_http.PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+            sender="executor",
+            source="execute.source",
+        )
+
     def test_execute_returns_blocker_without_schema_or_command(self) -> None:
         preview = {"status": "needs_field", "recovery_message": "Choose an action."}
         with (
@@ -122,6 +176,33 @@ class CommandHttpControllerTests(unittest.TestCase):
         self.assertEqual({"ok": False, "error": "Choose an action.", "preview": preview}, response.payload)
         run_schema.assert_not_called()
         handle.assert_not_called()
+
+    def test_execute_blocker_exception_returns_safe_failure_and_records_event(self) -> None:
+        raw_error = "password=fake-password SELECT * FROM private_table"
+        preview = {"status": "parsed", "exact_command": "exact command"}
+        with (
+            mock.patch.object(command_http, "parse_workbench_command", return_value=preview),
+            mock.patch.object(command_http, "execution_blocker", side_effect=RuntimeError(raw_error)),
+            mock.patch.object(command_http, "record_command_event", return_value={"id": 23}) as record,
+        ):
+            response = command_http.execute_workbench_request(
+                self.request({"text": "raw command"}, source="  blocker.source  ", sender="  blocker  "),
+                execute=True,
+            )
+
+        self.assertEqual(HTTPStatus.INTERNAL_SERVER_ERROR, response.status)
+        self.assertEqual(
+            {"ok": False, "error": command_http.PUBLIC_WORKBENCH_FAILURE_MESSAGE},
+            response.payload,
+        )
+        self.assertNotIn(raw_error, str(response.payload))
+        record.assert_called_once_with(
+            command="raw command",
+            ok=False,
+            message=command_http.PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+            sender="blocker",
+            source="blocker.source",
+        )
 
     def test_execute_runs_exact_command_and_uses_request_source(self) -> None:
         preview = {"status": "parsed", "exact_command": "exact command"}
