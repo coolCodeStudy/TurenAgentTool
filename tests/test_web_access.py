@@ -4,13 +4,36 @@ import unittest
 
 from investment_knowledge_mcp.web_access import (
     AccessClass,
+    AccessError,
     BrowserAccessConfig,
     authorize_request,
     extract_bearer_token,
 )
+from investment_knowledge_mcp.config import AppConfig
 
 
 class BrowserAccessConfigTests(unittest.TestCase):
+    def test_app_config_repr_redacts_browser_access_tokens(self) -> None:
+        config = AppConfig(
+            app_access_token="app-secret",
+            command_api_token="command-secret",
+            weekly_review_web_token="weekly-secret",
+        )
+
+        rendered = repr(config)
+
+        self.assertNotIn("app-secret", rendered)
+        self.assertNotIn("command-secret", rendered)
+        self.assertNotIn("weekly-secret", rendered)
+
+    def test_app_config_preserves_existing_positional_token_slot(self) -> None:
+        values = [None, "localhost", 55432, "postgres", "postgres", "investment_kg", "stdio", "127.0.0.1", 8000, "/mcp", "127.0.0.1", 8001, "legacy-command-token"]
+
+        config = AppConfig(*values)
+
+        self.assertEqual("legacy-command-token", config.command_api_token)
+        self.assertIsNone(config.app_access_token)
+
     def test_canonical_token_is_used_when_legacy_aliases_are_absent(self) -> None:
         config = BrowserAccessConfig.resolve(
             canonical="canonical-token",
@@ -102,6 +125,7 @@ class BrowserAuthorizationTests(unittest.TestCase):
         self.assertEqual("access_not_configured", missing.error_code)
         self.assertEqual("access_required", required.error_code)
         self.assertEqual("access_rejected", rejected.error_code)
+        self.assertIsInstance(missing.error_code, AccessError)
 
     def test_conflicting_configuration_fails_closed(self) -> None:
         decision = authorize_request(
@@ -124,6 +148,9 @@ class BrowserAuthorizationTests(unittest.TestCase):
         )
 
         self.assertTrue(decision.allowed)
+
+    def test_bearer_scheme_is_case_insensitive(self) -> None:
+        self.assertEqual("configured", extract_bearer_token("bearer configured"))
 
     def test_non_bearer_authorization_is_ignored(self) -> None:
         self.assertIsNone(extract_bearer_token("Basic configured"))

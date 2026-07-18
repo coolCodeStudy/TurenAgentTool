@@ -11,6 +11,12 @@ class AccessClass(str, Enum):
     PUBLIC_READ_PROTECTED_WRITE = "public_read_protected_write"
 
 
+class AccessError(str, Enum):
+    NOT_CONFIGURED = "access_not_configured"
+    REQUIRED = "access_required"
+    REJECTED = "access_rejected"
+
+
 @dataclass(frozen=True)
 class BrowserAccessConfig:
     token: str | None = field(repr=False)
@@ -42,13 +48,16 @@ class BrowserAccessConfig:
 @dataclass(frozen=True)
 class AccessDecision:
     allowed: bool
-    error_code: str | None = None
+    error_code: AccessError | None = None
 
 
 def extract_bearer_token(authorization: str | None) -> str | None:
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization:
         return None
-    return _clean_token(authorization.removeprefix("Bearer "))
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    return _clean_token(parts[1])
 
 
 def authorize_request(
@@ -67,17 +76,17 @@ def authorize_request(
     ):
         return AccessDecision(allowed=True)
     if configured.conflict or configured.token is None:
-        return AccessDecision(allowed=False, error_code="access_not_configured")
+        return AccessDecision(allowed=False, error_code=AccessError.NOT_CONFIGURED)
     candidates = tuple(
         candidate
         for supplied in supplied_tokens
         if (candidate := _clean_token(supplied)) is not None
     )
     if not candidates:
-        return AccessDecision(allowed=False, error_code="access_required")
+        return AccessDecision(allowed=False, error_code=AccessError.REQUIRED)
     if any(hmac.compare_digest(candidate, configured.token) for candidate in candidates):
         return AccessDecision(allowed=True)
-    return AccessDecision(allowed=False, error_code="access_rejected")
+    return AccessDecision(allowed=False, error_code=AccessError.REJECTED)
 
 
 def _clean_token(value: str | None) -> str | None:

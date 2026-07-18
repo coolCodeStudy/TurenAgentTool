@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -44,11 +44,10 @@ class AppConfig:
     mcp_path: str = "/mcp"
     command_api_host: str = "127.0.0.1"
     command_api_port: int = 8001
-    app_access_token: str | None = None
-    command_api_token: str | None = None
+    command_api_token: str | None = field(default=None, repr=False)
     weekly_review_web_host: str = "127.0.0.1"
     weekly_review_web_port: int = 8010
-    weekly_review_web_token: str | None = None
+    weekly_review_web_token: str | None = field(default=None, repr=False)
     dingtalk_api_host: str = "127.0.0.1"
     dingtalk_api_port: int = 8002
     dingtalk_outgoing_secret: str | None = None
@@ -79,6 +78,7 @@ class AppConfig:
     ops_api_token: str | None = None
     ops_api_timeout_seconds: float = 8.0
     ops_api_deploy_timeout_seconds: float = 600.0
+    app_access_token: str | None = field(default=None, repr=False)
 
 
 def get_config() -> AppConfig:
