@@ -4,7 +4,13 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest import TestCase
 
-from investment_knowledge_mcp.data_sources import DataSourcePool, FutuMarketBarsSource, YahooMarketBarsSource
+from investment_knowledge_mcp.data_sources import (
+    DataResult,
+    DataSourcePool,
+    DataStatus,
+    FutuMarketBarsSource,
+    YahooMarketBarsSource,
+)
 from investment_knowledge_mcp.futu_provider import FutuProviderError
 from investment_knowledge_mcp.market_data_provider import MarketDataProviderError
 from investment_knowledge_mcp.weekly_review import REQUIRED_INDEXES, _load_index_summary
@@ -93,6 +99,60 @@ class WeeklyReviewMarketContextTests(TestCase):
         )
         self.assertEqual(warnings, [])
 
+    def test_malformed_normalized_records_return_safe_contract_unavailable_status(self) -> None:
+        class ResultPool:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def fetch(self, request, plan) -> DataResult:
+                self.calls += 1
+                return DataResult(
+                    DataStatus.OK,
+                    ({"symbol": "US.SPX", "bars": [], "raw_sensitive": "token=do-not-expose"},),
+                    "futu",
+                    ("futu",),
+                    1.0,
+                    FETCHED_AT,
+                    False,
+                    (),
+                )
+
+        pool = ResultPool()
+        rows, status, warnings = self._load(pool, active_markets={"US"})
+
+        self.assertEqual(pool.calls, 1)
+        self.assertEqual(rows, [])
+        self.assertEqual(
+            status,
+            {
+                "status": "provider_unavailable",
+                "provider": None,
+                "providers": ["futu"],
+                "count": 0,
+                "fetched_at": FETCHED_AT.isoformat(),
+                "metric": "close_to_close",
+                "missing": [index["name"] for index in REQUIRED_INDEXES],
+                "active_markets": ["US"],
+                "uncovered_active_markets": ["US"],
+                "provider_errors": ["futu: provider_contract_error"],
+                "reason": "指数行情数据源暂不可用。",
+                "attempted_sources": ["futu"],
+                "selected_source": None,
+                "coverage": 0.0,
+                "from_cache": False,
+                "failures": [
+                    {
+                        "code": "provider_contract_error",
+                        "source": "futu",
+                        "retryable": False,
+                        "fallback_allowed": False,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(warnings, ["指数行情读取失败：指数行情数据源暂不可用。"])
+        self.assertNotIn("do-not-expose", " ".join(str(item) for item in [status, warnings]))
+
     def test_typed_futu_unavailable_uses_yahoo_with_safe_fallback_provenance(self) -> None:
         calls = {"futu": 0, "yahoo": 0}
         codes = [index["code"] for index in REQUIRED_INDEXES]
@@ -115,7 +175,14 @@ class WeeklyReviewMarketContextTests(TestCase):
         self.assertEqual(status["attempted_sources"], ["futu", "yahoo_chart"])
         self.assertEqual(status["selected_source"], "yahoo_chart")
         self.assertEqual(status["coverage"], 1.0)
+        self.assertEqual(status["count"], len(REQUIRED_INDEXES))
+        self.assertEqual(status["fetched_at"], FETCHED_AT.isoformat())
+        self.assertEqual(status["metric"], "close_to_close")
+        self.assertEqual(status["missing"], [])
+        self.assertEqual(status["active_markets"], [])
+        self.assertEqual(status["uncovered_active_markets"], [])
         self.assertEqual(status["provider_errors"], ["futu: provider_unavailable"])
+        self.assertEqual(status["reason"], "指数数据部分可用。")
         self.assertEqual(
             status["failures"],
             [{"code": "provider_unavailable", "source": "futu", "retryable": True, "fallback_allowed": True}],
@@ -148,6 +215,27 @@ class WeeklyReviewMarketContextTests(TestCase):
         self.assertEqual(status["failures"][0]["code"], "incomplete_coverage")
         self.assertEqual(warnings, [status["reason"]])
 
+    def test_partial_futu_snapshot_without_active_market_gap_remains_partial(self) -> None:
+        calls = {"futu": 0, "yahoo": 0}
+        partial_codes = [index["code"] for index in REQUIRED_INDEXES if index["market"] != "HK"]
+
+        def futu_loader(received_codes: list[str], start: str, end: str):
+            calls["futu"] += 1
+            return _snapshot("futu", partial_codes)
+
+        def yahoo_loader(received_codes: list[str], start: str, end: str):
+            calls["yahoo"] += 1
+            raise AssertionError("partial Futu coverage must not trigger Yahoo")
+
+        rows, status, warnings = self._load(self._pool(futu_loader, yahoo_loader))
+
+        self.assertEqual(calls, {"futu": 1, "yahoo": 0})
+        self.assertEqual(len(rows), len(partial_codes))
+        self.assertEqual(status["status"], "partial")
+        self.assertEqual(status["uncovered_active_markets"], [])
+        self.assertEqual(status["reason"], "缺少指数：Hang Seng Index、Hang Seng Tech Index、Hang Seng China Enterprises Index")
+        self.assertEqual(warnings, [])
+
     def test_both_typed_providers_unavailable_returns_safe_empty_status(self) -> None:
         calls = {"futu": 0, "yahoo": 0}
 
@@ -165,11 +253,20 @@ class WeeklyReviewMarketContextTests(TestCase):
         self.assertEqual(rows, [])
         self.assertEqual(status["status"], "provider_unavailable")
         self.assertEqual(status["count"], 0)
+        self.assertIsNone(status["provider"])
+        self.assertEqual(status["providers"], ["futu", "yahoo_chart"])
+        self.assertEqual(status["fetched_at"], FETCHED_AT.isoformat())
+        self.assertEqual(status["metric"], "close_to_close")
+        self.assertEqual(status["missing"], [index["name"] for index in REQUIRED_INDEXES])
+        self.assertEqual(status["active_markets"], ["US"])
+        self.assertEqual(status["uncovered_active_markets"], ["US"])
         self.assertEqual(status["attempted_sources"], ["futu", "yahoo_chart"])
         self.assertIsNone(status["selected_source"])
         self.assertEqual(status["coverage"], 0.0)
         self.assertEqual(status["provider_errors"], ["futu: provider_unavailable", "yahoo_chart: provider_unavailable"])
         self.assertEqual([failure["code"] for failure in status["failures"]], ["provider_unavailable", "provider_unavailable"])
         self.assertEqual(len(warnings), 1)
+        self.assertEqual(status["reason"], "指数行情数据源暂不可用。")
+        self.assertEqual(warnings, ["指数行情读取失败：指数行情数据源暂不可用。"])
         self.assertIn("指数行情读取失败", warnings[0])
         self.assertNotIn("do-not-expose", " ".join(str(item) for item in [status, warnings]))

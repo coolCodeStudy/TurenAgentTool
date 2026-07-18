@@ -484,7 +484,7 @@ def _load_index_summary(
         for failure in result.failures
     ]
 
-    if result.status is DataStatus.UNAVAILABLE:
+    def set_provider_unavailable_status(*, coverage: float, from_cache: bool) -> list[dict[str, Any]]:
         missing = [index["name"] for index in REQUIRED_INDEXES]
         reason = "指数行情数据源暂不可用。"
         source_status["indexes"] = {
@@ -501,14 +501,30 @@ def _load_index_summary(
             "reason": reason,
             "attempted_sources": list(result.attempted_sources),
             "selected_source": None,
-            "coverage": result.coverage,
-            "from_cache": result.from_cache,
+            "coverage": coverage,
+            "from_cache": from_cache,
             "failures": failures,
         }
         warnings.append(f"指数行情读取失败：{reason}")
         return []
 
-    bars_by_code = market_bar_records_by_symbol(result)
+    if result.status is DataStatus.UNAVAILABLE:
+        return set_provider_unavailable_status(coverage=result.coverage, from_cache=result.from_cache)
+
+    try:
+        bars_by_code = market_bar_records_by_symbol(result)
+    except ValueError:
+        source_id = provider_name or result.attempted_sources[-1]
+        provider_errors.append(f"{source_id}: provider_contract_error")
+        failures.append(
+            {
+                "code": "provider_contract_error",
+                "source": source_id,
+                "retryable": False,
+                "fallback_allowed": False,
+            }
+        )
+        return set_provider_unavailable_status(coverage=0.0, from_cache=False)
 
     rows: list[dict[str, Any]] = []
     missing: list[str] = []
