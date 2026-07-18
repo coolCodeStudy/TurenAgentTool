@@ -45,7 +45,7 @@ Success criteria:
 
 ## P1: Role Skills And Review Lanes
 
-Status: active.
+Status: V1 delivered on branch `codex/architecture-code-health-agent`; pending authoritative integration.
 
 Purpose: make common role handoffs repeatable without forcing the Owner to rewrite prompts.
 
@@ -100,6 +100,37 @@ from successful and rejected deploys, then calibrate target-aware reserves.
 Consider registry/digest delivery only after provenance, retention, rollback,
 and credential ownership are specified; do not replace the verified archive
 path opportunistically.
+
+## P1.2: Architecture And Code Health
+
+Status: active.
+
+Purpose: make cross-feature structural drift visible and actionable without
+turning known debt into an indiscriminate delivery gate.
+
+V1 delivers an explicit specialist role, a versioned repository skill, an
+architecture contract, a prompt template, and a deterministic local audit for
+Python import cycles and declared browser-route ownership/access/test
+contracts. Results are report-only P1 findings. Each finding must include
+evidence, severity, accountable Feature Coordinator, smallest safe slice, and
+verification.
+
+No blocking architecture rule exists in V1. A rule may be admitted only after
+it has a passing baseline or narrow exception, fixture coverage, clear owner
+and remediation, no credential/network dependency, and evidence that it
+prevents a demonstrated regression.
+
+The V1 baseline contains seven module responsibility-concentration P1 signals.
+They are explicit report inputs, not blockers; the first implementation slice
+must be selected by the Global PM with the affected Feature Coordinator.
+
+Success criteria:
+
+- A coordinator can run one local credential-free command and receive stable
+  Markdown and JSON findings.
+- The Architecture Agent routes findings to Feature Coordinators instead of
+  becoming a parallel feature manager.
+- The baseline makes current debt visible without blocking normal delivery.
 
 ## P2: Context Retrieval And Memory
 

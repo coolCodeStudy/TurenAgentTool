@@ -66,7 +66,10 @@ class DeployContractTests(TestCase):
             (
                 "AGENTS.md",
                 "docs/project-management/Agent-Operating-Model-Roadmap.md",
+                "skills/architecture-code-health/SKILL.md",
                 "scripts/evaluate_agent_flow_cases.py",
+                "scripts/audit_architecture_health.py",
+                "scripts/install_architecture_code_health_skill.py",
                 "scripts/smoke_test.py",
                 "scripts/verify_change_package.py",
                 ".github/workflows/deploy.yml",
