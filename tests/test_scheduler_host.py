@@ -369,6 +369,36 @@ class HistoryChildSupervisorTests(unittest.TestCase):
         self.assertFalse(supervisor.health().running)
         self.assertEqual(0, supervisor.health().starts)
 
+    def test_close_kills_unpublished_child_when_terminate_raises(self) -> None:
+        factory_entered = Event()
+        release_factory = Event()
+        secret = "provider credential detail"
+        child = FakeChild(terminate_error=RuntimeError(secret))
+
+        def factory() -> FakeChild:
+            factory_entered.set()
+            release_factory.wait(timeout=1.0)
+            return child
+
+        supervisor = HistoryChildSupervisor(lambda: True, factory)
+        polling = Thread(target=supervisor.poll)
+        polling.start()
+        self.assertTrue(factory_entered.wait(timeout=1.0))
+
+        supervisor.close(timeout_seconds=0.01)
+        release_factory.set()
+        polling.join(timeout=2.0)
+
+        self.assertFalse(polling.is_alive())
+        self.assertEqual(1, child.terminate_calls)
+        self.assertEqual(1, child.kill_calls)
+        self.assertEqual([1.0], child.wait_calls)
+        state = supervisor.health()
+        self.assertFalse(state.running)
+        self.assertEqual(0, state.starts)
+        self.assertEqual("discard:RuntimeError", state.last_error)
+        self.assertNotIn(secret, repr(state))
+
     def test_pending_work_starts_exactly_one_child_while_it_is_live(self) -> None:
         child = FakeChild()
         factory_calls = 0

@@ -190,15 +190,28 @@ class HistoryChildSupervisor:
         return self.health()
 
     def _stop_unpublished_child(self, child: HistoryChildProcess) -> None:
+        first_error: str | None = None
         try:
             child.terminate()
+        except Exception as exc:
+            first_error = f"discard:{type(exc).__name__}"
+        else:
             try:
                 child.wait(timeout=1.0)
+                return
             except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait(timeout=1.0)
+                pass
+            except Exception as exc:
+                first_error = f"discard:{type(exc).__name__}"
+
+        try:
+            child.kill()
+            child.wait(timeout=1.0)
         except Exception as exc:
             self._set_error(f"discard:{type(exc).__name__}")
+            return
+        if first_error is not None:
+            self._set_error(first_error)
 
     def _record_exit(
         self,
