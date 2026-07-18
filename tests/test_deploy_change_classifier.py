@@ -11,6 +11,7 @@ from unittest import TestCase
 from scripts.deploy_contract import (
     APPLICATION_SERVICES,
     DeployMode,
+    _read_changed_files,
     classify_deployment,
     classify_paths,
     serialize_plan,
@@ -33,7 +34,7 @@ class FakeRunner:
         del timeout
         self.commands.append(command)
         if command[:5] == ("git", "-C", "/repo", "diff", "--name-only"):
-            return ok("\n".join(self.changed_files))
+            return ok("\0".join(self.changed_files) + ("\0" if self.changed_files else ""))
         if command[:4] == ("git", "-C", "/repo", "show"):
             return ok("services: {}\n")
         if command[:3] == ("docker", "compose", "-f"):
@@ -92,6 +93,37 @@ class DeployContractTests(TestCase):
 
         self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
         self.assertEqual((), plan.targets)
+
+    def test_production_env_generator_only_changes_provisioning_templates(self) -> None:
+        plan = classify_paths(
+            ("scripts/generate_prod_env.py",),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
+        self.assertEqual((), plan.targets)
+        self.assertIn("production environment provisioning", plan.reasons[0])
+
+    def test_environment_example_only_changes_provisioning_template(self) -> None:
+        plan = classify_paths((".env.example",), compose_image_changed=False)
+
+        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
+        self.assertEqual((), plan.targets)
+        self.assertIn("production environment template", plan.reasons[0])
+
+    def test_real_diff_reads_non_ascii_paths_without_git_quote_escaping(self) -> None:
+        class NulDiffRunner:
+            def run(self, command: tuple[str, ...], timeout: int | None = None) -> CommandResult:
+                del timeout
+                self.command = command
+                return ok("docs/中文部署说明.md\0scripts/generate_prod_env.py\0")
+
+        runner = NulDiffRunner()
+
+        paths = _read_changed_files(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertEqual(("docs/中文部署说明.md", "scripts/generate_prod_env.py"), paths)
+        self.assertIn("-z", runner.command)
 
     def test_legacy_classifier_keeps_dependency_changes_full(self) -> None:
         self.assertEqual("full", classify_changed_files(("requirements.txt",)).deploy_mode)

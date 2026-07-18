@@ -68,6 +68,7 @@ class PathRule:
 
 # Ordered from the narrowest, explicitly-owned paths to conservative fallbacks.
 PATH_RULES = (
+    PathRule(".env.example", DeployMode.NO_DEPLOY, (), "production environment template"),
     PathRule("AGENTS.md", DeployMode.NO_DEPLOY, (), "agent governance"),
     PathRule("README.md", DeployMode.NO_DEPLOY, (), "repository documentation"),
     PathRule("DEPLOYMENT.md", DeployMode.NO_DEPLOY, (), "repository documentation"),
@@ -84,6 +85,12 @@ PATH_RULES = (
     PathRule("scripts/audit_prd_status.py", DeployMode.NO_DEPLOY, (), "local audit"),
     PathRule("scripts/classify_deploy_change.py", DeployMode.NO_DEPLOY, (), "local deploy classifier"),
     PathRule("scripts/evaluate_agent_flow_cases.py", DeployMode.NO_DEPLOY, (), "local evaluation"),
+    PathRule(
+        "scripts/generate_prod_env.py",
+        DeployMode.NO_DEPLOY,
+        (),
+        "production environment provisioning",
+    ),
     PathRule("scripts/smoke_test.py", DeployMode.NO_DEPLOY, (), "local smoke verification"),
     PathRule("scripts/verify_change_package.py", DeployMode.NO_DEPLOY, (), "local change-package verification"),
     PathRule("scripts/bootstrap_deploy_baseline.py", DeployMode.NO_DEPLOY, (), "ECS Ops API control plane"),
@@ -258,10 +265,10 @@ def serialize_plan(plan: DeploymentPlan) -> dict[str, object]:
 
 
 def _read_changed_files(repo: Path, base_sha: str, target_sha: str, runner: CommandRunner) -> tuple[str, ...]:
-    result = runner.run(("git", "-C", str(repo), "diff", "--name-only", base_sha, target_sha))
+    result = runner.run(("git", "-C", str(repo), "diff", "--name-only", "-z", base_sha, target_sha))
     if result.returncode != 0:
         raise RuntimeError(f"git diff failed: {result.stderr.strip()}")
-    return tuple(line for line in result.stdout.splitlines() if line.strip())
+    return tuple(path for path in result.stdout.split("\0") if path)
 
 
 def _compose_image_inputs_changed(repo: Path, base_sha: str, target_sha: str, runner: CommandRunner) -> bool:
