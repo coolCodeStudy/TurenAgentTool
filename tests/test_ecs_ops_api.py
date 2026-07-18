@@ -52,6 +52,28 @@ def _managed_archive(sha: str = TARGET_SHA):
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_scheduler_host_health_uses_internal_snapshot_check(self) -> None:
+        command = [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "scheduler-host",
+            "python",
+            "-m",
+            "investment_knowledge_mcp.scheduler_service",
+            "--check-health",
+        ]
+        with patch.object(ops, "_compose_command", return_value=command), patch.object(
+            ops,
+            "_run",
+            return_value=ops.CommandResult(returncode=0, stdout="", stderr=""),
+        ) as run:
+            result = ops._check_scheduler_host_health()
+
+        self.assertEqual({"name": "scheduler-host-state", "ok": True, "message": "healthy"}, result)
+        run.assert_called_once_with(command)
+
     def test_ops_server_and_installer_require_dedicated_ops_credential(self) -> None:
         source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
         installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
@@ -85,20 +107,22 @@ class OpsApiInstallLayoutTests(unittest.TestCase):
         self.assertIn('str(OPS_HOME / "deploy-artifacts")', source)
         self.assertNotIn('str(APP_ROOT / "shared" / "deploy-artifacts")', source)
 
-    def test_daily_market_brief_history_worker_is_in_ops_health_and_diagnostics(self) -> None:
+    def test_scheduler_host_is_in_ops_health_and_diagnostics(self) -> None:
         source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
 
-        self.assertEqual(
+        self.assertEqual("scheduler-host", ops.COMPOSE_SERVICES["scheduler-host"])
+        self.assertGreaterEqual(source.count('"scheduler-host"'), 3)
+
+    def test_removed_scheduler_names_are_aliases_not_compose_targets(self) -> None:
+        for old_name in (
             "daily-market-brief-history-worker",
-            ops.COMPOSE_SERVICES["daily-market-brief-history-worker"],
-        )
-        self.assertGreaterEqual(source.count('"daily-market-brief-history-worker"'), 3)
-
-    def test_daily_market_brief_scheduler_is_in_ops_health_and_diagnostics(self) -> None:
-        source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
-
-        self.assertEqual("daily-market-brief-scheduler", ops.COMPOSE_SERVICES["daily-market-brief-scheduler"])
-        self.assertGreaterEqual(source.count('"daily-market-brief-scheduler"'), 3)
+            "daily-market-brief-scheduler",
+            "account-snapshot-scheduler",
+            "ipo-reminder-scheduler",
+        ):
+            with self.subTest(old_name=old_name):
+                self.assertNotIn(old_name, ops.COMPOSE_SERVICES)
+                self.assertEqual("scheduler-host", ops.SERVICE_ALIASES[old_name])
 
     def test_installed_ops_home_contains_runtime_import_closure(self) -> None:
         installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")

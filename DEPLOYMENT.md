@@ -258,12 +258,13 @@ target. All application recreates use `--no-deps`.
 | --- | --- |
 | Web-only Daily Market Brief files | `weekly-review-web` |
 | `command_workbench.py` or shared command-workbench UI | `weekly-review-web`, `command-api` |
-| Shared command logic such as `command_router.py`, `daily_market_brief.py`, `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
-| Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
+| Shared command logic such as `command_router.py` and `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
+| Daily Market Brief runtime and queue logic | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot`, `scheduler-host` |
+| Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot`, `scheduler-host` |
 | Command API transport-only modules | `command-api` |
 | DingTalk HTTP API transport-only modules | `dingtalk-api` |
 | MCP server/tool modules | `mcp` |
-| Scheduler entrypoints | Matching scheduler service |
+| Scheduler adapters, host, job composition, and history child entrypoint | `scheduler-host` |
 | DingTalk stream bot entrypoint or adapter code | `dingtalk-stream-bot` |
 | Shared runtime modules | Union of importing application services |
 | Requirements, Dockerfile, base-image, or app-image Compose semantics | All application services using the shared app image |
@@ -275,8 +276,9 @@ which is the DingTalk Stream Mode long-connection service.
 
 For `config_restart`, `full_image`, and other all-application-service paths,
 the shared-image application service set is `weekly-review-web`, `command-api`,
-`dingtalk-api`, `mcp`, `account-snapshot-scheduler`,
-`ipo-reminder-scheduler`, and `dingtalk-stream-bot`.
+`dingtalk-api`, `mcp`, `scheduler-host`, and `dingtalk-stream-bot`. The legacy
+scheduler and history-worker service names remain accepted only as Ops aliases
+that resolve to `scheduler-host` during the compatibility window.
 
 ### Preflight Gates
 

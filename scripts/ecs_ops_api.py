@@ -109,12 +109,10 @@ ARTIFACT_CLAIM_MUTEX = threading.Lock()
 COMPOSE_SERVICES = {
     "mcp": "mcp",
     "command-api": "command-api",
-    "daily-market-brief-history-worker": "daily-market-brief-history-worker",
-    "daily-market-brief-scheduler": "daily-market-brief-scheduler",
+    "dingtalk-api": "dingtalk-api",
     "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
-    "account-snapshot-scheduler": "account-snapshot-scheduler",
-    "ipo-reminder-scheduler": "ipo-reminder-scheduler",
+    "scheduler-host": "scheduler-host",
     "postgres": "postgres",
 }
 
@@ -135,14 +133,21 @@ SERVICE_ALIASES = {
     "research": "research-agent-worker",
     "dingtalk": "dingtalk-stream-bot",
     "stream": "dingtalk-stream-bot",
-    "history-worker": "daily-market-brief-history-worker",
-    "daily-market-history": "daily-market-brief-history-worker",
-    "account-snapshot": "account-snapshot-scheduler",
-    "snapshot": "account-snapshot-scheduler",
-    "snapshot-scheduler": "account-snapshot-scheduler",
-    "ipo-reminder": "ipo-reminder-scheduler",
-    "ipo-reminders": "ipo-reminder-scheduler",
-    "ipo-scheduler": "ipo-reminder-scheduler",
+    "scheduler": "scheduler-host",
+    "scheduler-host": "scheduler-host",
+    "history-worker": "scheduler-host",
+    "daily-market-history": "scheduler-host",
+    "daily-market-brief": "scheduler-host",
+    "daily-market-brief-history-worker": "scheduler-host",
+    "daily-market-brief-scheduler": "scheduler-host",
+    "account-snapshot": "scheduler-host",
+    "snapshot": "scheduler-host",
+    "snapshot-scheduler": "scheduler-host",
+    "account-snapshot-scheduler": "scheduler-host",
+    "ipo-reminder": "scheduler-host",
+    "ipo-reminders": "scheduler-host",
+    "ipo-scheduler": "scheduler-host",
+    "ipo-reminder-scheduler": "scheduler-host",
     "weekly-review": "weekly-review-web",
     "weekly_review": "weekly-review-web",
     "weekly-review-web": "weekly-review-web",
@@ -336,12 +341,11 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
 
     for name in (
         "mcp",
+        "dingtalk-api",
         "dingtalk-stream-bot",
-        "account-snapshot-scheduler",
-        "daily-market-brief-history-worker",
-        "daily-market-brief-scheduler",
-        "ipo-reminder-scheduler",
         "command-api",
+        "scheduler-host",
+        "weekly-review-web",
         "postgres",
     ):
         try:
@@ -920,14 +924,15 @@ def build_deploy_health() -> dict[str, Any]:
         _check_socket("weekly-review-web", "127.0.0.1", int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010"))),
     ]
     for service in (
+        "command-api",
         "weekly-review-web",
+        "dingtalk-api",
         "dingtalk-stream-bot",
-        "account-snapshot-scheduler",
-        "daily-market-brief-history-worker",
-        "daily-market-brief-scheduler",
-        "ipo-reminder-scheduler",
+        "mcp",
+        "scheduler-host",
     ):
         checks.append(_check_compose_service_running(service))
+    checks.append(_check_scheduler_host_health())
     return {
         "ok": all(bool(check.get("ok")) for check in checks),
         "checks": checks,
@@ -1185,6 +1190,28 @@ def _check_compose_service_running(service: str) -> dict[str, Any]:
     if service in running:
         return {"name": service, "ok": True, "message": "running"}
     return {"name": service, "ok": False, "message": "not running"}
+
+
+def _check_scheduler_host_health() -> dict[str, Any]:
+    result = _run(
+        _compose_command(
+            [
+                "exec",
+                "-T",
+                "scheduler-host",
+                "python",
+                "-m",
+                "investment_knowledge_mcp.scheduler_service",
+                "--check-health",
+            ]
+        )
+    )
+    healthy = _command_ok(result)
+    return {
+        "name": "scheduler-host-state",
+        "ok": healthy,
+        "message": "healthy" if healthy else "stale or unhealthy",
+    }
 
 
 def _record_deploy_start(

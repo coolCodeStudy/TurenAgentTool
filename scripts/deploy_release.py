@@ -20,6 +20,7 @@ try:
     from scripts.deploy_contract import (
         APPLICATION_SERVICES,
         MODE_RANK,
+        OBSOLETE_APPLICATION_SERVICES,
         DeployMode,
         DeploymentPlan,
         classify_deployment,
@@ -55,6 +56,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
     from deploy_contract import (
         APPLICATION_SERVICES,
         MODE_RANK,
+        OBSOLETE_APPLICATION_SERVICES,
         DeployMode,
         DeploymentPlan,
         classify_deployment,
@@ -190,11 +192,9 @@ class SystemClock:
 
 class DockerHealthChecker:
     _PROCESS_SERVICES = {
-        "account-snapshot-scheduler",
-        "daily-market-brief-history-worker",
-        "daily-market-brief-scheduler",
-        "ipo-reminder-scheduler",
+        *OBSOLETE_APPLICATION_SERVICES,
         "dingtalk-stream-bot",
+        "scheduler-host",
     }
 
     def __init__(
@@ -225,6 +225,21 @@ class DockerHealthChecker:
             self._dingtalk_negative_check()
         elif service == "mcp":
             self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "MCP transport is unavailable")
+        elif service == "scheduler-host":
+            self._checked(
+                (
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    "scheduler-host",
+                    "python",
+                    "-m",
+                    "investment_knowledge_mcp.scheduler_service",
+                    "--check-health",
+                ),
+                "scheduler host health snapshot is stale or unavailable",
+            )
 
     def check_aggregate(self, feature_routes: tuple[str, ...]) -> None:
         self._check_running("postgres")
@@ -464,6 +479,8 @@ class DeploymentContext:
     selectors: SelectorSnapshot | None = None
     selector_journal: SelectorJournal = field(default_factory=SelectorJournal)
     touched_services: list[str] = field(default_factory=list)
+    planned_obsolete_services: list[str] = field(default_factory=list)
+    removed_obsolete_services: list[str] = field(default_factory=list)
     target_durations_ms: dict[str, int] = field(default_factory=dict)
     preflight: dict[str, int | float | str] = field(default_factory=dict)
     archive_bytes: int | None = None
@@ -675,6 +692,7 @@ class DeploymentEngine:
             )
             self._record_full_image_memory_phase(context, "post_load")
 
+        self._plan_topology_migration(context, release)
         self._switch_selectors(context, release, selected_image)
         for target in context.plan.targets:
             if context.plan.mode is DeployMode.FULL_IMAGE:
@@ -682,6 +700,8 @@ class DeploymentEngine:
                     context,
                     "before_activation",
                 )
+            if target == "scheduler-host":
+                self._retire_planned_obsolete_services(context)
             started = self.clock.monotonic()
             context.touched_services.append(target)
             self._activate_target(target, release)
@@ -1403,8 +1423,47 @@ class DeploymentEngine:
                     "--stop",
                     target,
                 ),
-                f"new application service {target} failed to roll back",
+                f"application service {target} failed to stop and remove",
             )
+
+    def _plan_topology_migration(
+        self,
+        context: DeploymentContext,
+        release: Path,
+    ) -> None:
+        """Admit the exact previous/candidate removal delta before mutation."""
+        if context.plan is None or "scheduler-host" not in context.plan.targets:
+            return
+        if context.selectors is None or context.selectors.current_release is None:
+            raise DeploymentError("previous release is unavailable for topology migration")
+        previous_release = context.selectors.current_release
+        previous_services = self._compose_services(previous_release)
+        candidate_services = self._compose_services(release)
+        if "scheduler-host" not in candidate_services:
+            raise DeploymentError("scheduler host is absent from candidate topology")
+        removed_services = previous_services - candidate_services
+        unadmitted = removed_services - set(OBSOLETE_APPLICATION_SERVICES)
+        if unadmitted:
+            raise DeploymentError("candidate topology contains an unadmitted service removal")
+        context.planned_obsolete_services.extend(
+            service
+            for service in OBSOLETE_APPLICATION_SERVICES
+            if service in removed_services
+        )
+
+    def _retire_planned_obsolete_services(
+        self,
+        context: DeploymentContext,
+    ) -> None:
+        if not context.planned_obsolete_services:
+            return
+        if context.selectors is None or context.selectors.current_release is None:
+            raise DeploymentError("previous release is unavailable for topology migration")
+        for service in context.planned_obsolete_services:
+            # Record ownership before the command: a partially successful stop
+            # must still be restored by rollback.
+            context.removed_obsolete_services.append(service)
+            self._remove_target(service, context.selectors.current_release)
 
     def _rollback(self, context: DeploymentContext) -> RollbackResult:
         if context.selectors is None or context.previous_state is None:
@@ -1459,6 +1518,30 @@ class DeploymentEngine:
                 successful_services.append(target)
             except Exception:
                 service_failures.append(target)
+
+        stable_obsolete_services: list[str] = []
+        if context.selectors.current_release is not None:
+            for service in reversed(context.removed_obsolete_services):
+                try:
+                    self._activate_target(service, context.selectors.current_release)
+                    self.health.check_service(service, context.request.feature_routes)
+                    stable_obsolete_services.append(service)
+                except Exception:
+                    service_failures.append(service)
+        if stable_obsolete_services:
+            rollback_stability_seconds = (
+                60
+                if context.plan is not None
+                and context.plan.mode is DeployMode.FULL_IMAGE
+                else 30
+            )
+            self.clock.sleep(rollback_stability_seconds)
+            for service in stable_obsolete_services:
+                try:
+                    self.health.check_service(service, context.request.feature_routes)
+                    successful_services.append(service)
+                except Exception:
+                    service_failures.append(service)
 
         aggregate_failed = False
         try:

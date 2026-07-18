@@ -163,11 +163,10 @@ class DeployContractTests(TestCase):
                 DeployMode.TARGETED_QUICK,
                 (
                     "command-api",
-                    "daily-market-brief-history-worker",
-                    "daily-market-brief-scheduler",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
+                    "scheduler-host",
                     "weekly-review-web",
                 ),
             ),
@@ -181,12 +180,12 @@ class DeployContractTests(TestCase):
             (
                 ("investment_knowledge_mcp/account_snapshots.py",),
                 DeployMode.TARGETED_QUICK,
-                ("account-snapshot-scheduler",),
+                ("scheduler-host",),
             ),
             (
                 ("investment_knowledge_mcp/ipo_reminders.py",),
                 DeployMode.TARGETED_QUICK,
-                ("ipo-reminder-scheduler",),
+                ("scheduler-host",),
             ),
             (("investment_knowledge_mcp/new_runtime_module.py",), DeployMode.TARGETED_QUICK, APPLICATION_SERVICES),
             (("scripts/ecs_ops_api.py",), DeployMode.NO_DEPLOY, ()),
@@ -202,8 +201,8 @@ class DeployContractTests(TestCase):
 
     def test_full_and_config_targets_cover_every_managed_app_image_service(self) -> None:
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
-        self.assertIn("daily-market-brief-scheduler", APPLICATION_SERVICES)
-        self.assertIn("daily-market-brief-history-worker", APPLICATION_SERVICES)
+        self.assertIn("scheduler-host", APPLICATION_SERVICES)
+        self.assertEqual(6, len(APPLICATION_SERVICES))
         for path, expected_mode in (
             ("requirements.txt", DeployMode.FULL_IMAGE),
             ("docker-compose.prod.yml", DeployMode.CONFIG_RESTART),
@@ -217,7 +216,7 @@ class DeployContractTests(TestCase):
         cases = (
             (
                 "scripts/daily_market_brief_history_worker.py",
-                ("daily-market-brief-history-worker",),
+                ("scheduler-host",),
             ),
             (
                 "scripts/dingtalk_stream_bot.py",
@@ -227,11 +226,10 @@ class DeployContractTests(TestCase):
                 "scripts/init_db.py",
                 (
                     "command-api",
-                    "daily-market-brief-history-worker",
-                    "daily-market-brief-scheduler",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
+                    "scheduler-host",
                     "weekly-review-web",
                 ),
             ),
@@ -313,7 +311,7 @@ class DeployContractTests(TestCase):
         self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
         self.assertEqual(APPLICATION_SERVICES, plan.targets)
 
-    def test_service_removal_requires_full_image_even_when_recipe_is_duplicated(self) -> None:
+    def test_service_removal_is_config_restart_when_image_recipe_is_unchanged(self) -> None:
         shared = {"image": "app:stable", "build": {"context": "."}}
         runner = FakeRunner(
             ("docker-compose.prod.yml",),
@@ -325,9 +323,9 @@ class DeployContractTests(TestCase):
 
         plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
 
-        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+        self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
 
-    def test_service_rename_requires_full_image(self) -> None:
+    def test_service_rename_is_config_restart_when_image_recipe_is_unchanged(self) -> None:
         shared = {"image": "app:stable", "build": {"context": "."}}
         runner = FakeRunner(
             ("docker-compose.prod.yml",),
@@ -339,7 +337,7 @@ class DeployContractTests(TestCase):
 
         plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
 
-        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+        self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
 
     def test_cross_service_recipe_swap_requires_full_image(self) -> None:
         recipe_a = {"image": "app:a", "build": {"context": "./a"}}

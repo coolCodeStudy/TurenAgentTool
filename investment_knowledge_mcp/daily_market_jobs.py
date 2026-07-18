@@ -17,6 +17,7 @@ SOURCES = {"web", "command", "scheduler_recovery", "agent"}
 MAX_HISTORY_ITEMS = 120
 MAX_DEDUP_RETRIES = 3
 DEFAULT_MAX_ACTIVE_WEB_JOBS = 3
+HISTORY_STALE_AFTER_SECONDS = 900
 WEB_HISTORY_JOB_CAPACITY_MESSAGE = "当前历史简报任务较多，请等待已有任务完成后再试。"
 PUBLIC_ERROR_SUMMARIES = {
     "generation_failed": "历史市场简报生成失败，请稍后重试。",
@@ -28,6 +29,32 @@ PUBLIC_ERROR_SUMMARIES = {
 
 class WebHistoryJobCapacityError(ValueError):
     pass
+
+
+def has_pending_history_items() -> bool:
+    """Return whether the active durable history queue has claimable work."""
+
+    with transaction(connect_timeout_seconds=5) as conn:
+        row = conn.execute(
+            """
+            SELECT EXISTS (
+              SELECT 1
+              FROM daily_market_brief_job_items AS item
+              JOIN daily_market_brief_jobs AS job ON job.id = item.job_id
+              WHERE job.status IN ('queued', 'running')
+                AND job.cancel_requested_at IS NULL
+                AND (
+                  item.status = 'queued'
+                  OR (
+                    item.status = 'running'
+                    AND item.heartbeat_at < now() - (%s * interval '1 second')
+                  )
+                )
+            ) AS pending
+            """,
+            (HISTORY_STALE_AFTER_SECONDS,),
+        ).fetchone()
+    return bool(row and row.get("pending"))
 
 
 def create_history_job(

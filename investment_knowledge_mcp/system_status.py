@@ -41,7 +41,7 @@ def render_system_status() -> str:
     else:
         lines.append(
             f"- 每日账户快照时间：{config.account_snapshot_time}，"
-            "由独立 account-snapshot-scheduler 服务负责"
+            "由 scheduler-host 统一调度"
         )
 
     failed = [item for item in checks if not item["ok"]]
@@ -69,7 +69,7 @@ def render_ipo_reminder_status() -> str:
         lines.append("- 后台提醒循环：当前进程已启动")
         lines.append(f"- 扫描间隔：{loop_state['interval_seconds']} 秒")
     else:
-        lines.append("- 后台提醒循环：由独立 ipo-reminder-scheduler 服务负责")
+        lines.append("- 后台提醒循环：由 scheduler-host 统一调度")
         lines.append(f"- 扫描间隔：{config.dingtalk_ipo_reminder_interval_seconds} 秒")
 
     if not config.dingtalk_ipo_reminders_enabled:

@@ -26,6 +26,7 @@ from investment_knowledge_mcp.daily_market_history import (
     load_historical_market_activity,
 )
 from investment_knowledge_mcp.daily_market_jobs import (
+    HISTORY_STALE_AFTER_SECONDS,
     PUBLIC_ERROR_SUMMARIES,
     claim_next_history_item,
     finalize_history_item_report,
@@ -37,7 +38,7 @@ from investment_knowledge_mcp.daily_market_jobs import (
 
 LOGGER = logging.getLogger("daily_market_brief_history_worker")
 HEARTBEAT_INTERVAL_SECONDS = 10.0
-STALE_AFTER_SECONDS = 900.0
+STALE_AFTER_SECONDS = float(HISTORY_STALE_AFTER_SECONDS)
 RECOVERY_INTERVAL_SECONDS = 60.0
 DRAIN_ERROR_EXIT_CODE = 1
 

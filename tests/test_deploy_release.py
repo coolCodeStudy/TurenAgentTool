@@ -116,11 +116,10 @@ class RecordingRunner:
                         "postgres",
                         "mcp",
                         "dingtalk-api",
-                        "account-snapshot-scheduler",
                         "command-api",
                         "weekly-review-web",
                         "dingtalk-stream-bot",
-                        "ipo-reminder-scheduler",
+                        "scheduler-host",
                     )
                 )
                 + "\n",
@@ -455,18 +454,29 @@ class DeploymentEngineTests(TestCase):
         )
 
     def test_rollback_removes_a_service_missing_from_the_previous_release(self) -> None:
-        self.plan = replace(self.plan, targets=("daily-market-brief-scheduler",))
+        self.plan = replace(self.plan, targets=("scheduler-host",))
         request = replace(
             self.targeted_request,
-            requested_targets=("daily-market-brief-scheduler",),
+            requested_targets=("scheduler-host",),
         )
-        self.health.fail_for("daily-market-brief-scheduler")
+        self.health.fail_for("scheduler-host")
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        self.runner.results[
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(previous_compose),
+                "config",
+                "--services",
+            )
+        ] = CommandResult(0, "command-api\nweekly-review-web\n", "")
 
         outcome = self.engine.deploy(request)
 
         target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.assertFalse(outcome.ok)
-        self.assertEqual(("daily-market-brief-scheduler",), outcome.rolled_back_services)
+        self.assertEqual(("scheduler-host",), outcome.rolled_back_services)
         self.assertEqual((), outcome.rollback_failures)
         self.assertIn(
             (
@@ -477,10 +487,201 @@ class DeploymentEngineTests(TestCase):
                 "rm",
                 "--force",
                 "--stop",
-                "daily-market-brief-scheduler",
+                "scheduler-host",
             ),
             self.runner.commands,
         )
+
+    def test_topology_migration_removes_only_explicit_obsolete_services_before_replacement(self) -> None:
+        old_services = (
+            "ipo-reminder-scheduler",
+            "account-snapshot-scheduler",
+            "daily-market-brief-scheduler",
+            "daily-market-brief-history-worker",
+        )
+        self.plan = replace(self.plan, targets=("scheduler-host",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("scheduler-host",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.runner.results[
+            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+        ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
+        self.runner.results[
+            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+        ] = CommandResult(0, "postgres\nscheduler-host\n", "")
+
+        def assert_replacement_not_started_before_removal(command: tuple[str, ...]) -> None:
+            if command[-4:-1] == ("rm", "--force", "--stop"):
+                self.assertFalse(
+                    any(
+                        candidate[-1:] == ("scheduler-host",)
+                        and "up" in candidate
+                        for candidate in self.runner.commands[:-1]
+                    )
+                )
+
+        self.runner.on_run = assert_replacement_not_started_before_removal
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        replacement_start = self.runner.commands.index(
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(target_compose),
+                "up",
+                "-d",
+                "--no-build",
+                "--no-deps",
+                "--force-recreate",
+                "scheduler-host",
+            )
+        )
+        for service in old_services:
+            removal = (
+                "docker",
+                "compose",
+                "-f",
+                str(previous_compose),
+                "rm",
+                "--force",
+                "--stop",
+                service,
+            )
+            self.assertIn(removal, self.runner.commands)
+            self.assertLess(self.runner.commands.index(removal), replacement_start)
+        self.assertFalse(
+            any("--remove-orphans" in command for command in self.runner.commands)
+        )
+
+    def test_topology_migration_rejects_an_unadmitted_previous_candidate_delta(self) -> None:
+        self.plan = replace(self.plan, targets=("scheduler-host",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("scheduler-host",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.runner.results[
+            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+        ] = CommandResult(0, "postgres\nunadmitted-worker\n", "")
+        self.runner.results[
+            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+        ] = CommandResult(0, "postgres\nscheduler-host\n", "")
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("unadmitted service removal", outcome.message)
+        self.assertFalse(
+            any(
+                command[-1:] in (("unadmitted-worker",), ("scheduler-host",))
+                and ("rm" in command or "up" in command)
+                for command in self.runner.commands
+            )
+        )
+
+    def test_failed_migration_restores_removed_obsolete_services_from_previous_release(self) -> None:
+        old_services = (
+            "ipo-reminder-scheduler",
+            "account-snapshot-scheduler",
+            "daily-market-brief-scheduler",
+            "daily-market-brief-history-worker",
+        )
+        self.plan = replace(self.plan, targets=("scheduler-host",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("scheduler-host",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.runner.results[
+            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+        ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
+        self.runner.results[
+            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+        ] = CommandResult(0, "postgres\nscheduler-host\n", "")
+
+        def fail_after_obsolete_removal(command: tuple[str, ...]) -> None:
+            if command[-4:] == (
+                "rm",
+                "--force",
+                "--stop",
+                "daily-market-brief-history-worker",
+            ):
+                self.health.fail_for("scheduler-host")
+
+        self.runner.on_run = fail_after_obsolete_removal
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        for service in old_services:
+            self.assertIn(
+                (
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(previous_compose),
+                    "up",
+                    "-d",
+                    "--no-build",
+                    "--no-deps",
+                    "--force-recreate",
+                    service,
+                ),
+                self.runner.commands,
+            )
+        self.assertFalse(
+            any("--remove-orphans" in command for command in self.runner.commands)
+        )
+
+    def test_rollback_requires_each_restored_obsolete_service_to_remain_healthy(self) -> None:
+        old_services = (
+            "ipo-reminder-scheduler",
+            "account-snapshot-scheduler",
+            "daily-market-brief-scheduler",
+            "daily-market-brief-history-worker",
+        )
+        unstable = "ipo-reminder-scheduler"
+        self.plan = replace(self.plan, targets=("scheduler-host",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("scheduler-host",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.runner.results[
+            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+        ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
+        self.runner.results[
+            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+        ] = CommandResult(0, "postgres\nscheduler-host\n", "")
+        self.health.fail_for("scheduler-host")
+        checks = 0
+
+        def fail_second_obsolete_health_check(label: str) -> None:
+            nonlocal checks
+            if label == f"service:{unstable}":
+                checks += 1
+                if checks == 2:
+                    self.health.fail_for(unstable)
+
+        self.health.on_check = fail_second_obsolete_health_check
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn(unstable, outcome.rollback_failures)
+        self.assertEqual(2, checks)
+        for service in old_services:
+            self.assertGreaterEqual(
+                self.health.service_checks.count((service, ())),
+                2,
+            )
 
     def test_command_failure_keeps_a_product_safe_diagnostic_line(self) -> None:
         command = ("docker", "compose", "up", "service")
@@ -1573,14 +1774,14 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(any("rm postgres" in command for command in rendered))
         self.assertFalse(any(" down" in f" {command}" for command in rendered))
 
-    def test_history_worker_target_is_recreated_without_postgresql(self) -> None:
+    def test_scheduler_host_target_is_recreated_without_postgresql(self) -> None:
         self.plan = replace(
             self.plan,
-            targets=("daily-market-brief-history-worker",),
+            targets=("scheduler-host",),
         )
         request = replace(
             self.targeted_request,
-            requested_targets=("daily-market-brief-history-worker",),
+            requested_targets=("scheduler-host",),
         )
 
         outcome = self.engine.deploy(request)
@@ -1589,7 +1790,7 @@ class DeploymentEngineTests(TestCase):
         rendered = [" ".join(_without_compose_file(command)) for command in self.runner.commands]
         self.assertTrue(
             any(
-                "docker compose up -d --no-build --no-deps --force-recreate daily-market-brief-history-worker"
+                "docker compose up -d --no-build --no-deps --force-recreate scheduler-host"
                 in command
                 for command in rendered
             )
@@ -2205,34 +2406,48 @@ class DockerHealthCheckerTests(TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def test_history_worker_compose_contract_is_private_and_uses_container_database(self) -> None:
+    def test_scheduler_host_health_checks_process_restart_and_internal_snapshot(self) -> None:
+        self.health.check_service("scheduler-host", ())
+
+        rendered = [" ".join(command) for command in self.runner.commands]
+        self.assertTrue(any("ps --status running --format json scheduler-host" in command for command in rendered))
+        self.assertTrue(any("inspect --format {{.RestartCount}} scheduler-host-container" in command for command in rendered))
+        self.assertTrue(
+            any(
+                "exec -T scheduler-host python -m investment_knowledge_mcp.scheduler_service --check-health"
+                in command
+                for command in rendered
+            )
+        )
+
+    def test_scheduler_host_compose_contract_is_private_and_uses_container_database(self) -> None:
         source = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
-        start = source.index("  daily-market-brief-history-worker:\n")
+        start = source.index("  scheduler-host:\n")
         worker = source[start:source.index("\nvolumes:\n", start)]
 
         self.assertIn("image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}", worker)
         self.assertIn("restart: unless-stopped", worker)
         self.assertIn("POSTGRES_HOST: postgres", worker)
-        self.assertIn("POSTGRES_PORT: 5432", worker)
+        self.assertIn('POSTGRES_PORT: "5432"', worker)
         self.assertNotIn("ports:", worker)
-        self.assertIn("scripts/daily_market_brief_history_worker.py", worker)
+        self.assertIn("investment_knowledge_mcp.scheduler_service", worker)
+        self.assertIn("--check-health", worker)
 
-    def test_history_worker_compose_entrypoint_exists_in_integrated_checkout(self) -> None:
+    def test_scheduler_host_entrypoint_and_child_exist_in_integrated_checkout(self) -> None:
         source = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
-        start = source.index("  daily-market-brief-history-worker:\n")
+        start = source.index("  scheduler-host:\n")
         worker = source[start:source.index("\nvolumes:\n", start)]
         script_paths = re.findall(r"python (scripts/[A-Za-z0-9_./-]+\.py)", worker)
 
-        self.assertEqual(
-            ["scripts/init_db.py", "scripts/daily_market_brief_history_worker.py"],
-            script_paths,
-        )
+        self.assertEqual(["scripts/init_db.py"], script_paths)
         for script_path in script_paths:
             with self.subTest(script_path=script_path):
                 self.assertTrue(
                     Path(script_path).is_file(),
                     "integrate the Async Task 2 worker commit before deploying this wiring",
                 )
+        self.assertTrue(Path("investment_knowledge_mcp/scheduler_service.py").is_file())
+        self.assertTrue(Path("scripts/daily_market_brief_history_worker.py").is_file())
 
     def test_exact_target_and_aggregate_health_routes_are_checked(self) -> None:
         self.health.check_service("weekly-review-web", ("/daily-market-brief",))
@@ -2356,23 +2571,23 @@ class DockerHealthCheckerTests(TestCase):
             "--no-color",
             "--tail",
             "200",
-            "account-snapshot-scheduler",
+            "scheduler-host",
         )
         self.runner.results[logs] = CommandResult(
             0, "Traceback (most recent call last):\nRuntimeError: boom\n", ""
         )
 
-        self.health.check_service("account-snapshot-scheduler", ())
+        self.health.check_service("scheduler-host", ())
 
         self.assertNotIn(logs, self.runner.commands)
 
-    def test_history_worker_health_uses_running_state_without_log_scan(self) -> None:
-        self.health.check_service("daily-market-brief-history-worker", ())
+    def test_scheduler_host_health_uses_running_state_without_log_scan(self) -> None:
+        self.health.check_service("scheduler-host", ())
 
         rendered = [" ".join(command) for command in self.runner.commands]
         self.assertTrue(
             any(
-                "ps --status running --format json daily-market-brief-history-worker" in command
+                "ps --status running --format json scheduler-host" in command
                 for command in rendered
             )
         )
@@ -2386,12 +2601,12 @@ class DockerHealthCheckerTests(TestCase):
             "inspect",
             "--format",
             "{{.RestartCount}}",
-            "account-snapshot-scheduler-container",
+            "scheduler-host-container",
         )
         self.runner.results[inspect] = CommandResult(0, "1\n", "")
 
         with self.assertRaisesRegex(DeploymentHealthError, "restarted during startup"):
-            self.health.check_service("account-snapshot-scheduler", ())
+            self.health.check_service("scheduler-host", ())
 
     def test_not_running_service_reports_safe_startup_log_detail(self) -> None:
         ps = (
@@ -2402,7 +2617,7 @@ class DockerHealthCheckerTests(TestCase):
             "running",
             "--format",
             "json",
-            "daily-market-brief-history-worker",
+            "scheduler-host",
         )
         logs = (
             "docker",
@@ -2411,7 +2626,7 @@ class DockerHealthCheckerTests(TestCase):
             "--no-color",
             "--tail",
             "200",
-            "daily-market-brief-history-worker",
+            "scheduler-host",
         )
         self.runner.results[ps] = CommandResult(0, "", "")
         self.runner.results[logs] = CommandResult(
@@ -2426,7 +2641,7 @@ class DockerHealthCheckerTests(TestCase):
         )
 
         with self.assertRaises(DeploymentHealthError) as raised:
-            self.health.check_service("daily-market-brief-history-worker", ())
+            self.health.check_service("scheduler-host", ())
 
         message = str(raised.exception)
         self.assertIn("Python module import failed", message)
@@ -2444,7 +2659,7 @@ class DockerHealthCheckerTests(TestCase):
             "running",
             "--format",
             "json",
-            "daily-market-brief-history-worker",
+            "scheduler-host",
         )
         logs = (
             "docker",
@@ -2453,7 +2668,7 @@ class DockerHealthCheckerTests(TestCase):
             "--no-color",
             "--tail",
             "200",
-            "daily-market-brief-history-worker",
+            "scheduler-host",
         )
         self.runner.results[ps] = CommandResult(0, "", "")
         self.runner.results[logs] = CommandResult(
@@ -2465,7 +2680,7 @@ class DockerHealthCheckerTests(TestCase):
         with self.assertRaisesRegex(
             DeploymentHealthError, "startup permission check failed"
         ):
-            self.health.check_service("daily-market-brief-history-worker", ())
+            self.health.check_service("scheduler-host", ())
 
     def test_mcp_target_rejects_not_found_transport(self) -> None:
         command = (
