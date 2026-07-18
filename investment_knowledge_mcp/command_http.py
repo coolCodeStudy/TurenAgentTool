@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Mapping
+import json
+from typing import Any, Mapping
 
 from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
 from investment_knowledge_mcp.command_workbench import execution_blocker, parse_workbench_command
@@ -11,6 +12,51 @@ from investment_knowledge_mcp.repository import record_command_event
 
 
 PUBLIC_WORKBENCH_FAILURE_MESSAGE = "Command execution failed. Please retry later."
+MAX_COMMAND_BODY_BYTES = 64 * 1024
+
+
+def read_command_json_body(handler: Any) -> dict[str, Any] | None:
+    content_length = handler.headers.get("Content-Length")
+    if content_length is None:
+        handler._write_json(
+            HTTPStatus.LENGTH_REQUIRED,
+            {"ok": False, "error": "Content-Length is required"},
+        )
+        return None
+
+    try:
+        length = int(content_length)
+    except ValueError:
+        handler._write_json(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "error": "invalid Content-Length"},
+        )
+        return None
+
+    if length > MAX_COMMAND_BODY_BYTES:
+        handler._write_json(
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            {"ok": False, "error": "request too large"},
+        )
+        return None
+
+    raw_body = handler.rfile.read(length)
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        handler._write_json(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "error": "invalid JSON body"},
+        )
+        return None
+
+    if not isinstance(payload, dict):
+        handler._write_json(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "error": "JSON body must be an object"},
+        )
+        return None
+    return payload
 
 
 @dataclass(frozen=True)

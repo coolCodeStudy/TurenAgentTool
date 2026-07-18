@@ -209,31 +209,69 @@ class AppGatewayDispatchTests(unittest.TestCase):
         from investment_knowledge_mcp import app_gateway, command_api
         from investment_knowledge_mcp.app_gateway import AppGatewayHandler
 
-        results = []
-        for handler_type, auth_target in (
-            (command_api.CommandRequestHandler, command_api),
-            (AppGatewayHandler, app_gateway),
-        ):
-            handler = object.__new__(handler_type)
-            handler.path = "/command"
-            handler.command = "POST"
-            handler.headers = {}
-            handler.rfile = BytesIO()
-            handler._write_json = mock.Mock()
-            with mock.patch.object(auth_target, "authorize_http", return_value=True):
-                handler.do_POST()
-            results.append(handler._write_json.call_args_list)
-
-        self.assertEqual(results[0], results[1])
-        self.assertEqual(
-            results[0],
-            [
+        cases = (
+            (
+                b"",
+                None,
                 mock.call(
                     HTTPStatus.LENGTH_REQUIRED,
                     {"ok": False, "error": "Content-Length is required"},
-                )
-            ],
+                ),
+            ),
+            (
+                b"",
+                "invalid",
+                mock.call(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "invalid Content-Length"},
+                ),
+            ),
+            (
+                b"{}",
+                str(64 * 1024 + 1),
+                mock.call(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    {"ok": False, "error": "request too large"},
+                ),
+            ),
+            (
+                b"{",
+                "1",
+                mock.call(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "invalid JSON body"},
+                ),
+            ),
+            (
+                b"[]",
+                "2",
+                mock.call(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "JSON body must be an object"},
+                ),
+            ),
         )
+        for body, content_length, expected in cases:
+            with self.subTest(body=body, content_length=content_length):
+                results = []
+                for handler_type, auth_target in (
+                    (command_api.CommandRequestHandler, command_api),
+                    (AppGatewayHandler, app_gateway),
+                ):
+                    handler = object.__new__(handler_type)
+                    handler.path = "/command"
+                    handler.command = "POST"
+                    handler.headers = (
+                        {} if content_length is None else {"Content-Length": content_length}
+                    )
+                    handler.rfile = BytesIO(body)
+                    handler._write_json = mock.Mock()
+                    with mock.patch.object(auth_target, "authorize_http", return_value=True):
+                        handler.do_POST()
+                    results.append(handler._write_json.call_args_list)
+
+                self.assertEqual(results[0], results[1])
+                self.assertEqual([expected], results[0])
 
     def test_legacy_and_gateway_handlers_share_the_exact_dispatch_methods(self) -> None:
         from investment_knowledge_mcp.app_gateway import AppGatewayHandler

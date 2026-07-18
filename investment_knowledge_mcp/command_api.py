@@ -13,13 +13,11 @@ from investment_knowledge_mcp.command_http import (
     CommandHttpRequest,
     execute_command_request,
     execute_workbench_request,
+    read_command_json_body,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.http_access import authorize_http
 from investment_knowledge_mcp.web_access import AccessClass
-
-
-MAX_BODY_BYTES = 64 * 1024
 
 
 class CommandRequestHandler(BaseHTTPRequestHandler):
@@ -96,32 +94,7 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
         self._write_json(response.status, response.payload)
 
     def _read_json_body(self) -> dict[str, Any] | None:
-        content_length = self.headers.get("Content-Length")
-        if content_length is None:
-            self._write_json(HTTPStatus.LENGTH_REQUIRED, {"ok": False, "error": "Content-Length is required"})
-            return None
-
-        try:
-            length = int(content_length)
-        except ValueError:
-            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid Content-Length"})
-            return None
-
-        if length > MAX_BODY_BYTES:
-            self._write_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"ok": False, "error": "request too large"})
-            return None
-
-        raw_body = self.rfile.read(length)
-        try:
-            payload = json.loads(raw_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid JSON body"})
-            return None
-
-        if not isinstance(payload, dict):
-            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "JSON body must be an object"})
-            return None
-        return payload
+        return read_command_json_body(self)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

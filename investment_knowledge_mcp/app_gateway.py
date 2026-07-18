@@ -11,7 +11,11 @@ from investment_knowledge_mcp.command_workbench import (
     list_workbench_actions,
     render_command_workbench_html,
 )
-from investment_knowledge_mcp.command_http import CommandHttpRequest, execute_command_request
+from investment_knowledge_mcp.command_http import (
+    CommandHttpRequest,
+    execute_command_request,
+    read_command_json_body,
+)
 from investment_knowledge_mcp.daily_market_brief_controller import (
     dispatch_daily_market_brief_get,
     dispatch_daily_market_brief_post,
@@ -151,13 +155,6 @@ def dispatch_post(handler: Any) -> None:
 
 def _write_not_found(handler: Any) -> None:
     handler._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
-
-
-def read_command_json_body(handler: Any) -> dict[str, Any] | None:
-    """Reuse the legacy transport parser until command-api retirement is complete."""
-    from investment_knowledge_mcp.command_api import CommandRequestHandler
-
-    return CommandRequestHandler._read_json_body(handler)
 
 
 # Imported after the dispatch functions so weekly_review_web can lazily delegate

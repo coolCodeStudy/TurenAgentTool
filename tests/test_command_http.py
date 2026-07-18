@@ -1,11 +1,107 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from io import BytesIO
 from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 from investment_knowledge_mcp import command_http
+
+
+class _JsonBodyHandler:
+    def __init__(self, body: bytes, content_length: str | None) -> None:
+        self.headers = {} if content_length is None else {"Content-Length": content_length}
+        self.rfile = BytesIO(body)
+        self.responses: list[tuple[HTTPStatus, dict[str, object]]] = []
+
+    def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
+        self.responses.append((status, payload))
+
+
+class CommandJsonBodyParserTests(unittest.TestCase):
+    def test_shared_parser_accepts_a_json_object(self) -> None:
+        handler = _JsonBodyHandler(b'{"text":"help"}', "15")
+        reader = getattr(command_http, "read_command_json_body", None)
+
+        self.assertIsNotNone(reader, "command HTTP must expose the shared JSON body parser")
+        payload = reader(handler)
+
+        self.assertEqual({"text": "help"}, payload)
+        self.assertEqual([], handler.responses)
+
+    def test_shared_parser_accepts_an_object_at_the_exact_body_limit(self) -> None:
+        body = b'{"text":"' + (b"x" * (64 * 1024 - 11)) + b'"}'
+        self.assertEqual(64 * 1024, len(body))
+        handler = _JsonBodyHandler(body, str(len(body)))
+
+        payload = command_http.read_command_json_body(handler)
+
+        self.assertEqual(64 * 1024 - 11, len(payload["text"]))
+        self.assertEqual([], handler.responses)
+
+    def test_shared_parser_preserves_legacy_error_responses(self) -> None:
+        cases = (
+            (
+                b"",
+                None,
+                HTTPStatus.LENGTH_REQUIRED,
+                {"ok": False, "error": "Content-Length is required"},
+            ),
+            (
+                b"",
+                "not-an-integer",
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": "invalid Content-Length"},
+            ),
+            (
+                b"{}",
+                str(64 * 1024 + 1),
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                {"ok": False, "error": "request too large"},
+            ),
+            (
+                b"{",
+                "1",
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": "invalid JSON body"},
+            ),
+            (
+                b"\xff",
+                "1",
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": "invalid JSON body"},
+            ),
+            (
+                b"[]",
+                "2",
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": "JSON body must be an object"},
+            ),
+        )
+        for body, content_length, status, response in cases:
+            with self.subTest(content_length=content_length, body=body):
+                handler = _JsonBodyHandler(body, content_length)
+                reader = getattr(command_http, "read_command_json_body", None)
+
+                self.assertIsNotNone(reader, "command HTTP must expose the shared JSON body parser")
+                payload = reader(handler)
+
+                self.assertIsNone(payload)
+                self.assertEqual([(status, response)], handler.responses)
+
+    def test_command_handler_still_serializes_json_responses(self) -> None:
+        from investment_knowledge_mcp.command_api import CommandRequestHandler
+
+        handler = object.__new__(CommandRequestHandler)
+        handler.wfile = BytesIO()
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock()
+        handler.end_headers = mock.Mock()
+
+        handler._write_json(HTTPStatus.OK, {"ok": True})
+
+        self.assertEqual(b'{"ok": true}', handler.wfile.getvalue())
 
 
 class CommandHttpControllerTests(unittest.TestCase):
