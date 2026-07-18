@@ -4,19 +4,13 @@ from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import os
 import re
 from threading import Lock
 import time
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import daily_market_jobs, repository
-from investment_knowledge_mcp.command_workbench import (
-    list_workbench_actions,
-    render_command_workbench_html,
-)
 from investment_knowledge_mcp.command_http import (
     PUBLIC_WORKBENCH_FAILURE_MESSAGE,
     CommandHttpRequest,
@@ -35,13 +29,11 @@ from investment_knowledge_mcp.daily_market_jobs import (
     list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
-from investment_knowledge_mcp.http_access import authorize_http
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 from investment_knowledge_mcp.web_experience import (
     render_experience_css,
     render_primary_navigation,
 )
-from investment_knowledge_mcp.web_access import AccessClass
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -90,107 +82,14 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     server_version = "InvestmentKnowledgeWeeklyReviewWeb/0.1"
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path in {"/", "/weekly-review"}:
-            self._write_html(HTTPStatus.OK, render_weekly_review_workbench_html())
-            return
-        if parsed.path == "/daily-market-brief":
-            self._write_html(HTTPStatus.OK, render_daily_market_brief_html())
-            return
-        if parsed.path == "/health":
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "app_release_sha": os.getenv("APP_RELEASE_SHA") or "",
-                    "daily_market_brief_route": True,
-                },
-            )
-            return
-        if parsed.path == "/command":
-            self._write_html(HTTPStatus.OK, render_command_workbench_html())
-            return
-        if parsed.path == "/api/command-workbench/actions":
-            self._write_json(HTTPStatus.OK, {"ok": True, "actions": list_workbench_actions()})
-            return
-        if parsed.path == "/api/weekly-review":
-            self._handle_weekly_review_read(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/daily-market-brief":
-            self._handle_daily_market_brief_read(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/daily-market-brief/dates":
-            self._handle_daily_market_brief_dates(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/daily-market-brief/history-jobs":
-            self._handle_daily_market_brief_history_jobs_read(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/candidate-insights":
-            if not authorize_http(self, AccessClass.PROTECTED):
-                return
-            self._handle_candidate_insights(parse_qs(parsed.query))
-            return
-        self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        from investment_knowledge_mcp.app_gateway import dispatch_get
+
+        dispatch_get(self)
 
     def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path in {"/api/command-workbench/parse", "/api/command-workbench/execute"}:
-            if not authorize_http(self, AccessClass.PROTECTED):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            if parsed.path == "/api/command-workbench/parse":
-                self._handle_workbench_parse(payload)
-            else:
-                self._handle_workbench_execute(payload)
-            return
+        from investment_knowledge_mcp.app_gateway import dispatch_post
 
-        if parsed.path == "/api/weekly-review/generate":
-            if not authorize_http(self, AccessClass.PROTECTED):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_weekly_review_generate(payload, force=False)
-            return
-        if parsed.path == "/api/weekly-review/refresh":
-            if not authorize_http(self, AccessClass.PROTECTED):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_weekly_review_generate(payload, force=True)
-            return
-        if parsed.path == "/api/weekly-review/save":
-            if not authorize_http(self, AccessClass.PROTECTED):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_weekly_review_save(payload)
-            return
-        if parsed.path == "/api/daily-market-brief/generate":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_daily_market_brief_generate(payload)
-            return
-        if parsed.path == "/api/daily-market-brief/history-jobs":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_daily_market_brief_history_job_create(payload)
-            return
-
-        candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
-        if candidate_match:
-            if not authorize_http(self, AccessClass.PROTECTED):
-                return
-            self._handle_candidate_decision(candidate_id=int(candidate_match.group(1)), action=candidate_match.group(2))
-            return
-
-        self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        dispatch_post(self)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -2101,8 +2000,10 @@ def _first_query_value(payload: dict[str, Any], key: str) -> str | None:
 
 
 def main() -> None:
+    from investment_knowledge_mcp.app_gateway import AppGatewayHandler
+
     config = get_config()
-    server = ThreadingHTTPServer((config.weekly_review_web_host, config.weekly_review_web_port), WeeklyReviewWebHandler)
+    server = ThreadingHTTPServer((config.weekly_review_web_host, config.weekly_review_web_port), AppGatewayHandler)
     print(
         f"Weekly Review Web listening on {config.weekly_review_web_host}:{config.weekly_review_web_port}",
         flush=True,
