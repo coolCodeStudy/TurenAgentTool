@@ -33,6 +33,16 @@ class DataSourceContractTests(TestCase):
         with self.assertRaises(AttributeError):
             failure.code = "other"  # type: ignore[misc]
 
+    def test_provider_failure_repr_never_includes_supplied_detail(self) -> None:
+        failure = ProviderFailure("error", "source", False, False, "ordinary internal detail")
+        self.assertNotIn("ordinary internal detail", repr(failure))
+        bearer = ProviderFailure("error", "source", False, False, "Bearer opaque-value")
+        basic = ProviderFailure("error", "source", False, False, "Basic opaque-value")
+        cookie = ProviderFailure("error", "source", False, False, "session=opaque-value; cookie=value")
+        self.assertEqual(bearer.detail, "[redacted]")
+        self.assertEqual(basic.detail, "[redacted]")
+        self.assertEqual(cookie.detail, "[redacted]")
+
     def test_provider_failure_requires_code_and_source_id(self) -> None:
         with self.assertRaises(ValueError):
             ProviderFailure("", "source", False, False)
@@ -58,6 +68,12 @@ class DataSourceContractTests(TestCase):
             DataRequest(SourceCapability.MARKET_BARS, "US", (), date(2026, 2, 2), date(2026, 2, 1), "1h", ())
         with self.assertRaises(ValueError):
             DataRequest(SourceCapability.MARKET_BARS, "", (), freshness="1h")
+
+    def test_request_rejects_datetime_boundaries(self) -> None:
+        with self.assertRaises(ValueError):
+            DataRequest(SourceCapability.MARKET_BARS, "US", (), datetime.now(timezone.utc), freshness="1h")
+        with self.assertRaises(ValueError):
+            DataRequest(SourceCapability.MARKET_BARS, "US", (), end=datetime.now(timezone.utc), freshness="1h")
 
     def test_plan_normalizes_sources_and_requires_allowed_membership(self) -> None:
         plan = SourcePlan(
@@ -99,6 +115,18 @@ class DataSourceContractTests(TestCase):
         with self.assertRaises(ValueError):
             ProviderDescriptor("source", (), ("",), 0, -1, "group", -1)
 
+    def test_provider_descriptor_rejects_non_finite_fractional_and_boolean_limits(self) -> None:
+        valid = ("source", (SourceCapability.MARKET_BARS,), ("US",), 1.0, 0, "group", 1)
+        for timeout in (float("nan"), float("inf"), True):
+            with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                ProviderDescriptor(*valid[:3], timeout, *valid[4:])
+        for retry_limit in (0.5, True):
+            with self.subTest(retry_limit=retry_limit), self.assertRaises(ValueError):
+                ProviderDescriptor(*valid[:4], retry_limit, *valid[5:])
+        for ttl in (0.5, True):
+            with self.subTest(ttl=ttl), self.assertRaises(ValueError):
+                ProviderDescriptor(*valid[:6], ttl)
+
     def test_ok_result_requires_selected_source_and_complete_coverage(self) -> None:
         with self.assertRaises(ValueError):
             DataResult(DataStatus.OK, (), None, ("source",), 1.0, datetime.now(timezone.utc), False, ())
@@ -123,11 +151,31 @@ class DataSourceContractTests(TestCase):
         self.assertEqual(result.attempted_sources, ("primary", "fallback"))
         self.assertIsNone(result.selected_source)
 
+    def test_result_requires_selected_source_and_failures_to_be_attempted(self) -> None:
+        fetched_at = datetime.now(timezone.utc)
+        with self.assertRaises(ValueError):
+            DataResult(DataStatus.PARTIAL, (), "source", (), 0.5, fetched_at, False, ())
+        with self.assertRaises(ValueError):
+            DataResult(
+                DataStatus.UNAVAILABLE,
+                (),
+                None,
+                ("source",),
+                0.0,
+                fetched_at,
+                False,
+                (ProviderFailure("error", "other", False, False),),
+            )
+
     def test_result_rejects_invalid_coverage_and_normalizes_selected_source(self) -> None:
         with self.assertRaises(ValueError):
             DataResult(DataStatus.UNAVAILABLE, (), None, (), 1.1, datetime.now(timezone.utc), False, ())
-        result = DataResult(DataStatus.PARTIAL, (), " Primary ", (), 0.3, datetime.now(timezone.utc), True, ())
+        result = DataResult(DataStatus.PARTIAL, (), " Primary ", ("primary",), 0.3, datetime.now(timezone.utc), True, ())
         self.assertEqual(result.selected_source, "primary")
+
+    def test_result_requires_timezone_aware_fetch_time(self) -> None:
+        with self.assertRaises(ValueError):
+            DataResult(DataStatus.UNAVAILABLE, (), None, (), 0.0, datetime.now(), False, ())
 
     def test_contract_annotations_do_not_include_credentials(self) -> None:
         contracts = (ProviderFailure, DataRequest, SourcePlan, ProviderDescriptor, DataResult)

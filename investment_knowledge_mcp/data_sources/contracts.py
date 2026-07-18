@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
+from numbers import Real
 from typing import Any, Iterable, Optional, Tuple
 
 
@@ -49,7 +51,11 @@ def _sanitize_detail(detail: Optional[str]) -> Optional[str]:
     if detail is None:
         return None
     text = str(detail)
-    if re.search(r"(?i)(token|api[_ -]?key|password|secret|authorization)", text):
+    if re.search(
+        r"(?i)\b(token|api[_ -]?key|password|secret|authorization)\b|"
+        r"\b(bearer|basic)\s+\S+|\bcookie\s*=",
+        text,
+    ):
         return "[redacted]"
     return text
 
@@ -60,7 +66,7 @@ class ProviderFailure:
     source_id: str
     retryable: bool
     fallback_allowed: bool
-    detail: Optional[str] = None
+    detail: Optional[str] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "code", _non_empty(self.code, "failure code"))
@@ -85,6 +91,10 @@ class DataRequest:
         object.__setattr__(self, "symbols", _string_tuple(self.symbols, lambda value: _non_empty(value, "symbol").upper(), "symbols"))
         object.__setattr__(self, "freshness", _non_empty(self.freshness, "freshness"))
         object.__setattr__(self, "required_fields", _string_tuple(self.required_fields, lambda value: _non_empty(value, "required field"), "required fields"))
+        if self.start is not None and (not isinstance(self.start, date) or isinstance(self.start, datetime)):
+            raise ValueError("start must be a date, not a datetime")
+        if self.end is not None and (not isinstance(self.end, date) or isinstance(self.end, datetime)):
+            raise ValueError("end must be a date, not a datetime")
         if self.start is not None and self.end is not None and self.start > self.end:
             raise ValueError("start cannot be after end")
 
@@ -136,12 +146,12 @@ class ProviderDescriptor:
         markets = _string_tuple(self.markets, _market, "markets")
         if not markets:
             raise ValueError("markets must be non-empty")
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
-        if self.retry_limit < 0:
-            raise ValueError("retry_limit cannot be negative")
-        if self.default_ttl_seconds < 0:
-            raise ValueError("default_ttl_seconds cannot be negative")
+        if isinstance(self.timeout_seconds, bool) or not isinstance(self.timeout_seconds, Real) or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a finite positive real number")
+        if isinstance(self.retry_limit, bool) or not isinstance(self.retry_limit, int) or self.retry_limit < 0:
+            raise ValueError("retry_limit must be a non-negative integer")
+        if isinstance(self.default_ttl_seconds, bool) or not isinstance(self.default_ttl_seconds, int) or self.default_ttl_seconds < 0:
+            raise ValueError("default_ttl_seconds must be a non-negative integer")
         object.__setattr__(self, "source_id", _source_id(self.source_id))
         object.__setattr__(self, "capabilities", capabilities)
         object.__setattr__(self, "markets", markets)
@@ -169,10 +179,16 @@ class DataResult:
         failures = tuple(self.failures)
         if any(not isinstance(failure, ProviderFailure) for failure in failures):
             raise ValueError("failures must be ProviderFailure values")
+        if not isinstance(self.fetched_at, datetime) or self.fetched_at.tzinfo is None or self.fetched_at.utcoffset() is None:
+            raise ValueError("fetched_at must be a timezone-aware datetime")
         if self.status in (DataStatus.OK, DataStatus.PARTIAL) and selected is None:
             raise ValueError("successful or partial results require a selected source")
         if self.status is DataStatus.OK and self.coverage != 1.0:
             raise ValueError("ok results require complete coverage")
+        if selected is not None and selected not in attempted:
+            raise ValueError("selected source must be attempted")
+        if any(failure.source_id not in attempted for failure in failures):
+            raise ValueError("failure sources must be attempted")
         object.__setattr__(self, "records", tuple(self.records))
         object.__setattr__(self, "selected_source", selected)
         object.__setattr__(self, "attempted_sources", attempted)
