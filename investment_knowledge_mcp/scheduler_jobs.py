@@ -56,7 +56,11 @@ def default_scheduler_jobs(
             JobDefinition(
                 job_id="ipo-reminder",
                 interval_seconds=_bounded_interval(resolved_config.dingtalk_ipo_reminder_interval_seconds),
-                run_once=lambda: run_ipo_reminder_once(logger=resolved_logger),
+                run_once=_with_failure_logging(
+                    "ipo-reminder",
+                    lambda: run_ipo_reminder_once(logger=resolved_logger),
+                    resolved_logger,
+                ),
                 timeout_seconds=IPO_REMINDER_TIMEOUT_SECONDS,
                 allow_overlap=False,
             )
@@ -67,10 +71,14 @@ def default_scheduler_jobs(
             JobDefinition(
                 job_id="account-snapshot",
                 interval_seconds=_bounded_interval(resolved_config.account_snapshot_interval_seconds),
-                run_once=_account_snapshot_callback(
-                    scheduled_time=_parse_scheduled_time(resolved_config.account_snapshot_time),
-                    now=wall_clock,
-                    logger=resolved_logger,
+                run_once=_with_failure_logging(
+                    "account-snapshot",
+                    _account_snapshot_callback(
+                        scheduled_time=_parse_scheduled_time(resolved_config.account_snapshot_time),
+                        now=wall_clock,
+                        logger=resolved_logger,
+                    ),
+                    resolved_logger,
                 ),
                 timeout_seconds=ACCOUNT_SNAPSHOT_TIMEOUT_SECONDS,
                 allow_overlap=False,
@@ -82,10 +90,14 @@ def default_scheduler_jobs(
             JobDefinition(
                 job_id=f"daily-market-brief-{market.lower()}",
                 interval_seconds=DAILY_MARKET_BRIEF_INTERVAL_SECONDS,
-                run_once=_daily_market_brief_callback(
-                    market=market,
-                    now=wall_clock,
-                    logger=resolved_logger,
+                run_once=_with_failure_logging(
+                    f"daily-market-brief-{market.lower()}",
+                    _daily_market_brief_callback(
+                        market=market,
+                        now=wall_clock,
+                        logger=resolved_logger,
+                    ),
+                    resolved_logger,
                 ),
                 timeout_seconds=DAILY_MARKET_BRIEF_TIMEOUT_SECONDS,
                 allow_overlap=False,
@@ -158,6 +170,25 @@ def _daily_market_brief_callback(
         return result
 
     return run_if_due
+
+
+def _with_failure_logging(
+    job_id: str,
+    callback: Callable[[], object | None],
+    logger: logging.Logger,
+) -> Callable[[], object | None]:
+    def run_with_logging() -> object | None:
+        try:
+            return callback()
+        except Exception as exc:
+            logger.error(
+                "scheduler job failed: job_id=%s exception_type=%s",
+                job_id,
+                type(exc).__name__,
+            )
+            raise
+
+    return run_with_logging
 
 
 def _bounded_interval(value: object) -> int:

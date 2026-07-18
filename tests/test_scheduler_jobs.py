@@ -204,6 +204,32 @@ class SchedulerJobTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(states["account-snapshot"].last_error, "exception:ValueError")
 
+    def test_job_failure_log_is_sanitized_and_health_still_records_failure(self) -> None:
+        logger = mock.Mock()
+        secret_message = "provider failed with secret-value"
+        with mock.patch.object(
+            scheduler_jobs,
+            "run_ipo_reminder_once",
+            side_effect=RuntimeError(secret_message),
+        ):
+            host = scheduler_jobs.default_scheduler_host(
+                config=self._config(account_snapshot_scheduler_enabled=False),
+                clock=lambda: 0.0,
+                now=lambda: datetime(2026, 7, 20, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+                executor=InlineExecutor(),
+                logger=logger,
+            )
+
+            states = {state.job_id: state for state in host.tick(0.0)}
+
+        logger.error.assert_called_once_with(
+            "scheduler job failed: job_id=%s exception_type=%s",
+            "ipo-reminder",
+            "RuntimeError",
+        )
+        self.assertNotIn(secret_message, repr(logger.error.call_args))
+        self.assertEqual(states["ipo-reminder"].last_error, "exception:RuntimeError")
+
 
 if __name__ == "__main__":
     unittest.main()
