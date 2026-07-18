@@ -23,6 +23,26 @@ class OpsApiWorkflowContractTests(TestCase):
         self.assertIn("workflow_dispatch:", self.workflow)
         self.assertIn('MODE="${{ inputs.mode }}"', self.workflow)
 
+    def test_resource_diagnostics_is_an_explicit_read_only_control_plane_mode(self) -> None:
+        self.assertIn("resource-diagnostics", self.workflow)
+        diagnostics_case = self.workflow.split("resource-diagnostics)", 1)[1].split(";;", 1)[0]
+
+        self.assertIn("free -b", diagnostics_case)
+        self.assertIn("docker stats --no-stream", diagnostics_case)
+        self.assertIn("ps -eo pid=,ppid=,rss=,comm= --sort=-rss", diagnostics_case)
+        self.assertIn("run_under_deploy_lock", diagnostics_case)
+        self.assertNotIn("systemctl", diagnostics_case)
+        self.assertNotIn("docker compose", diagnostics_case)
+        self.assertNotIn("docker restart", diagnostics_case)
+        self.assertNotIn("docker stop", diagnostics_case)
+        diagnostics_exit = 'if [ "$MODE" = "resource-diagnostics" ]; then\n              exit 0\n            fi'
+        self.assertIn(diagnostics_exit, self.workflow)
+        self.assertLess(
+            self.workflow.index(diagnostics_exit),
+            self.workflow.index("sudo journalctl -u investment-ops-api.service"),
+        )
+        self.assertIn('if [ ! -d "$APP_DIR/shared" ] || [ ! -e "$DEPLOY_LOCK_PATH" ]; then', self.workflow)
+
     def test_control_plane_mutations_share_production_deploy_concurrency(self) -> None:
         self.assertIn("concurrency:", self.workflow)
         self.assertIn("group: production-deploy", self.workflow)
