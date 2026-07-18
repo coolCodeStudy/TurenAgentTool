@@ -23,6 +23,9 @@ GIB = 1024**3
 MIB = 1024**2
 _DOCKER_TIMEOUT_SECONDS = 10
 _LOCK_RETRY_SECONDS = 0.05
+_BASE_AVAILABLE_MEMORY_BYTES = 512 * MIB
+_FULL_IMAGE_START_AVAILABLE_MEMORY_BYTES = 768 * MIB
+_FULL_IMAGE_RUNTIME_PHASES = frozenset({"post_load", "before_activation"})
 
 
 class DeployPreflightError(RuntimeError):
@@ -42,6 +45,21 @@ class PreflightResult:
     errors: tuple[str, ...]
 
 
+def required_available_memory_bytes(
+    mode: DeployMode,
+    *,
+    memory_phase: str = "start",
+) -> int:
+    """Return the physical MemAvailable reserve for a deployment phase."""
+    if memory_phase not in {"start", *_FULL_IMAGE_RUNTIME_PHASES}:
+        raise ValueError("unsupported deployment memory phase")
+    if mode is not DeployMode.FULL_IMAGE and memory_phase != "start":
+        raise ValueError("runtime memory phases apply only to full image deployment")
+    if mode is DeployMode.FULL_IMAGE and memory_phase == "start":
+        return _FULL_IMAGE_START_AVAILABLE_MEMORY_BYTES
+    return _BASE_AVAILABLE_MEMORY_BYTES
+
+
 def collect_resources(runner: CommandRunner) -> ResourceSnapshot:
     disk_result = _run_resource_probe(runner, ("df", "-Pk", "/"), "disk")
     free_disk_bytes, disk_used_percent = _parse_disk_output(disk_result.stdout)
@@ -59,14 +77,22 @@ def evaluate_preflight(
     snapshot: ResourceSnapshot,
     mode: DeployMode,
     archive_bytes: int | None,
+    *,
+    memory_phase: str = "start",
 ) -> PreflightResult:
     errors: list[str] = []
     if snapshot.free_disk_bytes < 8 * GIB:
         errors.append("free disk must be at least 8 GiB")
     if snapshot.disk_used_percent > 80.0:
         errors.append("disk use must not exceed 80%")
-    if snapshot.available_memory_bytes < 512 * MIB:
-        errors.append("available memory must be at least 512 MiB")
+    required_memory = required_available_memory_bytes(
+        mode,
+        memory_phase=memory_phase,
+    )
+    if snapshot.available_memory_bytes < required_memory:
+        errors.append(
+            f"available memory must be at least {required_memory // MIB} MiB"
+        )
     if mode is DeployMode.FULL_IMAGE:
         if archive_bytes is None:
             errors.append("full image requires a known archive size")

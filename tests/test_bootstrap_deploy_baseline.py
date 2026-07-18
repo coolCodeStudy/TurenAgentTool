@@ -161,6 +161,18 @@ class BootstrapDeployBaselineTests(TestCase):
                 ("docker", "image", "tag", IMAGE_ID, f"investment-knowledge-app:{BASELINE_SHA}"),
                 runner.commands,
             )
+            self.assertIn(
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "merge-base",
+                    "--is-ancestor",
+                    BASELINE_SHA,
+                    "origin/main",
+                ),
+                runner.commands,
+            )
             self.assertFalse(any(command[:3] == ("docker", "compose", "up") for command in runner.commands))
 
     def test_prefers_existing_managed_release_link_over_root_checkout(self) -> None:

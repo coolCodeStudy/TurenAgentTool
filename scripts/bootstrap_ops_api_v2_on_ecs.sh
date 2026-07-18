@@ -6,6 +6,7 @@ BOOTSTRAP_REF=${BOOTSTRAP_REF:-main}
 REPO_DIR=${OPS_DEPLOY_REPO_DIR:-/opt/investment-knowledge-repo}
 APP_ROOT=${APP_ROOT:-${INVESTMENT_APP_ROOT:-/opt/investment-knowledge}}
 OPS_HOME=${OPS_HOME:-/opt/investment-ops}
+OPS_DEPLOY_ARTIFACTS_DIR=${OPS_DEPLOY_ARTIFACTS_DIR:-$OPS_HOME/deploy-artifacts}
 OPS_API_PORT=${OPS_API_PORT:-8767}
 OPS_API_HOST=${OPS_API_HOST:-}
 OPS_DEPLOY_STATE_PATH=${OPS_DEPLOY_STATE_PATH:-/opt/investment-knowledge/shared/deploy-state.json}
@@ -13,6 +14,11 @@ OPS_DEPLOY_LOCK_PATH=${OPS_DEPLOY_LOCK_PATH:-/opt/investment-knowledge/shared/de
 OPS_DEPLOY_RELEASE_ROOT=${OPS_DEPLOY_RELEASE_ROOT:-/opt/investment-knowledge/releases}
 OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-1800}
 OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
+
+if [ -z "${OPS_API_TOKEN:-}" ]; then
+  echo "OPS_API_TOKEN is required to bootstrap the independent Ops API." >&2
+  exit 1
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Please run as root on the ECS host." >&2
@@ -67,6 +73,7 @@ PYTHONPATH="$REPO_DIR" python3 "$REPO_DIR/scripts/bootstrap_deploy_baseline.py" 
 INVESTMENT_APP_ROOT="$APP_ROOT" \
 INVESTMENT_DIR="$APP_ROOT/current" \
 OPS_HOME="$OPS_HOME" \
+OPS_DEPLOY_ARTIFACTS_DIR="$OPS_DEPLOY_ARTIFACTS_DIR" \
 OPS_DEPLOY_REPO_DIR="$REPO_DIR" \
 OPS_DEPLOY_STATE_PATH="$OPS_DEPLOY_STATE_PATH" \
 OPS_DEPLOY_LOCK_PATH="$OPS_DEPLOY_LOCK_PATH" \
@@ -75,6 +82,7 @@ OPS_API_DEPLOY_TIMEOUT_SECONDS="$OPS_API_DEPLOY_TIMEOUT_SECONDS" \
 OPS_DEPLOY_ALLOWED_REFS="$OPS_DEPLOY_ALLOWED_REFS" \
 OPS_API_PORT="$OPS_API_PORT" \
 OPS_API_HOST="$OPS_API_HOST" \
+OPS_API_TOKEN="$OPS_API_TOKEN" \
 bash "$REPO_DIR/scripts/install_ops_api_on_ecs.sh" --start
 
 if [ -f /etc/investment-knowledge/ops-api.env ]; then

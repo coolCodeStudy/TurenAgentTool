@@ -8,6 +8,7 @@ source_dir="${SOURCE_DIR:-$(pwd)}"
 deploy_mode="${DEPLOY_MODE:-}"
 deploy_ref="${DEPLOY_REF:-}"
 deploy_archive="${DEPLOY_ARCHIVE:-}"
+deploy_archive_sha256="${DEPLOY_ARCHIVE_SHA256:-}"
 conventional_archive="${IMAGE_TAR:-/tmp/investment-knowledge-images.tar.gz}"
 
 if [[ -z "$deploy_archive" && -f "$conventional_archive" ]]; then
@@ -36,6 +37,14 @@ case "$deploy_mode" in
     ;;
 esac
 
+if [[ "$deploy_mode" == "full_image" && -n "$deploy_archive" && -z "$deploy_archive_sha256" ]]; then
+  if command -v sha256sum >/dev/null 2>&1; then
+    deploy_archive_sha256="$(sha256sum "$deploy_archive" | awk '{print $1}')"
+  else
+    deploy_archive_sha256="$(shasum -a 256 "$deploy_archive" | awk '{print $1}')"
+  fi
+fi
+
 args=(
   "$python_bin"
   "$script_dir/deploy_release.py"
@@ -54,6 +63,9 @@ if [[ -n "${DEPLOY_TARGETS:-}" ]]; then
 fi
 if [[ -n "$deploy_archive" ]]; then
   args+=(--archive "$deploy_archive")
+fi
+if [[ -n "$deploy_archive_sha256" ]]; then
+  args+=(--archive-sha256 "$deploy_archive_sha256")
 fi
 if [[ -n "${DEPLOY_EMERGENCY_REASON:-}" ]]; then
   args+=(--emergency-reason "$DEPLOY_EMERGENCY_REASON")

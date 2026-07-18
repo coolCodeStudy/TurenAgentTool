@@ -394,6 +394,11 @@ def audit_context_required(
         active_delivery = [
             row for row in delivery_by_feature.get(feature_key, []) if row.status in ACTIVE_DISPATCH_STATUSES
         ]
+        blocked_recovery = [
+            row
+            for row in delivery_by_feature.get(feature_key, [])
+            if row.status == "blocked" and has_precise_blocked_recovery(row)
+        ]
         if len(statuses & UNHEALTHY_ACCEPTANCE_STATUSES) > 0:
             if registry_row and registry_row.user_acceptance == "accepted":
                 findings.append(
@@ -407,7 +412,7 @@ def audit_context_required(
                         "contradictory acceptance/user-acceptance state",
                     )
                 )
-            if not active_delivery:
+            if not active_delivery and not blocked_recovery:
                 findings.append(
                     FlowFinding(
                         "context_required",
@@ -428,14 +433,14 @@ def audit_repeated_blockers(
     *,
     include_history: bool,
 ) -> list[FlowFinding]:
-    bucket_items: dict[str, list[str]] = defaultdict(list)
+    bucket_items: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for row in delivery_rows:
         if not include_history and row.status not in ACTIVE_DISPATCH_STATUSES:
             continue
         text = row_text(row)
         bucket = blocker_bucket(text)
         if bucket:
-            bucket_items[bucket].append(row.item_id)
+            bucket_items[bucket].append((row.item_id, row.feature))
     for row in acceptance_rows:
         if not include_history and row.status not in UNHEALTHY_ACCEPTANCE_STATUSES:
             continue
@@ -447,12 +452,13 @@ def audit_repeated_blockers(
         text = " ".join([row.findings, row.next_action, row.evidence])
         bucket = blocker_bucket(text)
         if bucket:
-            bucket_items[bucket].append(row.item_id)
+            bucket_items[bucket].append((row.item_id, row.feature))
 
     findings: list[FlowFinding] = []
     for bucket, items in sorted(bucket_items.items()):
-        unique_items = sorted(set(items))
-        if len(unique_items) < 2:
+        unique_items = sorted({item_id for item_id, _feature in items})
+        unique_features = {normalize(feature) for _item_id, feature in items}
+        if len(unique_items) < 2 or len(unique_features) < 2:
             continue
         findings.append(
             FlowFinding(
@@ -514,7 +520,11 @@ def audit_deploy_conflicts(
     active_deploy_rows = [
         row
         for row in delivery_rows
-        if row.status in ACTIVE_DISPATCH_STATUSES and contains_any(row_text(row), DEPLOY_WORDS)
+        if (
+            row.status in ACTIVE_DISPATCH_STATUSES
+            and contains_any(row_text(row), DEPLOY_WORDS)
+            and not has_not_required_deploy_decision(row)
+        )
     ]
     feature_counts = Counter(normalize(row.feature) for row in active_deploy_rows)
     if len(active_deploy_rows) >= 2 and len(feature_counts) >= 2:
@@ -535,7 +545,9 @@ def audit_deploy_conflicts(
 def blocker_bucket(text: str) -> str:
     lower = text.lower()
     patterns = [
-        ("command workbench token/access", ("command_api_token", "token", "access token", "unauthorized")),
+        ("internal ops credentials", ("ops_api_token", "ops api token", "ops api credential", "private ops credential")),
+        ("command workbench token/access", ("command_api_token", "command workbench")),
+        ("browser access policy", ("public read", "access token", "unauthorized")),
         ("deploy/ref conflict", ("deploy/ref", "overwritten", "clobber", "release ref", "current deploy")),
         ("acceptance flow blocked", ("acceptance", "needs_retest", "failed", "blocked")),
         ("missing watch path", ("monitoring not active", "watch path", "heartbeat")),
@@ -545,6 +557,18 @@ def blocker_bucket(text: str) -> str:
         if contains_any(lower, markers):
             return bucket
     return ""
+
+
+def has_not_required_deploy_decision(row: DeliveryRow) -> bool:
+    return re.search(
+        r"deploy(?:ment)? decision(?:\s+is)?\s*[:=]?\s*`?not_required`?",
+        row_text(row).lower(),
+    ) is not None
+
+
+def has_precise_blocked_recovery(row: DeliveryRow) -> bool:
+    text = row_text(row).lower()
+    return "blocked_with_owner" in text and contains_any(text, ("owner", "provision", "repair", "retry", "dispatch"))
 
 
 def registry_advancement_reasons(current: RegistryRow, other: RegistryRow) -> list[str]:
