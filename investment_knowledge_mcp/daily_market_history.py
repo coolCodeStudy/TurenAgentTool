@@ -9,8 +9,11 @@ from threading import BoundedSemaphore, Event, Lock
 from time import monotonic, sleep
 from typing import Any, Callable
 
+from investment_knowledge_mcp.data_sources.market_activity import MarketActivitySource
+
 
 AKSHARE_PROVIDER = "akshare_eastmoney"
+HISTORICAL_MARKET_ACTIVITY_SOURCE = "historical_market_activity"
 MAX_EASTMONEY_HOST_REQUESTS = 2
 MAX_ATTEMPTS = 2
 HISTORY_LOOKBACK_DAYS = 35
@@ -45,6 +48,38 @@ class HistoricalActivityResult:
 
 
 HistoricalActivityProvider = Callable[[str, date], HistoricalActivityResult]
+
+
+def historical_market_activity_source(
+    *,
+    akshare_module: Any | None = None,
+    universe_limit: int = 200,
+    max_workers: int = 4,
+    timeout_seconds: float = 90.0,
+    cancel_event: Event | None = None,
+) -> MarketActivitySource:
+    """Adapt the exact-date transport without changing its deadline semantics."""
+
+    def load(market: str, market_date: date) -> HistoricalActivityResult:
+        try:
+            return load_historical_market_activity(
+                market,
+                market_date,
+                akshare_module=akshare_module,
+                universe_limit=universe_limit,
+                max_workers=max_workers,
+                timeout_seconds=timeout_seconds,
+                cancel_event=cancel_event,
+            )
+        except TimeoutError:
+            return _unavailable_result(detail_code="TimeoutError", timed_out=True)
+
+    return MarketActivitySource(
+        HISTORICAL_MARKET_ACTIVITY_SOURCE,
+        load,
+        cancellation_exceptions=(HistoricalActivityCancelled,),
+        timeout_seconds=timeout_seconds,
+    )
 
 
 class _QueryCoverage:
