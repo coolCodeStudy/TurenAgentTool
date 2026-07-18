@@ -9,6 +9,7 @@ from .contracts import (
     SourceCapability,
     SourcePlan,
 )
+from .pool import DataSourcePool, ExternalDataSource, MemoryResultCache, ResultCache
 
 __all__ = [
     "DataRequest",
@@ -18,4 +19,8 @@ __all__ = [
     "ProviderFailure",
     "SourceCapability",
     "SourcePlan",
+    "DataSourcePool",
+    "ExternalDataSource",
+    "MemoryResultCache",
+    "ResultCache",
 ]
