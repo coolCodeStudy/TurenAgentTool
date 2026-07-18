@@ -9,25 +9,25 @@
 - Technical plan: `docs/techplans/weekly-review.md`
 - Feature Registry row: `Weekly review generator`
 - Acceptance Queue rows: historical `AT-2026-06-25-001`, historical `AT-2026-06-30-001`, regression `AT-2026-07-16-001`
-- Delivery Queue row: `DQ-2026-07-16-001`
-- Current authoritative branch/ref: `origin/main@64d9a2854cdefcc95a6623eca59d5dd611f07f39`; the Weekly Review fix entered `main` at `dde3023` and remains an ancestor.
+- Delivery Queue rows: implementation `DQ-2026-07-16-001`, failed deploys `DQ-2026-07-16-002`/`003`, combined serialized deploy watch `DQ-2026-07-18-001`
+- Current authoritative branch/ref: `origin/main@08ce3397547c0446c39fde95c087f7e1bc2f7782`; the Weekly Review fix `ee4a3ea` remains an ancestor.
 - Related coordinator evidence: durable blocker-correction commit `a816bf0` on `origin/codex/weekly-review-public-web-auth-reconciled`; implementation commit `ee4a3ea`.
 - Current deployed ref or deploy event: `/health` reports `1d45daeb66a27527fabf3f51eaf692aa4c5d3f42`; latest-main deployment evidence must be refreshed after the fix.
 - User-facing surface: `http://47.84.190.191:8010/weekly-review`
-- Current state: the fix is implemented, reviewed, locally verified, pushed, and integrated to authoritative `main`. GitHub Actions runs `29511640343` (job `87666390001`) and `29512741489` (job `87670092096`) both completed without activating services.
-- Known blockers: both shared deploy attempts were rejected by the Ops API with HTTP `422 deployment_rejected` because deployment resource preflight reported available ECS memory below the required `512 MiB`. This is not an async deploy-lock, credential, browser-auth, or application-code blocker. Do not launch another retry while memory remains below the gate.
-- Active child threads or role sessions: Development Agent returned and passed the Coordinator Return Gate; no child implementation remains.
+- Current state: the fix is implemented, reviewed, locally verified, and included in authoritative `main@08ce339`. The Frontend Experience coordinator merged that ref into `codex/frontend-experience-system`; its complete focused suite reports 140 outcomes (139 passed plus the existing PostgreSQL class-level skip) while preserving the accepted Weekly privilege matrix.
+- Known blockers: no serialized deploy event/ref or post-deploy cloud smoke has returned yet, so `AT-2026-07-16-001` remains failed/blocker. Historical runs `29511640343` and `29512741489` activated no services. This Feature Coordinator must not start a separate deploy channel.
+- Active child threads or role sessions: Frontend Experience coordinator owns the combined serialized deployment and cloud smoke; this Feature Coordinator owns the Weekly Return Gate when its evidence handoff returns.
 - Watch contract:
-  - Watched item: ECS deployment resource preflight for Weekly Review `main@dde3023` or the then-current authoritative `origin/main` tip.
-  - Wake event or cadence: resume only when read-only deploy status reports no active run and available memory is at least `512 MiB`.
-  - Expected return artifact: typed resource-preflight evidence showing the memory gate is satisfied, followed by one serialized shared deploy event/ref.
-  - Coordinator action on wake: deploy once through the shared channel, smoke `/health`, `/weekly-review`, tokenless Weekly GET, authenticated write guards, and `/daily-market-brief`, then dispatch independent Acceptance Testing for `AT-2026-07-16-001`.
-- Next owner: Infrastructure & Release Reliability / ECS capacity recovery, with this Feature Coordinator resuming after the memory gate passes.
-- Next handoff: provide read-only deploy status with no active run and available ECS memory `>=512 MiB`; then deploy authoritative `main@dde3023` or the then-current `origin/main` tip through the single shared channel.
+  - Watched item: Frontend Experience combined release containing authoritative `main@08ce339` and Weekly implementation `ee4a3ea`.
+  - Wake event or cadence: Frontend Experience coordinator returns one exact serialized deploy event/ref plus cloud smoke evidence.
+  - Expected return artifact: deployed ref/event and evidence for `/health`, `/weekly-review`, tokenless Weekly GET, authenticated mutation guards, holder-attribution behavior, and tokenless `/daily-market-brief` regression guard.
+  - Coordinator action on wake: apply the Coordinator Return Gate to the Weekly evidence; accept and dispatch independent retest for `AT-2026-07-16-001`, or reject and return precise findings to Frontend Experience.
+- Next owner: Frontend Experience coordinator for the single combined deploy and cloud smoke; this Feature Coordinator remains the watch/Return Gate owner.
+- Next handoff: exact serialized deploy event/ref plus Weekly privilege-matrix and cloud-smoke evidence.
 - Deploy needed: yes.
-- Deploy decision: `blocked` after HTTP `422 deployment_rejected` in runs `29511640343` and `29512741489`; no ad hoc restart, direct Compose action, or retry below the `512 MiB` gate is allowed.
-- State reconciliation: commit and push this blocker correction on the feature-coordinator branch only. Do not push the documentation-only correction to `main` while the memory gate is closed because the current workflow would start another prohibited production deploy attempt; reconcile durable state to the authoritative branch after a no-deploy-safe control-plane path exists or the resource gate has passed.
-- Escalation target: Infrastructure & Release Reliability / ECS operator for the resource preflight blocker; no Owner product decision is required.
-- User decision needed: none. Resume is condition-based on ECS memory and deploy status.
+- Deploy decision: `dispatch_deploy_owner` to Frontend Experience; no separate Weekly deploy channel is allowed.
+- State reconciliation: commit and push this watch update on the feature-coordinator branch only. Frontend Experience owns the overlapping combined branch and serialized deploy; reconcile these Weekly rows to the authoritative branch through that coordinator's Return Gate rather than opening a competing integration/deploy path.
+- Escalation target: none at present; return precise findings to Frontend Experience if its evidence fails the Weekly Return Gate.
+- User decision needed: none. Resume is triggered by the Frontend Experience deployed-ref/evidence handoff.
 - Completion gate: independent cloud acceptance passes for Weekly Review page/API, holder-attribution cards and the 2026-06-22 report, with no raw secrets/internal errors and Daily Market Brief unchanged.
 - Role learning check: pending final evidence.
