@@ -514,6 +514,42 @@ assert.equal(localStorage.values.has("investment_knowledge_access_token"), false
 """
         )
 
+    def test_command_hung_request_becomes_a_recoverable_failure(self) -> None:
+        _run_command_script(
+            r"""
+const originalSetTimeout = global.setTimeout;
+const originalClearTimeout = global.clearTimeout;
+global.setTimeout = (callback) => {
+  queueMicrotask(callback);
+  return 1;
+};
+global.clearTimeout = () => {};
+
+let observedAbort = false;
+fetchHandler = (_url, options) => new Promise((_resolve, reject) => {
+  assert.ok(options.signal);
+  options.signal.addEventListener("abort", () => {
+    observedAbort = true;
+    reject(new DOMException("timed out", "AbortError"));
+  });
+});
+
+nodes.get("#smart-input").value = "系统状态";
+await workbench.parseSmartInput();
+await flush();
+
+assert.equal(observedAbort, true);
+assert.equal(nodes.get("#access-panel").hidden, false);
+assert.equal(nodes.get("#access-credential-fields").hidden, true);
+assert.equal(nodes.get("#request-retry").hidden, false);
+assert.equal(nodes.get("#access-message").textContent, "The request failed. Try again.");
+assert.notEqual(workbench.state.pendingRequest, null);
+
+global.setTimeout = originalSetTimeout;
+global.clearTimeout = originalClearTimeout;
+"""
+        )
+
     def test_command_409_preview_blocker_flows_through_execution_result_handler(self) -> None:
         _run_command_script(
             r"""
