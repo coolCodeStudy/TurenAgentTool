@@ -12,6 +12,7 @@ on:
           - install
           - start
           - status
+          - resource-diagnostics
           - stop
           - verify-deploy-events
           - recover-lockout
@@ -75,7 +76,14 @@ jobs:
             UPLOAD_DIR=/tmp/ops-api-${{ github.run_id }}
             MODE="${{ inputs.mode }}"
             DEPLOY_LOCK_PATH="$APP_DIR/shared/deploy.lock"
-            sudo install -d -m 0755 "$APP_DIR/shared"
+            if [ "$MODE" = "resource-diagnostics" ]; then
+              if [ ! -d "$APP_DIR/shared" ] || [ ! -e "$DEPLOY_LOCK_PATH" ]; then
+                echo "Resource diagnostics requires the existing deploy lock path" >&2
+                exit 1
+              fi
+            else
+              sudo install -d -m 0755 "$APP_DIR/shared"
+            fi
 
             run_under_deploy_lock() {
               sudo flock --exclusive --wait 600 "$DEPLOY_LOCK_PATH" "$@"
@@ -131,6 +139,18 @@ jobs:
                 ;;
               status)
                 true
+                ;;
+              resource-diagnostics)
+                run_under_deploy_lock /bin/bash -c '
+                set -euo pipefail
+
+                echo "Host memory snapshot (bytes):"
+                free -b
+                echo "Container memory snapshot (memory percent, name, usage, PIDs):"
+                docker stats --no-stream --format "{{.MemPerc}}\t{{.Name}}\t{{.MemUsage}}\t{{.PIDs}}" | sort -hr
+                echo "Largest host processes (PID, PPID, RSS KiB, executable):"
+                ps -eo pid=,ppid=,rss=,comm= --sort=-rss | awk "NR <= 20"
+                '
                 ;;
               verify-deploy-events)
                 run_under_deploy_lock /bin/bash -c '
@@ -192,6 +212,10 @@ jobs:
                 exit 1
                 ;;
             esac
+
+            if [ "$MODE" = "resource-diagnostics" ]; then
+              exit 0
+            fi
 
             sudo systemctl status investment-ops-api.service --no-pager || true
             sudo journalctl -u investment-ops-api.service -n 80 --no-pager || true
