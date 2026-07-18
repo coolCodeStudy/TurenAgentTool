@@ -16,6 +16,10 @@ OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-turenagenttool_prod}
 COMPOSE_ENV_FILE=${COMPOSE_ENV_FILE:-$APP_ROOT/.env}
 START_OPS=false
+# The bootstrap workflow supplies this credential explicitly.  Preserve it
+# before loading the business environment so a historical application value
+# cannot silently rebind the independent control plane.
+EXPLICIT_OPS_API_TOKEN=${OPS_API_TOKEN:-}
 
 usage() {
   cat <<'EOF'
@@ -97,6 +101,10 @@ elif [ -f "$INVESTMENT_DIR/.env" ]; then
   # shellcheck disable=SC1091
   . "$INVESTMENT_DIR/.env"
   set +a
+fi
+
+if [ -n "$EXPLICIT_OPS_API_TOKEN" ]; then
+  OPS_API_TOKEN=$EXPLICIT_OPS_API_TOKEN
 fi
 
 if [ -z "${OPS_API_HOST:-}" ]; then

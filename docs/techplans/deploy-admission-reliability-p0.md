@@ -157,7 +157,7 @@ TDD sequence:
 | Admission and serialization | `6423684`, `db382c9`, `ee0ace1` | Deploy-state, ECS Ops API, and workflow contract regressions; independent spec and quality review passed. | Awaiting authoritative integration. |
 | Resource policy, packaging, and evidence | `fd003c6` through `33f1bf2` | Preflight, release, retention, ECS Ops API, and workflow contract regressions; independent spec and quality review passed. | Awaiting authoritative integration. |
 | Client, MCP, and credential boundaries | `259888f`, `34b7b16`, `ca75b83` | Ops client, server/config, workflow, and URL/redirect/event-ID security regressions; two independent reviews passed after follow-up. | Distinct repository `OPS_API_TOKEN` provisioned 2026-07-17; it becomes active only through the serialized bootstrap. |
-| Operating state and Return Gate | `ca75b83` | Flow-health audit tests and eight deterministic flow-eval cases. | Weekly Review recovery is recorded as `blocked_with_owner` in `DQ-2026-07-16-003`; no production action has been taken. |
+| Operating state and Return Gate | `ca75b83` | Flow-health audit tests and eight deterministic flow-eval cases. | P0 merged as `main@08ce339`; serialized Ops bootstrap `29624982764` passed. Deploy-plan retries stopped before activation on a stale-`.env` credential overwrite, with recovery in `DQ-2026-07-16-003`. |
 
 ## Rollout Plan
 
