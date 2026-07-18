@@ -45,8 +45,8 @@ class _MarketBarsSource:
             return self._unavailable("provider_contract_error", retryable=False, fallback_allowed=True)
 
         try:
-            records = _records_for_request(getattr(snapshot, "bars_by_code"), request.symbols)
-        except (TypeError, ValueError):
+            records = _records_for_request(snapshot.bars_by_code, request.symbols)
+        except (AttributeError, TypeError, ValueError):
             return self._unavailable("provider_contract_error", retryable=False, fallback_allowed=True, fetched_at=fetched_at)
 
         covered = len(records)
@@ -173,11 +173,13 @@ def _records_for_request(bars_by_code: object, symbols: tuple[str, ...]) -> tupl
         raise ValueError("bars_by_code must be a mapping")
     records: list[dict[str, object]] = []
     for symbol in symbols:
-        bars = bars_by_code.get(symbol)
-        if not bars:
+        if symbol not in bars_by_code:
             continue
+        bars = bars_by_code[symbol]
         if not isinstance(bars, Sequence) or isinstance(bars, (str, bytes)):
             raise ValueError("market bars must be a sequence")
+        if not bars:
+            continue
         copied_bars: list[dict[str, object]] = []
         for bar in bars:
             if not isinstance(bar, Mapping):

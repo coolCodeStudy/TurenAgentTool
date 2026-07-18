@@ -168,6 +168,38 @@ class MarketBarSourceTests(TestCase):
         self.assertEqual(result.failures[0].code, "provider_contract_error")
         self.assertIsNone(result.failures[0].detail)
 
+    def test_missing_snapshot_bars_mapping_returns_contract_failure(self) -> None:
+        class SnapshotWithoutBars:
+            source = "futu"
+            fetched_at = NOW
+
+        result = FutuMarketBarsSource(loader=lambda codes, start, end: SnapshotWithoutBars()).fetch(
+            request(symbols=("US.SPX",))
+        )
+
+        self.assertEqual(result.status, DataStatus.UNAVAILABLE)
+        self.assertEqual(result.failures[0].code, "provider_contract_error")
+        self.assertIsNone(result.failures[0].detail)
+
+    def test_present_falsy_malformed_bars_are_contract_failures_but_empty_lists_are_uncovered(self) -> None:
+        for malformed_bars in (None, False, 0, {}):
+            with self.subTest(malformed_bars=malformed_bars):
+                result = YahooMarketBarsSource(
+                    loader=lambda codes, start, end, bars=malformed_bars: YahooMarketBarSnapshot(
+                        {"US.SPX": bars}, NOW, start, end
+                    )
+                ).fetch(request(symbols=("US.SPX",)))
+
+                self.assertEqual(result.status, DataStatus.UNAVAILABLE)
+                self.assertEqual(result.failures[0].code, "provider_contract_error")
+
+        empty = YahooMarketBarsSource(
+            loader=lambda codes, start, end: YahooMarketBarSnapshot({"US.SPX": []}, NOW, start, end)
+        ).fetch(request(symbols=("US.SPX",)))
+
+        self.assertEqual(empty.status, DataStatus.UNAVAILABLE)
+        self.assertEqual(empty.failures[0].code, "empty_result")
+
     def test_records_converter_validates_contract_and_returns_deep_container_copies(self) -> None:
         bars = {"date": "2026-07-01", "close": 1.0}
         result = DataResult(
