@@ -144,6 +144,48 @@ PATH_RULES = (
         ),
         "database initialization runtime",
     ),
+    PathRule(
+        "investment_knowledge_mcp/dingtalk_api.py",
+        DeployMode.TARGETED_QUICK,
+        ("dingtalk-api",),
+        "DingTalk HTTP adapter",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/app_gateway.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "application gateway",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/weekly_review_controller.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "weekly review gateway controller",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/daily_market_brief_controller.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "daily market brief gateway controller",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/command_http.py",
+        DeployMode.TARGETED_QUICK,
+        ("command-api", "weekly-review-web"),
+        "shared command HTTP controller",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/http_access.py",
+        DeployMode.TARGETED_QUICK,
+        ("command-api", "weekly-review-web"),
+        "shared HTTP access adapter",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/web_access.py",
+        DeployMode.TARGETED_QUICK,
+        ("command-api", "weekly-review-web"),
+        "shared browser access contract",
+    ),
     PathRule("investment_knowledge_mcp/weekly_review_web.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "weekly review web"),
     PathRule(
         "investment_knowledge_mcp/command_workbench.py",

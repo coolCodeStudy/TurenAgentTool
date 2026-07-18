@@ -199,6 +199,38 @@ class DeployContractTests(TestCase):
                 self.assertEqual(mode, plan.mode)
                 self.assertEqual(targets, plan.targets)
 
+    def test_dingtalk_http_adapter_targets_only_dingtalk_api(self) -> None:
+        plan = classify_paths(
+            ("investment_knowledge_mcp/dingtalk_api.py",),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+        self.assertEqual(("dingtalk-api",), plan.targets)
+
+    def test_app_gateway_and_route_controllers_target_only_weekly_review_web(self) -> None:
+        for path in (
+            "investment_knowledge_mcp/app_gateway.py",
+            "investment_knowledge_mcp/weekly_review_controller.py",
+            "investment_knowledge_mcp/daily_market_brief_controller.py",
+        ):
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(("weekly-review-web",), plan.targets)
+
+    def test_shared_access_targets_command_and_gateway_until_command_retirement(self) -> None:
+        for path in (
+            "investment_knowledge_mcp/command_http.py",
+            "investment_knowledge_mcp/http_access.py",
+            "investment_knowledge_mcp/web_access.py",
+            "investment_knowledge_mcp/command_workbench.py",
+        ):
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(("command-api", "weekly-review-web"), plan.targets)
+
     def test_full_and_config_targets_cover_every_managed_app_image_service(self) -> None:
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
         self.assertIn("scheduler-host", APPLICATION_SERVICES)
