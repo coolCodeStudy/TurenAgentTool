@@ -70,7 +70,7 @@ Success criteria:
 
 ## P1.1: Deploy Admission Reliability
 
-Status: P0 merged to authoritative `main@08ce339`; credential-precedence hotfix in progress.
+Status: P0 deployed to authoritative `main@c820753`.
 
 This is operating-model/control-plane infrastructure, not a Feature Registry item.
 It addresses the confirmed 2026-07-16 release failures: GitHub Actions runs
@@ -83,11 +83,17 @@ one GitHub Actions coordinator channel with an internal Ops executor, durable
 event/health/service/route evidence, mode-specific memory gates, isolated
 full-image artifacts, and separate browser, command, and Ops credentials.
 The serialized independent Ops API bootstrap using a distinct `OPS_API_TOKEN`
-completed in run `29624982764`; an ordinary app release cannot update
-`/opt/investment-ops`. The first deploy-plan retries correctly stopped before
-activation with 401 because a stale business `.env` overwrote the explicitly
-passed control-plane credential during install. The narrow follow-up preserves
-the explicit credential and adds a regression test before the next bootstrap.
+completed in run `29627356890`; an ordinary app release cannot update
+`/opt/investment-ops`. The credential-precedence hotfix and the deployment
+classifier regressions were integrated before the next application attempt.
+Read-only resource diagnostics in run `29629590815` established that the
+previous host exposed only 1.57 GiB total memory and approximately 356 MiB
+`MemAvailable` while nine long-lived Python application containers used about
+656 MiB in aggregate. The 512 MiB reserve correctly rejected releases before
+activation. After the owner increased instance capacity, serialized deploy run
+`29646929382` deployed `main@c820753`, passed the 512 MiB preflight with
+2,354,958,336 bytes available, activated all nine application targets, held a
+30-second stable-health window, and passed the recorded route smoke checks.
 
 P1 follow-up: collect memory, PSI, cgroup, swap, and full-image phase telemetry
 from successful and rejected deploys, then calibrate target-aware reserves.
