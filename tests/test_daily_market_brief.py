@@ -562,6 +562,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual([], result["indexes"])
         self.assertEqual("provider_unavailable", indexes["status"])
         self.assertEqual(dmb.INDEX_DEGRADED_COPY, indexes["message"])
+        self.assertEqual("yahoo_chart", indexes["provider"])
         self.assertEqual(["yahoo_chart"], indexes["attempted_sources"])
         self.assertIsNone(indexes["selected_source"])
         self.assertEqual(0.0, indexes["coverage"])
@@ -571,6 +572,10 @@ class DailyMarketBriefTests(unittest.TestCase):
             indexes["failures"],
         )
         self.assertNotIn("detail", indexes["failures"][0])
+        self.assertIn(
+            "核心指数：数据源暂不可用，来源：yahoo_chart",
+            dmb.render_daily_market_brief_markdown(result),
+        )
 
     def test_live_market_bar_pool_partial_coverage_keeps_missing_index_behavior(self) -> None:
         market_date = date(2026, 6, 30)
@@ -627,6 +632,61 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual("provider_unavailable", indexes["status"])
         self.assertEqual("provider_contract_error", indexes["failures"][-1]["code"])
         self.assertNotIn("detail", indexes["failures"][-1])
+
+    def test_live_market_bar_pool_inner_malformed_bar_is_contained_without_retry(self) -> None:
+        market_date = date(2026, 6, 30)
+        pool = mock.Mock()
+        pool.fetch.return_value = DataResult(
+            DataStatus.OK,
+            (
+                {
+                    "symbol": "SH.000001",
+                    "bars": (
+                        {
+                            "date": market_date.isoformat(),
+                            "close": 100.0,
+                            "volume": 1_000_000,
+                            "raw": "not-a-mapping",
+                        },
+                    ),
+                },
+            ),
+            "yahoo_chart",
+            ("yahoo_chart",),
+            1.0,
+            datetime(2026, 6, 30, 8, 0, tzinfo=timezone.utc),
+            False,
+            (),
+        )
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=market_date,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        indexes = result["source_status"]["indexes"]
+        self.assertEqual([], result["indexes"])
+        self.assertEqual("provider_unavailable", indexes["status"])
+        self.assertEqual("provider_contract_error", indexes["failures"][-1]["code"])
+        self.assertNotIn("detail", indexes["failures"][-1])
+        pool.fetch.assert_called_once()
+
+    def test_pool_programming_errors_are_not_converted_to_provider_failures(self) -> None:
+        pool = mock.Mock()
+        pool.fetch.side_effect = RuntimeError("pool programming defect")
+
+        with self.assertRaisesRegex(RuntimeError, "pool programming defect"):
+            dmb.build_daily_market_brief_context(
+                market="CN",
+                market_date=date(2026, 6, 30),
+                now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+                market_bar_pool=pool,
+                activity_provider=lambda market, session: dmb._empty_activity(market),
+            )
+        pool.fetch.assert_called_once()
 
     def test_pool_historical_indexes_filter_prior_sessions_and_preserve_count(self) -> None:
         market_date = date(2026, 7, 9)

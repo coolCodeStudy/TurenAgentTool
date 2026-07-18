@@ -539,18 +539,7 @@ def _load_index_rows_from_pool(
         required=True,
         partial_allowed=True,
     )
-    try:
-        result = market_bar_pool.fetch(request, plan)
-    except Exception:
-        return _set_pool_index_unavailable(
-            source_status=source_status,
-            warnings=warnings,
-            attempted_sources=[],
-            selected_source=None,
-            coverage=0.0,
-            from_cache=False,
-            failures=[_typed_failure("provider_exception", "yahoo_chart", retryable=False, fallback_allowed=False)],
-        )
+    result = market_bar_pool.fetch(request, plan)
 
     if not isinstance(result, DataResult):
         return _set_pool_index_unavailable(
@@ -590,12 +579,33 @@ def _load_index_rows_from_pool(
             failures=failures,
         )
 
-    candidate_rows: list[dict[str, Any]] = []
-    for index_config in config.index_configs:
-        bars = sorted(bars_by_code.get(index_config["code"], []), key=lambda item: str(item.get("date") or ""))
-        row = _index_row(index_config=index_config, bars=bars, market_date=market_date, metric_label=config.index_metric_label)
-        if row is not None:
-            candidate_rows.append(row)
+    try:
+        candidate_rows: list[dict[str, Any]] = []
+        for index_config in config.index_configs:
+            bars = sorted(
+                bars_by_code.get(index_config["code"], []),
+                key=lambda item: str(item.get("date") or ""),
+            )
+            row = _index_row(
+                index_config=index_config,
+                bars=bars,
+                market_date=market_date,
+                metric_label=config.index_metric_label,
+            )
+            if row is not None:
+                candidate_rows.append(row)
+    except (AttributeError, TypeError, ValueError):
+        source_id = result.selected_source or (result.attempted_sources[-1] if result.attempted_sources else "yahoo_chart")
+        failures.append(_typed_failure("provider_contract_error", source_id, retryable=False, fallback_allowed=False))
+        return _set_pool_index_unavailable(
+            source_status=source_status,
+            warnings=warnings,
+            attempted_sources=list(result.attempted_sources),
+            selected_source=result.selected_source,
+            coverage=0.0,
+            from_cache=False,
+            failures=failures,
+        )
     rows = [
         row for row in candidate_rows if not require_exact_date or row.get("date") == market_date.isoformat()
     ]
@@ -627,7 +637,7 @@ def _set_pool_index_unavailable(
 ) -> list[dict[str, Any]]:
     source_status["indexes"] = {
         "status": "provider_unavailable",
-        "provider": selected_source,
+        "provider": selected_source or "yahoo_chart",
         "count": 0,
         "message": INDEX_DEGRADED_COPY,
         "detail_code": "provider_unavailable",
