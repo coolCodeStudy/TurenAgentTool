@@ -21,19 +21,19 @@ small ECS host:
 
 The workflow should succeed for `no_deploy` instead of skipping the workflow. This keeps future required checks green while avoiding production churn.
 
-Production source policy is strict: deployment may target only `main` or a
-40-character commit SHA for which `git merge-base --is-ancestor <sha>
-origin/main` succeeds. Named feature branches and SHAs not reachable from
-`origin/main` are rejected.
+Production source policy is strict: `main` resolves to the freshly fetched
+`origin/main` tip, and an explicit 40-character commit SHA must equal that
+same tip. Named feature branches, unintegrated SHAs, and older ancestors are
+rejected; integrate, push `main`, and dispatch the new authoritative tip.
 
 ## Mode Matrix
 
 | Mode | Paths / semantic trigger | ECS access | Image behavior | Runtime behavior |
 | --- | --- | --- | --- | --- |
 | `no_deploy` | Docs, governance, tests, local audit/eval assets | No | None | CI/classification only; no Ops API, SSH, SCP, or service restart. |
-| `targeted_quick` | Python app code, scripts, DB initialization code, host worker code, source assets | Yes, after preflight | Reuse current immutable application image | Stage release, switch `current`, recreate only mapped application targets with `--no-deps`, and keep PostgreSQL running. |
-| `config_restart` | Compose/environment/runtime wiring with no `image`, `build`, platform, or image-input semantic change | Yes, after preflight | Reuse current immutable application image | Validate Compose, switch release when needed, recreate only mapped targets with `--no-deps`, and keep PostgreSQL running. |
-| `full_image` | `Dockerfile*`, `requirements*.txt`, package lockfiles, base-image changes, or Compose `image`/`build` semantics | Yes, after preflight and image archive sizing | Build/load `investment-knowledge-app:<40-char-sha>` only | Activate the new release and image tag together; recreate application targets sequentially; never recreate PostgreSQL. |
+| `targeted_quick` | Python app code, scripts, DB initialization code, host worker code, source assets | Yes, 512 MiB `MemAvailable` reserve | Reuse current immutable application image | Stage release, switch `current`, recreate only mapped application targets with `--no-deps`, and keep PostgreSQL running. |
+| `config_restart` | Compose/environment/runtime wiring with no `image`, `build`, platform, or image-input semantic change | Yes, 512 MiB `MemAvailable` reserve | Reuse current immutable application image | Validate Compose, switch release when needed, recreate only mapped targets with `--no-deps`, and keep PostgreSQL running. |
+| `full_image` | `Dockerfile*`, `requirements*.txt`, package lockfiles, base-image changes, or Compose `image`/`build` semantics | Yes, 768 MiB start reserve plus 512 MiB after image load/before every activation | Build/load `investment-knowledge-app:<40-char-sha>` only | Activate the new release and image tag together; recreate application targets sequentially; never recreate PostgreSQL. |
 
 Manual emergency `full_image` is allowed only when the operator records the
 reason and the image archive path/size. A requested `full_image` without an
@@ -93,11 +93,16 @@ The highest-impact changed file wins: a docs change plus app-runtime code is
 ## Preflight and Product-Safe Failure
 
 Every ECS-touching mode must pass preflight before release activation or image
-archive load:
+archive load. `MemAvailable` is a Linux availability signal, not raw free RAM;
+it includes reclaimable cache. The 512 MiB quick/config reserve is deliberately
+fail-closed for the small no-swap host and is not to be lowered merely to retry
+a rejected release. Full-image work has higher transient pressure and starts at
+768 MiB before its post-load/pre-activation 512 MiB rechecks:
 
 - root filesystem has at least 8 GiB free;
 - root filesystem usage is at most 80%;
-- available memory is at least 512 MiB;
+- quick/config available memory is at least 512 MiB;
+- full-image available memory is at least 768 MiB before load and at least 512 MiB after load/before each activation;
 - Docker responds within 10 seconds;
 - the existing PostgreSQL container is running and healthy;
 - the global production deployment lock is available;
@@ -153,7 +158,8 @@ df -h /
 free -m
 docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-curl -fsS http://127.0.0.1:8765/deploy/status | python3 -m json.tool
+curl -fsS -H "Authorization: Bearer $OPS_API_TOKEN" \
+  "http://127.0.0.1:8767/ops/deploy-status?id=$DEPLOY_EVENT_ID" | python3 -m json.tool
 ```
 
 ## Maintenance Rule

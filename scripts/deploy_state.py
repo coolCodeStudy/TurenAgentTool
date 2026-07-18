@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, fields
+import secrets
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,10 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_state.py.
 
 class SourcePolicyError(ValueError):
     """Raised when a production deployment target is not trusted."""
+
+
+class SourceRefreshError(RuntimeError):
+    """Raised when authoritative repository state cannot be refreshed or resolved."""
 
 
 class StateFormatError(ValueError):
@@ -64,10 +69,33 @@ class DeploymentEvent:
     final_health: str
     started_at: str
     completed_at: str
+    source: str = "direct"
+    requested_by: str = "unspecified"
+    failure_category: str | None = None
+    feature_routes: tuple[str, ...] = ()
+    stability_seconds: int = 0
+    affected_services: tuple[str, ...] = ()
+    route_smoke_checks: tuple[str, ...] = ()
+    archive_sha256: str | None = None
+    artifact_cleanup_status: str = "not_applicable"
+
+
+@dataclass(frozen=True)
+class DeploymentEventAuditOverlay:
+    schema_version: int
+    event_id: str
+    status: str
+    reason: str
+    artifact_cleanup_status: str
 
 
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_CLEANUP_STATUS_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,79}")
 _STATE_FIELDS = tuple(field.name for field in fields(DeploymentState))
+_AUDIT_OVERLAY_FIELDS = tuple(field.name for field in fields(DeploymentEventAuditOverlay))
+_AUDIT_OVERLAY_STATUS = "audit_incomplete"
+_AUDIT_OVERLAY_REASON = "artifact_cleanup_event_update_failed"
 _PREFLIGHT_OBSERVATION_TYPES: dict[str, type | tuple[type, ...]] = {
     "disk_available_bytes": int,
     "disk_used_percent": (int, float),
@@ -80,6 +108,17 @@ _PREFLIGHT_OBSERVATION_TYPES: dict[str, type | tuple[type, ...]] = {
     "lock_valid": str,
     "archive_bytes": int,
     "required_free_bytes": int,
+    "memory_policy_mode": str,
+    "required_available_memory_bytes": int,
+    "start_required_available_memory_bytes": int,
+    "runtime_required_available_memory_bytes": int,
+    "minimum_available_memory_bytes": int,
+    "start_available_memory_bytes": int,
+    "post_load_available_memory_bytes": int,
+    "post_load_required_available_memory_bytes": int,
+    "before_activation_available_memory_bytes": int,
+    "before_activation_required_available_memory_bytes": int,
+    "activation_memory_check_count": int,
 }
 _SENSITIVE_TEXT = re.compile(
     r"(?i)\b(?:database[_-]?url|password|passwd|token|api[_-]?key|secret|credential|"
@@ -92,33 +131,91 @@ _AUTHENTICATED_URI = re.compile(
 _BARE_CREDENTIAL = re.compile(
     r"(?i)(?<![A-Za-z0-9_.-])[^\s/:@]+:[^\s/@]+@[^\s]+"
 )
+_DEPLOY_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
+_CREDENTIAL_SHAPE = re.compile(
+    r"(?:\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{8,}\b|"
+    r"\bsk-[A-Za-z0-9_-]{8,}\b|"
+    r"\bAKIA[A-Z0-9]{16}\b|"
+    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)",
+    re.IGNORECASE,
+)
+ALLOWED_DEPLOY_SOURCES = frozenset(
+    {
+        "direct",
+        "github_actions",
+        "ops_client",
+        "mcp",
+        "codex_app",
+        "verification",
+    }
+)
+
+
+def is_safe_deploy_label(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and _DEPLOY_LABEL.fullmatch(value)
+        and not _has_sensitive_material(value)
+    )
+
+
+def is_allowed_deploy_source(value: object) -> bool:
+    return bool(is_safe_deploy_label(value) and value in ALLOWED_DEPLOY_SOURCES)
 
 
 def resolve_production_target(repo: Path, requested_ref: str, runner: CommandRunner) -> str:
-    """Resolve an approved production ref and prove it is reachable from origin/main."""
+    """Resolve an approved production ref to the freshly fetched origin/main tip."""
     if requested_ref != "main" and not _SHA_PATTERN.fullmatch(requested_ref):
         raise SourcePolicyError("production ref must be main or a 40-character SHA")
 
     refreshed = runner.run(("git", "-C", str(repo), "fetch", "origin", "main"))
     if refreshed.returncode != 0:
-        raise SourcePolicyError("failed to refresh origin/main")
+        raise SourceRefreshError("production source refresh failed")
 
-    if requested_ref == "main":
-        result = runner.run(("git", "-C", str(repo), "rev-parse", "origin/main"))
-        if result.returncode != 0:
-            raise SourcePolicyError(f"failed to resolve origin/main: {result.stderr.strip()}")
-        sha = result.stdout.strip()
-        if not _SHA_PATTERN.fullmatch(sha):
-            raise SourcePolicyError("failed to resolve origin/main to a 40-character SHA")
-    else:
-        sha = requested_ref
-
-    result = runner.run(
-        ("git", "-C", str(repo), "merge-base", "--is-ancestor", sha, "origin/main")
-    )
+    result = runner.run(("git", "-C", str(repo), "rev-parse", "origin/main"))
     if result.returncode != 0:
-        raise SourcePolicyError(f"{sha} is not reachable from origin/main")
-    return sha
+        raise SourceRefreshError("production source resolution failed")
+    authoritative_sha = result.stdout.strip()
+    if not _SHA_PATTERN.fullmatch(authoritative_sha):
+        raise SourceRefreshError("production source resolution failed")
+
+    if requested_ref != "main" and requested_ref != authoritative_sha:
+        raise SourcePolicyError(
+            "production ref must equal the current origin/main tip; integrate the commit "
+            "into authoritative main, push main, and dispatch the new main tip"
+        )
+    return authoritative_sha
+
+
+def resolve_historical_production_target(
+    repo: Path,
+    deployed_sha: str,
+    runner: CommandRunner,
+) -> str:
+    """Trust an existing deployed baseline only when it remains on origin/main history."""
+    if not _SHA_PATTERN.fullmatch(deployed_sha):
+        raise SourcePolicyError("historical production baseline must be a 40-character SHA")
+
+    refreshed = runner.run(("git", "-C", str(repo), "fetch", "origin", "main"))
+    if refreshed.returncode != 0:
+        raise SourceRefreshError("production source refresh failed")
+
+    reachable = runner.run(
+        (
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            deployed_sha,
+            "origin/main",
+        )
+    )
+    if reachable.returncode != 0:
+        raise SourcePolicyError(
+            "historical production baseline is not reachable from authoritative origin/main"
+        )
+    return deployed_sha
 
 
 def load_state(path: Path) -> DeploymentState:
@@ -149,6 +246,112 @@ def write_event(events_dir: Path, event: DeploymentEvent) -> Path:
     return path
 
 
+def write_event_audit_overlay(
+    events_dir: Path,
+    overlay: DeploymentEventAuditOverlay,
+) -> Path:
+    _validate_event_audit_overlay(overlay)
+    if not overlay.event_id or Path(overlay.event_id).name != overlay.event_id:
+        raise ValueError("event_id must be a single path component")
+    path = events_dir / f"{overlay.event_id}.audit-incomplete.json"
+    _atomic_write_private(path, asdict(overlay))
+    return path
+
+
+def load_event_audit_overlay(
+    events_dir: Path,
+    event_id: str,
+) -> DeploymentEventAuditOverlay | None:
+    if not event_id or Path(event_id).name != event_id:
+        raise ValueError("event_id must be a single path component")
+    path = events_dir / f"{event_id}.audit-incomplete.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise StateFormatError(f"invalid deployment audit overlay JSON: {path}") from error
+    if not isinstance(payload, dict) or set(payload) != set(_AUDIT_OVERLAY_FIELDS):
+        raise StateFormatError(f"deployment audit overlay has an invalid schema: {path}")
+    try:
+        overlay = DeploymentEventAuditOverlay(**payload)
+    except (TypeError, ValueError) as error:
+        raise StateFormatError(f"deployment audit overlay has invalid fields: {path}") from error
+    _validate_event_audit_overlay(overlay)
+    if overlay.event_id != event_id:
+        raise StateFormatError("deployment audit overlay event_id does not match its path")
+    return overlay
+
+
+def load_event(events_dir: Path, event_id: str) -> DeploymentEvent:
+    if not event_id or Path(event_id).name != event_id:
+        raise ValueError("event_id must be a single path component")
+    path = events_dir / f"{event_id}.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise StateFormatError(f"invalid deployment event JSON: {path}") from error
+    except OSError:
+        raise
+    if not isinstance(payload, dict):
+        raise StateFormatError(f"deployment event must be an object: {path}")
+    normalized = dict(payload)
+    for name in (
+        "changed_image_inputs",
+        "targets",
+        "feature_routes",
+        "affected_services",
+        "route_smoke_checks",
+    ):
+        if isinstance(normalized.get(name), list):
+            normalized[name] = tuple(normalized[name])
+    normalized.setdefault("archive_sha256", None)
+    normalized.setdefault(
+        "artifact_cleanup_status",
+        _artifact_cleanup_from_rollback(str(normalized.get("rollback_status") or "")),
+    )
+    try:
+        event = DeploymentEvent(**normalized)
+    except (TypeError, ValueError) as error:
+        raise StateFormatError(f"deployment event has invalid fields: {path}") from error
+    _validate_event(event)
+    return event
+
+
+def update_event_artifact_cleanup(
+    events_dir: Path,
+    event_id: str,
+    cleanup_status: str,
+) -> Path:
+    if _CLEANUP_STATUS_PATTERN.fullmatch(cleanup_status) is None:
+        raise StateFormatError("artifact cleanup status is invalid")
+    event = load_event(events_dir, event_id)
+    canonical = "|".join(
+        segment
+        for segment in event.rollback_status.split("|")
+        if segment
+        and not segment.startswith("archive_cleanup:")
+        and re.fullmatch(r"archive_[A-Za-z0-9_-]+", segment) is None
+    )
+    rollback_status = (
+        f"{canonical}|archive_cleanup:{cleanup_status}"
+        if canonical
+        else f"archive_cleanup:{cleanup_status}"
+    )
+    path = write_event(
+        events_dir,
+        replace(
+            event,
+            rollback_status=rollback_status,
+            artifact_cleanup_status=cleanup_status,
+        ),
+    )
+    (events_dir / f"{event_id}.audit-incomplete.json").unlink(missing_ok=True)
+    return path
+
+
 def _state_payload(state: DeploymentState) -> dict[str, Any]:
     _validate_state(state)
     payload = asdict(state)
@@ -161,7 +364,18 @@ def _event_payload(event: DeploymentEvent) -> dict[str, Any]:
     payload = asdict(event)
     payload["changed_image_inputs"] = list(event.changed_image_inputs)
     payload["targets"] = list(event.targets)
+    payload["feature_routes"] = list(event.feature_routes)
+    payload["affected_services"] = list(event.affected_services)
+    payload["route_smoke_checks"] = list(event.route_smoke_checks)
     return payload
+
+
+def _artifact_cleanup_from_rollback(rollback_status: str) -> str:
+    match = re.search(r"(?:^|\|)archive_cleanup:([^|]+)", rollback_status)
+    if match is not None:
+        return match.group(1)
+    legacy = re.search(r"(?:^|\|)archive_([A-Za-z0-9_-]+)(?:\||$)", rollback_status)
+    return legacy.group(1) if legacy is not None else "not_applicable"
 
 
 def _state_from_payload(payload: object, path: Path) -> DeploymentState:
@@ -238,8 +452,20 @@ def _validate_event(event: DeploymentEvent) -> None:
         _required_string(getattr(event, name), name)
     _optional_string(event.deployed_sha, "deployed_sha")
     _optional_string(event.emergency_reason, "emergency_reason")
+    _deploy_label(event.source, "source", allowed_source=True)
+    _deploy_label(event.requested_by, "requested_by")
+    _optional_string(event.failure_category, "failure_category")
+    if event.archive_sha256 is not None and not _SHA256_PATTERN.fullmatch(
+        event.archive_sha256
+    ):
+        raise StateFormatError("archive_sha256 must be 64 lowercase hexadecimal characters or null")
+    if not _CLEANUP_STATUS_PATTERN.fullmatch(event.artifact_cleanup_status):
+        raise StateFormatError("artifact_cleanup_status must be a safe cleanup status")
     _string_tuple(event.changed_image_inputs, "changed_image_inputs")
     _string_tuple(event.targets, "targets")
+    _string_tuple(event.feature_routes, "feature_routes")
+    _string_tuple(event.affected_services, "affected_services")
+    _string_tuple(event.route_smoke_checks, "route_smoke_checks")
     _metrics_dict(event.preflight, "preflight")
     if event.archive_bytes is not None and not _integer(event.archive_bytes):
         raise StateFormatError("archive_bytes must be an integer or null")
@@ -256,6 +482,29 @@ def _validate_event(event: DeploymentEvent) -> None:
         raise StateFormatError("target_durations_ms must map strings to integers")
     if not isinstance(event.emergency_override, bool):
         raise StateFormatError("emergency_override must be a boolean")
+    if not _integer(event.stability_seconds) or event.stability_seconds < 0:
+        raise StateFormatError("stability_seconds must be a non-negative integer")
+
+
+def _validate_event_audit_overlay(overlay: DeploymentEventAuditOverlay) -> None:
+    if (
+        not isinstance(overlay.schema_version, int)
+        or isinstance(overlay.schema_version, bool)
+        or overlay.schema_version != 1
+    ):
+        raise StateFormatError("deployment audit overlay schema_version must be 1")
+    _required_string(overlay.event_id, "event_id")
+    if not overlay.event_id or Path(overlay.event_id).name != overlay.event_id:
+        raise StateFormatError("deployment audit overlay event_id is invalid")
+    if overlay.status != _AUDIT_OVERLAY_STATUS:
+        raise StateFormatError("deployment audit overlay status is invalid")
+    if overlay.reason != _AUDIT_OVERLAY_REASON:
+        raise StateFormatError("deployment audit overlay reason is invalid")
+    if (
+        not isinstance(overlay.artifact_cleanup_status, str)
+        or _CLEANUP_STATUS_PATTERN.fullmatch(overlay.artifact_cleanup_status) is None
+    ):
+        raise StateFormatError("deployment audit overlay cleanup status is invalid")
 
 
 def _required_string(value: object, name: str) -> str:
@@ -263,6 +512,23 @@ def _required_string(value: object, name: str) -> str:
         raise StateFormatError(f"{name} must be a string")
     _reject_sensitive_material(value, name)
     return value
+
+
+def _deploy_label(
+    value: object,
+    name: str,
+    *,
+    allowed_source: bool = False,
+) -> str:
+    validated = _required_string(value, name)
+    valid = (
+        is_allowed_deploy_source(validated)
+        if allowed_source
+        else is_safe_deploy_label(validated)
+    )
+    if not valid:
+        raise StateFormatError(f"{name} must be a safe deployment label")
+    return validated
 
 
 def _optional_string(value: object, name: str) -> str | None:
@@ -304,6 +570,7 @@ def _has_sensitive_material(value: str) -> bool:
         or _ASSIGNMENT.search(value)
         or _AUTHENTICATED_URI.search(value)
         or _BARE_CREDENTIAL.search(value)
+        or _CREDENTIAL_SHAPE.search(value)
     )
 
 
@@ -335,3 +602,52 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
             temporary_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def _atomic_write_private(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    descriptor: int | None = None
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        for _attempt in range(16):
+            candidate = path.with_name(
+                f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            )
+            try:
+                descriptor = os.open(candidate, flags, 0o600)
+            except FileExistsError:
+                continue
+            temporary_path = candidate
+            break
+        else:
+            raise FileExistsError("could not allocate a unique deployment audit temp file")
+
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_descriptor = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass

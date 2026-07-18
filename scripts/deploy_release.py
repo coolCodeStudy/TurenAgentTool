@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -27,6 +29,7 @@ try:
         collect_resources,
         deployment_lock,
         evaluate_preflight,
+        required_available_memory_bytes,
         validate_runtime,
     )
     from scripts.deploy_retention import (
@@ -38,6 +41,10 @@ try:
     from scripts.deploy_state import (
         DeploymentEvent,
         DeploymentState,
+        SourcePolicyError,
+        SourceRefreshError,
+        is_allowed_deploy_source,
+        is_safe_deploy_label,
         load_state,
         resolve_production_target,
         write_event,
@@ -57,6 +64,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
         collect_resources,
         deployment_lock,
         evaluate_preflight,
+        required_available_memory_bytes,
         validate_runtime,
     )
     from deploy_retention import (
@@ -68,6 +76,10 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
     from deploy_state import (
         DeploymentEvent,
         DeploymentState,
+        SourcePolicyError,
+        SourceRefreshError,
+        is_allowed_deploy_source,
+        is_safe_deploy_label,
         load_state,
         resolve_production_target,
         write_event,
@@ -89,6 +101,66 @@ _SENSITIVE_REASON = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
 )
 _APPLICATION_TARGETS = set(APPLICATION_SERVICES)
+_MANAGED_ARCHIVE_NAME = re.compile(
+    r"investment-knowledge-app-(?P<sha>[0-9a-f]{40})-"
+    r"(?P<suffix>[A-Za-z0-9][A-Za-z0-9._-]{0,127})\.tar\.gz"
+)
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_SAFE_FEATURE_ROUTE = re.compile(
+    r"/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)?"
+)
+_BUILTIN_ROUTE_SMOKE_CHECKS = (
+    "weekly-review-web:/health",
+    "weekly-review-web:/weekly-review",
+    "weekly-review-web:/command",
+    "command-api:/health",
+    "command-api:auth-boundary",
+    "mcp:transport-boundary",
+)
+
+
+def deployment_route_smoke_checks(
+    feature_routes: tuple[str, ...],
+) -> tuple[str, ...]:
+    extras = tuple(f"weekly-review-web:{route}" for route in feature_routes)
+    return tuple(dict.fromkeys((*_BUILTIN_ROUTE_SMOKE_CHECKS, *extras)))
+
+
+def is_safe_feature_route(route: object) -> bool:
+    if not isinstance(route, str) or not 1 <= len(route) <= 256:
+        return False
+    if _SAFE_FEATURE_ROUTE.fullmatch(route) is None or _SENSITIVE_REASON.search(route):
+        return False
+    return all(segment not in {".", ".."} for segment in route.split("/")[1:])
+
+
+def is_managed_image_archive(
+    archive_path: Path,
+    *,
+    expected_sha: str | None = None,
+    allowed_parent: Path = Path("/tmp"),
+) -> bool:
+    if not archive_path.is_absolute() or archive_path.parent != allowed_parent:
+        return False
+    if archive_path.is_symlink() or not archive_path.is_file():
+        return False
+    match = _MANAGED_ARCHIVE_NAME.fullmatch(archive_path.name)
+    if match is None:
+        return False
+    return expected_sha is None or match.group("sha") == expected_sha
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_cleanup_from_rollback(rollback_status: str) -> str:
+    match = re.search(r"(?:^|\|)archive_cleanup:([^|]+)", rollback_status)
+    return match.group(1) if match is not None else "not_applicable"
 
 
 class HealthChecker(Protocol):
@@ -297,12 +369,33 @@ class DeployRequest:
     emergency_reason: str | None
     feature_routes: tuple[str, ...] = ()
     external_event_id: str | None = None
+    source: str = "direct"
+    requested_by: str = "unspecified"
+    archive_sha256: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "requested_targets", tuple(sorted(set(self.requested_targets))))
         object.__setattr__(self, "feature_routes", tuple(dict.fromkeys(self.feature_routes)))
-        if any(not route.startswith("/") or route.startswith("//") for route in self.feature_routes):
+        if any(not is_safe_feature_route(route) for route in self.feature_routes):
             raise ValueError("feature routes must be absolute local paths")
+        if self.requested_mode is DeployMode.FULL_IMAGE:
+            if self.archive_sha256 is None or not _SHA256_PATTERN.fullmatch(
+                self.archive_sha256
+            ):
+                raise ValueError(
+                    "full image deployment requires a 64-character lowercase archive SHA-256"
+                )
+        elif self.archive_sha256 is not None:
+            raise ValueError("archive SHA-256 is supported only for full image deployment")
+        for name in ("source", "requested_by"):
+            value = getattr(self, name)
+            valid = (
+                is_allowed_deploy_source(value)
+                if name == "source"
+                else is_safe_deploy_label(value)
+            )
+            if not valid:
+                raise ValueError(f"{name} must be a safe non-secret deployment label")
 
 
 @dataclass(frozen=True)
@@ -321,6 +414,7 @@ class DeployOutcome:
     disk_used_after: float = -1.0
     cleanup_reclaimed_bytes: int = -1
     cleanup_status: str = "not_applicable"
+    failure_category: str | None = None
 
 
 @dataclass
@@ -409,6 +503,7 @@ class DeploymentEngine:
         referenced_image_ids: ReferencedImageIds | None = None,
         compose_project_name: str = "turenagenttool_prod",
         env_file: Path | None = None,
+        artifact_staging_dir: Path | None = None,
         lock_factory: LockFactory = deployment_lock,
     ) -> None:
         self.repo = repo
@@ -431,6 +526,7 @@ class DeploymentEngine:
         self.env_file = env_file or app_root / ".env"
         self.state_path = self.shared_dir / "deploy-state.json"
         self.events_dir = self.shared_dir / "deploy-events"
+        self.artifacts_dir = artifact_staging_dir or self.shared_dir / "deploy-artifacts"
         self.lock_path = self.shared_dir / "deploy.lock"
         self.lockout_path = self.shared_dir / "deploy.lockout"
 
@@ -476,10 +572,6 @@ class DeploymentEngine:
 
     def _execute_locked(self, context: DeploymentContext) -> DeployOutcome:
         request = context.request
-        self._run_checked(
-            ("git", "-C", str(self.repo), "fetch", "origin", "main"),
-            "production source refresh failed",
-        )
         context.target_sha = resolve_production_target(
             self.repo, request.requested_ref, self.runner
         )
@@ -519,22 +611,34 @@ class DeploymentEngine:
             raise DeploymentError(
                 "full image deployment requires an immutable image archive"
             )
+        if (
+            context.plan.mode is DeployMode.FULL_IMAGE
+            and request.archive_path is not None
+            and not is_managed_image_archive(
+                request.archive_path,
+                expected_sha=context.target_sha,
+                allowed_parent=self.artifacts_dir,
+            )
+        ):
+            raise DeploymentError(
+                "full image archive must be a SHA-bound managed regular file in private staging"
+            )
         try:
             context.archive_bytes = (
                 request.archive_path.stat().st_size if request.archive_path else None
             )
         except OSError as error:
             raise DeploymentError("full image archive is unavailable") from error
-        result = evaluate_preflight(
-            snapshot, context.plan.mode, context.archive_bytes
+        context.preflight = self._preflight_observations(
+            snapshot,
+            context.archive_bytes,
+            context.plan.mode,
         )
+        result = evaluate_preflight(snapshot, context.plan.mode, context.archive_bytes)
         if not result.ok:
             raise DeploymentError(
                 "deployment resource preflight failed: " + "; ".join(result.errors)
             )
-        context.preflight = self._preflight_observations(
-            snapshot, context.archive_bytes
-        )
         current_compose = self.current_link / "docker-compose.prod.yml"
         with _compose_environment(self.compose_project_name):
             labels = self.runtime_validator(self.runner, current_compose)
@@ -569,9 +673,15 @@ class DeploymentEngine:
             self._load_candidate_archive(
                 context, request.archive_path, selected_image
             )
+            self._record_full_image_memory_phase(context, "post_load")
 
         self._switch_selectors(context, release, selected_image)
         for target in context.plan.targets:
+            if context.plan.mode is DeployMode.FULL_IMAGE:
+                self._record_full_image_memory_phase(
+                    context,
+                    "before_activation",
+                )
             started = self.clock.monotonic()
             context.touched_services.append(target)
             self._activate_target(target, release)
@@ -625,6 +735,7 @@ class DeploymentEngine:
                 cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
                 rollback_status="not_needed|cleanup:pending|archive_cleanup:pending",
                 final_health="healthy",
+                affected_services=tuple(context.touched_services),
                 started_at=context.started_at,
                 completed_at=completed_at,
             ),
@@ -657,8 +768,10 @@ class DeploymentEngine:
             cleanup_statuses.append("image_not_applicable")
 
         context.archive_cleanup = self._cleanup_archive_safe(request.archive_path)
-        cleanup_statuses.append(f"archive_{context.archive_cleanup}")
-        context.cleanup_status = "|".join(cleanup_statuses)
+        cleanup_summary = "|".join(cleanup_statuses)
+        context.cleanup_status = (
+            f"{cleanup_summary}|archive_cleanup:{context.archive_cleanup}"
+        )
         self._collect_post_metrics(context)
         cleanup_completed_at = self._safe_timestamp()
         audit_status = "recorded"
@@ -680,9 +793,11 @@ class DeploymentEngine:
                     target_durations_ms=context.target_durations_ms,
                     cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
                     rollback_status=(
-                        f"not_needed|cleanup:{context.cleanup_status}"
+                        f"not_needed|cleanup:{cleanup_summary}"
+                        f"|archive_cleanup:{context.archive_cleanup}"
                     ),
                     final_health="healthy",
+                    affected_services=tuple(context.touched_services),
                     started_at=context.started_at,
                     completed_at=cleanup_completed_at,
                 ),
@@ -926,6 +1041,15 @@ class DeploymentEngine:
         )
         before = self.runner.run(inspect)
         before_id = before.stdout.strip() if before.returncode == 0 else ""
+        expected_digest = context.request.archive_sha256
+        if expected_digest is None:
+            raise DeploymentError("candidate image archive digest is required")
+        try:
+            observed_digest = _sha256_file(archive_path)
+        except OSError as error:
+            raise DeploymentError("candidate image archive digest could not be verified") from error
+        if not hmac.compare_digest(observed_digest, expected_digest):
+            raise DeploymentError("candidate image archive digest does not match admitted artifact")
         try:
             loaded = self.runner.run(("docker", "load", "--input", str(archive_path)))
         except Exception as error:
@@ -948,6 +1072,11 @@ class DeploymentEngine:
     def _cleanup_archive_safe(self, archive_path: Path | None) -> str:
         if archive_path is None:
             return "not_applicable"
+        if not is_managed_image_archive(
+            archive_path,
+            allowed_parent=self.artifacts_dir,
+        ):
+            return "rejected_unmanaged"
         try:
             existed = archive_path.exists() or archive_path.is_symlink()
             self._remove_archive(archive_path)
@@ -1105,8 +1234,14 @@ class DeploymentEngine:
                         if rollback_attempted and not rollback.ok
                         else "unhealthy"
                     ),
+                    affected_services=tuple(context.touched_services),
                     started_at=context.started_at,
                     completed_at=completed_at,
+                    failure_category=(
+                        "source_policy_rejected"
+                        if isinstance(error, SourcePolicyError)
+                        else None
+                    ),
                 ),
             )
         except Exception:
@@ -1135,6 +1270,11 @@ class DeploymentEngine:
             disk_used_after=context.disk_used_after,
             cleanup_reclaimed_bytes=context.cleanup_reclaimed_bytes,
             cleanup_status=context.cleanup_status,
+            failure_category=(
+                "source_policy_rejected"
+                if isinstance(error, SourcePolicyError)
+                else None
+            ),
         )
 
     def _validate_request(
@@ -1226,6 +1366,7 @@ class DeploymentEngine:
                     str(release / "docker-compose.prod.yml"),
                     "up",
                     "-d",
+                    "--no-build",
                     "--no-deps",
                     "--force-recreate",
                     target,
@@ -1395,8 +1536,10 @@ class DeploymentEngine:
         cleanup_reclaimed_bytes: int,
         rollback_status: str,
         final_health: str,
+        affected_services: tuple[str, ...],
         started_at: str,
         completed_at: str,
+        failure_category: str | None = None,
     ) -> DeploymentEvent:
         return DeploymentEvent(
             event_id=event_id,
@@ -1420,22 +1563,76 @@ class DeploymentEngine:
             final_health=final_health,
             started_at=started_at,
             completed_at=completed_at,
+            source=request.source,
+            requested_by=request.requested_by,
+            failure_category=failure_category,
+            feature_routes=request.feature_routes,
+            stability_seconds=(60 if plan.mode is DeployMode.FULL_IMAGE else 30),
+            affected_services=affected_services,
+            route_smoke_checks=deployment_route_smoke_checks(request.feature_routes),
+            archive_sha256=request.archive_sha256,
+            artifact_cleanup_status=_artifact_cleanup_from_rollback(rollback_status),
         )
 
     def _preflight_observations(
-        self, snapshot: ResourceSnapshot, archive_bytes: int | None
+        self,
+        snapshot: ResourceSnapshot,
+        archive_bytes: int | None,
+        mode: DeployMode,
     ) -> dict[str, int | float | str]:
+        start_required = required_available_memory_bytes(mode)
         observations: dict[str, int | float | str] = {
             "disk_available_bytes": snapshot.free_disk_bytes,
             "disk_used_percent": snapshot.disk_used_percent,
             "available_memory_bytes": snapshot.available_memory_bytes,
+            "minimum_available_memory_bytes": snapshot.available_memory_bytes,
+            "start_available_memory_bytes": snapshot.available_memory_bytes,
+            "memory_policy_mode": mode.value,
+            "required_available_memory_bytes": start_required,
+            "start_required_available_memory_bytes": start_required,
             "source_valid": "valid",
             "lock_valid": "held",
             "required_free_bytes": 8 * 1024**3,
         }
         if archive_bytes is not None:
             observations["archive_bytes"] = archive_bytes
+        if mode is DeployMode.FULL_IMAGE:
+            observations["runtime_required_available_memory_bytes"] = (
+                required_available_memory_bytes(
+                    mode,
+                    memory_phase="before_activation",
+                )
+            )
         return observations
+
+    def _record_full_image_memory_phase(
+        self,
+        context: DeploymentContext,
+        memory_phase: str,
+    ) -> None:
+        snapshot = self.resource_collector(self.runner)
+        available = snapshot.available_memory_bytes
+        required = required_available_memory_bytes(
+            DeployMode.FULL_IMAGE,
+            memory_phase=memory_phase,
+        )
+        context.disk_used_after = snapshot.disk_used_percent
+        context.preflight[f"{memory_phase}_available_memory_bytes"] = available
+        context.preflight[f"{memory_phase}_required_available_memory_bytes"] = required
+        context.preflight["minimum_available_memory_bytes"] = min(
+            int(context.preflight.get("minimum_available_memory_bytes", available)),
+            available,
+        )
+        if memory_phase == "before_activation":
+            context.preflight["activation_memory_check_count"] = (
+                int(context.preflight.get("activation_memory_check_count", 0)) + 1
+            )
+        if available < required:
+            label = "post-load" if memory_phase == "post_load" else "before activation"
+            raise DeploymentError(
+                "deployment resource preflight failed "
+                f"{label}: available memory must be at least {required // (1024**2)} MiB"
+            )
 
     def _runtime_observations(self, labels: tuple[str, ...]) -> dict[str, str]:
         available = set(labels)
@@ -1808,7 +2005,7 @@ class DeploymentEngine:
             return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def _safe_message(self, error: Exception) -> str:
-        if isinstance(error, DeploymentError):
+        if isinstance(error, (DeploymentError, SourcePolicyError, SourceRefreshError)):
             return str(error)
         return "deployment failed; inspect the product-safe deployment event"
 
@@ -1884,6 +2081,7 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", required=True, choices=[mode.value for mode in DeployMode])
     parser.add_argument("--targets")
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--archive-sha256")
     parser.add_argument("--emergency-reason")
     parser.add_argument("--feature-routes")
     parser.add_argument("--external-event-id")
@@ -1900,7 +2098,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _argument_parser()
     arguments = parser.parse_args(argv)
     feature_routes = _csv_values(arguments.feature_routes)
-    if any(not route.startswith("/") or route.startswith("//") for route in feature_routes):
+    if any(not is_safe_feature_route(route) for route in feature_routes):
         parser.error("feature routes must be absolute local paths")
 
     runner = SubprocessRunner()
@@ -1912,6 +2110,7 @@ def main(argv: list[str] | None = None) -> int:
         emergency_reason=arguments.emergency_reason,
         feature_routes=feature_routes,
         external_event_id=arguments.external_event_id,
+        archive_sha256=arguments.archive_sha256,
     )
     engine = DeploymentEngine(
         repo=arguments.repo.resolve(),

@@ -4,6 +4,7 @@ set -euo pipefail
 APP_ROOT=${APP_ROOT:-${INVESTMENT_APP_ROOT:-/opt/investment-knowledge}}
 INVESTMENT_DIR=${INVESTMENT_DIR:-$APP_ROOT/current}
 OPS_HOME=${OPS_HOME:-/opt/investment-ops}
+OPS_DEPLOY_ARTIFACTS_DIR=${OPS_DEPLOY_ARTIFACTS_DIR:-$OPS_HOME/deploy-artifacts}
 OPS_API_PORT=${OPS_API_PORT:-8767}
 OPS_API_VENV=${OPS_API_VENV:-$OPS_HOME/.venv}
 OPS_DEPLOY_REPO_DIR=${OPS_DEPLOY_REPO_DIR:-/opt/investment-knowledge-repo}
@@ -27,10 +28,11 @@ Environment:
   INVESTMENT_APP_ROOT=/opt/investment-knowledge
   INVESTMENT_DIR=/opt/investment-knowledge/current
   OPS_HOME=/opt/investment-ops
+  OPS_DEPLOY_ARTIFACTS_DIR=/opt/investment-ops/deploy-artifacts
   OPS_API_VENV=/opt/investment-ops/.venv
   OPS_API_HOST=...              Optional; defaults to docker0 bridge IP, then 127.0.0.1.
   OPS_API_PORT=8767
-  OPS_API_TOKEN=...             Optional; defaults to COMMAND_API_TOKEN from .env.
+  OPS_API_TOKEN=...             Required distinct credential for the private Ops API.
   OPS_DEPLOY_REPO_DIR=...       Optional; defaults to /opt/investment-knowledge-repo.
   OPS_DEPLOY_STATE_PATH=/opt/investment-knowledge/shared/deploy-state.json
   OPS_DEPLOY_LOCK_PATH=/opt/investment-knowledge/shared/deploy.lock
@@ -107,13 +109,21 @@ if [ -z "${OPS_API_HOST:-}" ]; then
 fi
 OPS_API_HOST=${OPS_API_HOST:-127.0.0.1}
 
-OPS_API_TOKEN=${OPS_API_TOKEN:-${COMMAND_API_TOKEN:-}}
+OPS_API_TOKEN=${OPS_API_TOKEN:-}
 if [ -z "$OPS_API_TOKEN" ]; then
-  echo "OPS_API_TOKEN or COMMAND_API_TOKEN is required." >&2
+  echo "OPS_API_TOKEN is required." >&2
   exit 1
 fi
 
-mkdir -p "$OPS_HOME"
+for trusted_dir in "$OPS_HOME" "$OPS_DEPLOY_ARTIFACTS_DIR"; do
+  if [ -L "$trusted_dir" ]; then
+    echo "Refusing symlinked Ops directory: $trusted_dir" >&2
+    exit 1
+  fi
+done
+mkdir -p "$OPS_HOME" "$OPS_DEPLOY_ARTIFACTS_DIR"
+chown root:root "$OPS_HOME" "$OPS_DEPLOY_ARTIFACTS_DIR"
+chmod 0700 "$OPS_HOME" "$OPS_DEPLOY_ARTIFACTS_DIR"
 for module in "${OPS_API_MODULES[@]}"; do
   cp -a "$SCRIPT_DIR/$module" "$OPS_HOME/$module"
 done
@@ -134,6 +144,7 @@ cat > /etc/investment-knowledge/ops-api.env <<EOF
 INVESTMENT_APP_ROOT=$APP_ROOT
 INVESTMENT_DIR=$INVESTMENT_DIR
 OPS_HOME=$OPS_HOME
+OPS_DEPLOY_ARTIFACTS_DIR=$OPS_DEPLOY_ARTIFACTS_DIR
 OPS_API_VENV=$OPS_API_VENV
 OPS_API_PYTHON_BIN=$OPS_API_VENV/bin/python
 OPS_API_HOST=$OPS_API_HOST

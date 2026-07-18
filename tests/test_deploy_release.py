@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import json
 import os
@@ -310,6 +311,46 @@ class DeploymentEngineTests(TestCase):
         (release / "docker-compose.prod.yml").write_text("services: {}\n", encoding="utf-8")
         return release
 
+    def _managed_archive(self, contents: bytes = b"candidate") -> Path:
+        artifacts_dir = self.shared_dir / "deploy-artifacts"
+        artifacts_dir.mkdir(mode=0o700, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            prefix=f"investment-knowledge-app-{TARGET_SHA}-test-",
+            suffix=".tar.gz",
+            dir=artifacts_dir,
+            delete=False,
+        )
+        try:
+            handle.write(contents)
+        finally:
+            handle.close()
+        archive = Path(handle.name)
+        self.addCleanup(lambda: archive.unlink(missing_ok=True))
+        return archive
+
+    def _full_request(
+        self,
+        requested_ref: str,
+        requested_mode: DeployMode,
+        requested_targets: tuple[str, ...],
+        archive_path: Path | None,
+        emergency_reason: str | None,
+    ) -> DeployRequest:
+        self.assertIs(DeployMode.FULL_IMAGE, requested_mode)
+        archive_sha256 = (
+            hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            if archive_path is not None
+            else "0" * 64
+        )
+        return DeployRequest(
+            requested_ref,
+            requested_mode,
+            requested_targets,
+            archive_path,
+            emergency_reason,
+            archive_sha256=archive_sha256,
+        )
+
     def assertSubsequence(
         self, expected: list[tuple[str, ...]], actual: list[tuple[str, ...]]
     ) -> None:
@@ -331,6 +372,7 @@ class DeploymentEngineTests(TestCase):
                     str(staged_compose),
                     "up",
                     "-d",
+                    "--no-build",
                     "--no-deps",
                     "--force-recreate",
                     "command-api",
@@ -342,6 +384,7 @@ class DeploymentEngineTests(TestCase):
                     str(staged_compose),
                     "up",
                     "-d",
+                    "--no-build",
                     "--no-deps",
                     "--force-recreate",
                     "weekly-review-web",
@@ -364,6 +407,7 @@ class DeploymentEngineTests(TestCase):
                 str(staged_compose),
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "command-api",
@@ -386,6 +430,7 @@ class DeploymentEngineTests(TestCase):
                 str(previous_compose),
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "command-api",
@@ -607,6 +652,7 @@ class DeploymentEngineTests(TestCase):
             "compose",
             "up",
             "-d",
+            "--no-build",
             "--no-deps",
             "--force-recreate",
             "command-api",
@@ -713,6 +759,12 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(request)
 
         self.assertTrue(outcome.ok)
+        self.assertEqual(
+            1,
+            self.runner.commands.count(
+                ("git", "-C", str(self.repo), "fetch", "origin", "main")
+            ),
+        )
 
     def test_no_deploy_does_not_read_or_rewrite_image_selector(self) -> None:
         self.plan = DeploymentPlan(
@@ -880,8 +932,8 @@ class DeploymentEngineTests(TestCase):
         self.assertIn(container_inspect, self.runner.commands)
 
     def test_full_image_loads_and_activates_target_sha_tag_for_sixty_seconds(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
+        archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -895,6 +947,7 @@ class DeploymentEngineTests(TestCase):
             requested_targets=("command-api",),
             archive_path=archive,
             emergency_reason=None,
+            archive_sha256=archive_sha256,
         )
 
         outcome = self.engine.deploy(request)
@@ -920,10 +973,43 @@ class DeploymentEngineTests(TestCase):
             ("docker", "builder", "prune", "--filter", "until=168h", "--force"),
             self.runner.commands,
         )
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertIn("archive_cleanup:removed", event["rollback_status"])
+        self.assertNotIn("|archive_removed", event["rollback_status"])
+        self.assertEqual(archive_sha256, event["archive_sha256"])
+        self.assertEqual("removed", event["artifact_cleanup_status"])
+
+    def test_full_image_rehashes_private_archive_immediately_before_load(self) -> None:
+        archive = self._managed_archive()
+        admitted_digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        archive.write_bytes(b"post-claim mutation")
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api",),
+            changed_files=("requirements.txt",),
+            image_input_files=("requirements.txt",),
+            reasons=("dependency image input",),
+        )
+        request = DeployRequest(
+            requested_ref="main",
+            requested_mode=DeployMode.FULL_IMAGE,
+            requested_targets=("command-api",),
+            archive_path=archive,
+            emergency_reason=None,
+            archive_sha256=admitted_digest,
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("digest", outcome.message)
+        self.assertNotIn(
+            ("docker", "load", "--input", str(archive)),
+            self.runner.commands,
+        )
 
     def test_full_rejects_stale_expected_tag_when_archive_loads_different_image(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         expected = f"investment-knowledge-app:{TARGET_SHA}"
         inspect = (
             "docker",
@@ -947,7 +1033,7 @@ class DeploymentEngineTests(TestCase):
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
         )
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -959,8 +1045,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual("recorded", outcome.audit_status)
 
     def test_full_rejects_mutable_prod_only_archive_with_product_safe_event(self) -> None:
-        archive = self.directory / "candidate.tar.gz"
-        archive.write_bytes(b"legacy-prod-image")
+        archive = self._managed_archive(b"legacy-prod-image")
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -971,7 +1056,7 @@ class DeploymentEngineTests(TestCase):
         self.runner.results[("docker", "load", "--input", str(archive))] = (
             CommandResult(0, "Loaded image: investment-knowledge-app:prod\n", "")
         )
-        request = DeployRequest("main", DeployMode.FULL_IMAGE, (), archive, None)
+        request = self._full_request("main", DeployMode.FULL_IMAGE, (), archive, None)
 
         outcome = self.engine.deploy(request)
 
@@ -990,7 +1075,7 @@ class DeploymentEngineTests(TestCase):
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
         )
-        request = DeployRequest("main", DeployMode.FULL_IMAGE, (), None, None)
+        request = self._full_request("main", DeployMode.FULL_IMAGE, (), None, None)
 
         outcome = self.engine.deploy(request)
 
@@ -1082,12 +1167,11 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual([], self.stage_calls)
 
     def test_emergency_override_cannot_escalate_narrow_targets_to_full_image(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         state_before = self.state_path.read_bytes()
         current_before = self.engine.current_link.resolve()
         env_before = self.engine.env_file.read_bytes()
-        request = DeployRequest(
+        request = self._full_request(
             "main",
             DeployMode.FULL_IMAGE,
             self.plan.targets,
@@ -1108,8 +1192,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual("full_image", event["requested_mode"])
 
     def test_emergency_full_escalation_accepts_complete_application_targets(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.CONFIG_RESTART,
             targets=APPLICATION_SERVICES,
@@ -1117,7 +1200,7 @@ class DeploymentEngineTests(TestCase):
             image_input_files=(),
             reasons=("runtime configuration",),
         )
-        request = DeployRequest(
+        request = self._full_request(
             "main",
             DeployMode.FULL_IMAGE,
             APPLICATION_SERVICES,
@@ -1142,8 +1225,11 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(request)
 
         self.assertFalse(outcome.ok)
+        self.assertEqual("source_policy_rejected", outcome.failure_category)
         self.assertEqual([], self.stage_calls)
         self.assertFalse(any(command[:3] == ("docker", "compose", "up") for command in self.runner.commands))
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual("source_policy_rejected", event["failure_category"])
 
     def test_preflight_failure_happens_before_staging_or_runtime_mutation(self) -> None:
         from scripts.deploy_preflight import ResourceSnapshot
@@ -1157,6 +1243,101 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(any(command[:3] == ("docker", "compose", "up") for command in self.runner.commands))
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
         self.assertEqual("recorded", outcome.audit_status)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual(1, event["preflight"]["available_memory_bytes"])
+        self.assertEqual(512 * 1024**2, event["preflight"]["required_available_memory_bytes"])
+        self.assertEqual(1, event["preflight"]["minimum_available_memory_bytes"])
+        self.assertEqual("targeted_quick", event["preflight"]["memory_policy_mode"])
+
+    def test_full_image_rechecks_memory_after_load_before_selector_mutation(self) -> None:
+        from scripts.deploy_preflight import GIB, MIB, ResourceSnapshot
+
+        archive = self._managed_archive()
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api",),
+            changed_files=("Dockerfile",),
+            image_input_files=("Dockerfile",),
+            reasons=("image input",),
+        )
+        request = self._full_request(
+            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+        )
+        snapshots = iter(
+            (
+                ResourceSnapshot(16 * GIB, 40.0, 768 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+            )
+        )
+        self.engine.resource_collector = lambda runner: next(snapshots)
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("post-load", outcome.message)
+        self.assertFalse(
+            any(_without_compose_file(command)[:3] == ("docker", "compose", "up") for command in self.runner.commands)
+        )
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual(768 * MIB, event["preflight"]["start_available_memory_bytes"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["post_load_available_memory_bytes"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["minimum_available_memory_bytes"])
+        self.assertEqual("not_started", event["rollback_status"].split("|")[0])
+
+    def test_full_image_rechecks_memory_before_each_activation_and_rolls_back(self) -> None:
+        from scripts.deploy_preflight import GIB, MIB, ResourceSnapshot
+
+        archive = self._managed_archive()
+        self.plan = DeploymentPlan(
+            mode=DeployMode.FULL_IMAGE,
+            targets=("command-api", "weekly-review-web"),
+            changed_files=("Dockerfile",),
+            image_input_files=("Dockerfile",),
+            reasons=("image input",),
+        )
+        request = self._full_request(
+            "main",
+            DeployMode.FULL_IMAGE,
+            ("command-api", "weekly-review-web"),
+            archive,
+            None,
+        )
+        snapshots = iter(
+            (
+                ResourceSnapshot(16 * GIB, 40.0, 768 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 700 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 600 * MIB),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+                ResourceSnapshot(16 * GIB, 40.0, 512 * MIB - 1),
+            )
+        )
+        self.engine.resource_collector = lambda runner: next(snapshots)
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("before activation", outcome.message)
+        self.assertEqual(("command-api",), outcome.activated_services)
+        self.assertEqual(("command-api",), outcome.rolled_back_services)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual(2, event["preflight"]["activation_memory_check_count"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["before_activation_available_memory_bytes"])
+        self.assertEqual(512 * MIB - 1, event["preflight"]["minimum_available_memory_bytes"])
+
+    def test_every_compose_activation_and_rollback_uses_no_build(self) -> None:
+        self.health.fail_for("weekly-review-web")
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertFalse(outcome.ok)
+        compose_up_commands = [
+            _without_compose_file(command)
+            for command in self.runner.commands
+            if _without_compose_file(command)[:3] == ("docker", "compose", "up")
+        ]
+        self.assertGreaterEqual(len(compose_up_commands), 2)
+        self.assertTrue(all("--no-build" in command for command in compose_up_commands))
 
     def test_source_failure_records_sanitized_failed_event(self) -> None:
         self.runner.results[("git", "-C", str(self.repo), "fetch", "origin", "main")] = CommandResult(
@@ -1166,11 +1347,77 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(self.targeted_request)
 
         self.assertFalse(outcome.ok)
+        self.assertIsNone(outcome.failure_category)
         self.assertNotIn("token", outcome.message.lower())
         self.assertEqual("recorded", outcome.audit_status)
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertEqual("unhealthy", event["final_health"])
         self.assertEqual("targeted_quick", event["requested_mode"])
+
+    def test_deploy_event_persists_sanitized_source_and_requester_labels(self) -> None:
+        request = replace(
+            self.targeted_request,
+            source="github_actions",
+            requested_by="weekly_review_coordinator",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
+        self.assertEqual("github_actions", event["source"])
+        self.assertEqual("weekly_review_coordinator", event["requested_by"])
+
+    def test_deploy_request_rejects_secret_shaped_source_labels(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source"):
+            replace(self.targeted_request, source="TOKEN=hidden-value")
+
+    def test_deploy_request_rejects_source_outside_explicit_allowlist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source"):
+            replace(self.targeted_request, source="rogue_dispatcher")
+
+    def test_deploy_request_accepts_supported_source_allowlist(self) -> None:
+        for source in (
+            "direct",
+            "github_actions",
+            "ops_client",
+            "mcp",
+            "codex_app",
+            "verification",
+        ):
+            with self.subTest(source=source):
+                request = replace(self.targeted_request, source=source)
+                self.assertEqual(source, request.source)
+
+    def test_deploy_request_rejects_synthetic_credential_label_shapes(self) -> None:
+        shapes = (
+            "github_pat_" + "A" * 24,
+            "sk-" + "B" * 32,
+            "AKIA" + "C" * 16,
+            "eyJ" + "D" * 12 + "." + "E" * 12 + "." + "F" * 12,
+        )
+
+        for index, label in enumerate(shapes):
+            with self.subTest(shape=index):
+                with self.assertRaisesRegex(ValueError, "requested_by"):
+                    replace(self.targeted_request, requested_by=label)
+
+    def test_deploy_request_rejects_noncanonical_or_control_feature_routes(self) -> None:
+        invalid_routes = (
+            " /health",
+            "/health ",
+            "/health\x00hidden",
+            "/health\nnext",
+            "/weekly-review//detail",
+            "/weekly-review/../health",
+            "/health?token=value",
+            "/café",
+        )
+
+        for route in invalid_routes:
+            with self.subTest(route=repr(route)):
+                with self.assertRaisesRegex(ValueError, "feature routes"):
+                    replace(self.targeted_request, feature_routes=(route,))
 
     def test_runtime_failure_records_failed_event(self) -> None:
         self.engine.runtime_validator = lambda runner, compose: (_ for _ in ()).throw(
@@ -1229,8 +1476,7 @@ class DeploymentEngineTests(TestCase):
     def test_archive_is_removed_when_full_preflight_fails(self) -> None:
         from scripts.deploy_preflight import ResourceSnapshot
 
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = replace(
             self.plan,
             mode=DeployMode.FULL_IMAGE,
@@ -1241,12 +1487,57 @@ class DeploymentEngineTests(TestCase):
             self.targeted_request,
             requested_mode=DeployMode.FULL_IMAGE,
             archive_path=archive,
+            archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
         )
 
         outcome = self.engine.deploy(request)
 
         self.assertFalse(outcome.ok)
         self.assertFalse(archive.exists())
+
+    def test_engine_rejects_unclaimed_tmp_archive_without_deleting_it(self) -> None:
+        handle = tempfile.NamedTemporaryFile(
+            prefix=f"investment-knowledge-app-{TARGET_SHA}-unclaimed-",
+            suffix=".tar.gz",
+            dir="/tmp",
+            delete=False,
+        )
+        try:
+            handle.write(b"unclaimed")
+        finally:
+            handle.close()
+        archive = Path(handle.name)
+        self.addCleanup(lambda: archive.unlink(missing_ok=True))
+        self.plan = replace(
+            self.plan,
+            mode=DeployMode.FULL_IMAGE,
+            image_input_files=("requirements.txt",),
+        )
+        request = replace(
+            self.targeted_request,
+            requested_mode=DeployMode.FULL_IMAGE,
+            archive_path=archive,
+            archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertIn("private staging", outcome.message)
+        self.assertTrue(archive.is_file())
+        self.assertNotIn(
+            ("docker", "load", "--input", str(archive)),
+            self.runner.commands,
+        )
+
+    def test_archive_cleanup_refuses_unmanaged_paths(self) -> None:
+        archive = self.directory / "unmanaged-archive.tar.gz"
+        archive.write_bytes(b"must survive")
+
+        status = self.engine._cleanup_archive_safe(archive)
+
+        self.assertEqual("rejected_unmanaged", status)
+        self.assertEqual(b"must survive", archive.read_bytes())
 
     def test_rollback_failure_persists_lockout_and_blocks_next_attempt(self) -> None:
         self.health.fail_for("weekly-review-web")
@@ -1298,7 +1589,7 @@ class DeploymentEngineTests(TestCase):
         rendered = [" ".join(_without_compose_file(command)) for command in self.runner.commands]
         self.assertTrue(
             any(
-                "docker compose up -d --no-deps --force-recreate daily-market-brief-history-worker"
+                "docker compose up -d --no-build --no-deps --force-recreate daily-market-brief-history-worker"
                 in command
                 for command in rendered
             )
@@ -1327,6 +1618,7 @@ class DeploymentEngineTests(TestCase):
             "compose",
             "up",
             "-d",
+            "--no-build",
             "--no-deps",
             "--force-recreate",
             "command-api",
@@ -1343,8 +1635,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
 
     def test_image_switch_failure_restores_previous_release(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -1355,7 +1646,7 @@ class DeploymentEngineTests(TestCase):
         self.engine._write_image_tag = lambda image: (_ for _ in ()).throw(
             DeploymentHealthError("image selector failed")
         )
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -1366,9 +1657,8 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
 
     def test_full_source_rejection_removes_uploaded_archive(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
-        request = DeployRequest(
+        archive = self._managed_archive()
+        request = self._full_request(
             "feature/unsafe",
             DeployMode.FULL_IMAGE,
             ("command-api",),
@@ -1403,8 +1693,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(0o600, self.engine.env_file.stat().st_mode & 0o777)
 
     def test_full_event_preserves_archive_size_and_image_counts(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -1417,7 +1706,7 @@ class DeploymentEngineTests(TestCase):
             ImageRecord("previous-id", f"investment-knowledge-app:{OLD_SHA}", 1),
         )
         self.engine.referenced_image_ids = lambda: {"current-id"}
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -1432,8 +1721,7 @@ class DeploymentEngineTests(TestCase):
     def test_full_records_real_post_metrics_and_reclaimed_image_bytes(self) -> None:
         from scripts.deploy_preflight import ResourceSnapshot
 
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -1460,13 +1748,15 @@ class DeploymentEngineTests(TestCase):
         self.engine.referenced_image_ids = lambda: {"target-id"}
         resources = [
             ResourceSnapshot(16 * 1024**3, 40.0, 1024 * 1024**2),
+            ResourceSnapshot(16 * 1024**3, 39.0, 1000 * 1024**2),
+            ResourceSnapshot(16 * 1024**3, 38.0, 900 * 1024**2),
             ResourceSnapshot(17 * 1024**3, 35.0, 1100 * 1024**2),
         ]
         self.engine.resource_collector = lambda runner: resources.pop(0)
         self.runner.results[
             ("docker", "image", "inspect", "--format", "{{.Size}}", "old-id")
         ] = CommandResult(0, "123\n", "")
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -1488,6 +1778,7 @@ class DeploymentEngineTests(TestCase):
                 "compose",
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "command-api",
@@ -1497,6 +1788,7 @@ class DeploymentEngineTests(TestCase):
                 "compose",
                 "up",
                 "-d",
+                "--no-build",
                 "--no-deps",
                 "--force-recreate",
                 "weekly-review-web",
@@ -1597,8 +1889,7 @@ class DeploymentEngineTests(TestCase):
         )
 
     def test_failed_full_removes_unreferenced_candidate_and_preserves_previous_image(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         candidate = f"investment-knowledge-app:{TARGET_SHA}"
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
@@ -1614,7 +1905,7 @@ class DeploymentEngineTests(TestCase):
         )
         self.engine.referenced_image_ids = lambda: set()
         self.health.fail_for("command-api")
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -1628,8 +1919,7 @@ class DeploymentEngineTests(TestCase):
         self.assertTrue(event["rollback_status"].startswith("succeeded|"))
 
     def test_failed_full_keeps_candidate_while_a_container_references_it(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         candidate = f"investment-knowledge-app:{TARGET_SHA}"
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
@@ -1643,7 +1933,7 @@ class DeploymentEngineTests(TestCase):
         )
         self.engine.referenced_image_ids = lambda: {"candidate-id"}
         self.health.fail_for("command-api")
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -1653,8 +1943,7 @@ class DeploymentEngineTests(TestCase):
         self.assertNotIn(("docker", "image", "rm", "candidate-id"), self.runner.commands)
 
     def test_candidate_cleanup_failure_still_returns_product_safe_outcome(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -1673,7 +1962,7 @@ class DeploymentEngineTests(TestCase):
 
         self.engine.image_inventory = inventory
         self.health.fail_for("command-api")
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -1713,15 +2002,14 @@ class DeploymentEngineTests(TestCase):
         self.assertTrue(event["rollback_status"].startswith("rollback_failed|"))
 
     def test_archive_cleanup_failure_does_not_mask_primary_source_failure(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.runner.results[("git", "-C", str(self.repo), "fetch", "origin", "main")] = CommandResult(
             1, "", "PASSWORD=source-secret"
         )
         self.engine._remove_archive = lambda path: (_ for _ in ()).throw(
             OSError("TOKEN=cleanup-secret")
         )
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, (), archive, None
         )
 
@@ -1775,8 +2063,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual("deferred_lock_unavailable", outcome.archive_cleanup)
 
     def test_existing_lockout_removes_full_archive_while_lock_is_held(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.engine.lockout_path.write_text("{}\n", encoding="ascii")
         lock_held = False
 
@@ -1796,7 +2083,7 @@ class DeploymentEngineTests(TestCase):
 
         self.engine.lock_factory = tracking_lock
         self.engine._remove_archive = checked_remove
-        request = DeployRequest("main", DeployMode.FULL_IMAGE, (), archive, None)
+        request = self._full_request("main", DeployMode.FULL_IMAGE, (), archive, None)
 
         outcome = self.engine.deploy(request)
 
@@ -1805,8 +2092,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual("removed", outcome.archive_cleanup)
 
     def test_full_archive_load_failure_is_safe_and_removes_archive(self) -> None:
-        archive = self.directory / "candidate.tar"
-        archive.write_bytes(b"candidate")
+        archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
             targets=("command-api",),
@@ -1817,7 +2103,7 @@ class DeploymentEngineTests(TestCase):
         self.runner.results[("docker", "load", "--input", str(archive))] = CommandResult(
             1, "", "TOKEN=do-not-report"
         )
-        request = DeployRequest(
+        request = self._full_request(
             "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
         )
 
@@ -2317,6 +2603,10 @@ class ShellWrapperTests(TestCase):
 
         self.assertEqual("full_image", arguments[arguments.index("--mode") + 1])
         self.assertEqual(str(archive), arguments[arguments.index("--archive") + 1])
+        self.assertEqual(
+            hashlib.sha256(b"legacy archive").hexdigest(),
+            arguments[arguments.index("--archive-sha256") + 1],
+        )
         self.assertNotIn("--targets", arguments)
 
     def test_github_preloaded_archive_environment_selects_explicit_full_mode(self) -> None:

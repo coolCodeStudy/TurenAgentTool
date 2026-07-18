@@ -124,6 +124,118 @@
       "acceptance_rows": [],
       "registry_rows": [],
       "expected_categories": ["deploy_conflict", "missing_watch_path", "repeated_blocker"]
+    },
+    {
+      "id": "not-required-is-not-a-deploy-conflict",
+      "description": "A documented no_deploy decision must not be counted as a parallel production deployment.",
+      "today": "2026-07-17",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-17-001",
+          "feature": "Governance",
+          "target_role": "Feature Coordinator",
+          "status": "ready_to_dispatch",
+          "thread_or_branch": "main",
+          "source": "Docs-only change",
+          "expected_result": "No production action.",
+          "next_action": "Deploy decision: not_required."
+        },
+        {
+          "item_id": "DQ-2026-07-17-002",
+          "feature": "Example Feature",
+          "target_role": "Feature Coordinator self-deploy",
+          "status": "ready_to_dispatch",
+          "thread_or_branch": "main",
+          "source": "Authoritative feature fix",
+          "expected_result": "One serialized deployment.",
+          "next_action": "Deploy decision: self_deploy."
+        }
+      ],
+      "acceptance_rows": [],
+      "registry_rows": [],
+      "expected_categories": []
+    },
+    {
+      "id": "blocked-recovery-is-visible-followup",
+      "description": "A failed acceptance with a named blocked_with_owner recovery must not look ownerless.",
+      "today": "2026-07-17",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-17-003",
+          "feature": "Example Feature",
+          "target_role": "Infrastructure & Release Reliability Expert",
+          "status": "blocked",
+          "thread_or_branch": "main",
+          "source": "Low-memory deployment rejection",
+          "expected_result": "Preserve prior release and retry only after capacity remediation.",
+          "next_action": "blocked_with_owner: Infrastructure owner must repair capacity and dispatch the same serialized channel."
+        }
+      ],
+      "acceptance_rows": [
+        {
+          "item_id": "AT-2026-07-17-001",
+          "feature": "Example Feature",
+          "surface": "http://example.invalid/feature",
+          "status": "failed",
+          "severity": "blocker",
+          "evidence": "Preflight rejected before activation.",
+          "findings": "No user-surface change occurred.",
+          "next_action": "Wait for the named recovery owner."
+        }
+      ],
+      "registry_rows": [],
+      "expected_categories": []
+    },
+    {
+      "id": "browser-and-ops-credentials-are-not-one-blocker",
+      "description": "Public browser-access policy and private Ops credentials must not be conflated as one repeated token issue.",
+      "today": "2026-07-17",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-17-004",
+          "feature": "Public Read",
+          "target_role": "Feature Coordinator",
+          "status": "blocked",
+          "thread_or_branch": "main",
+          "source": "Browser test",
+          "expected_result": "Restore public read policy.",
+          "next_action": "blocked_with_owner: product owner must repair public read unauthorized behavior."
+        },
+        {
+          "item_id": "DQ-2026-07-17-005",
+          "feature": "Ops Bootstrap",
+          "target_role": "Infrastructure & Release Reliability Expert",
+          "status": "blocked",
+          "thread_or_branch": "main",
+          "source": "Control-plane rollout",
+          "expected_result": "Provision private Ops credential.",
+          "next_action": "blocked_with_owner: infrastructure owner must provision OPS_API_TOKEN."
+        }
+      ],
+      "acceptance_rows": [
+        {
+          "item_id": "AT-2026-07-17-002",
+          "feature": "Public Read",
+          "surface": "http://example.invalid/public",
+          "status": "blocked",
+          "severity": "major",
+          "evidence": "Public read returned unauthorized.",
+          "findings": "Browser asked for an access token.",
+          "next_action": "Return to public-read owner."
+        },
+        {
+          "item_id": "AT-2026-07-17-003",
+          "feature": "Ops Bootstrap",
+          "surface": "private://ops",
+          "status": "blocked",
+          "severity": "major",
+          "evidence": "OPS_API_TOKEN missing.",
+          "findings": "Private control-plane credential is not provisioned.",
+          "next_action": "Return to infrastructure owner."
+        }
+      ],
+      "registry_rows": [],
+      "expected_categories": []
     }
   ]
 }

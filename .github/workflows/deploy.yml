@@ -194,7 +194,7 @@ jobs:
         if: steps.early_plan.outputs.mode != 'no_deploy'
         env:
           OPS_API_URL: http://127.0.0.1:18767
-          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
           REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'auto' }}
           EMERGENCY_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.emergency_reason || '' }}
@@ -203,7 +203,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "$OPS_API_TOKEN" ]; then
-            echo "::error::OPS_API_TOKEN or COMMAND_API_TOKEN is required."
+            echo "::error::OPS_API_TOKEN is required."
             exit 1
           fi
 
@@ -306,9 +306,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Install private tunnel dependency
         run: |
           sudo apt-get update -qq
@@ -380,10 +377,11 @@ jobs:
       - name: Delegate deployment to Ops API
         env:
           OPS_API_URL: http://127.0.0.1:18767
-          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           DEPLOY_MODE: ${{ needs.plan.outputs.mode }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
 
@@ -395,6 +393,9 @@ jobs:
               "ref": os.environ["TARGET_SHA"],
               "mode": os.environ["DEPLOY_MODE"],
               "targets": json.loads(os.environ["TARGETS_JSON"]),
+              "feature_routes": ["/daily-market-brief"],
+              "source": "github_actions",
+              "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",
           }
           print(json.dumps(payload, separators=(",", ":")))
           PY
@@ -437,11 +438,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          archive="dist/investment-knowledge-app-${{ github.sha }}.tar.gz"
+          archive="dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz"
           docker save investment-knowledge-app:${{ github.sha }} | gzip > "$archive"
           archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "archive_bytes=$archive_bytes" >> "$GITHUB_OUTPUT"
+          echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
           ls -lh "$archive"
 
       - name: Remote deploy_preflight.py resource gate
@@ -449,33 +452,26 @@ jobs:
         env:
           ARCHIVE_BYTES: ${{ steps.archive.outputs.archive_bytes }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
           command_timeout: 15m
-          envs: ARCHIVE_BYTES,TARGET_SHA
+          envs: ARCHIVE_BYTES,TARGET_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
           script: |
             set -euo pipefail
 
-            DEPLOY_REPO_DIR=/opt/investment-knowledge-repo
             DEPLOY_REPO_URL=https://github.com/coolCodeStudy/TurenAgentTool.git
-            APP_ROOT=/opt/investment-knowledge
-
-            sudo mkdir -p "$APP_ROOT" "$DEPLOY_REPO_DIR"
-            sudo chown -R "$(id -un)":"$(id -gn)" "$APP_ROOT" "$DEPLOY_REPO_DIR"
-            if [ -d "$DEPLOY_REPO_DIR/.git" ]; then
-              git -C "$DEPLOY_REPO_DIR" remote set-url origin "$DEPLOY_REPO_URL"
-              git -C "$DEPLOY_REPO_DIR" fetch --prune origin
-            else
-              rm -rf "$DEPLOY_REPO_DIR"
-              git clone "$DEPLOY_REPO_URL" "$DEPLOY_REPO_DIR"
-            fi
-            git -C "$DEPLOY_REPO_DIR" checkout --detach "$TARGET_SHA"
+            PREFLIGHT_REPO="$(mktemp -d "/tmp/investment-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")"
+            trap 'rm -rf "$PREFLIGHT_REPO"' EXIT
+            git clone --filter=blob:none --no-checkout "$DEPLOY_REPO_URL" "$PREFLIGHT_REPO"
+            git -C "$PREFLIGHT_REPO" checkout --detach "$TARGET_SHA"
 
             echo "Running deploy_preflight.py before image archive upload."
-            python3 - "$DEPLOY_REPO_DIR" "$ARCHIVE_BYTES" <<'PY'
+            python3 - "$PREFLIGHT_REPO" "$ARCHIVE_BYTES" <<'PY'
             from pathlib import Path
             import sys
 
@@ -504,7 +500,7 @@ jobs:
           username: ${{ secrets.ECS_USERNAME }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: ${{ secrets.ECS_PORT || '22' }}
-          source: "dist/investment-knowledge-app-${{ github.sha }}.tar.gz"
+          source: "dist/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz"
           target: "/tmp"
           strip_components: 1
           overwrite: true
@@ -580,11 +576,13 @@ jobs:
       - name: Delegate full image deployment to Ops API
         env:
           OPS_API_URL: http://127.0.0.1:18767
-          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN || secrets.COMMAND_API_TOKEN }}
+          OPS_API_TOKEN: ${{ secrets.OPS_API_TOKEN }}
           TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
           TARGETS_JSON: ${{ needs.plan.outputs.targets }}
           EMERGENCY_REASON: ${{ needs.plan.outputs.emergency_reason }}
-          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}.tar.gz
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
+          ARCHIVE_SHA256: ${{ steps.archive.outputs.archive_sha256 }}
         run: |
           set -euo pipefail
 
@@ -597,6 +595,10 @@ jobs:
               "mode": "full_image",
               "targets": json.loads(os.environ["TARGETS_JSON"]),
               "archive_path": os.environ["REMOTE_ARCHIVE"],
+              "archive_sha256": os.environ["ARCHIVE_SHA256"],
+              "feature_routes": ["/daily-market-brief"],
+              "source": "github_actions",
+              "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",
           }
           reason = os.environ.get("EMERGENCY_REASON", "").strip()
           if reason:
@@ -610,3 +612,27 @@ jobs:
             --header "Content-Type: application/json" \
             --data @deploy-payload.json \
             "$OPS_API_URL/deploy"
+
+      - name: Cleanup exact remote image archive
+        if: always()
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          TARGET_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          REMOTE_ARCHIVE: /tmp/investment-knowledge-app-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          envs: TARGET_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,REMOTE_ARCHIVE
+          script: |
+            set -euo pipefail
+
+            expected="/tmp/investment-knowledge-app-${TARGET_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+            if [ "$REMOTE_ARCHIVE" != "$expected" ]; then
+              echo "::error::Refusing to clean a non-run-scoped image archive."
+              exit 1
+            fi
+            rm -f -- "$REMOTE_ARCHIVE"

@@ -68,6 +68,30 @@ Success criteria:
 - Global PM intervention is reserved for stale coordinators, missing watch paths, credentials/permissions, user decisions, and cross-feature conflicts.
 - Governance/docs/tests-only changes can push through `main` with a successful `no_deploy` job instead of restarting production or getting stranded on a feature branch.
 
+## P1.1: Deploy Admission Reliability
+
+Status: in progress on `codex/release-reliability-p0-20260716`.
+
+This is operating-model/control-plane infrastructure, not a Feature Registry item.
+It addresses the confirmed 2026-07-16 release failures: GitHub Actions runs
+`29511640343` and `29512741489` reached the private Ops API but were rejected
+before activation because `MemAvailable` was below the 512 MiB quick/config
+reserve. The failure was neither a GitHub-token nor a deploy-lock failure.
+
+P0 delivered locally reviewed controls for forward-only authoritative refs,
+one GitHub Actions coordinator channel with an internal Ops executor, durable
+event/health/service/route evidence, mode-specific memory gates, isolated
+full-image artifacts, and separate browser, command, and Ops credentials.
+The remaining rollout gate is deliberate integration followed by a serialized
+independent Ops API bootstrap using a distinct `OPS_API_TOKEN`; an ordinary app
+release cannot update `/opt/investment-ops`.
+
+P1 follow-up: collect memory, PSI, cgroup, swap, and full-image phase telemetry
+from successful and rejected deploys, then calibrate target-aware reserves.
+Consider registry/digest delivery only after provenance, retention, rollback,
+and credential ownership are specified; do not replace the verified archive
+path opportunistically.
+
 ## P2: Context Retrieval And Memory
 
 Status: deferred.

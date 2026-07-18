@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from dataclasses import replace
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
+import scripts.deploy_state as deploy_state
 from scripts.deploy_state import (
     DeploymentEvent,
+    DeploymentEventAuditOverlay,
     DeploymentState,
     SourcePolicyError,
+    SourceRefreshError,
     StateFormatError,
+    load_event_audit_overlay,
+    load_event,
     load_state,
     resolve_production_target,
+    update_event_artifact_cleanup,
     write_event,
+    write_event_audit_overlay,
     write_state,
 )
 from scripts.deploy_support import CommandResult
@@ -93,26 +102,17 @@ class DeployStateTests(TestCase):
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
                 ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("a" * 40),
-                (
-                    "git",
-                    "-C",
-                    "/repo",
-                    "merge-base",
-                    "--is-ancestor",
-                    "a" * 40,
-                    "origin/main",
-                ): ok(""),
             }
         )
 
         self.assertEqual("a" * 40, resolve_production_target(Path("/repo"), "main", runner))
 
-    def test_resolves_a_reachable_full_sha_without_rev_parse(self) -> None:
+    def test_resolves_only_the_current_origin_main_full_sha(self) -> None:
         sha = "b" * 40
         runner = FakeRunner(
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
-                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"): ok("")
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): ok(sha),
             }
         )
 
@@ -120,12 +120,35 @@ class DeployStateTests(TestCase):
         self.assertEqual(
             [
                 ("git", "-C", "/repo", "fetch", "origin", "main"),
-                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"),
+                ("git", "-C", "/repo", "rev-parse", "origin/main"),
             ],
             runner.calls,
         )
 
-    def test_rejects_feature_branch_and_unreachable_sha(self) -> None:
+    def test_historical_baseline_accepts_a_reachable_origin_main_ancestor(self) -> None:
+        deployed_sha = "a" * 40
+        runner = FakeRunner(
+            {
+                ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
+                (
+                    "git",
+                    "-C",
+                    "/repo",
+                    "merge-base",
+                    "--is-ancestor",
+                    deployed_sha,
+                    "origin/main",
+                ): ok(""),
+            }
+        )
+
+        resolved = deploy_state.resolve_historical_production_target(
+            Path("/repo"), deployed_sha, runner
+        )
+
+        self.assertEqual(deployed_sha, resolved)
+
+    def test_rejects_feature_branch_and_stale_origin_main_ancestor(self) -> None:
         runner = FakeRunner({})
         with self.assertRaisesRegex(SourcePolicyError, "main or a 40-character SHA"):
             resolve_production_target(Path("/repo"), "feature/daily", runner)
@@ -134,23 +157,29 @@ class DeployStateTests(TestCase):
         runner = FakeRunner(
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
-                ("git", "-C", "/repo", "merge-base", "--is-ancestor", sha, "origin/main"): CommandResult(
-                    1, "", "not reachable"
-                )
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("d" * 40),
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "not reachable from origin/main"):
+        with self.assertRaisesRegex(
+            SourcePolicyError,
+            "integrate.*authoritative main.*push.*new main tip",
+        ):
             resolve_production_target(Path("/repo"), sha, runner)
 
     def test_rejects_failed_or_malformed_origin_main_resolution(self) -> None:
         runner = FakeRunner(
             {
                 ("git", "-C", "/repo", "fetch", "origin", "main"): ok(""),
-                ("git", "-C", "/repo", "rev-parse", "origin/main"): CommandResult(1, "", "missing ref")
+                ("git", "-C", "/repo", "rev-parse", "origin/main"): CommandResult(
+                    1,
+                    "",
+                    "missing ref TOKEN=source-secret",
+                )
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main"):
+        with self.assertRaisesRegex(SourceRefreshError, "source resolution") as caught:
             resolve_production_target(Path("/repo"), "main", runner)
+        self.assertNotIn("source-secret", str(caught.exception))
 
         runner = FakeRunner(
             {
@@ -158,7 +187,7 @@ class DeployStateTests(TestCase):
                 ("git", "-C", "/repo", "rev-parse", "origin/main"): ok("not-a-sha"),
             }
         )
-        with self.assertRaisesRegex(SourcePolicyError, "resolve origin/main"):
+        with self.assertRaisesRegex(SourceRefreshError, "source resolution"):
             resolve_production_target(Path("/repo"), "main", runner)
 
     def test_rejects_target_when_origin_main_cannot_be_refreshed(self) -> None:
@@ -170,7 +199,7 @@ class DeployStateTests(TestCase):
             }
         )
 
-        with self.assertRaisesRegex(SourcePolicyError, "refresh origin/main"):
+        with self.assertRaisesRegex(SourceRefreshError, "source refresh"):
             resolve_production_target(Path("/repo"), "main", runner)
 
     def test_state_round_trip_is_atomic_and_preserves_previous(self) -> None:
@@ -238,6 +267,153 @@ class DeployStateTests(TestCase):
         self.assertEqual(event.event_id, json.loads(path.read_text(encoding="utf-8"))["event_id"])
         self.assertFalse((events_dir / "event-1.json.tmp").exists())
 
+    def test_legacy_event_load_and_cleanup_update_use_canonical_schema(self) -> None:
+        events_dir = self.directory / "events"
+        path = write_event(events_dir, sample_event())
+        legacy = json.loads(path.read_text(encoding="utf-8"))
+        legacy.pop("archive_sha256")
+        legacy.pop("artifact_cleanup_status")
+        legacy["rollback_status"] = "not_needed|cleanup:complete|archive_removed"
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        loaded = load_event(events_dir, "event-1")
+        self.assertIsNone(loaded.archive_sha256)
+        self.assertEqual("removed", loaded.artifact_cleanup_status)
+        overlay = DeploymentEventAuditOverlay(
+            schema_version=1,
+            event_id="event-1",
+            status="audit_incomplete",
+            reason="artifact_cleanup_event_update_failed",
+            artifact_cleanup_status="failed",
+        )
+        write_event_audit_overlay(events_dir, overlay)
+        self.assertEqual(overlay, load_event_audit_overlay(events_dir, "event-1"))
+
+        update_event_artifact_cleanup(events_dir, "event-1", "failed")
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual("failed", persisted["artifact_cleanup_status"])
+        self.assertEqual(
+            "not_needed|cleanup:complete|archive_cleanup:failed",
+            persisted["rollback_status"],
+        )
+        self.assertIsNone(persisted["archive_sha256"])
+        self.assertIsNone(load_event_audit_overlay(events_dir, "event-1"))
+
+    def test_audit_overlay_rejects_unknown_schema_fields(self) -> None:
+        events_dir = self.directory / "events"
+        events_dir.mkdir()
+        path = events_dir / "event-1.audit-incomplete.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "event_id": "event-1",
+                    "status": "audit_incomplete",
+                    "reason": "artifact_cleanup_event_update_failed",
+                    "artifact_cleanup_status": "failed",
+                    "fabricated_success": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StateFormatError, "invalid schema"):
+            load_event_audit_overlay(events_dir, "event-1")
+
+    def test_audit_overlay_atomic_write_ignores_predictable_temp_symlink(self) -> None:
+        events_dir = self.directory / "events"
+        events_dir.mkdir()
+        victim = self.directory / "victim.txt"
+        victim.write_bytes(b"victim remains unchanged")
+        final_path = events_dir / "event-1.audit-incomplete.json"
+        predictable_temp = final_path.with_name(f"{final_path.name}.tmp")
+        predictable_temp.symlink_to(victim)
+        overlay = DeploymentEventAuditOverlay(
+            schema_version=1,
+            event_id="event-1",
+            status="audit_incomplete",
+            reason="artifact_cleanup_event_update_failed",
+            artifact_cleanup_status="failed",
+        )
+
+        with patch.object(
+            deploy_state.os,
+            "replace",
+            side_effect=OSError("simulated sidecar replace failure"),
+        ):
+            with self.assertRaisesRegex(OSError, "replace failure"):
+                write_event_audit_overlay(events_dir, overlay)
+
+        self.assertEqual(b"victim remains unchanged", victim.read_bytes())
+        self.assertTrue(predictable_temp.is_symlink())
+        self.assertEqual([predictable_temp], list(events_dir.iterdir()))
+
+        real_open = os.open
+        real_fsync = os.fsync
+        with (
+            patch.object(deploy_state.os, "open", wraps=real_open) as secure_open,
+            patch.object(deploy_state.os, "fsync", wraps=real_fsync) as secure_fsync,
+        ):
+            path = write_event_audit_overlay(events_dir, overlay)
+
+        self.assertEqual(final_path, path)
+        self.assertEqual(b"victim remains unchanged", victim.read_bytes())
+        self.assertTrue(predictable_temp.is_symlink())
+        self.assertTrue(path.is_file())
+        self.assertFalse(path.is_symlink())
+        self.assertEqual(0o600, path.stat().st_mode & 0o777)
+        self.assertEqual(overlay, load_event_audit_overlay(events_dir, "event-1"))
+        temporary_open = next(
+            call
+            for call in secure_open.call_args_list
+            if str(call.args[0]).endswith(".tmp")
+        )
+        flags = temporary_open.args[1]
+        self.assertTrue(flags & os.O_WRONLY)
+        self.assertTrue(flags & os.O_CREAT)
+        self.assertTrue(flags & os.O_EXCL)
+        if hasattr(os, "O_NOFOLLOW"):
+            self.assertTrue(flags & os.O_NOFOLLOW)
+        self.assertEqual(0o600, temporary_open.args[2])
+        self.assertEqual(2, secure_fsync.call_count)
+
+    def test_audit_overlay_rejects_non_integer_schema_and_non_string_cleanup(self) -> None:
+        events_dir = self.directory / "events"
+        base = DeploymentEventAuditOverlay(
+            schema_version=1,
+            event_id="event-1",
+            status="audit_incomplete",
+            reason="artifact_cleanup_event_update_failed",
+            artifact_cleanup_status="failed",
+        )
+
+        for invalid_version in (1.0, True):
+            with self.subTest(schema_version=invalid_version):
+                with self.assertRaisesRegex(StateFormatError, "schema_version"):
+                    write_event_audit_overlay(
+                        events_dir,
+                        replace(base, schema_version=invalid_version),
+                    )
+        with self.assertRaisesRegex(StateFormatError, "cleanup status"):
+            write_event_audit_overlay(
+                events_dir,
+                replace(base, artifact_cleanup_status=123),
+            )
+
+    def test_event_rejects_invalid_archive_digest_and_cleanup_status(self) -> None:
+        events_dir = self.directory / "events"
+
+        with self.assertRaisesRegex(StateFormatError, "archive_sha256"):
+            write_event(
+                events_dir,
+                replace(sample_event(), archive_sha256="A" * 64),
+            )
+        with self.assertRaisesRegex(StateFormatError, "artifact_cleanup_status"):
+            write_event(
+                events_dir,
+                replace(sample_event(), artifact_cleanup_status="failed|forged"),
+            )
+
     def test_write_event_rejects_path_traversal_event_ids(self) -> None:
         event = sample_event()
         event = DeploymentEvent(**{**event.__dict__, "event_id": "../outside"})
@@ -302,6 +478,49 @@ class DeployStateTests(TestCase):
         path = write_event(self.directory / "events", replace(sample_event(), emergency_reason=reason))
 
         self.assertEqual(reason, json.loads(path.read_text(encoding="utf-8"))["emergency_reason"])
+
+    def test_write_event_persists_safe_source_and_requester_labels(self) -> None:
+        event = replace(
+            sample_event(),
+            source="github_actions",
+            requested_by="weekly_review_coordinator",
+        )
+
+        path = write_event(self.directory / "events", event)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual("github_actions", payload["source"])
+        self.assertEqual("weekly_review_coordinator", payload["requested_by"])
+
+    def test_write_event_rejects_secret_shaped_source_label(self) -> None:
+        with self.assertRaisesRegex(StateFormatError, "source"):
+            write_event(
+                self.directory / "events",
+                replace(sample_event(), source="TOKEN=hidden-value"),
+            )
+
+    def test_write_event_rejects_source_outside_explicit_allowlist(self) -> None:
+        with self.assertRaisesRegex(StateFormatError, "source"):
+            write_event(
+                self.directory / "events",
+                replace(sample_event(), source="rogue_dispatcher"),
+            )
+
+    def test_write_event_rejects_synthetic_credential_label_shapes(self) -> None:
+        shapes = (
+            "github_pat_" + "A" * 24,
+            "sk-" + "B" * 32,
+            "AKIA" + "C" * 16,
+            "eyJ" + "D" * 12 + "." + "E" * 12 + "." + "F" * 12,
+        )
+
+        for index, label in enumerate(shapes):
+            with self.subTest(shape=index):
+                with self.assertRaisesRegex(StateFormatError, "requested_by"):
+                    write_event(
+                        self.directory / "events",
+                        replace(sample_event(), requested_by=label),
+                    )
 
 
 def _as_json(value: DeploymentState) -> dict[str, object]:
