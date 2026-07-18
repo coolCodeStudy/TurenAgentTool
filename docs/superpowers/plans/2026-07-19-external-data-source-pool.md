@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11, dataclasses, enum, unittest, existing provider functions.
 
+**Implementation status (2026-07-19):** Implemented and independently reviewed through Tasks 1-7 on `codex/architecture-consolidation`. Weekly Review and Daily Market Brief market bars use the shared contracts/pool, and Daily live/historical market activity uses the same result/failure/provenance boundary while preserving provider transports, timeout/cancellation semantics, and feature-layer evidence admission. The final focused market-activity suite passed 122 tests. The architecture harness reports P0 0/P1 7; its remaining signals are report-only module-size findings, not admission for broad refactors. Production verification is tracked by `DQ-2026-07-19-001`.
+
 ## Global Constraints
 
 - Do not add a network service, Redis, credential, or cloud dependency.
@@ -300,4 +302,3 @@ git commit -m "refactor: unify daily market activity sources"
 - [ ] **Step 2: Run `python3 scripts/audit_architecture_health.py --repo . --format markdown`**
 - [ ] **Step 3: Keep direct-fallback detection report-only unless fixture pass/fail and main baseline satisfy admission**
 - [ ] **Step 4: Run `git diff --check` and commit any admitted contract/harness update separately**
-

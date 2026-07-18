@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11 stdlib HTTP server, dataclasses, hmac, unittest, existing browser JavaScript helper.
 
+**Implementation status (2026-07-19):** Implemented and independently reviewed through Task 6 on `codex/architecture-consolidation`. One typed access contract and command controller now serve the browser routes; `WeeklyReviewWebHandler` is the single production handler; standalone `command-api` is retired from the five-service topology while host port 8001 remains mapped to the gateway. Compose resolves canonical and legacy token names to one configured value and keeps legacy request headers for this compatibility release. The deploy/Ops/gateway review suite passed 298 focused tests. Production verification is tracked by `DQ-2026-07-19-001`.
+
 ## Global Constraints
 
 - Never log, render, persist, compare in error text, or expose a token value.
@@ -235,4 +237,3 @@ git commit -m "fix: declare gateway and transport deploy ownership"
 - [ ] **Step 4: Classify the Compose change and run the full deployment contract suite**
 - [ ] **Step 5: Deploy under the production lock, verify browser/API parity, and observe stability**
 - [ ] **Step 6: Commit the retirement evidence and remove expired token/header aliases in a later compatible release**
-

@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11, subprocess, signal, PostgreSQL durable jobs, Docker Compose, systemd/host diagnostics, existing Ops deploy lock.
 
+**Implementation status (2026-07-19):** Baseline run `29652847798` recorded nine business Python containers at approximately 431.16 MiB, including approximately 201.17 MiB for scheduler/history and 81.63 MiB for command-api plus dingtalk-api. Tasks 3-6 are implemented and independently reviewed: three schedules share `scheduler-host`, history is an on-demand supervised child, topology migration explicitly removes only admitted predecessors without overlap, and rollback restores and stability-checks them. Task 2 instrumentation is implemented, but DingTalk HTTP removal remains intentionally unadmitted until a complete sanitized production observation window and callback/audio caller inventory prove it unused. Deployment and after-memory evidence are tracked by `DQ-2026-07-19-001`.
+
 ## Global Constraints
 
 - Do not infer current production memory or callers from static source.
@@ -200,4 +202,3 @@ The task must choose exactly one of 2A or 2B from evidence; it must not keep an 
 - [ ] **Step 3: Run architecture and delivery audits**
 - [ ] **Step 4: Apply the Coordinator Return Gate and reconcile authoritative delivery state**
 - [ ] **Step 5: Record Role learning only if it passes the lesson-capture protocol**
-
