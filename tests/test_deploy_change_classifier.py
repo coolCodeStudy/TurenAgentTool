@@ -151,18 +151,17 @@ class DeployContractTests(TestCase):
             (
                 ("investment_knowledge_mcp/command_workbench.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "weekly-review-web"),
+                ("weekly-review-web",),
             ),
             (
                 ("investment_knowledge_mcp/command_router.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
             (
                 ("investment_knowledge_mcp/daily_market_brief.py",),
                 DeployMode.TARGETED_QUICK,
                 (
-                    "command-api",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
@@ -173,9 +172,9 @@ class DeployContractTests(TestCase):
             (
                 ("investment_knowledge_mcp/weekly_review.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
-            (("investment_knowledge_mcp/command_api.py",), DeployMode.TARGETED_QUICK, ("command-api",)),
+            (("investment_knowledge_mcp/command_api.py",), DeployMode.TARGETED_QUICK, ("weekly-review-web",)),
             (("investment_knowledge_mcp/server.py",), DeployMode.TARGETED_QUICK, ("mcp",)),
             (
                 ("investment_knowledge_mcp/account_snapshots.py",),
@@ -219,7 +218,7 @@ class DeployContractTests(TestCase):
                 self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
                 self.assertEqual(("weekly-review-web",), plan.targets)
 
-    def test_shared_access_targets_command_and_gateway_until_command_retirement(self) -> None:
+    def test_shared_access_targets_only_the_gateway_after_command_retirement(self) -> None:
         for path in (
             "investment_knowledge_mcp/command_http.py",
             "investment_knowledge_mcp/http_access.py",
@@ -229,12 +228,13 @@ class DeployContractTests(TestCase):
             with self.subTest(path=path):
                 plan = classify_paths((path,), compose_image_changed=False)
                 self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
-                self.assertEqual(("command-api", "weekly-review-web"), plan.targets)
+                self.assertEqual(("weekly-review-web",), plan.targets)
 
     def test_full_and_config_targets_cover_every_managed_app_image_service(self) -> None:
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
         self.assertIn("scheduler-host", APPLICATION_SERVICES)
-        self.assertEqual(6, len(APPLICATION_SERVICES))
+        self.assertNotIn("command-api", APPLICATION_SERVICES)
+        self.assertEqual(5, len(APPLICATION_SERVICES))
         for path, expected_mode in (
             ("requirements.txt", DeployMode.FULL_IMAGE),
             ("docker-compose.prod.yml", DeployMode.CONFIG_RESTART),
@@ -257,7 +257,6 @@ class DeployContractTests(TestCase):
             (
                 "scripts/init_db.py",
                 (
-                    "command-api",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
@@ -473,7 +472,7 @@ class DeployContractTests(TestCase):
         self.assertEqual(
             {
                 "mode": "targeted_quick",
-                "targets": ["command-api", "weekly-review-web"],
+                "targets": ["weekly-review-web"],
                 "changed_files": ["investment_knowledge_mcp/command_workbench.py"],
                 "image_input_files": [],
                 "reasons": ["investment_knowledge_mcp/command_workbench.py: command workbench"],

@@ -19,11 +19,12 @@ ChatGPT / Codex / Web UI
 
 - `postgres`: `pgvector/pgvector:pg16`
 - `mcp`: Python FastMCP 服务，生产 transport 使用 `streamable-http`
-- `command-api`: 给自动化、脚本和未来 Agent 外壳调用的 HTTP 指令入口
+- `weekly-review-web`: application gateway for browser routes and the port-8001 command compatibility endpoint
 - `dingtalk-api`: DingTalk HTTP adapter service using the shared application image
 - `dingtalk-stream-bot`: 钉钉 Stream Mode 长连接机器人，不需要公网回调地址
+- `scheduler-host`: consolidated IPO, account snapshot, Daily Market Brief, and on-demand history scheduler runtime
 
-生产默认 `COMPOSE_PROFILES=stream`，只启动 `postgres` 和 `dingtalk-stream-bot`，适合 2GB 内存左右的小规格 ECS。需要 HTTP/MCP 入口时再改成：
+The production default is `COMPOSE_PROFILES=stream,http`. It starts all five application services listed above, plus PostgreSQL, so the Ops health contract and the steady runtime topology describe the same deployment. `scheduler-host` has no profile and is therefore always included. A stream-only profile is not a supported healthy production steady state because it omits MCP and the HTTP gateways.
 
 ```text
 COMPOSE_PROFILES=stream,http
@@ -78,10 +79,9 @@ MCP_HOST=0.0.0.0
 MCP_PORT=8000
 MCP_HOST_PORT=8000
 MCP_PATH=/mcp
-COMMAND_API_HOST=0.0.0.0
-COMMAND_API_PORT=8001
 COMMAND_API_HOST_PORT=8001
-COMMAND_API_TOKEN=<strong-command-token>
+APP_ACCESS_TOKEN=<strong-shared-app-token>
+COMMAND_API_TOKEN=<same-value-for-legacy-compatibility>
 OPS_API_TOKEN=<distinct-private-ops-token>
 DINGTALK_API_HOST=0.0.0.0
 DINGTALK_API_PORT=8002
@@ -97,19 +97,19 @@ DINGTALK_STREAM_WRITE_ALLOWED_SENDERS=<senderStaffId-or-senderId>
 OPENAI_API_KEY=<openai-api-key>
 ```
 
-`scripts/generate_prod_env.py` 会自动生成互不相同的强 `POSTGRES_PASSWORD`、`COMMAND_API_TOKEN` 和 `OPS_API_TOKEN`。Ops token only authorizes the private control plane; it must not be reused as a browser token or command API token. Still confirm whether to fill `OPENAI_API_KEY`, `DINGTALK_STREAM_CLIENT_ID`, and `DINGTALK_STREAM_CLIENT_SECRET`.
+`scripts/generate_prod_env.py` 会自动生成互不相同的强 `POSTGRES_PASSWORD`、`COMMAND_API_TOKEN` 和 `OPS_API_TOKEN`; it writes the generated command value to canonical `APP_ACCESS_TOKEN` as well. Compose resolves access configuration with `APP_ACCESS_TOKEN > COMMAND_API_TOKEN > WEEKLY_REVIEW_WEB_TOKEN` precedence and injects that one result under all three names for the compatibility release. Ops token only authorizes the private control plane; it must not be reused as a browser token or command API token. Still confirm whether to fill `OPENAI_API_KEY`, `DINGTALK_STREAM_CLIENT_ID`, and `DINGTALK_STREAM_CLIENT_SECRET`.
 
-如果第一版只使用钉钉 Stream Mode，可以保留：
+Keep both production profiles even when DingTalk Stream Mode is the primary user entry point:
 
 ```text
-COMPOSE_PROFILES=stream
+COMPOSE_PROFILES=stream,http
 DINGTALK_ALLOW_WRITE_COMMANDS=false
 DINGTALK_STREAM_ALLOW_WRITE=false
 DINGTALK_STREAM_WRITE_ALLOWED_SENDERS=
 PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ```
 
-这样服务器不需要暴露钉钉回调端口给公网；机器人会从 ECS 主动连到钉钉。
+The Stream bot still connects outbound from ECS and does not require a public DingTalk callback port. Bind or expose each HTTP port according to the ingress policy; do not disable the `http` profile as a memory-saving mechanism because deployment health requires those services.
 如果后续要允许钉钉写入，先把 `DINGTALK_STREAM_ALLOW_WRITE` 改成 `true`，再把日志里的 `sender_staff_id` 或 `sender_id` 填入 `DINGTALK_STREAM_WRITE_ALLOWED_SENDERS`。没有进入白名单的群成员只能查询，不能确认候选心得或记录心得。
 
 启动：
@@ -147,7 +147,7 @@ MCP endpoint：
 http://<ecs-public-ip>:8000/mcp
 ```
 
-Command API endpoint：
+Command compatibility endpoint served by `weekly-review-web`:
 
 ```text
 http://<ecs-public-ip>:8001/command
@@ -257,11 +257,11 @@ target. All application recreates use `--no-deps`.
 | Change family | Targets |
 | --- | --- |
 | Web-only Daily Market Brief files | `weekly-review-web` |
-| `command_workbench.py` or shared command-workbench UI | `weekly-review-web`, `command-api` |
-| Shared command logic such as `command_router.py` and `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
-| Daily Market Brief runtime and queue logic | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot`, `scheduler-host` |
-| Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot`, `scheduler-host` |
-| Command API transport-only modules | `command-api` |
+| `command_workbench.py` or shared command-workbench UI | `weekly-review-web` |
+| Shared command logic such as `command_router.py` and `weekly_review.py` | `weekly-review-web`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
+| Daily Market Brief runtime and queue logic | `weekly-review-web`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot`, `scheduler-host` |
+| Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot`, `scheduler-host` |
+| Legacy Command API adapter modules | `weekly-review-web` |
 | DingTalk HTTP API transport-only modules | `dingtalk-api` |
 | MCP server/tool modules | `mcp` |
 | Scheduler adapters, host, job composition, and history child entrypoint | `scheduler-host` |
@@ -275,10 +275,11 @@ and imports shared command logic. It is distinct from `dingtalk-stream-bot`,
 which is the DingTalk Stream Mode long-connection service.
 
 For `config_restart`, `full_image`, and other all-application-service paths,
-the shared-image application service set is `weekly-review-web`, `command-api`,
-`dingtalk-api`, `mcp`, `scheduler-host`, and `dingtalk-stream-bot`. The legacy
-scheduler and history-worker service names remain accepted only as Ops aliases
-that resolve to `scheduler-host` during the compatibility window.
+the shared-image application service set is `weekly-review-web`, `dingtalk-api`,
+`mcp`, `scheduler-host`, and `dingtalk-stream-bot`. The legacy `command-api`
+name remains an Ops alias for `weekly-review-web`; the old scheduler and
+history-worker names remain aliases for `scheduler-host` during the
+compatibility window.
 
 ### Preflight Gates
 
@@ -459,7 +460,7 @@ guidance.
 - 数据库 volume 有备份策略。
 - `scripts/ikg.py "分析 000660 KR"` 在服务器上能跑通。
 - `scripts/prod_check.py --start-prod` 能完整通过。
-- `/command` 带 `COMMAND_API_TOKEN` 能跑通，未带 token 会返回 `401`。
+- `/command` accepts `Authorization: Bearer`, `X-Command-Token`, and `X-Weekly-Review-Token` with the one resolved application-access value. Missing access returns `401`; direct non-Compose runtimes still fail closed if configured aliases conflict.
 - `/dingtalk/webhook` 能处理文本消息，且真实接入时设置了 `DINGTALK_OUTGOING_SECRET`。
 - `scripts/candidate_insights.py list` 能看到待确认候选心得。
 - 写入类入口区分正式心得和候选心得，系统推断不能直接写入 `user_insights`。

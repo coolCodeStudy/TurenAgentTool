@@ -108,7 +108,6 @@ ARTIFACT_CLAIM_MUTEX = threading.Lock()
 
 COMPOSE_SERVICES = {
     "mcp": "mcp",
-    "command-api": "command-api",
     "dingtalk-api": "dingtalk-api",
     "weekly-review-web": "weekly-review-web",
     "dingtalk-stream-bot": "dingtalk-stream-bot",
@@ -125,6 +124,8 @@ SYSTEMD_SERVICES = {
 }
 
 SERVICE_ALIASES = {
+    "command": "weekly-review-web",
+    "command-api": "weekly-review-web",
     "worker": "codex-worker",
     "codex_worker": "codex-worker",
     "codex": "codex-worker",
@@ -343,7 +344,6 @@ def build_recent_errors(lines: int = 160) -> dict[str, Any]:
         "mcp",
         "dingtalk-api",
         "dingtalk-stream-bot",
-        "command-api",
         "scheduler-host",
         "weekly-review-web",
         "postgres",
@@ -922,9 +922,9 @@ def build_deploy_health() -> dict[str, Any]:
         _check_socket("postgres", "127.0.0.1", int(os.getenv("POSTGRES_HOST_PORT", "55432"))),
         _check_socket("mcp", "127.0.0.1", int(os.getenv("MCP_HOST_PORT", "8000"))),
         _check_socket("weekly-review-web", "127.0.0.1", int(os.getenv("WEEKLY_REVIEW_WEB_HOST_PORT", "8010"))),
+        _check_socket("command-api-compat", "127.0.0.1", int(os.getenv("COMMAND_API_HOST_PORT", "8001"))),
     ]
     for service in (
-        "command-api",
         "weekly-review-web",
         "dingtalk-api",
         "dingtalk-stream-bot",

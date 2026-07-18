@@ -81,7 +81,7 @@ SERVICE_FIELD = (
         "id": "service",
         "label": "Service",
         "type": "select",
-        "options": ["mcp", "command-api", "codex-worker", "research-agent-worker", "dingtalk-stream-bot"],
+        "options": ["mcp", "weekly-review-web", "codex-worker", "research-agent-worker", "dingtalk-stream-bot"],
     },
 )
 DAILY_MARKET_HISTORY_COMMAND_FIELD = (
@@ -449,8 +449,8 @@ ALIAS_STOCKS: dict[str, list[dict[str, Any]]] = {
 
 SERVICE_ALIASES = {
     "mcp": "mcp",
-    "command": "command-api",
-    "command-api": "command-api",
+    "command": "weekly-review-web",
+    "command-api": "weekly-review-web",
     "codex": "codex-worker",
     "codex-worker": "codex-worker",
     "worker": "codex-worker",

@@ -124,6 +124,11 @@ class OpsApiInstallLayoutTests(unittest.TestCase):
                 self.assertNotIn(old_name, ops.COMPOSE_SERVICES)
                 self.assertEqual("scheduler-host", ops.SERVICE_ALIASES[old_name])
 
+    def test_removed_command_api_is_a_gateway_alias_not_compose_target(self) -> None:
+        self.assertNotIn("command-api", ops.COMPOSE_SERVICES)
+        self.assertEqual("weekly-review-web", ops.SERVICE_ALIASES["command-api"])
+        self.assertEqual("weekly-review-web", ops.SERVICE_ALIASES["command"])
+
     def test_installed_ops_home_contains_runtime_import_closure(self) -> None:
         installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
         match = re.search(r"OPS_API_MODULES=\((?P<body>.*?)\)", installer, re.DOTALL)

@@ -40,6 +40,19 @@ def _without_compose_file(command: tuple[str, ...]) -> tuple[str, ...]:
     return command
 
 
+def _all_profile_services_command(compose_file: Path) -> tuple[str, ...]:
+    return (
+        "docker",
+        "compose",
+        "-f",
+        str(compose_file),
+        "--profile",
+        "*",
+        "config",
+        "--services",
+    )
+
+
 class RecordingRunner:
     def __init__(self) -> None:
         self.commands: list[tuple[str, ...]] = []
@@ -86,7 +99,7 @@ class RecordingRunner:
                     {
                         "ID": "container-1",
                         "Image": f"investment-knowledge-app:{OLD_SHA}",
-                        "Names": "app-command-api-1",
+                        "Names": "app-weekly-review-web-1",
                     }
                 )
                 + "\n",
@@ -116,7 +129,6 @@ class RecordingRunner:
                         "postgres",
                         "mcp",
                         "dingtalk-api",
-                        "command-api",
                         "weekly-review-web",
                         "dingtalk-stream-bot",
                         "scheduler-host",
@@ -207,7 +219,16 @@ class HealthRunner(RecordingRunner):
         if lookup_command[:3] == ("docker", "compose", "logs"):
             return CommandResult(0, "service started normally\n", "")
         if command[:2] == ("curl", "--silent"):
-            if "http://127.0.0.1:8001/command" in command:
+            if (
+                any(
+                    url in command
+                    for url in (
+                        "http://127.0.0.1:8001/command",
+                        "http://127.0.0.1:8010/command",
+                    )
+                )
+                and "--request" in command
+            ):
                 return CommandResult(0, "401", "")
             if "http://127.0.0.1:8002/dingtalk/webhook" in command:
                 return CommandResult(0, "401", "")
@@ -272,13 +293,13 @@ class DeploymentEngineTests(TestCase):
         self.targeted_request = DeployRequest(
             requested_ref="main",
             requested_mode=DeployMode.TARGETED_QUICK,
-            requested_targets=("command-api", "weekly-review-web"),
+            requested_targets=("weekly-review-web",),
             archive_path=None,
             emergency_reason=None,
         )
         self.plan = DeploymentPlan(
             mode=DeployMode.TARGETED_QUICK,
-            targets=("command-api", "weekly-review-web"),
+            targets=("weekly-review-web",),
             changed_files=("investment_knowledge_mcp/command_workbench.py",),
             image_input_files=(),
             reasons=("command workbench",),
@@ -374,24 +395,28 @@ class DeploymentEngineTests(TestCase):
                     "--no-build",
                     "--no-deps",
                     "--force-recreate",
-                    "command-api",
-                ),
-                (
-                    "docker",
-                    "compose",
-                    "-f",
-                    str(staged_compose),
-                    "up",
-                    "-d",
-                    "--no-build",
-                    "--no-deps",
-                    "--force-recreate",
                     "weekly-review-web",
                 ),
             ],
             self.runner.commands,
         )
         self.assertNotIn("postgres", outcome.activated_services)
+
+    def test_legacy_command_api_request_is_canonicalized_to_gateway_before_validation(self) -> None:
+        self.plan = replace(self.plan, targets=("weekly-review-web",))
+        request = replace(self.targeted_request, requested_targets=("command-api",))
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(("weekly-review-web",), outcome.activated_services)
+        self.assertFalse(
+            any(
+                _without_compose_file(command)[:3] == ("docker", "compose", "up")
+                and command[-1] == "command-api"
+                for command in self.runner.commands
+            )
+        )
 
     def test_activation_uses_the_staged_release_compose_file_explicitly(self) -> None:
         outcome = self.engine.deploy(self.targeted_request)
@@ -409,7 +434,7 @@ class DeploymentEngineTests(TestCase):
                 "--no-build",
                 "--no-deps",
                 "--force-recreate",
-                "command-api",
+                "weekly-review-web",
             ),
             self.runner.commands,
         )
@@ -432,7 +457,7 @@ class DeploymentEngineTests(TestCase):
                 "--no-build",
                 "--no-deps",
                 "--force-recreate",
-                "command-api",
+                "weekly-review-web",
             ),
             self.runner.commands,
         )
@@ -462,14 +487,7 @@ class DeploymentEngineTests(TestCase):
         self.health.fail_for("scheduler-host")
         previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
         self.runner.results[
-            (
-                "docker",
-                "compose",
-                "-f",
-                str(previous_compose),
-                "config",
-                "--services",
-            )
+            _all_profile_services_command(previous_compose)
         ] = CommandResult(0, "command-api\nweekly-review-web\n", "")
 
         outcome = self.engine.deploy(request)
@@ -507,10 +525,10 @@ class DeploymentEngineTests(TestCase):
         previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
         target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.runner.results[
-            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+            _all_profile_services_command(previous_compose)
         ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
         self.runner.results[
-            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+            _all_profile_services_command(target_compose)
         ] = CommandResult(0, "postgres\nscheduler-host\n", "")
 
         def assert_replacement_not_started_before_removal(command: tuple[str, ...]) -> None:
@@ -567,10 +585,10 @@ class DeploymentEngineTests(TestCase):
         previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
         target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.runner.results[
-            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+            _all_profile_services_command(previous_compose)
         ] = CommandResult(0, "postgres\nunadmitted-worker\n", "")
         self.runner.results[
-            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+            _all_profile_services_command(target_compose)
         ] = CommandResult(0, "postgres\nscheduler-host\n", "")
 
         outcome = self.engine.deploy(request)
@@ -584,6 +602,101 @@ class DeploymentEngineTests(TestCase):
                 for command in self.runner.commands
             )
         )
+
+    def test_command_api_is_removed_immediately_before_gateway_activation(self) -> None:
+        self.plan = replace(self.plan, targets=("weekly-review-web",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("weekly-review-web",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.runner.results[
+            _all_profile_services_command(previous_compose)
+        ] = CommandResult(0, "postgres\ncommand-api\nweekly-review-web\n", "")
+        self.runner.results[
+            _all_profile_services_command(target_compose)
+        ] = CommandResult(0, "postgres\nweekly-review-web\n", "")
+
+        outcome = self.engine.deploy(request)
+
+        removal = (
+            "docker", "compose", "-f", str(previous_compose),
+            "rm", "--force", "--stop", "command-api",
+        )
+        activation = (
+            "docker", "compose", "-f", str(target_compose), "up", "-d",
+            "--no-build", "--no-deps", "--force-recreate", "weekly-review-web",
+        )
+        self.assertTrue(outcome.ok)
+        self.assertIn(removal, self.runner.commands)
+        self.assertEqual(
+            self.runner.commands.index(removal) + 1,
+            self.runner.commands.index(activation),
+        )
+
+    def test_stream_profile_still_discovers_and_removes_running_http_command_api(self) -> None:
+        self.plan = replace(self.plan, targets=("weekly-review-web",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("weekly-review-web",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        previous_all_profiles = (
+            "docker", "compose", "-f", str(previous_compose),
+            "--profile", "*", "config", "--services",
+        )
+        target_all_profiles = (
+            "docker", "compose", "-f", str(target_compose),
+            "--profile", "*", "config", "--services",
+        )
+        self.runner.results[previous_all_profiles] = CommandResult(
+            0, "postgres\ncommand-api\nweekly-review-web\n", ""
+        )
+        self.runner.results[target_all_profiles] = CommandResult(
+            0, "postgres\nweekly-review-web\n", ""
+        )
+
+        with patch.dict(os.environ, {"COMPOSE_PROFILES": "stream"}, clear=False):
+            outcome = self.engine.deploy(request)
+
+        removal = (
+            "docker", "compose", "-f", str(previous_compose),
+            "rm", "--force", "--stop", "command-api",
+        )
+        activation = (
+            "docker", "compose", "-f", str(target_compose), "up", "-d",
+            "--no-build", "--no-deps", "--force-recreate", "weekly-review-web",
+        )
+        self.assertTrue(outcome.ok)
+        self.assertIn(previous_all_profiles, self.runner.commands)
+        self.assertIn(target_all_profiles, self.runner.commands)
+        self.assertIn(removal, self.runner.commands)
+        self.assertLess(self.runner.commands.index(removal), self.runner.commands.index(activation))
+
+    def test_gateway_failure_restores_and_health_checks_legacy_command_api(self) -> None:
+        self.plan = replace(self.plan, targets=("weekly-review-web",))
+        request = replace(
+            self.targeted_request,
+            requested_targets=("weekly-review-web",),
+        )
+        previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
+        target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
+        self.runner.results[
+            _all_profile_services_command(previous_compose)
+        ] = CommandResult(0, "postgres\ncommand-api\nweekly-review-web\n", "")
+        self.runner.results[
+            _all_profile_services_command(target_compose)
+        ] = CommandResult(0, "postgres\nweekly-review-web\n", "")
+        self.health.fail_for("weekly-review-web")
+
+        outcome = self.engine.deploy(request)
+
+        self.assertFalse(outcome.ok)
+        self.assertEqual(2, self.health.service_checks.count(("command-api", ())))
+        self.assertIn("command-api", outcome.rolled_back_services)
+        self.assertNotIn("command-api", outcome.rollback_failures)
 
     def test_failed_migration_restores_removed_obsolete_services_from_previous_release(self) -> None:
         old_services = (
@@ -600,10 +713,10 @@ class DeploymentEngineTests(TestCase):
         previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
         target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.runner.results[
-            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+            _all_profile_services_command(previous_compose)
         ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
         self.runner.results[
-            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+            _all_profile_services_command(target_compose)
         ] = CommandResult(0, "postgres\nscheduler-host\n", "")
 
         def fail_after_obsolete_removal(command: tuple[str, ...]) -> None:
@@ -655,10 +768,10 @@ class DeploymentEngineTests(TestCase):
         previous_compose = self.old_release.resolve() / "docker-compose.prod.yml"
         target_compose = self.releases_dir / TARGET_SHA / "docker-compose.prod.yml"
         self.runner.results[
-            ("docker", "compose", "-f", str(previous_compose), "config", "--services")
+            _all_profile_services_command(previous_compose)
         ] = CommandResult(0, "\n".join((*old_services, "postgres")) + "\n", "")
         self.runner.results[
-            ("docker", "compose", "-f", str(target_compose), "config", "--services")
+            _all_profile_services_command(target_compose)
         ] = CommandResult(0, "postgres\nscheduler-host\n", "")
         self.health.fail_for("scheduler-host")
         checks = 0
@@ -763,7 +876,7 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(self.targeted_request)
 
         self.assertFalse(outcome.ok)
-        self.assertEqual(("weekly-review-web", "command-api"), outcome.rolled_back_services)
+        self.assertEqual(("weekly-review-web",), outcome.rolled_back_services)
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
 
     def test_global_lock_remains_held_through_rollback_event_and_lockout(self) -> None:
@@ -848,7 +961,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(f"APP_IMAGE_TAG={OLD_SHA}\n", self.engine.env_file.read_text())
 
     def test_rollback_attempts_every_service_and_reports_only_successful_restores(self) -> None:
-        command_api = (
+        gateway = (
             "docker",
             "compose",
             "up",
@@ -856,9 +969,9 @@ class DeploymentEngineTests(TestCase):
             "--no-build",
             "--no-deps",
             "--force-recreate",
-            "command-api",
+            "weekly-review-web",
         )
-        self.runner.sequences[command_api] = [
+        self.runner.sequences[gateway] = [
             CommandResult(0, "", ""),
             CommandResult(1, "", "rollback command failed"),
         ]
@@ -867,8 +980,8 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(self.targeted_request)
 
         self.assertFalse(outcome.ok)
-        self.assertEqual(("weekly-review-web",), outcome.rolled_back_services)
-        self.assertEqual(("command-api",), outcome.rollback_failures)
+        self.assertEqual((), outcome.rolled_back_services)
+        self.assertEqual(("weekly-review-web",), outcome.rollback_failures)
         self.assertEqual(1, self.health.aggregate_checks)
 
     def test_no_deploy_recomputes_plan_without_mutating_runtime_or_filesystem(self) -> None:
@@ -1023,7 +1136,7 @@ class DeploymentEngineTests(TestCase):
                 {
                     "ID": "mismatched-container",
                     "Image": f"investment-knowledge-app:{TARGET_SHA}",
-                    "Names": "app-command-api-1",
+                    "Names": "app-weekly-review-web-1",
                 }
             )
             + "\n",
@@ -1137,7 +1250,7 @@ class DeploymentEngineTests(TestCase):
         archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency image input",),
@@ -1145,7 +1258,7 @@ class DeploymentEngineTests(TestCase):
         request = DeployRequest(
             requested_ref="main",
             requested_mode=DeployMode.FULL_IMAGE,
-            requested_targets=("command-api",),
+            requested_targets=("weekly-review-web",),
             archive_path=archive,
             emergency_reason=None,
             archive_sha256=archive_sha256,
@@ -1186,7 +1299,7 @@ class DeploymentEngineTests(TestCase):
         archive.write_bytes(b"post-claim mutation")
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency image input",),
@@ -1194,7 +1307,7 @@ class DeploymentEngineTests(TestCase):
         request = DeployRequest(
             requested_ref="main",
             requested_mode=DeployMode.FULL_IMAGE,
-            requested_targets=("command-api",),
+            requested_targets=("weekly-review-web",),
             archive_path=archive,
             emergency_reason=None,
             archive_sha256=admitted_digest,
@@ -1229,13 +1342,13 @@ class DeploymentEngineTests(TestCase):
         )
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
         )
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -1249,7 +1362,7 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive(b"legacy-prod-image")
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -1271,7 +1384,7 @@ class DeploymentEngineTests(TestCase):
     def test_archive_less_legacy_full_returns_product_safe_audited_error(self) -> None:
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -1286,7 +1399,7 @@ class DeploymentEngineTests(TestCase):
         self.assertNotIn("traceback", outcome.message.lower())
 
     def test_mismatched_client_plan_is_rejected_before_staging(self) -> None:
-        request = replace(self.targeted_request, requested_targets=("command-api",))
+        request = replace(self.targeted_request, requested_targets=("mcp",))
 
         outcome = self.engine.deploy(request)
 
@@ -1317,7 +1430,7 @@ class DeploymentEngineTests(TestCase):
     def test_emergency_override_requires_twenty_character_reason(self) -> None:
         request = replace(
             self.targeted_request,
-            requested_targets=("command-api",),
+            requested_targets=("mcp",),
             emergency_reason="too short",
         )
 
@@ -1328,10 +1441,10 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual([], self.stage_calls)
 
     def test_emergency_override_cannot_change_server_computed_targets(self) -> None:
-        reason = "Restore the command API while its peer is investigated."
+        reason = "Restart MCP while its gateway peer is investigated."
         request = replace(
             self.targeted_request,
-            requested_targets=("command-api",),
+            requested_targets=("mcp",),
             emergency_reason=reason,
         )
 
@@ -1343,12 +1456,12 @@ class DeploymentEngineTests(TestCase):
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertTrue(event["emergency_override"])
         self.assertEqual(reason, event["emergency_reason"])
-        self.assertEqual(["command-api", "weekly-review-web"], event["targets"])
+        self.assertEqual(["weekly-review-web"], event["targets"])
 
     def test_emergency_override_cannot_downgrade_full_image_to_no_deploy(self) -> None:
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -1456,13 +1569,13 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("Dockerfile",),
             image_input_files=("Dockerfile",),
             reasons=("image input",),
         )
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
         snapshots = iter(
             (
@@ -1492,7 +1605,7 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api", "weekly-review-web"),
+            targets=("mcp", "weekly-review-web"),
             changed_files=("Dockerfile",),
             image_input_files=("Dockerfile",),
             reasons=("image input",),
@@ -1500,7 +1613,7 @@ class DeploymentEngineTests(TestCase):
         request = self._full_request(
             "main",
             DeployMode.FULL_IMAGE,
-            ("command-api", "weekly-review-web"),
+            ("mcp", "weekly-review-web"),
             archive,
             None,
         )
@@ -1519,8 +1632,8 @@ class DeploymentEngineTests(TestCase):
 
         self.assertFalse(outcome.ok)
         self.assertIn("before activation", outcome.message)
-        self.assertEqual(("command-api",), outcome.activated_services)
-        self.assertEqual(("command-api",), outcome.rolled_back_services)
+        self.assertEqual(("mcp",), outcome.activated_services)
+        self.assertEqual(("mcp",), outcome.rolled_back_services)
         event = json.loads(next(self.engine.events_dir.iterdir()).read_text(encoding="utf-8"))
         self.assertEqual(2, event["preflight"]["activation_memory_check_count"])
         self.assertEqual(512 * MIB - 1, event["preflight"]["before_activation_available_memory_bytes"])
@@ -1651,7 +1764,7 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual("2026-07-10T00:00:00Z", event["started_at"])
         self.assertEqual("2026-07-10T00:00:30Z", event["completed_at"])
         self.assertEqual(
-            {"command-api", "weekly-review-web"}, set(event["target_durations_ms"])
+            {"weekly-review-web"}, set(event["target_durations_ms"])
         )
         self.assertEqual(2, self.health.aggregate_checks)
 
@@ -1664,10 +1777,8 @@ class DeploymentEngineTests(TestCase):
         self.assertTrue(outcome.ok)
         self.assertEqual(
             [
-                "service:command-api",
                 "service:weekly-review-web",
                 "aggregate",
-                "service:command-api",
                 "service:weekly-review-web",
                 "aggregate",
             ],
@@ -1812,8 +1923,8 @@ class DeploymentEngineTests(TestCase):
         self.assertFalse(any(command[-1:] == ("postgres",) for command in self.runner.commands))
 
     def test_failed_activation_rolls_back_the_attempted_service(self) -> None:
-        self.plan = replace(self.plan, targets=("command-api",))
-        request = replace(self.targeted_request, requested_targets=("command-api",))
+        self.plan = replace(self.plan, targets=("weekly-review-web",))
+        request = replace(self.targeted_request, requested_targets=("weekly-review-web",))
         activate = (
             "docker",
             "compose",
@@ -1822,7 +1933,7 @@ class DeploymentEngineTests(TestCase):
             "--no-build",
             "--no-deps",
             "--force-recreate",
-            "command-api",
+            "weekly-review-web",
         )
         self.runner.sequences[activate] = [
             CommandResult(1, "", "partial activation"),
@@ -1832,14 +1943,14 @@ class DeploymentEngineTests(TestCase):
         outcome = self.engine.deploy(request)
 
         self.assertFalse(outcome.ok)
-        self.assertEqual(("command-api",), outcome.rolled_back_services)
+        self.assertEqual(("weekly-review-web",), outcome.rolled_back_services)
         self.assertEqual(OLD_SHA, load_state(self.state_path).current_sha)
 
     def test_image_switch_failure_restores_previous_release(self) -> None:
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -1848,7 +1959,7 @@ class DeploymentEngineTests(TestCase):
             DeploymentHealthError("image selector failed")
         )
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -1862,7 +1973,7 @@ class DeploymentEngineTests(TestCase):
         request = self._full_request(
             "feature/unsafe",
             DeployMode.FULL_IMAGE,
-            ("command-api",),
+            ("weekly-review-web",),
             archive,
             "Source policy remains mandatory during emergency recovery.",
         )
@@ -1897,7 +2008,7 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -1908,7 +2019,7 @@ class DeploymentEngineTests(TestCase):
         )
         self.engine.referenced_image_ids = lambda: {"current-id"}
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -1925,7 +2036,7 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -1958,7 +2069,7 @@ class DeploymentEngineTests(TestCase):
             ("docker", "image", "inspect", "--format", "{{.Size}}", "old-id")
         ] = CommandResult(0, "123\n", "")
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -1974,16 +2085,6 @@ class DeploymentEngineTests(TestCase):
 
     def test_late_release_cleanup_failure_keeps_healthy_activation_committed(self) -> None:
         activation_commands = (
-            (
-                "docker",
-                "compose",
-                "up",
-                "-d",
-                "--no-build",
-                "--no-deps",
-                "--force-recreate",
-                "command-api",
-            ),
             (
                 "docker",
                 "compose",
@@ -2094,7 +2195,7 @@ class DeploymentEngineTests(TestCase):
         candidate = f"investment-knowledge-app:{TARGET_SHA}"
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -2105,9 +2206,9 @@ class DeploymentEngineTests(TestCase):
             ImageRecord("previous-id", f"investment-knowledge-app:{OLDER_SHA}", 1),
         )
         self.engine.referenced_image_ids = lambda: set()
-        self.health.fail_for("command-api")
+        self.health.fail_for("weekly-review-web")
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -2124,7 +2225,7 @@ class DeploymentEngineTests(TestCase):
         candidate = f"investment-knowledge-app:{TARGET_SHA}"
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -2133,9 +2234,9 @@ class DeploymentEngineTests(TestCase):
             ImageRecord("candidate-id", candidate, 3),
         )
         self.engine.referenced_image_ids = lambda: {"candidate-id"}
-        self.health.fail_for("command-api")
+        self.health.fail_for("weekly-review-web")
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -2147,7 +2248,7 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -2162,9 +2263,9 @@ class DeploymentEngineTests(TestCase):
             return ()
 
         self.engine.image_inventory = inventory
-        self.health.fail_for("command-api")
+        self.health.fail_for("weekly-review-web")
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -2296,7 +2397,7 @@ class DeploymentEngineTests(TestCase):
         archive = self._managed_archive()
         self.plan = DeploymentPlan(
             mode=DeployMode.FULL_IMAGE,
-            targets=("command-api",),
+            targets=("weekly-review-web",),
             changed_files=("requirements.txt",),
             image_input_files=("requirements.txt",),
             reasons=("dependency input",),
@@ -2305,7 +2406,7 @@ class DeploymentEngineTests(TestCase):
             1, "", "TOKEN=do-not-report"
         )
         request = self._full_request(
-            "main", DeployMode.FULL_IMAGE, ("command-api",), archive, None
+            "main", DeployMode.FULL_IMAGE, ("weekly-review-web",), archive, None
         )
 
         outcome = self.engine.deploy(request)
@@ -2451,7 +2552,6 @@ class DockerHealthCheckerTests(TestCase):
 
     def test_exact_target_and_aggregate_health_routes_are_checked(self) -> None:
         self.health.check_service("weekly-review-web", ("/daily-market-brief",))
-        self.health.check_service("command-api", ())
         self.health.check_service("dingtalk-api", ())
         self.health.check_service("mcp", ())
         self.health.check_aggregate(("/daily-market-brief",))
@@ -2469,6 +2569,20 @@ class DockerHealthCheckerTests(TestCase):
             "http://127.0.0.1:8000/mcp",
         ):
             self.assertTrue(any(url in command for command in rendered), url)
+        self.assertTrue(
+            any(
+                "--request POST" in command
+                and "http://127.0.0.1:8010/command" in command
+                for command in rendered
+            )
+        )
+        self.assertTrue(
+            any(
+                "--request POST" in command
+                and "http://127.0.0.1:8001/command" in command
+                for command in rendered
+            )
+        )
         self.assertTrue(
             any(
                 "--request POST" in command
@@ -2762,7 +2876,7 @@ class ShellWrapperTests(TestCase):
                 "ARGS_OUTPUT": str(output),
                 "DEPLOY_REF": "main",
                 "DEPLOY_MODE": "targeted_quick",
-                "DEPLOY_TARGETS": "command-api,weekly-review-web",
+                "DEPLOY_TARGETS": "mcp,weekly-review-web",
                 "DEPLOY_ARCHIVE": str(directory / "archive with spaces.tar"),
                 "DEPLOY_EMERGENCY_REASON": "A carefully scoped recovery reason with spaces.",
                 "DEPLOY_FEATURE_ROUTES": "/daily-market-brief,/market-status",

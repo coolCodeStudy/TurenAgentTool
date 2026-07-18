@@ -50,7 +50,6 @@ _DEPLOY_MODE_ALIASES = {
 _APPLICATION_DEPLOY_TARGETS = frozenset(
     {
         "mcp",
-        "command-api",
         "dingtalk-api",
         "weekly-review-web",
         "dingtalk-stream-bot",

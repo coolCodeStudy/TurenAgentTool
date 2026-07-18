@@ -21,6 +21,8 @@ try:
         APPLICATION_SERVICES,
         MODE_RANK,
         OBSOLETE_APPLICATION_SERVICES,
+        OBSOLETE_GATEWAY_SERVICES,
+        OBSOLETE_SCHEDULER_SERVICES,
         DeployMode,
         DeploymentPlan,
         classify_deployment,
@@ -57,6 +59,8 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
         APPLICATION_SERVICES,
         MODE_RANK,
         OBSOLETE_APPLICATION_SERVICES,
+        OBSOLETE_GATEWAY_SERVICES,
+        OBSOLETE_SCHEDULER_SERVICES,
         DeployMode,
         DeploymentPlan,
         classify_deployment,
@@ -102,6 +106,9 @@ _SENSITIVE_REASON = re.compile(
     r"(?i)(?:\b(?:token|password|passwd|secret|credential|authorization|api[_-]?key)\b|"
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*=|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s@]+@)"
 )
+# DeployRequest canonicalizes the retired ``command-api`` client alias before
+# validation. This allowlist contains only real steady-state services; the old
+# name remains valid solely in explicit topology migration and rollback paths.
 _APPLICATION_TARGETS = set(APPLICATION_SERVICES)
 _MANAGED_ARCHIVE_NAME = re.compile(
     r"investment-knowledge-app-(?P<sha>[0-9a-f]{40})-"
@@ -115,8 +122,8 @@ _BUILTIN_ROUTE_SMOKE_CHECKS = (
     "weekly-review-web:/health",
     "weekly-review-web:/weekly-review",
     "weekly-review-web:/command",
-    "command-api:/health",
-    "command-api:auth-boundary",
+    "weekly-review-web:command-compat-health",
+    "weekly-review-web:command-compat-auth-boundary",
     "mcp:transport-boundary",
 )
 
@@ -217,9 +224,12 @@ class DockerHealthChecker:
         if service == "weekly-review-web":
             for route in ("/health", "/weekly-review", "/command", *feature_routes):
                 self._http_success(f"http://127.0.0.1:8010{route}", "weekly review route is unavailable")
+            self._http_success("http://127.0.0.1:8001/health", "command compatibility health route is unavailable")
+            self._authenticated_negative_check(port=8010)
+            self._authenticated_negative_check(port=8001)
         elif service == "command-api":
             self._http_success("http://127.0.0.1:8001/health", "command API health route is unavailable")
-            self._authenticated_negative_check()
+            self._authenticated_negative_check(port=8001)
         elif service == "dingtalk-api":
             self._http_success("http://127.0.0.1:8002/health", "DingTalk API health route is unavailable")
             self._dingtalk_negative_check()
@@ -250,7 +260,8 @@ class DockerHealthChecker:
         for route in ("/health", "/weekly-review", "/command", *feature_routes):
             self._http_success(f"http://127.0.0.1:8010{route}", "aggregate weekly review route is unavailable")
         self._http_success("http://127.0.0.1:8001/health", "aggregate command API route is unavailable")
-        self._authenticated_negative_check()
+        self._authenticated_negative_check(port=8010)
+        self._authenticated_negative_check(port=8001)
         self._http_response("http://127.0.0.1:8000/mcp", {200, 400, 405, 406}, "aggregate MCP route is unavailable")
 
     def _check_running(self, service: str) -> None:
@@ -303,9 +314,9 @@ class DockerHealthChecker:
         suffix = f": {detail}" if detail else ""
         raise DeploymentHealthError(f"{service} is not running{suffix}")
 
-    def _authenticated_negative_check(self) -> None:
+    def _authenticated_negative_check(self, *, port: int) -> None:
         self._http_response(
-            "http://127.0.0.1:8001/command",
+            f"http://127.0.0.1:{port}/command",
             {401, 403},
             "command API authentication boundary is unavailable",
             method="POST",
@@ -389,7 +400,11 @@ class DeployRequest:
     archive_sha256: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "requested_targets", tuple(sorted(set(self.requested_targets))))
+        canonical_targets = (
+            "weekly-review-web" if target == "command-api" else target
+            for target in self.requested_targets
+        )
+        object.__setattr__(self, "requested_targets", tuple(sorted(set(canonical_targets))))
         object.__setattr__(self, "feature_routes", tuple(dict.fromkeys(self.feature_routes)))
         if any(not is_safe_feature_route(route) for route in self.feature_routes):
             raise ValueError("feature routes must be absolute local paths")
@@ -700,8 +715,8 @@ class DeploymentEngine:
                     context,
                     "before_activation",
                 )
-            if target == "scheduler-host":
-                self._retire_planned_obsolete_services(context)
+            if target in {"scheduler-host", "weekly-review-web"}:
+                self._retire_planned_obsolete_services(context, replacement=target)
             started = self.clock.monotonic()
             context.touched_services.append(target)
             self._activate_target(target, release)
@@ -1402,6 +1417,8 @@ class DeploymentEngine:
                     "compose",
                     "-f",
                     str(release / "docker-compose.prod.yml"),
+                    "--profile",
+                    "*",
                     "config",
                     "--services",
                 )
@@ -1432,15 +1449,18 @@ class DeploymentEngine:
         release: Path,
     ) -> None:
         """Admit the exact previous/candidate removal delta before mutation."""
-        if context.plan is None or "scheduler-host" not in context.plan.targets:
+        replacements = {"scheduler-host", "weekly-review-web"}
+        if context.plan is None or replacements.isdisjoint(context.plan.targets):
             return
         if context.selectors is None or context.selectors.current_release is None:
             raise DeploymentError("previous release is unavailable for topology migration")
         previous_release = context.selectors.current_release
         previous_services = self._compose_services(previous_release)
         candidate_services = self._compose_services(release)
-        if "scheduler-host" not in candidate_services:
+        if "scheduler-host" in context.plan.targets and "scheduler-host" not in candidate_services:
             raise DeploymentError("scheduler host is absent from candidate topology")
+        if "weekly-review-web" in context.plan.targets and "weekly-review-web" not in candidate_services:
+            raise DeploymentError("application gateway is absent from candidate topology")
         removed_services = previous_services - candidate_services
         unadmitted = removed_services - set(OBSOLETE_APPLICATION_SERVICES)
         if unadmitted:
@@ -1454,12 +1474,21 @@ class DeploymentEngine:
     def _retire_planned_obsolete_services(
         self,
         context: DeploymentContext,
+        *,
+        replacement: str,
     ) -> None:
         if not context.planned_obsolete_services:
             return
         if context.selectors is None or context.selectors.current_release is None:
             raise DeploymentError("previous release is unavailable for topology migration")
+        admitted = (
+            OBSOLETE_SCHEDULER_SERVICES
+            if replacement == "scheduler-host"
+            else OBSOLETE_GATEWAY_SERVICES
+        )
         for service in context.planned_obsolete_services:
+            if service not in admitted:
+                continue
             # Record ownership before the command: a partially successful stop
             # must still be restored by rollback.
             context.removed_obsolete_services.append(service)

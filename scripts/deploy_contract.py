@@ -15,7 +15,6 @@ except ModuleNotFoundError:  # Direct execution through scripts/classify_deploy_
 
 
 APPLICATION_SERVICES = (
-    "command-api",
     "dingtalk-api",
     "dingtalk-stream-bot",
     "mcp",
@@ -26,11 +25,16 @@ APPLICATION_SERVICES = (
 # Explicit one-time topology migrations. These names are intentionally not
 # inferred from Compose or removed with ``--remove-orphans``: deployment must
 # only retire application containers whose replacement contract is admitted.
-OBSOLETE_APPLICATION_SERVICES = (
+OBSOLETE_SCHEDULER_SERVICES = (
     "ipo-reminder-scheduler",
     "account-snapshot-scheduler",
     "daily-market-brief-scheduler",
     "daily-market-brief-history-worker",
+)
+OBSOLETE_GATEWAY_SERVICES = ("command-api",)
+OBSOLETE_APPLICATION_SERVICES = (
+    *OBSOLETE_SCHEDULER_SERVICES,
+    *OBSOLETE_GATEWAY_SERVICES,
 )
 
 
@@ -135,7 +139,6 @@ PATH_RULES = (
         "scripts/init_db.py",
         DeployMode.TARGETED_QUICK,
         (
-            "command-api",
             "dingtalk-api",
             "dingtalk-stream-bot",
             "mcp",
@@ -171,39 +174,38 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/command_http.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "weekly-review-web"),
+        ("weekly-review-web",),
         "shared command HTTP controller",
     ),
     PathRule(
         "investment_knowledge_mcp/http_access.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "weekly-review-web"),
+        ("weekly-review-web",),
         "shared HTTP access adapter",
     ),
     PathRule(
         "investment_knowledge_mcp/web_access.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "weekly-review-web"),
+        ("weekly-review-web",),
         "shared browser access contract",
     ),
     PathRule("investment_knowledge_mcp/weekly_review_web.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "weekly review web"),
     PathRule(
         "investment_knowledge_mcp/command_workbench.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "weekly-review-web"),
+        ("weekly-review-web",),
         "command workbench",
     ),
     PathRule(
         "investment_knowledge_mcp/command_router.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
         "shared command logic",
     ),
     PathRule(
         "investment_knowledge_mcp/daily_market_brief.py",
         DeployMode.TARGETED_QUICK,
         (
-            "command-api",
             "dingtalk-api",
             "dingtalk-stream-bot",
             "mcp",
@@ -215,10 +217,10 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/weekly_review.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
         "shared command logic",
     ),
-    PathRule("investment_knowledge_mcp/command_api.py", DeployMode.TARGETED_QUICK, ("command-api",), "command API"),
+    PathRule("investment_knowledge_mcp/command_api.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "legacy command API adapter"),
     PathRule("investment_knowledge_mcp/server.py", DeployMode.TARGETED_QUICK, ("mcp",), "MCP server"),
     PathRule(
         "investment_knowledge_mcp/account_snapshots.py",
@@ -253,7 +255,7 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/daily_market_jobs.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "scheduler-host", "weekly-review-web"),
+        ("dingtalk-api", "dingtalk-stream-bot", "mcp", "scheduler-host", "weekly-review-web"),
         "shared daily market history queue",
     ),
     PathRule("investment_knowledge_mcp/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "unknown application runtime module"),
