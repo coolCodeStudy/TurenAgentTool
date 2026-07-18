@@ -70,7 +70,7 @@ Success criteria:
 
 ## P1.1: Deploy Admission Reliability
 
-Status: in progress on `codex/release-reliability-p0-20260716`.
+Status: P0 merged to authoritative `main@08ce339`; credential-precedence hotfix in progress.
 
 This is operating-model/control-plane infrastructure, not a Feature Registry item.
 It addresses the confirmed 2026-07-16 release failures: GitHub Actions runs
@@ -78,13 +78,16 @@ It addresses the confirmed 2026-07-16 release failures: GitHub Actions runs
 before activation because `MemAvailable` was below the 512 MiB quick/config
 reserve. The failure was neither a GitHub-token nor a deploy-lock failure.
 
-P0 delivered locally reviewed controls for forward-only authoritative refs,
+P0 delivered and merged locally reviewed controls for forward-only authoritative refs,
 one GitHub Actions coordinator channel with an internal Ops executor, durable
 event/health/service/route evidence, mode-specific memory gates, isolated
 full-image artifacts, and separate browser, command, and Ops credentials.
-The remaining rollout gate is deliberate integration followed by a serialized
-independent Ops API bootstrap using a distinct `OPS_API_TOKEN`; an ordinary app
-release cannot update `/opt/investment-ops`.
+The serialized independent Ops API bootstrap using a distinct `OPS_API_TOKEN`
+completed in run `29624982764`; an ordinary app release cannot update
+`/opt/investment-ops`. The first deploy-plan retries correctly stopped before
+activation with 401 because a stale business `.env` overwrote the explicitly
+passed control-plane credential during install. The narrow follow-up preserves
+the explicit credential and adds a regression test before the next bootstrap.
 
 P1 follow-up: collect memory, PSI, cgroup, swap, and full-image phase telemetry
 from successful and rejected deploys, then calibrate target-aware reserves.
