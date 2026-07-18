@@ -10,6 +10,12 @@ from .contracts import (
     SourcePlan,
 )
 from .pool import DataSourcePool, ExternalDataSource, MemoryResultCache, ResultCache
+from .market_bars import (
+    FutuMarketBarsSource,
+    YahooMarketBarsSource,
+    default_market_bar_pool,
+    market_bar_records_by_symbol,
+)
 
 __all__ = [
     "DataRequest",
@@ -23,4 +29,8 @@ __all__ = [
     "ExternalDataSource",
     "MemoryResultCache",
     "ResultCache",
+    "FutuMarketBarsSource",
+    "YahooMarketBarsSource",
+    "default_market_bar_pool",
+    "market_bar_records_by_symbol",
 ]
