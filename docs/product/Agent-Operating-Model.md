@@ -17,6 +17,7 @@ This model is the top-level operating contract for multi-role work. Role-specifi
 - Development Agent: owns technical planning, implementation, developer verification, deployment work, technical evidence, and code-level handoff.
 - Acceptance Testing Agent: owns independent user-facing testing from the real user surface and returns results to the Feature Coordinator.
 - Project Management Agent: owns audits, status integrity, stale-document detection, registry consistency, and missing-evidence discovery. It is not the default feature-flow owner.
+- Architecture & Code Health Agent: owns read-only cross-feature architecture review. It runs the repository harness, identifies structural risks with evidence, and proposes bounded implementation slices; it does not replace Feature Coordinators, directly start broad refactors, or decide product access policy.
 
 There may be many Feature Coordinators running in parallel, but there is only one Global Project Manager role for the portfolio. The Global Project Manager does not replace Feature Coordinators, Product, Development, or Testing. It is accountable for whether the agent organization itself works: whether coordinators close loops, whether handoffs are valid, whether deploy and acceptance gates are respected, and whether repeated failures become better rules, scripts, or queues.
 
@@ -90,6 +91,11 @@ Escalate to the Global Project Manager only for:
 - Conflicting source-of-truth documents or delivery state.
 - Operating-model, protocol, or audit-script defect.
 - Repeated blocker patterns that suggest a protocol, lesson, or script improvement is needed.
+
+Architecture & Code Health findings return to the affected Feature Coordinator
+for feature-level closure. The Global Project Manager prioritizes systemic
+debt and rule evolution. Ask the Owner only for a true cross-feature tradeoff
+or priority decision.
 
 Do not escalate normal next-owner routing, developer follow-up, deploy retest, or acceptance retest to the Owner or Global Project Manager when the Feature Coordinator can continue.
 
