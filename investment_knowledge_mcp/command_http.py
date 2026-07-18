@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from http import HTTPStatus
+from typing import Mapping
+
+from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
+from investment_knowledge_mcp.command_workbench import execution_blocker, parse_workbench_command
+from investment_knowledge_mcp.db import run_schema
+from investment_knowledge_mcp.repository import record_command_event
+
+
+PUBLIC_WORKBENCH_FAILURE_MESSAGE = "Command execution failed. Please retry later."
+
+
+@dataclass(frozen=True)
+class CommandHttpRequest:
+    body: Mapping[str, object]
+    source: str | None
+    sender: str | None = None
+
+
+@dataclass(frozen=True)
+class CommandHttpResponse:
+    status: HTTPStatus
+    payload: dict[str, object]
+
+
+def execute_command_request(request: CommandHttpRequest) -> CommandHttpResponse:
+    text = str(request.body.get("text") or "").strip()
+    if not text:
+        return CommandHttpResponse(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "text is required"})
+
+    sender = _clean_optional_text(request.sender)
+    source = _clean_optional_text(request.source)
+    try:
+        run_schema()
+        result = handle_command(text)
+        message = safe_public_command_message(result, PUBLIC_WORKBENCH_FAILURE_MESSAGE)
+        event_id = _record_event_id(
+            command=text,
+            ok=result.ok,
+            message=message,
+            sender=sender,
+            source=source,
+        )
+    except Exception:
+        _record_event_id(
+            command=text,
+            ok=False,
+            message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+            sender=sender,
+            source=source,
+        )
+        return CommandHttpResponse(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            {"ok": False, "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE},
+        )
+
+    status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
+    return CommandHttpResponse(status, {"ok": result.ok, "message": message, "event_id": event_id})
+
+
+def execute_workbench_request(
+    request: CommandHttpRequest,
+    *,
+    execute: bool,
+) -> CommandHttpResponse:
+    raw_input = str(request.body.get("text") or "").strip()
+    action_id = _clean_optional_text(request.body.get("action_id"))
+    source = _clean_optional_text(request.source)
+    fields = request.body.get("fields") if isinstance(request.body.get("fields"), dict) else {}
+    selected_target = request.body.get("selected_target") if isinstance(request.body.get("selected_target"), dict) else None
+    preview = parse_workbench_command(
+        raw_input,
+        action_id=action_id,
+        fields=fields,
+        selected_target=selected_target,
+    )
+
+    if not execute:
+        event_id = _record_event_id(
+            command=raw_input or f"[action] {action_id or 'unknown'}",
+            ok=preview.get("status") == "parsed",
+            message=f"parse status={preview.get('status')} action={preview.get('action_id')}",
+            sender=_clean_optional_text(request.sender),
+            source=source,
+        )
+        return CommandHttpResponse(HTTPStatus.OK, {"ok": True, "preview": preview, "event_id": event_id})
+
+    blocker = execution_blocker(preview, confirmed=bool(request.body.get("confirmed")))
+    if blocker:
+        return CommandHttpResponse(HTTPStatus.CONFLICT, {"ok": False, "error": blocker, "preview": preview})
+
+    exact_command = str(preview.get("exact_command") or "").strip()
+    sender = _clean_optional_text(request.sender)
+    try:
+        run_schema()
+        result = handle_command(exact_command)
+        message = safe_public_command_message(result, PUBLIC_WORKBENCH_FAILURE_MESSAGE)
+        event_id = _record_event_id(
+            command=exact_command,
+            ok=result.ok,
+            message=message,
+            sender=sender,
+            source=source,
+        )
+    except Exception:
+        event_id = _record_event_id(
+            command=exact_command,
+            ok=False,
+            message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+            sender=sender,
+            source=source,
+        )
+        return CommandHttpResponse(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            {
+                "ok": False,
+                "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+                "preview": preview,
+                "event_id": event_id,
+                "executed_command": exact_command,
+                "raw_input": raw_input,
+            },
+        )
+
+    status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
+    return CommandHttpResponse(
+        status,
+        {
+            "ok": result.ok,
+            "message": message,
+            "preview": preview,
+            "event_id": event_id,
+            "executed_command": exact_command,
+            "raw_input": raw_input,
+        },
+    )
+
+
+def _clean_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _record_event_id(
+    *,
+    command: str,
+    ok: bool,
+    message: str,
+    sender: str | None,
+    source: str | None,
+) -> int | None:
+    try:
+        event = record_command_event(
+            command=command,
+            ok=ok,
+            message=message,
+            sender=sender,
+            source=source,
+        )
+    except Exception:
+        return None
+    return event.get("id") if isinstance(event, dict) else None

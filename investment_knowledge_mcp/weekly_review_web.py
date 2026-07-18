@@ -5,7 +5,6 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
-import logging
 import os
 import re
 from threading import Lock
@@ -15,12 +14,14 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import daily_market_jobs, repository
-from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
 from investment_knowledge_mcp.command_workbench import (
-    execution_blocker,
     list_workbench_actions,
-    parse_workbench_command,
     render_command_workbench_html,
+)
+from investment_knowledge_mcp.command_http import (
+    PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+    CommandHttpRequest,
+    execute_workbench_request,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.daily_market_brief import (
@@ -35,7 +36,6 @@ from investment_knowledge_mcp.daily_market_jobs import (
     list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
-from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 from investment_knowledge_mcp.web_experience import (
     access_error_payload,
@@ -46,8 +46,6 @@ from investment_knowledge_mcp.web_experience import (
 
 MAX_BODY_BYTES = 64 * 1024
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-logger = logging.getLogger(__name__)
-PUBLIC_WORKBENCH_FAILURE_MESSAGE = "Command execution failed. Please retry later."
 
 
 class _DailyBriefGenerationLease:
@@ -198,86 +196,26 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         return
 
     def _handle_workbench_parse(self, payload: dict[str, Any]) -> None:
-        raw_input = str(payload.get("text") or "").strip()
-        action_id = _clean_optional_text(payload.get("action_id"))
-        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-        selected_target = payload.get("selected_target") if isinstance(payload.get("selected_target"), dict) else None
-        preview = parse_workbench_command(
-            raw_input,
-            action_id=action_id,
-            fields=fields,
-            selected_target=selected_target,
+        response = execute_workbench_request(
+            CommandHttpRequest(
+                body=payload,
+                source="weekly-review-web.command-workbench.parse",
+                sender=payload.get("sender"),
+            ),
+            execute=False,
         )
-        event = _record_workbench_event(
-            command=raw_input or f"[action] {action_id or 'unknown'}",
-            ok=preview.get("status") == "parsed",
-            message=f"parse status={preview.get('status')} action={preview.get('action_id')}",
-            source="weekly-review-web.command-workbench.parse",
-        )
-        self._write_json(HTTPStatus.OK, {"ok": True, "preview": preview, "event_id": event.get("id") if event else None})
+        self._write_json(response.status, response.payload)
 
     def _handle_workbench_execute(self, payload: dict[str, Any]) -> None:
-        raw_input = str(payload.get("text") or "").strip()
-        action_id = _clean_optional_text(payload.get("action_id"))
-        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-        selected_target = payload.get("selected_target") if isinstance(payload.get("selected_target"), dict) else None
-        confirmed = bool(payload.get("confirmed"))
-        preview = parse_workbench_command(
-            raw_input,
-            action_id=action_id,
-            fields=fields,
-            selected_target=selected_target,
-        )
-        blocker = execution_blocker(preview, confirmed=confirmed)
-        if blocker:
-            self._write_json(HTTPStatus.CONFLICT, {"ok": False, "error": blocker, "preview": preview})
-            return
-
-        exact_command = str(preview.get("exact_command") or "").strip()
-        try:
-            run_schema()
-            result = handle_command(exact_command)
-            response_message = safe_public_command_message(result, PUBLIC_WORKBENCH_FAILURE_MESSAGE)
-            event = record_command_event(
-                command=exact_command,
-                ok=result.ok,
-                message=response_message,
-                sender=_clean_optional_text(payload.get("sender")),
+        response = execute_workbench_request(
+            CommandHttpRequest(
+                body=payload,
                 source="weekly-review-web.command-workbench.execute",
-            )
-        except Exception:
-            logger.exception("Command Workbench execution failed")
-            event = _record_workbench_event(
-                command=exact_command,
-                ok=False,
-                message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
-                source="weekly-review-web.command-workbench.execute",
-            )
-            self._write_json(
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-                {
-                    "ok": False,
-                    "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE,
-                    "preview": preview,
-                    "event_id": event.get("id") if event else None,
-                    "executed_command": exact_command,
-                    "raw_input": raw_input,
-                },
-            )
-            return
-
-        status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
-        self._write_json(
-            status,
-            {
-                "ok": result.ok,
-                "message": response_message,
-                "preview": preview,
-                "event_id": event.get("id"),
-                "executed_command": exact_command,
-                "raw_input": raw_input,
-            },
+                sender=payload.get("sender"),
+            ),
+            execute=True,
         )
+        self._write_json(response.status, response.payload)
 
     def _handle_weekly_review_read(self, payload: dict[str, Any]) -> None:
         try:
@@ -2227,26 +2165,6 @@ def _authorization_token(authorization: str | None) -> str | None:
     if authorization and authorization.startswith("Bearer "):
         return authorization.removeprefix("Bearer ").strip()
     return None
-
-
-def _clean_optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    cleaned = str(value).strip()
-    return cleaned or None
-
-
-def _record_workbench_event(command: str, ok: bool, message: str, source: str) -> dict[str, Any] | None:
-    try:
-        return record_command_event(
-            command=command,
-            ok=ok,
-            message=message,
-            source=source,
-            sender=None,
-        )
-    except Exception:
-        return None
 
 
 def main() -> None:
