@@ -64,6 +64,20 @@ class OpsApiInstallLayoutTests(unittest.TestCase):
         self.assertNotIn("COMMAND_API_TOKEN", installer)
         self.assertIn('OPS_API_TOKEN="$OPS_API_TOKEN"', bootstrap)
 
+    def test_explicit_ops_credential_survives_loading_business_environment(self) -> None:
+        installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(encoding="utf-8")
+
+        self.assertIn('EXPLICIT_OPS_API_TOKEN=${OPS_API_TOKEN:-}', installer)
+        self.assertIn('OPS_API_TOKEN=$EXPLICIT_OPS_API_TOKEN', installer)
+        self.assertLess(
+            installer.index('EXPLICIT_OPS_API_TOKEN=${OPS_API_TOKEN:-}'),
+            installer.index('. "$INVESTMENT_DIR/.env"'),
+        )
+        self.assertLess(
+            installer.index('. "$INVESTMENT_DIR/.env"'),
+            installer.index('OPS_API_TOKEN=$EXPLICIT_OPS_API_TOKEN'),
+        )
+
     def test_default_artifact_staging_is_under_independent_ops_home(self) -> None:
         source = Path("scripts/ecs_ops_api.py").read_text(encoding="utf-8")
 
