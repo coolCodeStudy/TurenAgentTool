@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11 stdlib HTTP server, dataclasses, hmac, unittest, existing browser JavaScript helper.
 
-**Implementation status (2026-07-19):** Implemented and independently reviewed through Task 6 on `codex/architecture-consolidation`. One typed access contract and command controller now serve the browser routes; `WeeklyReviewWebHandler` is the single production handler; standalone `command-api` is retired from the five-service topology while host port 8001 remains mapped to the gateway. Compose resolves canonical and legacy token names to one configured value and keeps legacy request headers for this compatibility release. The deploy/Ops/gateway review suite passed 298 focused tests. Production verification is tracked by `DQ-2026-07-19-001`.
+**Implementation status (2026-07-19):** Implemented, independently reviewed, and deployed on authoritative `main@86652e4` by full deploy run `29660355957`. One typed access contract and command controller now serve the browser routes; `WeeklyReviewWebHandler` is the single production handler; standalone `command-api` is retired while host ports 8001 and 8010 both map to that gateway. Compose resolves canonical and legacy token names to one configured value and keeps legacy request headers for this compatibility release. The deploy/Ops/gateway review suite passed 298 focused tests, and production passed both port health/auth boundaries plus the 60-second stable window. Delivery evidence is closed in `DQ-2026-07-19-001`.
 
 ## Global Constraints
 

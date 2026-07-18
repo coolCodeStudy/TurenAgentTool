@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11, dataclasses, enum, unittest, existing provider functions.
 
-**Implementation status (2026-07-19):** Implemented and independently reviewed through Tasks 1-7 on `codex/architecture-consolidation`. Weekly Review and Daily Market Brief market bars use the shared contracts/pool, and Daily live/historical market activity uses the same result/failure/provenance boundary while preserving provider transports, timeout/cancellation semantics, and feature-layer evidence admission. The final focused market-activity suite passed 122 tests. The architecture harness reports P0 0/P1 7; its remaining signals are report-only module-size findings, not admission for broad refactors. Production verification is tracked by `DQ-2026-07-19-001`.
+**Implementation status (2026-07-19):** Implemented, independently reviewed, and deployed on authoritative `main@86652e4` by full deploy run `29660355957`. Weekly Review and Daily Market Brief market bars use the shared contracts/pool, and Daily live/historical market activity uses the same result/failure/provenance boundary while preserving provider transports, timeout/cancellation semantics, and feature-layer evidence admission. The final focused market-activity suite passed 122 tests. The production release passed its 60-second stable window, and the architecture harness reports P0 0/P1 7; its remaining signals are report-only module-size findings, not admission for broad refactors. Delivery evidence is closed in `DQ-2026-07-19-001`.
 
 ## Global Constraints
 

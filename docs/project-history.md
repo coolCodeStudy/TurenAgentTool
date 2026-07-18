@@ -15,6 +15,7 @@ It is intentionally not a day-by-day log.
 - Production database connection moved from hand-built `DATABASE_URL` strings to structured PostgreSQL environment variables after special characters in passwords caused host parsing failures.
 - The primary runtime later moved to Singapore ECS because it could reach OpenAI reliably; the older domestic ECS path was not kept as the main runtime.
 - The current main ops path is `Codex App -> InvestmentKnowledge MCP /mcp -> ECS internal Ops API`; the legacy Hermes Gateway path was removed.
+- The 2026-07-19 architecture consolidation introduced shared external-data contracts, one browser command gateway/token policy, and a consolidated scheduler host with an on-demand history child. Production moved from nine application containers to five plus PostgreSQL, reducing measured application-container memory from about 431.16 MiB to 278.36 MiB while preserving the compatibility ports and serialized deploy/rollback gates.
 
 ## Futu/OpenD
 
