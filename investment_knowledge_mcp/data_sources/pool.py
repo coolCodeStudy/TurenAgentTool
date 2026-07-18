@@ -53,9 +53,12 @@ class MemoryResultCache:
         return replace(result, from_cache=True)
 
     def put(self, request: DataRequest, source_id: str, result: DataResult, ttl_seconds: int) -> None:
-        if result.status not in (DataStatus.OK, DataStatus.PARTIAL):
-            return
-        key = (request, source_id.casefold())
+        if not isinstance(ttl_seconds, int) or isinstance(ttl_seconds, bool) or ttl_seconds < 0:
+            raise ValueError("ttl_seconds must be a non-negative integer")
+        normalized_source_id = _normalized_source_id(source_id)
+        if not _valid_cache_result(result, normalized_source_id):
+            raise ValueError("cache result must be a normalized successful source result")
+        key = (request, normalized_source_id)
         self._entries[key] = (self._clock() + ttl_seconds, replace(result, from_cache=False))
         self._entries.move_to_end(key)
         while len(self._entries) > self._max_entries:
@@ -90,13 +93,15 @@ class DataSourcePool:
             attempts.append(source_id)
             provider = self._providers.get(source_id)
             if provider is None:
-                failures.append(_failure("provider_not_registered", source_id, retryable=False, fallback_allowed=True))
-                if self._may_advance(failures, candidates, index, plan):
+                current_failures = [_failure("provider_not_registered", source_id, retryable=False, fallback_allowed=True)]
+                failures.extend(current_failures)
+                if self._may_advance(current_failures, candidates, index, plan):
                     continue
                 break
             if request.capability not in provider.descriptor.capabilities or request.market not in provider.descriptor.markets:
-                failures.append(_failure("provider_not_compatible", source_id, retryable=False, fallback_allowed=True))
-                if self._may_advance(failures, candidates, index, plan):
+                current_failures = [_failure("provider_not_compatible", source_id, retryable=False, fallback_allowed=True)]
+                failures.extend(current_failures)
+                if self._may_advance(current_failures, candidates, index, plan):
                     continue
                 break
 
@@ -107,19 +112,21 @@ class DataSourcePool:
             try:
                 provider_result = provider.fetch(request)
             except Exception:
-                failures.append(_failure("provider_exception", source_id, retryable=False, fallback_allowed=True))
-                if self._may_advance(failures, candidates, index, plan):
+                current_failures = [_failure("provider_exception", source_id, retryable=False, fallback_allowed=True)]
+                failures.extend(current_failures)
+                if self._may_advance(current_failures, candidates, index, plan):
                     continue
                 break
 
             if not _valid_provider_result(provider_result, source_id):
-                failures.append(_failure("provider_contract_error", source_id, retryable=False, fallback_allowed=True))
-                if self._may_advance(failures, candidates, index, plan):
+                current_failures = [_failure("provider_contract_error", source_id, retryable=False, fallback_allowed=True)]
+                failures.extend(current_failures)
+                if self._may_advance(current_failures, candidates, index, plan):
                     continue
                 break
 
-            attempts = list(_ordered_unique((*attempts, *provider_result.attempted_sources)))
-            failures.extend(provider_result.failures)
+            current_failures = list(provider_result.failures)
+            failures.extend(current_failures)
             normalized = replace(provider_result, attempted_sources=(source_id,), failures=(), from_cache=False)
             if provider_result.status is DataStatus.OK:
                 self._put_cached(request, source_id, normalized, provider.descriptor.default_ttl_seconds)
@@ -128,9 +135,11 @@ class DataSourcePool:
                 self._put_cached(request, source_id, normalized, provider.descriptor.default_ttl_seconds)
                 return _combined(provider_result, attempts, failures)
             if provider_result.status is DataStatus.PARTIAL:
-                failures.append(_failure("partial_not_allowed", source_id, retryable=False, fallback_allowed=True))
+                policy_failure = _failure("partial_not_allowed", source_id, retryable=False, fallback_allowed=True)
+                current_failures.append(policy_failure)
+                failures.append(policy_failure)
 
-            if self._may_advance(failures, candidates, index, plan):
+            if self._may_advance(current_failures, candidates, index, plan):
                 continue
             break
 
@@ -142,12 +151,12 @@ class DataSourcePool:
 
     @staticmethod
     def _may_advance(
-        failures: list[ProviderFailure], candidates: tuple[str, ...], index: int, plan: SourcePlan
+        current_failures: list[ProviderFailure], candidates: tuple[str, ...], index: int, plan: SourcePlan
     ) -> bool:
         return (
             index + 1 < len(candidates)
             and candidates[index + 1] in plan.fallback_sources
-            and any(failure.fallback_allowed for failure in failures)
+            and any(failure.fallback_allowed for failure in current_failures)
         )
 
 
@@ -166,9 +175,26 @@ def _failure(code: str, source_id: str, *, retryable: bool, fallback_allowed: bo
 def _valid_provider_result(result: object, source_id: str) -> bool:
     return (
         isinstance(result, DataResult)
-        and source_id in result.attempted_sources
-        and (result.selected_source is None or result.selected_source == source_id)
+        and result.attempted_sources == (source_id,)
+        and all(failure.source_id == source_id for failure in result.failures)
+        and (result.status is DataStatus.UNAVAILABLE or result.selected_source == source_id)
     )
+
+
+def _valid_cache_result(result: object, source_id: str) -> bool:
+    return (
+        isinstance(result, DataResult)
+        and result.status in (DataStatus.OK, DataStatus.PARTIAL)
+        and result.selected_source == source_id
+        and result.attempted_sources == (source_id,)
+        and not result.failures
+    )
+
+
+def _normalized_source_id(source_id: str) -> str:
+    if not isinstance(source_id, str) or not (normalized := source_id.strip().casefold()):
+        raise ValueError("source_id must be non-empty")
+    return normalized
 
 
 def _combined(result: DataResult, attempts: list[str] | tuple[str, ...], failures: list[ProviderFailure]) -> DataResult:

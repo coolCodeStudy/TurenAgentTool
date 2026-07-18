@@ -197,3 +197,96 @@ class DataSourcePoolTests(TestCase):
         self.assertEqual(actual.attempted_sources, ("primary", "fallback"))
         self.assertEqual(actual.coverage, 0.0)
         self.assertEqual(actual.fetched_at, NOW)
+
+    def test_only_current_attempt_failures_control_fallback_progression(self) -> None:
+        plan_with_two_fallbacks = SourcePlan(
+            SourceCapability.MARKET_BARS,
+            ("a",),
+            ("a", "b", "c"),
+            ("b", "c"),
+            True,
+            False,
+        )
+        a = Provider("a", result(DataStatus.UNAVAILABLE, "a", coverage=0.0, failures=(ProviderFailure("down", "a", False, True),)))
+        b = Provider("b", result(DataStatus.UNAVAILABLE, "b", coverage=0.0, failures=(ProviderFailure("denied", "b", False, False),)))
+        c = Provider("c", result(DataStatus.OK, "c"))
+        pool = DataSourcePool(now=lambda: NOW)
+        for provider in (a, b, c):
+            pool.register(provider)
+
+        actual = pool.fetch(request(), plan_with_two_fallbacks)
+
+        self.assertEqual(actual.status, DataStatus.UNAVAILABLE)
+        self.assertEqual(actual.attempted_sources, ("a", "b"))
+        self.assertEqual(c.calls, 0)
+
+    def test_injected_or_reordered_provider_attempts_are_contract_errors(self) -> None:
+        injected = replace(
+            result(
+                DataStatus.UNAVAILABLE,
+                "primary",
+                coverage=0.0,
+                failures=(ProviderFailure("down", "primary", False, True),),
+            ),
+            attempted_sources=("fallback", "primary"),
+        )
+        pool = DataSourcePool(now=lambda: NOW)
+        pool.register(Provider("primary", injected))
+        pool.register(Provider("fallback", result(DataStatus.OK, "fallback")))
+
+        actual = pool.fetch(request(), plan())
+
+        self.assertEqual(actual.selected_source, "fallback")
+        self.assertEqual(actual.attempted_sources, ("primary", "fallback"))
+        self.assertEqual(actual.failures[0].code, "provider_contract_error")
+
+    def test_fetch_rejects_provider_incompatible_with_request(self) -> None:
+        incompatible = Provider("primary", result(DataStatus.OK, "primary"))
+        incompatible.descriptor = descriptor("primary", markets=("HK",))
+        pool = DataSourcePool(now=lambda: NOW)
+        pool.register(incompatible)
+
+        actual = pool.fetch(request(), SourcePlan(SourceCapability.MARKET_BARS, ("primary",), ("primary",), (), True, False))
+
+        self.assertEqual(actual.status, DataStatus.UNAVAILABLE)
+        self.assertEqual(actual.failures[0].code, "provider_not_compatible")
+        self.assertEqual(incompatible.calls, 0)
+
+    def test_cache_validates_ttl_and_normalized_results(self) -> None:
+        ticks = [0.0]
+        cache = MemoryResultCache(clock=lambda: ticks[0])
+        valid = result(DataStatus.OK, "primary")
+
+        cache.put(request(), "primary", valid, 0)
+        self.assertIsNone(cache.get(request(), "primary"))
+        for invalid_ttl in (-1, True, 1.5, "1"):
+            with self.subTest(invalid_ttl=invalid_ttl), self.assertRaises(ValueError):
+                cache.put(request(), "primary", valid, invalid_ttl)  # type: ignore[arg-type]
+        malformed = (
+            result(DataStatus.UNAVAILABLE, "primary", coverage=0.0),
+            replace(valid, selected_source="other", attempted_sources=("other",)),
+            replace(valid, attempted_sources=("primary", "other")),
+            replace(valid, failures=(ProviderFailure("bad", "primary", False, False),)),
+        )
+        for invalid_result in malformed:
+            with self.subTest(invalid_result=invalid_result), self.assertRaises(ValueError):
+                cache.put(request(), "primary", invalid_result, 1)
+
+    def test_cache_is_bounded_and_promotes_entries_on_get(self) -> None:
+        cache = MemoryResultCache(max_entries=2, clock=lambda: 0.0)
+        a = DataRequest(SourceCapability.MARKET_BARS, "US", ("A",), freshness="1h")
+        b = DataRequest(SourceCapability.MARKET_BARS, "US", ("B",), freshness="1h")
+        c = DataRequest(SourceCapability.MARKET_BARS, "US", ("C",), freshness="1h")
+        cache.put(a, "primary", result(DataStatus.OK, "primary"), 60)
+        cache.put(b, "primary", result(DataStatus.OK, "primary"), 60)
+        self.assertIsNotNone(cache.get(a, "primary"))
+        cache.put(c, "primary", result(DataStatus.OK, "primary"), 60)
+
+        self.assertIsNotNone(cache.get(a, "primary"))
+        self.assertIsNone(cache.get(b, "primary"))
+        self.assertIsNotNone(cache.get(c, "primary"))
+
+    def test_cache_rejects_invalid_max_entries(self) -> None:
+        for max_entries in (0, -1, True, 1.5):
+            with self.subTest(max_entries=max_entries), self.assertRaises(ValueError):
+                MemoryResultCache(max_entries=max_entries)  # type: ignore[arg-type]
