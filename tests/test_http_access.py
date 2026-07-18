@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+from investment_knowledge_mcp import command_api
 from investment_knowledge_mcp.http_access import authorize_http
 from investment_knowledge_mcp.web_access import AccessClass
 
@@ -117,6 +118,59 @@ class AuthorizeHttpTests(unittest.TestCase):
         )
 
         self.assertEqual([], handler.responses)
+
+
+class CommandHandlerRouteAccessTests(unittest.TestCase):
+    def _handler(self, path: str) -> command_api.CommandRequestHandler:
+        handler = object.__new__(command_api.CommandRequestHandler)
+        handler.path = path
+        handler._read_json_body = mock.Mock()
+        handler._write_json = mock.Mock()
+        handler._write_html = mock.Mock()
+        return handler
+
+    def test_protected_post_routes_authorize_before_reading_or_dispatching(self) -> None:
+        routes = (
+            ("/command", None),
+            ("/api/command-workbench/parse", "_handle_workbench_parse"),
+            ("/api/command-workbench/execute", "_handle_workbench_execute"),
+        )
+        for path, controller_name in routes:
+            with self.subTest(path=path):
+                handler = self._handler(path)
+                controller = mock.Mock()
+                if controller_name:
+                    setattr(handler, controller_name, controller)
+
+                with (
+                    mock.patch.object(command_api, "authorize_http", return_value=False) as authorize,
+                    mock.patch.object(command_api, "execute_command_request") as execute_command,
+                ):
+                    handler.do_POST()
+
+                authorize.assert_called_once_with(handler, AccessClass.PROTECTED)
+                handler._read_json_body.assert_not_called()
+                controller.assert_not_called()
+                execute_command.assert_not_called()
+
+    def test_public_get_routes_do_not_invoke_shared_access(self) -> None:
+        routes = (
+            "/health",
+            "/command",
+            "/api/command-workbench/actions",
+        )
+        for path in routes:
+            with self.subTest(path=path):
+                handler = self._handler(path)
+
+                with (
+                    mock.patch.object(command_api, "authorize_http") as authorize,
+                    mock.patch.object(command_api, "list_workbench_actions", return_value=[]),
+                    mock.patch.object(command_api, "render_command_workbench_html", return_value="<html></html>"),
+                ):
+                    handler.do_GET()
+
+                authorize.assert_not_called()
 
 
 if __name__ == "__main__":

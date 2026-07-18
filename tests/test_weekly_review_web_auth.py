@@ -107,6 +107,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
             ("POST", "/api/candidate-insights/1/confirm", None, "access_required"),
             ("POST", "/api/candidate-insights/1/reject", None, "access_required"),
             ("POST", "/api/command-workbench/parse", {"text": "本周复盘"}, "access_required"),
+            ("POST", "/api/command-workbench/execute", {"text": "本周复盘"}, "access_required"),
         )
 
         for method, path, payload, expected_error in requests:
@@ -125,6 +126,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
             ("GET", "/api/candidate-insights?status=pending", None),
             ("POST", "/api/candidate-insights/1/confirm", None),
             ("POST", "/api/candidate-insights/1/reject", None),
+            ("POST", "/api/command-workbench/execute", {"text": "本周复盘"}),
         )
         cases = (
             (
@@ -171,17 +173,22 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual("existing", payload["status"])
 
-    def test_command_token_also_reaches_privileged_weekly_generate_handler(self) -> None:
-        status, _, body = self.request(
-            "POST",
-            "/api/weekly-review/generate",
-            payload={"week_start": WEEK_START},
-            headers={"X-Command-Token": "configured-access-token"},
-        )
+    def test_legacy_token_headers_reach_privileged_weekly_generate_handler(self) -> None:
+        for headers in (
+            {"X-Command-Token": "configured-access-token"},
+            {"X-Weekly-Review-Token": "configured-access-token"},
+        ):
+            with self.subTest(headers=headers):
+                status, _, body = self.request(
+                    "POST",
+                    "/api/weekly-review/generate",
+                    payload={"week_start": WEEK_START},
+                    headers=headers,
+                )
 
-        payload = json.loads(body)
-        self.assertEqual(HTTPStatus.OK, status)
-        self.assertTrue(payload["ok"])
+                payload = json.loads(body)
+                self.assertEqual(HTTPStatus.OK, status)
+                self.assertTrue(payload["ok"])
 
     def test_valid_token_reaches_every_privileged_weekly_handler(self) -> None:
         def write_ok(handler: web.WeeklyReviewWebHandler, *args: object, **kwargs: object) -> None:
@@ -194,12 +201,14 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
             ("GET", "/api/candidate-insights?status=pending", None),
             ("POST", "/api/candidate-insights/1/confirm", None),
             ("POST", "/api/candidate-insights/1/reject", None),
+            ("POST", "/api/command-workbench/execute", {"text": "本周复盘"}),
         )
         with (
             mock.patch.object(web.WeeklyReviewWebHandler, "_handle_weekly_review_generate", write_ok),
             mock.patch.object(web.WeeklyReviewWebHandler, "_handle_weekly_review_save", write_ok),
             mock.patch.object(web.WeeklyReviewWebHandler, "_handle_candidate_insights", write_ok),
             mock.patch.object(web.WeeklyReviewWebHandler, "_handle_candidate_decision", write_ok),
+            mock.patch.object(web.WeeklyReviewWebHandler, "_handle_workbench_execute", write_ok),
         ):
             for method, path, payload in requests:
                 with self.subTest(method=method, path=path):
