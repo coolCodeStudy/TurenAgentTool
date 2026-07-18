@@ -68,7 +68,7 @@ process.stdout.write(JSON.stringify({{ok: true}}));
         raise AssertionError("Browser access behavior check returned an invalid status result")
 
 
-def _run_command_script(assertions: str) -> None:
+def _run_command_script(assertions: str, *, storage_denied: bool = False) -> None:
     from investment_knowledge_mcp.command_workbench import render_command_workbench_html
 
     node = shutil.which("node")
@@ -84,9 +84,18 @@ const assert = require("node:assert/strict");
 
 class LocalStorageStub {
   constructor() { this.values = new Map(); }
-  getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
-  setItem(key, value) { this.values.set(key, String(value)); }
-  removeItem(key) { this.values.delete(key); }
+  getItem(key) {
+    if (__STORAGE_DENIED__) throw new DOMException("denied", "SecurityError");
+    return this.values.has(key) ? this.values.get(key) : null;
+  }
+  setItem(key, value) {
+    if (__STORAGE_DENIED__) throw new DOMException("denied", "SecurityError");
+    this.values.set(key, String(value));
+  }
+  removeItem(key) {
+    if (__STORAGE_DENIED__) throw new DOMException("denied", "SecurityError");
+    this.values.delete(key);
+  }
 }
 
 const makeNode = () => ({
@@ -149,6 +158,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
     harness = (
         harness.replace("__ACCESS_SOURCE__", json.dumps(scripts[0]))
         .replace("__COMMAND_SOURCE__", json.dumps(scripts[1]))
+        .replace("__STORAGE_DENIED__", json.dumps(storage_denied))
         .replace("__ASSERTIONS__", assertions)
     )
     completed = subprocess.run(
@@ -292,6 +302,26 @@ assert.deepEqual(access.classifyResponse(200, {}), {status: "ready"});
 """
         )
 
+    def test_access_script_degrades_safely_when_browser_storage_is_denied(self) -> None:
+        _run_access_script(
+            """
+const deniedStorage = {
+  getItem() { throw new DOMException("denied", "SecurityError"); },
+  setItem() { throw new DOMException("denied", "SecurityError"); },
+  removeItem() { throw new DOMException("denied", "SecurityError"); },
+};
+global.window = {localStorage: deniedStorage};
+eval(accessSource);
+const access = window.InvestmentKnowledgeAccess;
+assert.deepEqual(access.resolve(), {status: "missing"});
+assert.deepEqual(access.remember("synthetic-memory-only"), {status: "ready"});
+assert.deepEqual(access.resolve(), {status: "ready"});
+assert.equal(Object.prototype.hasOwnProperty.call(access.authorizationHeaders(), "Authorization"), true);
+assert.deepEqual(access.forget(), {status: "missing"});
+assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
+"""
+        )
+
     def test_access_errors_are_distinct_and_recoverable(self) -> None:
         required = access_error_payload("access_required")
         rejected = access_error_payload("access_rejected")
@@ -316,6 +346,8 @@ assert.deepEqual(access.classifyResponse(200, {}), {status: "ready"});
         self.assertIn(":focus-visible", css)
         self.assertIn("@media (max-width: 760px)", css)
         self.assertIn("--experience-accent", css)
+        self.assertIn(".experience-skip-link", css)
+        self.assertIn(".table-scroll", css)
 
     def test_command_uses_shared_shell_and_canonical_access(self) -> None:
         from investment_knowledge_mcp.command_workbench import render_command_workbench_html
@@ -326,6 +358,23 @@ assert.deepEqual(access.classifyResponse(200, {}), {status: "ready"});
         self.assertNotIn('id="api-token"', html)
         self.assertIn('id="access-panel"', html)
         self.assertIn('role="alert"', html)
+        self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
+        self.assertIn('<header class="page-header">', html)
+        self.assertIn('<main id="main-content"', html)
+        self.assertEqual(1, html.count("<main"))
+        self.assertEqual(1, html.count("<h1"))
+
+    def test_command_installs_handlers_when_browser_storage_is_denied(self) -> None:
+        _run_command_script(
+            r"""
+assert.equal(typeof nodes.get("#parse").listeners.click, "function");
+assert.equal(typeof nodes.get("#access-continue").listeners.click, "function");
+nodes.get("#smart-input").value = "系统状态";
+await workbench.parseSmartInput();
+assert.equal(nodes.get("#access-panel").hidden, true);
+""",
+            storage_denied=True,
+        )
 
     def test_command_api_authorization_reports_distinct_access_errors(self) -> None:
         from investment_knowledge_mcp import command_api

@@ -814,13 +814,16 @@ def render_command_workbench_html() -> str:
   </style>
 </head>
 <body>
+  <a class="experience-skip-link" href="#main-content">Skip to main content</a>
   <div class="experience-shell">
     __PRIMARY_NAVIGATION__
     <div class="experience-main">
       <div class="shell">
-        <main>
-      <h1>Command Workbench</h1>
-      <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
+        <main id="main-content" tabindex="-1">
+      <header class="page-header">
+        <h1>Command Workbench</h1>
+        <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
+      </header>
       <div class="input-row">
         <label for="smart-input" class="command-entry">
           <span class="label">Command</span>
@@ -1257,7 +1260,7 @@ def render_command_workbench_html() -> str:
         event_id: data.event_id || null,
         timestamp: new Date().toISOString()
       });
-      localStorage.setItem(storage.recent, JSON.stringify(current.slice(0, 10)));
+      writeJson(storage.recent, current.slice(0, 10));
       renderHistory();
     }
 
@@ -1284,6 +1287,10 @@ def render_command_workbench_html() -> str:
     }
     function readJson(key, fallback) {
       try { return JSON.parse(localStorage.getItem(key) || ""); } catch { return fallback; }
+    }
+    function writeJson(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch { return false; }
+      return true;
     }
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));

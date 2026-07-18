@@ -71,6 +71,36 @@ def render_experience_css() -> str:
   padding: 24px;
 }
 
+.experience-skip-link {
+  position: fixed;
+  z-index: 1000;
+  top: 8px;
+  left: 8px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--experience-surface);
+  color: var(--experience-accent);
+  font-weight: 700;
+  transform: translateY(-160%);
+}
+
+.experience-skip-link:focus {
+  transform: translateY(0);
+}
+
+.page-header {
+  min-width: 0;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table-scroll table {
+  min-width: 680px;
+}
+
 .experience-nav {
   display: flex;
   flex-direction: column;
@@ -136,8 +166,44 @@ def render_access_session_script() -> str:
   const canonicalKey = {canonical_key!r};
   const legacyKeys = [{legacy_command_key!r}, {legacy_weekly_key!r}];
 
-  const read = (key) => (window.localStorage.getItem(key) || "").trim();
-  const clearLegacy = () => legacyKeys.forEach((key) => window.localStorage.removeItem(key));
+  const memory = new Map();
+  const storage = (() => {{
+    try {{
+      return window.localStorage;
+    }} catch {{
+      return null;
+    }}
+  }})();
+
+  const read = (key) => {{
+    try {{
+      const stored = storage ? storage.getItem(key) : null;
+      if (stored !== null) return String(stored).trim();
+    }} catch {{
+      // Browser storage can be unavailable in hardened/private contexts.
+    }}
+    return String(memory.get(key) || "").trim();
+  }};
+
+  const write = (key, value) => {{
+    memory.set(key, value);
+    try {{
+      if (storage) storage.setItem(key, value);
+    }} catch {{
+      // Keep the access value only in this page session.
+    }}
+  }};
+
+  const remove = (key) => {{
+    memory.delete(key);
+    try {{
+      if (storage) storage.removeItem(key);
+    }} catch {{
+      // The in-memory copy is already cleared.
+    }}
+  }};
+
+  const clearLegacy = () => legacyKeys.forEach(remove);
 
   const resolve = () => {{
     if (read(canonicalKey)) {{
@@ -150,7 +216,7 @@ def render_access_session_script() -> str:
       return {{status: "legacy_conflict"}};
     }}
     if (presentValues.length) {{
-      window.localStorage.setItem(canonicalKey, presentValues[0]);
+      write(canonicalKey, presentValues[0]);
       clearLegacy();
       return {{status: "ready"}};
     }}
@@ -164,13 +230,13 @@ def render_access_session_script() -> str:
     if (!normalized) {{
       return {{status: "missing"}};
     }}
-    window.localStorage.setItem(canonicalKey, normalized);
+    write(canonicalKey, normalized);
     clearLegacy();
     return {{status: "ready"}};
   }};
 
   const forget = () => {{
-    window.localStorage.removeItem(canonicalKey);
+    remove(canonicalKey);
     clearLegacy();
     return {{status: "missing"}};
   }};

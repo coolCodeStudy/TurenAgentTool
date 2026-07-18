@@ -613,22 +613,31 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         tokens = [token for token in (config.weekly_review_web_token, config.command_api_token) if token]
         if not tokens:
             if require_configured:
-                self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "web write token is not configured"})
+                self._write_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    access_error_payload("access_not_configured"),
+                )
                 return False
             return True
-        authorization = self.headers.get("Authorization")
-        web_token = self.headers.get("X-Weekly-Review-Token")
-        command_token = self.headers.get("X-Command-Token")
-        supplied = ""
-        if authorization and authorization.startswith("Bearer "):
-            supplied = authorization.removeprefix("Bearer ").strip()
-        elif web_token:
-            supplied = web_token.strip()
-        elif command_token:
-            supplied = command_token.strip()
-        if supplied and any(hmac.compare_digest(supplied, token) for token in tokens):
+        supplied_tokens = [
+            token
+            for token in (
+                _authorization_token(self.headers.get("Authorization")),
+                self.headers.get("X-Weekly-Review-Token"),
+                self.headers.get("X-Command-Token"),
+            )
+            if token and token.strip()
+        ]
+        if not supplied_tokens:
+            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
+            return False
+        if any(
+            hmac.compare_digest(supplied.strip(), configured)
+            for supplied in supplied_tokens
+            for configured in tokens
+        ):
             return True
-        self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+        self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
         return False
 
     def _read_json_body(self) -> dict[str, Any] | None:
@@ -768,6 +777,13 @@ def render_weekly_review_workbench_html() -> str:
       flex-wrap: wrap;
       justify-content: flex-end;
     }}
+    .controls label, .chips label {{
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }}
     .read-only-badge {{
       border: 1px solid var(--line);
       border-radius: 999px;
@@ -779,7 +795,7 @@ def render_weekly_review_workbench_html() -> str:
     }}
     input, select, button {{
       font: inherit;
-      height: 34px;
+      min-height: 40px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #fff;
@@ -966,6 +982,12 @@ def render_weekly_review_workbench_html() -> str:
       color: #6b4b00;
       margin-bottom: 14px;
     }}
+    .notice.error {{
+      border-left-color: var(--bad);
+      background: #fff1f0;
+      color: #7a271a;
+    }}
+    [hidden] {{ display: none !important; }}
     .empty {{
       color: var(--muted);
       font-size: 13px;
@@ -982,11 +1004,13 @@ def render_weekly_review_workbench_html() -> str:
       .topbar {{ grid-template-columns: 1fr; }}
       .controls {{ justify-content: flex-start; }}
       .status-grid {{ grid-template-columns: 1fr 1fr; }}
-      table {{ display: block; overflow-x: auto; white-space: nowrap; }}
+      input, select, button {{ min-height: 44px; }}
+      .table-scroll table {{ white-space: nowrap; }}
     }}
   </style>
 </head>
 <body>
+  <a class="experience-skip-link" href="#main-content">跳到主要内容</a>
   <div class="experience-shell">
     {render_primary_navigation("weekly_review")}
     <div class="experience-main">
@@ -999,27 +1023,28 @@ def render_weekly_review_workbench_html() -> str:
         <a href="#source-status">数据源状态</a>
       </nav>
     </aside>
-    <main>
+    <main id="main-content" tabindex="-1">
       <div class="topbar">
-        <div>
+        <header class="page-header">
           <h1>本周复盘</h1>
           <p class="subtitle">只读查看基于交易记录、账户快照、当前持仓、IPO 和知识库生成的周复盘。</p>
-        </div>
+        </header>
         <div class="controls">
           <button id="prev-week" type="button">上一周</button>
           <button id="this-week" type="button">本周</button>
-          <input id="week-date" type="date" value="{start.isoformat()}" aria-label="复盘周">
+          <label for="week-date">复盘周<input id="week-date" type="date" value="{start.isoformat()}"></label>
           <span class="read-only-badge">公开只读</span>
         </div>
       </div>
-      <div id="message" class="notice">正在读取本周复盘状态。</div>
+      <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取本周复盘状态。</div>
+      <div id="error-message" class="notice error" role="alert" hidden></div>
       <div id="source-status" class="status-grid" aria-live="polite"></div>
       <section id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
       <section id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
       <section id="indexes"><h2>3. 指数</h2><div data-slot="indexes"></div></section>
       <section id="story"><h2>4. 整体故事</h2><div data-slot="story"></div></section>
       <section id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
-      <section id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><select id="market-filter"><option value="">全部市场</option></select><select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></div><div data-slot="holdings"></div></section>
+      <section id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><label for="market-filter">市场筛选<select id="market-filter"><option value="">全部市场</option></select></label><label for="status-filter">持仓状态筛选<select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></label></div><div data-slot="holdings"></div></section>
       <section id="attribution"><h2>7. 持仓归因卡</h2><div data-slot="attribution"></div></section>
       <section id="markdown"><h2>报告原文</h2><textarea id="markdown-text" class="markdown" spellcheck="false" readonly></textarea></section>
     </main>
@@ -1041,6 +1066,7 @@ def render_weekly_review_workbench_html() -> str:
     const $ = (selector) => document.querySelector(selector);
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
     const message = $("#message");
+    const errorMessage = $("#error-message");
 
     $("#prev-week").addEventListener("click", () => shiftWeek(-7));
     $("#this-week").addEventListener("click", () => setThisWeek());
@@ -1050,7 +1076,7 @@ def render_weekly_review_workbench_html() -> str:
     loadReview();
 
     async function loadReview() {{
-      message.textContent = "正在读取复盘状态...";
+      showStatus("正在读取复盘状态...");
       try {{
         const weekStart = $("#week-date").value;
         const response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(weekStart)}}`);
@@ -1063,10 +1089,24 @@ def render_weekly_review_workbench_html() -> str:
         state.markdown = data.markdown || "";
         state.holdings = data.context ? data.context.holdings_table || [] : [];
         renderAll();
-        message.textContent = statusMessage(data);
+        showStatus(statusMessage(data));
       }} catch (error) {{
-        message.textContent = `处理失败：${{error.message}}`;
+        showError(`处理失败：${{error.message}}`);
       }}
+    }}
+
+    function showStatus(text) {{
+      errorMessage.hidden = true;
+      errorMessage.textContent = "";
+      message.hidden = false;
+      message.textContent = text;
+    }}
+
+    function showError(text) {{
+      message.textContent = "";
+      message.hidden = true;
+      errorMessage.textContent = text;
+      errorMessage.hidden = false;
     }}
 
     function statusMessage(data) {{
@@ -1121,12 +1161,12 @@ def render_weekly_review_workbench_html() -> str:
 
     function rankedTable(items, positive) {{
       if (!items.length) return `<div class="empty">${{positive ? "暂未识别到明显高光。" : "暂未识别到明显拖累。"}}</div>`;
-      return `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
+      return tableRegion(positive ? "高光明细" : "拖累明细", `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
         ${{items.map((item) => {{
           const amount = item.amount ?? item.pl_val_delta;
           return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money ${{moneyClass(amount)}}">${{formatMoney(amount, item.currency)}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
         }}).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
     }}
 
     function storyBlock(story, warnings) {{
@@ -1149,20 +1189,20 @@ def render_weekly_review_workbench_html() -> str:
       if (!items.length) {{
         return `<div class="empty">${{escapeHtml(statusText(status))}}</div>`;
       }}
-      return `<table><thead><tr><th>指数</th><th>市场</th><th class="money">本周涨跌</th><th>最大单日波动</th><th>环境</th><th>组合影响</th></tr></thead><tbody>
+      return tableRegion("指数表现", `<table><thead><tr><th>指数</th><th>市场</th><th class="money">本周涨跌</th><th>最大单日波动</th><th>环境</th><th>组合影响</th></tr></thead><tbody>
         ${{items.map((item) => {{
           const move = item.largest_daily_move || {{}};
           const moveText = move.date ? `${{move.date}} ${{formatPercent(move.change_pct)}}` : "待补";
           return `<tr><td>${{escapeHtml(item.name)}}</td><td>${{escapeHtml(item.market)}}</td><td class="money ${{moneyClass(item.weekly_change_pct)}}">${{formatPercent(item.weekly_change_pct)}}</td><td>${{escapeHtml(moveText)}}</td><td>${{escapeHtml(item.environment_label || "待观察")}}</td><td>${{escapeHtml(item.portfolio_relevance || "待观察")}}</td></tr>`;
         }}).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
     }}
 
     function nextWeekTable(items) {{
       if (!items.length) return `<div class="empty">暂无下周事项。</div>`;
-      return `<table><thead><tr><th>类型</th><th>事项</th><th>为什么重要</th><th>需要决定</th></tr></thead><tbody>
+      return tableRegion("下周事项", `<table><thead><tr><th>类型</th><th>事项</th><th>为什么重要</th><th>需要决定</th></tr></thead><tbody>
         ${{items.map((item) => `<tr><td>${{escapeHtml(item.type)}}</td><td>${{escapeHtml(item.item)}}</td><td>${{escapeHtml(item.reason)}}</td><td>${{escapeHtml(item.needs_decision)}}</td></tr>`).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
     }}
 
     function renderMarketOptions() {{
@@ -1180,9 +1220,13 @@ def render_weekly_review_workbench_html() -> str:
         slot("holdings").innerHTML = `<div class="empty">当前没有符合条件的持仓。</div>`;
         return;
       }}
-      slot("holdings").innerHTML = `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
+      slot("holdings").innerHTML = tableRegion("当前持仓", `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
         ${{rows.map((row) => `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money">${{formatMoney(row.market_val, row.currency)}}</td><td class="money ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
+    }}
+
+    function tableRegion(label, tableHtml) {{
+      return `<div class="table-scroll" role="region" aria-label="${{escapeAttr(label)}}" tabindex="0">${{tableHtml}}</div>`;
     }}
 
     function attributionCards(cards) {{
@@ -1365,8 +1409,15 @@ def render_daily_market_brief_html() -> str:
       justify-content: flex-end;
       flex-wrap: wrap;
     }}
+    .controls label {{
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }}
     input, select, button {{
-      height: 34px;
+      min-height: 40px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #fff;
@@ -1390,6 +1441,15 @@ def render_daily_market_brief_html() -> str:
       gap: 6px;
       margin: 0 0 14px;
       flex-wrap: wrap;
+      padding: 0;
+      border: 0;
+    }}
+    .tabs legend {{
+      width: 100%;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
     }}
     .tabs button {{
       min-width: 72px;
@@ -1408,6 +1468,12 @@ def render_daily_market_brief_html() -> str:
       font-size: 13px;
       margin-bottom: 14px;
     }}
+    .notice.error {{
+      border-left-color: var(--bad);
+      background: #fff1f0;
+      color: #7a271a;
+    }}
+    [hidden] {{ display: none !important; }}
     .summary-grid {{
       display: grid;
       grid-template-columns: repeat(4, minmax(140px, 1fr));
@@ -1483,11 +1549,13 @@ def render_daily_market_brief_html() -> str:
       .topbar {{ grid-template-columns: 1fr; }}
       .controls {{ justify-content: flex-start; }}
       .summary-grid {{ grid-template-columns: 1fr 1fr; }}
-      table {{ display: block; overflow-x: auto; white-space: nowrap; }}
+      input, select, button {{ min-height: 44px; }}
+      .table-scroll table {{ white-space: nowrap; }}
     }}
   </style>
 </head>
 <body>
+  <a class="experience-skip-link" href="#main-content">跳到主要内容</a>
   <div class="experience-shell">
     {render_primary_navigation("daily_market_brief")}
     <div class="experience-main">
@@ -1500,25 +1568,27 @@ def render_daily_market_brief_html() -> str:
         <a href="#markdown">Markdown 原文</a>
       </nav>
     </aside>
-    <main>
+    <main id="main-content" tabindex="-1">
       <div class="topbar">
-        <div>
+        <header class="page-header">
           <h1>每日市场简报</h1>
           <p class="subtitle">按市场查看收盘后的核心指数、领涨方向、个股、资金流和数据缺口。</p>
-        </div>
+        </header>
         <div class="controls">
-          <input id="market-date" type="date" value="{today}" aria-label="市场日期">
-          <select id="saved-date" aria-label="已保存日期"><option value="">已保存日期</option></select>
+          <label for="market-date">市场日期<input id="market-date" type="date" value="{today}"></label>
+          <label for="saved-date">已保存日期<select id="saved-date"><option value="">已保存日期</option></select></label>
           <button id="read" type="button">读取</button>
           <button id="generate" class="primary" type="button">生成</button>
         </div>
       </div>
-      <div class="tabs" aria-label="市场">
+      <fieldset class="tabs">
+        <legend>市场</legend>
         <button data-market="CN" class="active" type="button">A股</button>
         <button data-market="HK" type="button">港股</button>
         <button data-market="US" type="button">美股</button>
-      </div>
+      </fieldset>
       <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取每日市场简报。</div>
+      <div id="error-message" class="notice error" role="alert" hidden></div>
       <section><h2>历史生成任务</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
       <div id="summary" class="summary-grid"></div>
       <section><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
@@ -1545,6 +1615,7 @@ def render_daily_market_brief_html() -> str:
     }};
     const $ = (selector) => document.querySelector(selector);
     const message = $("#message");
+    const errorMessage = $("#error-message");
 
     document.querySelectorAll("[data-market]").forEach((button) => {{
       button.addEventListener("click", () => {{
@@ -1598,7 +1669,7 @@ def render_daily_market_brief_html() -> str:
       state.loadController = controller;
       setBusy(true);
       const date = $("#market-date").value;
-      message.textContent = action === "read" ? "正在读取简报..." : "正在生成并保存简报...";
+      showStatus(action === "read" ? "正在读取简报..." : "正在生成并保存简报...");
       try {{
         let response;
         if (action === "read") {{
@@ -1621,7 +1692,7 @@ def render_daily_market_brief_html() -> str:
         if (data.job) {{
           state.jobId = data.job.id;
           renderHistoryJob(data.job);
-          message.textContent = "历史简报任务已加入队列，页面会自动更新进度。";
+          showStatus("历史简报任务已加入队列，页面会自动更新进度。");
           loadRecentHistoryJobs();
           startHistoryJobPolling(data.job.id, data.market_date);
           return;
@@ -1633,10 +1704,10 @@ def render_daily_market_brief_html() -> str:
           loadSavedDates();
           loadRecentHistoryJobs();
         }}
-        message.textContent = statusMessage(action, data);
+        showStatus(statusMessage(action, data));
       }} catch (error) {{
         if (generation !== state.loadGeneration || error.name === "AbortError") return;
-        message.textContent = `处理失败：${{error.message}}`;
+        showError(`处理失败：${{error.message}}`);
       }} finally {{
         if (generation === state.loadGeneration) {{
           if (state.loadController === controller) state.loadController = null;
@@ -1681,24 +1752,24 @@ def render_daily_market_brief_html() -> str:
           state.jobId = null;
           loadRecentHistoryJobs();
           if (["completed", "partial"].includes(job.status)) {{
-            message.textContent = job.status === "partial"
+            showStatus(job.status === "partial"
               ? "历史简报已部分生成，缺失项已在数据状态中说明。"
-              : "历史简报已生成并保存。";
+              : "历史简报已生成并保存。");
             await loadSavedDates();
             if (state.market === job.items?.[0]?.market && $("#market-date").value === marketDate) {{
               await loadBrief("read");
             }}
           }} else {{
             const failures = (job.items || []).map((item) => item.error_summary).filter(Boolean);
-            message.textContent = failures[0] || (job.status === "cancelled" ? "历史简报任务已取消。" : "历史简报生成失败，请稍后重试。");
+            showError(failures[0] || (job.status === "cancelled" ? "历史简报任务已取消。" : "历史简报生成失败，请稍后重试。"));
           }}
           return;
         }}
-        message.textContent = historyJobProgress(job);
+        showStatus(historyJobProgress(job));
         state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate, generation), 2000);
       }} catch (error) {{
         if (generation !== state.pollGeneration || state.jobId !== jobId) return;
-        message.textContent = `任务进度读取失败：${{error.message}}`;
+        showError(`任务进度读取失败：${{error.message}}`);
         state.pollTimer = setTimeout(() => pollHistoryJob(jobId, marketDate, generation), 5000);
       }}
     }}
@@ -1781,34 +1852,52 @@ def render_daily_market_brief_html() -> str:
 
     function indexTable(rows) {{
       if (!rows.length) return `<div class="empty">暂无核心指数数据。</div>`;
-      return `<table><thead><tr><th>指数</th><th>代码</th><th class="money">收盘</th><th class="money">涨跌幅</th><th class="money">较前日量能</th><th class="money">较5日均量</th><th class="money">较20日均量</th></tr></thead><tbody>
+      return tableRegion("核心指数", `<table><thead><tr><th>指数</th><th>代码</th><th class="money">收盘</th><th class="money">涨跌幅</th><th class="money">较前日量能</th><th class="money">较5日均量</th><th class="money">较20日均量</th></tr></thead><tbody>
         ${{rows.map((row) => {{
           const previousVolume = relativePct(row.volume, row.baseline?.previous);
           const avg5Volume = relativePct(row.volume, row.baseline?.avg_5);
           const avg20Volume = relativePct(row.volume, row.baseline?.avg_20);
           return `<tr><td>${{escapeHtml(row.name)}}</td><td>${{escapeHtml(row.code)}}</td><td class="money">${{fmt(row.close)}}</td><td class="money ${{numClass(row.change_pct)}}">${{pct(row.change_pct)}}</td><td class="money ${{numClass(previousVolume)}}">${{pct(previousVolume)}}</td><td class="money ${{numClass(avg5Volume)}}">${{pct(avg5Volume)}}</td><td class="money ${{numClass(avg20Volume)}}">${{pct(avg20Volume)}}</td></tr>`;
         }}).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
     }}
 
     function rankTable(rows, firstLabel, flow = false) {{
       if (!rows.length) return `<div class="empty">当前数据源未提供可用明细，见数据状态。</div>`;
-      return `<table><thead><tr><th>${{escapeHtml(firstLabel)}}</th><th>代码/提供方</th><th class="money">涨跌/数值</th><th class="money">成交额/说明</th></tr></thead><tbody>
+      return tableRegion(firstLabel, `<table><thead><tr><th>${{escapeHtml(firstLabel)}}</th><th>代码/提供方</th><th class="money">涨跌/数值</th><th class="money">成交额/说明</th></tr></thead><tbody>
         ${{rows.map((row) => {{
           const numericValue = row.flow_value ?? row.value ?? row.change_pct;
           const valueText = flow ? fmt(numericValue) : pct(row.change_pct);
           const noteText = row.turnover !== undefined ? formatMarketAmount(row.turnover, state.context?.market?.code || state.market) : (row.message || row.metric || "-");
           return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money">${{escapeHtml(noteText)}}</td></tr>`;
         }}).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
     }}
 
     function statusTable(sourceStatus) {{
       const rows = Object.entries(sourceStatus);
       if (!rows.length) return `<div class="empty">暂无数据状态。</div>`;
-      return `<table><thead><tr><th>模块</th><th>状态</th><th>来源</th><th>说明</th></tr></thead><tbody>
+      return tableRegion("数据状态", `<table><thead><tr><th>模块</th><th>状态</th><th>来源</th><th>说明</th></tr></thead><tbody>
         ${{rows.map(([key, item]) => `<tr><td>${{escapeHtml(sourceLabel(key))}}</td><td>${{escapeHtml(statusLabel(item?.status))}}</td><td>${{escapeHtml(item?.provider || item?.taxonomy || "-")}}</td><td>${{escapeHtml(item?.message || item?.reason || "-")}}</td></tr>`).join("")}}
-      </tbody></table>`;
+      </tbody></table>`);
+    }}
+
+    function tableRegion(label, tableHtml) {{
+      return `<div class="table-scroll" role="region" aria-label="${{escapeHtml(label)}}" tabindex="0">${{tableHtml}}</div>`;
+    }}
+
+    function showStatus(text) {{
+      errorMessage.hidden = true;
+      errorMessage.textContent = "";
+      message.hidden = false;
+      message.textContent = text;
+    }}
+
+    function showError(text) {{
+      message.textContent = "";
+      message.hidden = true;
+      errorMessage.textContent = text;
+      errorMessage.hidden = false;
     }}
 
     function setBusy(busy) {{

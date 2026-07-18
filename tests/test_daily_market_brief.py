@@ -526,7 +526,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertLess(weekly_index, command_index)
         self.assertIn('<div class="experience-shell">', html)
         self.assertIn('<div class="experience-main">', html)
-        self.assertEqual(1, html.count("<main>"))
+        self.assertEqual(1, html.count("<main"))
         self.assertEqual(1, html.count("</main>"))
 
         local_nav_marker = '<nav class="nav" aria-label="On this page">'
@@ -549,6 +549,25 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertNotIn("localStorage", html)
         self.assertNotIn("Authorization", html)
         self.assertNotIn('id="api-token"', html)
+        self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
+        self.assertIn('<header class="page-header">', html)
+        self.assertIn('<main id="main-content"', html)
+        self.assertEqual(1, html.count("<main"))
+        self.assertEqual(1, html.count("<h1"))
+        self.assertIn('<label for="market-date">市场日期', html)
+        self.assertIn('<label for="saved-date">已保存日期', html)
+        self.assertIn('<legend>市场</legend>', html)
+        self.assertIn('id="message" class="notice" role="status"', html)
+        self.assertIn('id="error-message" class="notice error" role="alert"', html)
+        self.assertIn('class="table-scroll" role="region" aria-label="', html)
+        self.assertIn('tabindex="0"', html)
+        self.assertIn("showStatus(", html)
+        self.assertIn("showError(", html)
+        self.assertIn("message.hidden = false;", html)
+        self.assertIn("message.hidden = true;", html)
+        self.assertRegex(html, r"input, select, button\s*\{[^}]*min-height:\s*40px")
+        compact_css = html.split("@media (max-width: 900px)", 1)[1].split("</style>", 1)[0]
+        self.assertIn("input, select, button { min-height: 44px; }", compact_css)
 
     def test_page_generation_progress_supports_background_history_jobs(self) -> None:
         html = render_daily_market_brief_html()
