@@ -49,6 +49,13 @@ class DataSourceContractTests(TestCase):
         with self.assertRaises(ValueError):
             ProviderFailure("error", "  ", False, False)
 
+    def test_provider_failure_requires_boolean_retry_flags(self) -> None:
+        for value in (1, "true"):
+            with self.subTest(retryable=value), self.assertRaises(ValueError):
+                ProviderFailure("error", "source", value, False)
+            with self.subTest(fallback_allowed=value), self.assertRaises(ValueError):
+                ProviderFailure("error", "source", False, value)
+
     def test_request_normalizes_market_symbols_and_required_fields(self) -> None:
         request = DataRequest(
             capability=SourceCapability.MARKET_BARS,
@@ -94,6 +101,13 @@ class DataSourceContractTests(TestCase):
         request = DataRequest(SourceCapability.OFFICIAL_EVENTS, "US", (), freshness="1d")
         with self.assertRaises(ValueError):
             plan.validate_request(request)
+
+    def test_plan_requires_boolean_policy_flags(self) -> None:
+        for value in (1, "true"):
+            with self.subTest(required=value), self.assertRaises(ValueError):
+                SourcePlan(SourceCapability.MARKET_BARS, (), ("source",), (), value, False)
+            with self.subTest(partial_allowed=value), self.assertRaises(ValueError):
+                SourcePlan(SourceCapability.MARKET_BARS, (), ("source",), (), False, value)
 
     def test_provider_descriptor_normalizes_source_and_markets(self) -> None:
         descriptor = ProviderDescriptor(
@@ -176,6 +190,15 @@ class DataSourceContractTests(TestCase):
     def test_result_requires_timezone_aware_fetch_time(self) -> None:
         with self.assertRaises(ValueError):
             DataResult(DataStatus.UNAVAILABLE, (), None, (), 0.0, datetime.now(), False, ())
+
+    def test_result_requires_boolean_cache_flag_and_real_finite_coverage(self) -> None:
+        fetched_at = datetime.now(timezone.utc)
+        for value in (1, "false"):
+            with self.subTest(from_cache=value), self.assertRaises(ValueError):
+                DataResult(DataStatus.UNAVAILABLE, (), None, (), 0.0, fetched_at, value, ())
+        for coverage in (True, float("nan"), float("inf"), "0.5"):
+            with self.subTest(coverage=coverage), self.assertRaises(ValueError):
+                DataResult(DataStatus.UNAVAILABLE, (), None, (), coverage, fetched_at, False, ())
 
     def test_contract_annotations_do_not_include_credentials(self) -> None:
         contracts = (ProviderFailure, DataRequest, SourcePlan, ProviderDescriptor, DataResult)

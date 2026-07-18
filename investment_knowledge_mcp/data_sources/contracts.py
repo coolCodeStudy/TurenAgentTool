@@ -60,6 +60,11 @@ def _sanitize_detail(detail: Optional[str]) -> Optional[str]:
     return text
 
 
+def _boolean(value: bool, field: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean")
+
+
 @dataclass(frozen=True)
 class ProviderFailure:
     code: str
@@ -71,6 +76,8 @@ class ProviderFailure:
     def __post_init__(self) -> None:
         object.__setattr__(self, "code", _non_empty(self.code, "failure code"))
         object.__setattr__(self, "source_id", _source_id(self.source_id))
+        _boolean(self.retryable, "retryable")
+        _boolean(self.fallback_allowed, "fallback_allowed")
         object.__setattr__(self, "detail", _sanitize_detail(self.detail))
 
 
@@ -118,6 +125,8 @@ class SourcePlan:
             raise ValueError("allowed sources must be non-empty")
         if not set(preferred).issubset(allowed) or not set(fallback).issubset(allowed):
             raise ValueError("preferred and fallback sources must be allowed")
+        _boolean(self.required, "required")
+        _boolean(self.partial_allowed, "partial_allowed")
         object.__setattr__(self, "preferred_sources", preferred)
         object.__setattr__(self, "allowed_sources", allowed)
         object.__setattr__(self, "fallback_sources", fallback)
@@ -172,8 +181,8 @@ class DataResult:
     def __post_init__(self) -> None:
         if not isinstance(self.status, DataStatus):
             raise ValueError("status must be a DataStatus")
-        if not 0.0 <= self.coverage <= 1.0:
-            raise ValueError("coverage must be between 0.0 and 1.0")
+        if isinstance(self.coverage, bool) or not isinstance(self.coverage, Real) or not math.isfinite(self.coverage) or not 0.0 <= self.coverage <= 1.0:
+            raise ValueError("coverage must be a finite real number between 0.0 and 1.0")
         selected = None if self.selected_source is None else _source_id(self.selected_source)
         attempted = _string_tuple(self.attempted_sources, _source_id, "attempted sources")
         failures = tuple(self.failures)
@@ -181,6 +190,7 @@ class DataResult:
             raise ValueError("failures must be ProviderFailure values")
         if not isinstance(self.fetched_at, datetime) or self.fetched_at.tzinfo is None or self.fetched_at.utcoffset() is None:
             raise ValueError("fetched_at must be a timezone-aware datetime")
+        _boolean(self.from_cache, "from_cache")
         if self.status in (DataStatus.OK, DataStatus.PARTIAL) and selected is None:
             raise ValueError("successful or partial results require a selected source")
         if self.status is DataStatus.OK and self.coverage != 1.0:
