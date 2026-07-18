@@ -88,6 +88,12 @@ class _FakeHandler:
         self.calls.append(("read",))
         return self.payload
 
+    def _render_weekly_review_page(self) -> str:
+        return "weekly-page"
+
+    def _render_daily_market_brief_page(self) -> str:
+        return "daily-page"
+
     def _handle_weekly_review_read(self, query: dict[str, object]) -> None:
         self.calls.append(("weekly_read", query))
 
@@ -134,6 +140,18 @@ class AppGatewayDispatchTests(unittest.TestCase):
 
         self.assertEqual(weekly.calls, [("weekly_read", {"week_start": ["2026-07-13"]})])
         self.assertEqual(daily.calls, [("daily_read", {"market": ["HK"]})])
+
+    def test_page_routes_render_through_handler_owned_methods(self) -> None:
+        from investment_knowledge_mcp.app_gateway import dispatch_get
+
+        weekly = _FakeHandler("/weekly-review")
+        daily = _FakeHandler("/daily-market-brief")
+
+        dispatch_get(weekly)
+        dispatch_get(daily)
+
+        self.assertEqual([("html", HTTPStatus.OK, "weekly-page")], weekly.calls)
+        self.assertEqual([("html", HTTPStatus.OK, "daily-page")], daily.calls)
 
     def test_health_and_unknown_payloads_are_unchanged(self) -> None:
         from investment_knowledge_mcp.app_gateway import dispatch_get
@@ -207,7 +225,7 @@ class AppGatewayDispatchTests(unittest.TestCase):
 
     def test_direct_command_post_body_errors_match_legacy_command_handler(self) -> None:
         from investment_knowledge_mcp import app_gateway, command_api
-        from investment_knowledge_mcp.app_gateway import AppGatewayHandler
+        from investment_knowledge_mcp.weekly_review_web import WeeklyReviewWebHandler
 
         cases = (
             (
@@ -256,7 +274,7 @@ class AppGatewayDispatchTests(unittest.TestCase):
                 results = []
                 for handler_type, auth_target in (
                     (command_api.CommandRequestHandler, command_api),
-                    (AppGatewayHandler, app_gateway),
+                    (WeeklyReviewWebHandler, app_gateway),
                 ):
                     handler = object.__new__(handler_type)
                     handler.path = "/command"
@@ -273,52 +291,29 @@ class AppGatewayDispatchTests(unittest.TestCase):
                 self.assertEqual(results[0], results[1])
                 self.assertEqual([expected], results[0])
 
-    def test_legacy_and_gateway_handlers_share_the_exact_dispatch_methods(self) -> None:
-        from investment_knowledge_mcp.app_gateway import AppGatewayHandler
+    def test_gateway_exports_dispatch_only_and_production_handler_owns_http_methods(self) -> None:
+        from investment_knowledge_mcp import app_gateway
         from investment_knowledge_mcp.weekly_review_web import WeeklyReviewWebHandler
 
-        self.assertIs(AppGatewayHandler.do_GET, WeeklyReviewWebHandler.do_GET)
-        self.assertIs(AppGatewayHandler.do_POST, WeeklyReviewWebHandler.do_POST)
+        self.assertFalse(hasattr(app_gateway, "AppGatewayHandler"))
+        self.assertIn("dispatch_get", WeeklyReviewWebHandler.do_GET.__code__.co_names)
+        self.assertIn("dispatch_post", WeeklyReviewWebHandler.do_POST.__code__.co_names)
 
-    def test_handler_names_produce_equivalent_representative_get_responses(self) -> None:
-        from investment_knowledge_mcp.app_gateway import AppGatewayHandler
-        from investment_knowledge_mcp.weekly_review_web import WeeklyReviewWebHandler
+    def test_production_handler_render_methods_delegate_existing_renderers(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web as web
 
-        paths = (
-            "/health",
-            "/command",
-            "/api/weekly-review?week_start=2026-07-13",
-            "/api/daily-market-brief?market=HK",
-            "/missing",
-        )
-        for path in paths:
-            with self.subTest(path=path):
-                results = []
-                for handler_type in (WeeklyReviewWebHandler, AppGatewayHandler):
-                    handler = object.__new__(handler_type)
-                    handler.path = path
-                    handler.command = "GET"
-                    handler.headers = {}
-                    handler._write_json = mock.Mock()
-                    handler._write_html = mock.Mock()
-                    handler._handle_weekly_review_read = mock.Mock(
-                        side_effect=lambda query, target=handler: target._write_json(
-                            HTTPStatus.OK, {"ok": True, "surface": "weekly", "query": query}
-                        )
-                    )
-                    handler._handle_daily_market_brief_read = mock.Mock(
-                        side_effect=lambda query, target=handler: target._write_json(
-                            HTTPStatus.OK, {"ok": True, "surface": "daily", "query": query}
-                        )
-                    )
-                    handler.do_GET()
-                    results.append(
-                        (handler._write_json.call_args_list, handler._write_html.call_args_list)
-                    )
-                self.assertEqual(results[0], results[1])
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        with (
+            mock.patch.object(web, "render_weekly_review_workbench_html", return_value="weekly") as weekly,
+            mock.patch.object(web, "render_daily_market_brief_html", return_value="daily") as daily,
+        ):
+            self.assertEqual("weekly", handler._render_weekly_review_page())
+            self.assertEqual("daily", handler._render_daily_market_brief_page())
+
+        weekly.assert_called_once_with()
+        daily.assert_called_once_with()
 
     def test_main_starts_the_gateway_handler(self) -> None:
-        from investment_knowledge_mcp import app_gateway
         from investment_knowledge_mcp import weekly_review_web as web
 
         config = SimpleNamespace(weekly_review_web_host="127.0.0.1", weekly_review_web_port=8769)
@@ -329,7 +324,7 @@ class AppGatewayDispatchTests(unittest.TestCase):
         ):
             web.main()
 
-        server_type.assert_called_once_with(("127.0.0.1", 8769), app_gateway.AppGatewayHandler)
+        server_type.assert_called_once_with(("127.0.0.1", 8769), web.WeeklyReviewWebHandler)
         server.serve_forever.assert_called_once_with()
 
     def test_route_state_repr_contains_no_configured_token(self) -> None:

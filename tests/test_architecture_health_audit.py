@@ -15,6 +15,7 @@ except ModuleNotFoundError:
     route_findings = None
 else:
     RouteDeclaration = audit_architecture_health.RouteDeclaration
+    collect_python_modules = audit_architecture_health.collect_python_modules
     find_import_cycles = audit_architecture_health.find_import_cycles
     module_size_findings = getattr(audit_architecture_health, "module_size_findings", None)
     render_json = audit_architecture_health.render_json
@@ -78,6 +79,24 @@ class ArchitectureSkillCheckTests(TestCase):
 
 
 class ArchitectureAuditTests(TestCase):
+    def test_gateway_controller_web_import_cycle_is_absent_in_repository_graph(self) -> None:
+        package_root = Path(__file__).resolve().parents[1] / "investment_knowledge_mcp"
+        graph, parse_findings = collect_python_modules(package_root)
+
+        self.assertEqual([], parse_findings)
+        self.assertIn(
+            "investment_knowledge_mcp.app_gateway",
+            graph["investment_knowledge_mcp.weekly_review_web"],
+        )
+        matching = [
+            cycle
+            for cycle in find_import_cycles(graph)
+            if "investment_knowledge_mcp.app_gateway" in cycle
+            and "investment_knowledge_mcp.weekly_review_web" in cycle
+        ]
+
+        self.assertEqual([], matching)
+
     def test_large_module_is_report_only_with_a_bounded_slice(self) -> None:
         self.assertIsNotNone(module_size_findings, "module_size_findings must be implemented")
 
@@ -99,6 +118,10 @@ class ArchitectureAuditTests(TestCase):
         self.assertEqual(
             [("a", "b", "a")],
             find_import_cycles({"b": {"a"}, "a": {"b"}}),
+        )
+        self.assertEqual(
+            [("a", "b", "c", "a")],
+            find_import_cycles({"a": {"b"}, "b": {"c"}, "c": {"a"}}),
         )
 
     def test_route_contract_findings_name_missing_test_and_owner(self) -> None:

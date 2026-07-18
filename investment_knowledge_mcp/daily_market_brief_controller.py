@@ -7,9 +7,7 @@ from urllib.parse import ParseResult, parse_qs
 
 def dispatch_daily_market_brief_get(handler: Any, parsed: ParseResult) -> bool:
     if parsed.path == "/daily-market-brief":
-        from investment_knowledge_mcp.weekly_review_web import render_daily_market_brief_html
-
-        handler._write_html(HTTPStatus.OK, render_daily_market_brief_html())
+        handler._write_html(HTTPStatus.OK, handler._render_daily_market_brief_page())
         return True
     routes = {
         "/api/daily-market-brief": "_handle_daily_market_brief_read",

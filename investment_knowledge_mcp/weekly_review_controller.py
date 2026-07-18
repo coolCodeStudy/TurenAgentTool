@@ -8,9 +8,7 @@ from urllib.parse import ParseResult, parse_qs
 
 def dispatch_weekly_review_get(handler: Any, parsed: ParseResult) -> bool:
     if parsed.path in {"/", "/weekly-review"}:
-        from investment_knowledge_mcp.weekly_review_web import render_weekly_review_workbench_html
-
-        handler._write_html(HTTPStatus.OK, render_weekly_review_workbench_html())
+        handler._write_html(HTTPStatus.OK, handler._render_weekly_review_page())
         return True
     if parsed.path == "/api/weekly-review":
         handler._handle_weekly_review_read(parse_qs(parsed.query))

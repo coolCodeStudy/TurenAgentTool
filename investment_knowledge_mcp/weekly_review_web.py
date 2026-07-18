@@ -94,6 +94,12 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def _render_weekly_review_page(self) -> str:
+        return render_weekly_review_workbench_html()
+
+    def _render_daily_market_brief_page(self) -> str:
+        return render_daily_market_brief_html()
+
     def _handle_workbench_parse(self, payload: dict[str, Any]) -> None:
         response = execute_workbench_request(
             CommandHttpRequest(
@@ -2000,10 +2006,11 @@ def _first_query_value(payload: dict[str, Any], key: str) -> str | None:
 
 
 def main() -> None:
-    from investment_knowledge_mcp.app_gateway import AppGatewayHandler
-
     config = get_config()
-    server = ThreadingHTTPServer((config.weekly_review_web_host, config.weekly_review_web_port), AppGatewayHandler)
+    server = ThreadingHTTPServer(
+        (config.weekly_review_web_host, config.weekly_review_web_port),
+        WeeklyReviewWebHandler,
+    )
     print(
         f"Weekly Review Web listening on {config.weekly_review_web_host}:{config.weekly_review_web_port}",
         flush=True,

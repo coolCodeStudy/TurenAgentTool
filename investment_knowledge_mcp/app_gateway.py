@@ -155,12 +155,3 @@ def dispatch_post(handler: Any) -> None:
 
 def _write_not_found(handler: Any) -> None:
     handler._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
-
-
-# Imported after the dispatch functions so weekly_review_web can lazily delegate
-# here while this module still provides the compatibility subclass.
-from investment_knowledge_mcp.weekly_review_web import WeeklyReviewWebHandler
-
-
-class AppGatewayHandler(WeeklyReviewWebHandler):
-    """Composition root for all browser-facing application routes."""
