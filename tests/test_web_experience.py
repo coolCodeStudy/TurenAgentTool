@@ -377,7 +377,8 @@ assert.equal(nodes.get("#access-panel").hidden, true);
         )
 
     def test_command_api_authorization_reports_distinct_access_errors(self) -> None:
-        from investment_knowledge_mcp import command_api
+        from investment_knowledge_mcp.http_access import authorize_http
+        from investment_knowledge_mcp.web_access import AccessClass
 
         cases = (
             ({}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_required"),
@@ -386,19 +387,25 @@ assert.equal(nodes.get("#access-panel").hidden, true);
         )
         for headers, configured_token, expected_status, expected_error in cases:
             with self.subTest(expected_error=expected_error):
-                handler = object.__new__(command_api.CommandRequestHandler)
+                handler = SimpleNamespace()
+                handler.command = "POST"
                 handler.headers = headers
                 handler._write_json = mock.Mock()
-                config = SimpleNamespace(command_api_token=configured_token)
-                with mock.patch.object(command_api, "get_config", return_value=config):
-                    self.assertFalse(handler._require_authorized())
+                config = SimpleNamespace(
+                    app_access_token=configured_token,
+                    command_api_token=None,
+                    weekly_review_web_token=None,
+                )
+                with mock.patch("investment_knowledge_mcp.http_access.get_config", return_value=config):
+                    self.assertFalse(authorize_http(handler, AccessClass.PROTECTED))
 
                 status, payload = handler._write_json.call_args.args
                 self.assertEqual(expected_status, status)
                 self.assertEqual(expected_error, payload["error"])
 
     def test_weekly_command_authorization_reports_distinct_access_errors(self) -> None:
-        from investment_knowledge_mcp import weekly_review_web
+        from investment_knowledge_mcp.http_access import authorize_http
+        from investment_knowledge_mcp.web_access import AccessClass
 
         cases = (
             ({}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_required"),
@@ -407,15 +414,17 @@ assert.equal(nodes.get("#access-panel").hidden, true);
         )
         for headers, configured_token, expected_status, expected_error in cases:
             with self.subTest(expected_error=expected_error):
-                handler = object.__new__(weekly_review_web.WeeklyReviewWebHandler)
+                handler = SimpleNamespace()
+                handler.command = "POST"
                 handler.headers = headers
                 handler._write_json = mock.Mock()
                 config = SimpleNamespace(
-                    command_api_token=configured_token,
+                    app_access_token=configured_token,
+                    command_api_token=None,
                     weekly_review_web_token=None,
                 )
-                with mock.patch.object(weekly_review_web, "get_config", return_value=config):
-                    self.assertFalse(handler._authorized_for_command_workbench())
+                with mock.patch("investment_knowledge_mcp.http_access.get_config", return_value=config):
+                    self.assertFalse(authorize_http(handler, AccessClass.PROTECTED))
 
                 status, payload = handler._write_json.call_args.args
                 self.assertEqual(expected_status, status)

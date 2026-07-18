@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+from investment_knowledge_mcp import http_access
 from investment_knowledge_mcp import weekly_review_web as web
 
 
@@ -20,11 +21,12 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self._patches = ExitStack()
         self._patches.enter_context(
             mock.patch.object(
-                web,
+                http_access,
                 "get_config",
                 return_value=SimpleNamespace(
-                    weekly_review_web_token="configured-weekly-token",
-                    command_api_token="configured-command-token",
+                    app_access_token="configured-access-token",
+                    weekly_review_web_token="configured-access-token",
+                    command_api_token="configured-access-token",
                 ),
             )
         )
@@ -127,15 +129,20 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         cases = (
             (
                 SimpleNamespace(
-                    weekly_review_web_token="configured-weekly-token",
-                    command_api_token="configured-command-token",
+                    app_access_token="configured-access-token",
+                    weekly_review_web_token="configured-access-token",
+                    command_api_token="configured-access-token",
                 ),
                 {"Authorization": "Bearer synthetic-invalid"},
                 HTTPStatus.UNAUTHORIZED,
                 "access_rejected",
             ),
             (
-                SimpleNamespace(weekly_review_web_token=None, command_api_token=None),
+                SimpleNamespace(
+                    app_access_token=None,
+                    weekly_review_web_token=None,
+                    command_api_token=None,
+                ),
                 {},
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 "access_not_configured",
@@ -144,7 +151,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         for config, headers, expected_status, expected_error in cases:
             for method, path, payload in requests:
                 with self.subTest(error=expected_error, method=method, path=path):
-                    with mock.patch.object(web, "get_config", return_value=config):
+                    with mock.patch.object(http_access, "get_config", return_value=config):
                         status, _, body = self.request(method, path, payload=payload, headers=headers)
                     self.assertEqual(expected_status, status)
                     response = json.loads(body)
@@ -156,7 +163,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
             "POST",
             "/api/weekly-review/generate",
             payload={"week_start": WEEK_START},
-            headers={"Authorization": "Bearer configured-weekly-token"},
+            headers={"Authorization": "Bearer configured-access-token"},
         )
 
         payload = json.loads(body)
@@ -169,7 +176,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
             "POST",
             "/api/weekly-review/generate",
             payload={"week_start": WEEK_START},
-            headers={"X-Command-Token": "configured-command-token"},
+            headers={"X-Command-Token": "configured-access-token"},
         )
 
         payload = json.loads(body)
@@ -200,7 +207,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
                         method,
                         path,
                         payload=payload,
-                        headers={"Authorization": "Bearer configured-weekly-token"},
+                        headers={"Authorization": "Bearer configured-access-token"},
                     )
                     self.assertEqual(HTTPStatus.OK, status)
                     self.assertTrue(json.loads(body)["ok"])
@@ -282,8 +289,12 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertEqual("missing", payload["status"])
 
     def test_candidate_read_fails_closed_without_configured_tokens_while_weekly_read_stays_public(self) -> None:
-        config = SimpleNamespace(weekly_review_web_token=None, command_api_token=None)
-        with mock.patch.object(web, "get_config", return_value=config):
+        config = SimpleNamespace(
+            app_access_token=None,
+            weekly_review_web_token=None,
+            command_api_token=None,
+        )
+        with mock.patch.object(http_access, "get_config", return_value=config):
             weekly_status, _, weekly_body = self.request(
                 "GET",
                 f"/api/weekly-review?week_start={WEEK_START}",

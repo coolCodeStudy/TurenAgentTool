@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import hmac
 import json
 import os
 import re
@@ -36,12 +35,13 @@ from investment_knowledge_mcp.daily_market_jobs import (
     list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
+from investment_knowledge_mcp.http_access import authorize_http
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 from investment_knowledge_mcp.web_experience import (
-    access_error_payload,
     render_experience_css,
     render_primary_navigation,
 )
+from investment_knowledge_mcp.web_access import AccessClass
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -126,7 +126,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._handle_daily_market_brief_history_jobs_read(parse_qs(parsed.query))
             return
         if parsed.path == "/api/candidate-insights":
-            if not self._authorized(require_configured=True):
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             self._handle_candidate_insights(parse_qs(parsed.query))
             return
@@ -135,7 +135,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path in {"/api/command-workbench/parse", "/api/command-workbench/execute"}:
-            if not self._authorized_for_command_workbench():
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -147,7 +147,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/weekly-review/generate":
-            if not self._authorized(require_configured=True):
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -155,7 +155,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._handle_weekly_review_generate(payload, force=False)
             return
         if parsed.path == "/api/weekly-review/refresh":
-            if not self._authorized(require_configured=True):
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -163,7 +163,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._handle_weekly_review_generate(payload, force=True)
             return
         if parsed.path == "/api/weekly-review/save":
-            if not self._authorized(require_configured=True):
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -185,7 +185,7 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
 
         candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
         if candidate_match:
-            if not self._authorized(require_configured=True):
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             self._handle_candidate_decision(candidate_id=int(candidate_match.group(1)), action=candidate_match.group(2))
             return
@@ -514,69 +514,6 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
             return
         self._write_json(HTTPStatus.OK, {"ok": True, "result": result})
-
-    def _authorized_for_command_workbench(self) -> bool:
-        config = get_config()
-        supplied = _authorization_token(self.headers.get("Authorization"))
-        command_token = self.headers.get("X-Command-Token")
-        weekly_token = self.headers.get("X-Weekly-Review-Token")
-        configured_tokens = [
-            token for token in (config.command_api_token, config.weekly_review_web_token) if token
-        ]
-        supplied_tokens = [
-            token for token in (supplied, command_token, weekly_token) if token
-        ]
-        if not configured_tokens:
-            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, access_error_payload("access_not_configured"))
-            return False
-        if not supplied_tokens:
-            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
-            return False
-        candidates = [
-            (supplied, config.command_api_token),
-            (command_token, config.command_api_token),
-            (supplied, config.weekly_review_web_token),
-            (weekly_token, config.weekly_review_web_token),
-        ]
-        if any(
-            expected and supplied_token and hmac.compare_digest(supplied_token.strip(), expected)
-            for supplied_token, expected in candidates
-        ):
-            return True
-        self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
-        return False
-
-    def _authorized(self, *, require_configured: bool = False) -> bool:
-        config = get_config()
-        tokens = [token for token in (config.weekly_review_web_token, config.command_api_token) if token]
-        if not tokens:
-            if require_configured:
-                self._write_json(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    access_error_payload("access_not_configured"),
-                )
-                return False
-            return True
-        supplied_tokens = [
-            token
-            for token in (
-                _authorization_token(self.headers.get("Authorization")),
-                self.headers.get("X-Weekly-Review-Token"),
-                self.headers.get("X-Command-Token"),
-            )
-            if token and token.strip()
-        ]
-        if not supplied_tokens:
-            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
-            return False
-        if any(
-            hmac.compare_digest(supplied.strip(), configured)
-            for supplied in supplied_tokens
-            for configured in tokens
-        ):
-            return True
-        self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
-        return False
 
     def _read_json_body(self) -> dict[str, Any] | None:
         content_length = self.headers.get("Content-Length")
@@ -2161,10 +2098,6 @@ def _first_query_value(payload: dict[str, Any], key: str) -> str | None:
     return cleaned or None
 
 
-def _authorization_token(authorization: str | None) -> str | None:
-    if authorization and authorization.startswith("Bearer "):
-        return authorization.removeprefix("Bearer ").strip()
-    return None
 
 
 def main() -> None:

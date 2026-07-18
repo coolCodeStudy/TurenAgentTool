@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import hmac
 import json
 from typing import Any
 
@@ -16,7 +15,8 @@ from investment_knowledge_mcp.command_http import (
     execute_workbench_request,
 )
 from investment_knowledge_mcp.config import get_config
-from investment_knowledge_mcp.web_experience import access_error_payload
+from investment_knowledge_mcp.http_access import authorize_http
+from investment_knowledge_mcp.web_access import AccessClass
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -39,7 +39,7 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path in {"/api/command-workbench/parse", "/api/command-workbench/execute"}:
-            if not self._require_authorized():
+            if not authorize_http(self, AccessClass.PROTECTED):
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -54,7 +54,7 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
             return
 
-        if not self._require_authorized():
+        if not authorize_http(self, AccessClass.PROTECTED):
             return
 
         payload = self._read_json_body()
@@ -94,23 +94,6 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
             execute=True,
         )
         self._write_json(response.status, response.payload)
-
-    def _require_authorized(self) -> bool:
-        configured_token = get_config().command_api_token
-        supplied_token = _supplied_command_token(
-            self.headers.get("Authorization"),
-            self.headers.get("X-Command-Token"),
-        )
-        if not configured_token:
-            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, access_error_payload("access_not_configured"))
-            return False
-        if not supplied_token:
-            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
-            return False
-        if not hmac.compare_digest(supplied_token, configured_token):
-            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
-            return False
-        return True
 
     def _read_json_body(self) -> dict[str, Any] | None:
         content_length = self.headers.get("Content-Length")
@@ -155,14 +138,6 @@ class CommandRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-
-def _supplied_command_token(authorization: str | None, command_token: str | None) -> str:
-    if authorization and authorization.startswith("Bearer "):
-        return authorization.removeprefix("Bearer ").strip()
-    if command_token:
-        return command_token.strip()
-    return ""
 
 
 def main() -> None:
