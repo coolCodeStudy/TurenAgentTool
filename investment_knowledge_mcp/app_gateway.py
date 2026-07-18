@@ -29,8 +29,12 @@ class RouteContract:
     method: str
     pattern: str
     owner: str
-    access: str
+    access: AccessClass
     dynamic: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.access, AccessClass):
+            raise ValueError("route access must be an admitted AccessClass")
 
     def matches(self, method: str, path: str) -> bool:
         if method.upper() != self.method:
@@ -41,30 +45,30 @@ class RouteContract:
 
 
 _ROUTES = (
-    RouteContract("GET", "/", "weekly_review", "public_read"),
-    RouteContract("GET", "/weekly-review", "weekly_review", "public_read"),
-    RouteContract("GET", "/daily-market-brief", "daily_market_brief", "public_read"),
-    RouteContract("GET", "/health", "gateway", "public_read"),
-    RouteContract("GET", "/command", "command", "public_read"),
-    RouteContract("GET", "/api/command-workbench/actions", "command", "public_read"),
-    RouteContract("GET", "/api/weekly-review", "weekly_review", "public_read"),
-    RouteContract("GET", "/api/daily-market-brief", "daily_market_brief", "public_read"),
-    RouteContract("GET", "/api/daily-market-brief/dates", "daily_market_brief", "public_read"),
-    RouteContract("GET", "/api/daily-market-brief/history-jobs", "daily_market_brief", "public_read"),
-    RouteContract("GET", "/api/candidate-insights", "weekly_review", "protected"),
-    RouteContract("POST", "/api/command-workbench/parse", "command", "protected"),
-    RouteContract("POST", "/api/command-workbench/execute", "command", "protected"),
-    RouteContract("POST", "/command", "command", "protected"),
-    RouteContract("POST", "/api/weekly-review/generate", "weekly_review", "protected"),
-    RouteContract("POST", "/api/weekly-review/refresh", "weekly_review", "protected"),
-    RouteContract("POST", "/api/weekly-review/save", "weekly_review", "protected"),
-    RouteContract("POST", "/api/daily-market-brief/generate", "daily_market_brief", "tokenless"),
-    RouteContract("POST", "/api/daily-market-brief/history-jobs", "daily_market_brief", "tokenless"),
+    RouteContract("GET", "/", "weekly_review", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/weekly-review", "weekly_review", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/daily-market-brief", "daily_market_brief", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/health", "gateway", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/command", "command", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/command-workbench/actions", "command", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/weekly-review", "weekly_review", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/daily-market-brief", "daily_market_brief", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/daily-market-brief/dates", "daily_market_brief", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/daily-market-brief/history-jobs", "daily_market_brief", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/candidate-insights", "weekly_review", AccessClass.PROTECTED),
+    RouteContract("POST", "/api/command-workbench/parse", "command", AccessClass.PROTECTED),
+    RouteContract("POST", "/api/command-workbench/execute", "command", AccessClass.PROTECTED),
+    RouteContract("POST", "/command", "command", AccessClass.PROTECTED),
+    RouteContract("POST", "/api/weekly-review/generate", "weekly_review", AccessClass.PROTECTED),
+    RouteContract("POST", "/api/weekly-review/refresh", "weekly_review", AccessClass.PROTECTED),
+    RouteContract("POST", "/api/weekly-review/save", "weekly_review", AccessClass.PROTECTED),
+    RouteContract("POST", "/api/daily-market-brief/generate", "daily_market_brief", AccessClass.PUBLIC_READ),
+    RouteContract("POST", "/api/daily-market-brief/history-jobs", "daily_market_brief", AccessClass.PUBLIC_READ),
     RouteContract(
         "POST",
         r"/api/candidate-insights/(\d+)/(confirm|reject)",
         "weekly_review",
-        "protected",
+        AccessClass.PROTECTED,
         dynamic=True,
     ),
 )
@@ -85,7 +89,7 @@ def dispatch_get(handler: Any) -> None:
     if route is None:
         _write_not_found(handler)
         return
-    if route.access == "protected" and not authorize_http(handler, AccessClass.PROTECTED):
+    if not authorize_http(handler, route.access):
         return
     if route.owner == "weekly_review":
         dispatch_weekly_review_get(handler, parsed)
@@ -115,7 +119,7 @@ def dispatch_post(handler: Any) -> None:
     if route is None:
         _write_not_found(handler)
         return
-    if route.access == "protected" and not authorize_http(handler, AccessClass.PROTECTED):
+    if not authorize_http(handler, route.access):
         return
     if route.owner == "weekly_review":
         dispatch_weekly_review_post(handler, parsed)

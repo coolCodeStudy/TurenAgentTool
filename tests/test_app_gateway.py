@@ -8,8 +8,15 @@ from unittest import mock
 
 
 class AppGatewayRouteTableTests(unittest.TestCase):
+    def test_route_contract_rejects_unadmitted_access_value(self) -> None:
+        from investment_knowledge_mcp.app_gateway import RouteContract
+
+        with self.assertRaisesRegex(ValueError, "admitted AccessClass"):
+            RouteContract("POST", "/unsafe", "command", "protected")  # type: ignore[arg-type]
+
     def test_route_ownership_table_is_complete_and_preserves_access_classes(self) -> None:
         from investment_knowledge_mcp.app_gateway import route_contracts
+        from investment_knowledge_mcp.web_access import AccessClass
 
         actual = {
             (route.method, route.pattern): (route.owner, route.access)
@@ -17,28 +24,28 @@ class AppGatewayRouteTableTests(unittest.TestCase):
         }
         self.assertEqual(len(actual), len(route_contracts()), "route contracts must not contain duplicates")
         expected = {
-            ("GET", "/"): ("weekly_review", "public_read"),
-            ("GET", "/weekly-review"): ("weekly_review", "public_read"),
-            ("GET", "/daily-market-brief"): ("daily_market_brief", "public_read"),
-            ("GET", "/health"): ("gateway", "public_read"),
-            ("GET", "/command"): ("command", "public_read"),
-            ("GET", "/api/command-workbench/actions"): ("command", "public_read"),
-            ("GET", "/api/weekly-review"): ("weekly_review", "public_read"),
-            ("GET", "/api/daily-market-brief"): ("daily_market_brief", "public_read"),
-            ("GET", "/api/daily-market-brief/dates"): ("daily_market_brief", "public_read"),
-            ("GET", "/api/daily-market-brief/history-jobs"): ("daily_market_brief", "public_read"),
-            ("GET", "/api/candidate-insights"): ("weekly_review", "protected"),
-            ("POST", "/api/command-workbench/parse"): ("command", "protected"),
-            ("POST", "/api/command-workbench/execute"): ("command", "protected"),
-            ("POST", "/command"): ("command", "protected"),
-            ("POST", "/api/weekly-review/generate"): ("weekly_review", "protected"),
-            ("POST", "/api/weekly-review/refresh"): ("weekly_review", "protected"),
-            ("POST", "/api/weekly-review/save"): ("weekly_review", "protected"),
-            ("POST", "/api/daily-market-brief/generate"): ("daily_market_brief", "tokenless"),
-            ("POST", "/api/daily-market-brief/history-jobs"): ("daily_market_brief", "tokenless"),
+            ("GET", "/"): ("weekly_review", AccessClass.PUBLIC_READ),
+            ("GET", "/weekly-review"): ("weekly_review", AccessClass.PUBLIC_READ),
+            ("GET", "/daily-market-brief"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/health"): ("gateway", AccessClass.PUBLIC_READ),
+            ("GET", "/command"): ("command", AccessClass.PUBLIC_READ),
+            ("GET", "/api/command-workbench/actions"): ("command", AccessClass.PUBLIC_READ),
+            ("GET", "/api/weekly-review"): ("weekly_review", AccessClass.PUBLIC_READ),
+            ("GET", "/api/daily-market-brief"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/api/daily-market-brief/dates"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/api/daily-market-brief/history-jobs"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/api/candidate-insights"): ("weekly_review", AccessClass.PROTECTED),
+            ("POST", "/api/command-workbench/parse"): ("command", AccessClass.PROTECTED),
+            ("POST", "/api/command-workbench/execute"): ("command", AccessClass.PROTECTED),
+            ("POST", "/command"): ("command", AccessClass.PROTECTED),
+            ("POST", "/api/weekly-review/generate"): ("weekly_review", AccessClass.PROTECTED),
+            ("POST", "/api/weekly-review/refresh"): ("weekly_review", AccessClass.PROTECTED),
+            ("POST", "/api/weekly-review/save"): ("weekly_review", AccessClass.PROTECTED),
+            ("POST", "/api/daily-market-brief/generate"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("POST", "/api/daily-market-brief/history-jobs"): ("daily_market_brief", AccessClass.PUBLIC_READ),
             ("POST", r"/api/candidate-insights/(\d+)/(confirm|reject)"): (
                 "weekly_review",
-                "protected",
+                AccessClass.PROTECTED,
             ),
         }
         self.assertEqual(actual, expected)
@@ -66,6 +73,8 @@ class AppGatewayRouteTableTests(unittest.TestCase):
 class _FakeHandler:
     def __init__(self, path: str, *, payload: dict[str, object] | None = None) -> None:
         self.path = path
+        self.command = "POST" if path.startswith("/api/") and payload is not None else "GET"
+        self.headers: dict[str, str] = {}
         self.payload = payload if payload is not None else {}
         self.calls: list[tuple[object, ...]] = []
 
@@ -93,6 +102,27 @@ class _FakeHandler:
 
 
 class AppGatewayDispatchTests(unittest.TestCase):
+    def test_mixed_access_post_is_decided_by_shared_policy_before_body_read(self) -> None:
+        from investment_knowledge_mcp import app_gateway
+        from investment_knowledge_mcp.web_access import AccessClass
+
+        route = app_gateway.RouteContract(
+            "POST",
+            "/synthetic-mixed",
+            "command",
+            AccessClass.PUBLIC_READ_PROTECTED_WRITE,
+        )
+        handler = _FakeHandler("/synthetic-mixed", payload={"text": "must-not-read"})
+        handler.command = "POST"
+        with (
+            mock.patch.object(app_gateway, "_ROUTES", (route,)),
+            mock.patch.object(app_gateway, "authorize_http", return_value=False) as authorize,
+        ):
+            app_gateway.dispatch_post(handler)
+
+        authorize.assert_called_once_with(handler, AccessClass.PUBLIC_READ_PROTECTED_WRITE)
+        self.assertEqual([], handler.calls)
+
     def test_representative_weekly_and_daily_routes_delegate_without_moving_business_logic(self) -> None:
         from investment_knowledge_mcp.app_gateway import dispatch_get
 
@@ -229,6 +259,8 @@ class AppGatewayDispatchTests(unittest.TestCase):
                 for handler_type in (WeeklyReviewWebHandler, AppGatewayHandler):
                     handler = object.__new__(handler_type)
                     handler.path = path
+                    handler.command = "GET"
+                    handler.headers = {}
                     handler._write_json = mock.Mock()
                     handler._write_html = mock.Mock()
                     handler._handle_weekly_review_read = mock.Mock(
