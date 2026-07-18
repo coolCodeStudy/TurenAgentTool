@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import subprocess
+from threading import Event, Thread
 import unittest
 
 from investment_knowledge_mcp.scheduler_host import (
@@ -281,6 +282,93 @@ class SchedulerHostTests(unittest.TestCase):
 
 
 class HistoryChildSupervisorTests(unittest.TestCase):
+    def test_concurrent_polls_cannot_start_two_children(self) -> None:
+        probe_entered = Event()
+        release_probe = Event()
+        children: list[FakeChild] = []
+
+        def pending() -> bool:
+            probe_entered.set()
+            release_probe.wait(timeout=1.0)
+            return True
+
+        def factory() -> FakeChild:
+            child = FakeChild()
+            children.append(child)
+            return child
+
+        supervisor = HistoryChildSupervisor(pending, factory)
+        first = Thread(target=supervisor.poll)
+        first.start()
+        self.assertTrue(probe_entered.wait(timeout=1.0))
+
+        concurrent_state = supervisor.poll()
+        release_probe.set()
+        first.join(timeout=1.0)
+
+        self.assertFalse(first.is_alive())
+        self.assertTrue(concurrent_state.poll_in_flight)
+        self.assertEqual(1, len(children))
+        self.assertEqual(1, supervisor.health().starts)
+
+    def test_close_prevents_child_start_after_in_flight_probe(self) -> None:
+        probe_entered = Event()
+        release_probe = Event()
+        factory_calls = 0
+
+        def pending() -> bool:
+            probe_entered.set()
+            release_probe.wait(timeout=1.0)
+            return True
+
+        def factory() -> FakeChild:
+            nonlocal factory_calls
+            factory_calls += 1
+            return FakeChild()
+
+        supervisor = HistoryChildSupervisor(pending, factory)
+        polling = Thread(target=supervisor.poll)
+        polling.start()
+        self.assertTrue(probe_entered.wait(timeout=1.0))
+
+        close_state = supervisor.close(timeout_seconds=0.01)
+        release_probe.set()
+        polling.join(timeout=1.0)
+
+        self.assertFalse(close_state.running)
+        self.assertTrue(close_state.poll_in_flight)
+        self.assertEqual("close:poll_in_flight", close_state.last_error)
+        self.assertFalse(polling.is_alive())
+        self.assertEqual(0, factory_calls)
+        self.assertFalse(supervisor.health().running)
+
+    def test_close_discards_child_returned_by_in_flight_factory(self) -> None:
+        factory_entered = Event()
+        release_factory = Event()
+        child = FakeChild()
+
+        def factory() -> FakeChild:
+            factory_entered.set()
+            release_factory.wait(timeout=1.0)
+            return child
+
+        supervisor = HistoryChildSupervisor(lambda: True, factory)
+        polling = Thread(target=supervisor.poll)
+        polling.start()
+        self.assertTrue(factory_entered.wait(timeout=1.0))
+
+        close_state = supervisor.close(timeout_seconds=0.01)
+        release_factory.set()
+        polling.join(timeout=2.0)
+
+        self.assertFalse(close_state.running)
+        self.assertTrue(close_state.poll_in_flight)
+        self.assertFalse(polling.is_alive())
+        self.assertEqual(1, child.terminate_calls)
+        self.assertEqual([1.0], child.wait_calls)
+        self.assertFalse(supervisor.health().running)
+        self.assertEqual(0, supervisor.health().starts)
+
     def test_pending_work_starts_exactly_one_child_while_it_is_live(self) -> None:
         child = FakeChild()
         factory_calls = 0
