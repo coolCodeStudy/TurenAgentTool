@@ -986,11 +986,19 @@ def render_command_workbench_html() -> str:
     }
 
     async function postJson(url, serializedPayload) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { ...access.authorizationHeaders(), "Content-Type": "application/json" },
-        body: serializedPayload
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { ...access.authorizationHeaders(), "Content-Type": "application/json" },
+          body: serializedPayload,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       const data = await response.json();
       const recoveryStatus = access.classifyResponse(response.status, data).status;
       const isAccessRecovery = ["access_required", "access_rejected", "access_not_configured"]
