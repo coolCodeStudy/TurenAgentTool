@@ -41,7 +41,7 @@ class MemoryResultCache:
         self._entries: OrderedDict[tuple[DataRequest, str], tuple[float, DataResult]] = OrderedDict()
 
     def get(self, request: DataRequest, source_id: str) -> DataResult | None:
-        key = (request, source_id.casefold())
+        key = (request, _normalized_source_id(source_id))
         entry = self._entries.get(key)
         if entry is None:
             return None
@@ -107,7 +107,13 @@ class DataSourcePool:
 
             cached = self._cache.get(request, source_id) if self._cache is not None else None
             if cached is not None:
-                return _combined(cached, attempts, failures)
+                if cached.status is DataStatus.OK or plan.partial_allowed:
+                    return _combined(cached, attempts, failures)
+                current_failures = [_failure("partial_not_allowed", source_id, retryable=False, fallback_allowed=True)]
+                failures.extend(current_failures)
+                if self._may_advance(current_failures, candidates, index, plan):
+                    continue
+                break
 
             try:
                 provider_result = provider.fetch(request)

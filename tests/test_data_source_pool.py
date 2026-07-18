@@ -290,3 +290,28 @@ class DataSourcePoolTests(TestCase):
         for max_entries in (0, -1, True, 1.5):
             with self.subTest(max_entries=max_entries), self.assertRaises(ValueError):
                 MemoryResultCache(max_entries=max_entries)  # type: ignore[arg-type]
+
+    def test_cached_partial_obeys_the_current_plan_policy(self) -> None:
+        cache = MemoryResultCache(clock=lambda: 0.0)
+        primary = Provider("primary", result(DataStatus.PARTIAL, "primary"))
+        fallback = Provider("fallback", result(DataStatus.OK, "fallback"))
+        pool = DataSourcePool(cache=cache, now=lambda: NOW)
+        pool.register(primary)
+        pool.register(fallback)
+
+        self.assertEqual(pool.fetch(request(), plan(partial_allowed=True)).selected_source, "primary")
+        actual = pool.fetch(request(), plan(partial_allowed=False))
+
+        self.assertEqual(actual.selected_source, "fallback")
+        self.assertEqual(actual.attempted_sources, ("primary", "fallback"))
+        self.assertEqual(actual.failures[0].code, "partial_not_allowed")
+        self.assertEqual(primary.calls, 1)
+
+    def test_cache_get_normalizes_and_validates_source_ids(self) -> None:
+        cache = MemoryResultCache(clock=lambda: 0.0)
+        cache.put(request(), " Primary ", result(DataStatus.OK, "primary"), 60)
+
+        self.assertIsNotNone(cache.get(request(), " PRIMARY "))
+        for invalid_source_id in ("", "   ", 1):
+            with self.subTest(invalid_source_id=invalid_source_id), self.assertRaises(ValueError):
+                cache.get(request(), invalid_source_id)  # type: ignore[arg-type]
