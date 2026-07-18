@@ -172,6 +172,55 @@ class SchedulerTopologyTests(unittest.TestCase):
         self.assertEqual("postgres", scheduler["environment"]["POSTGRES_HOST"])
         self.assertEqual("5432", scheduler["environment"]["POSTGRES_PORT"])
 
+    def test_all_application_services_ignore_host_database_overrides(self) -> None:
+        docker = shutil.which("docker")
+        if docker is None:
+            self.skipTest("Docker Compose is unavailable")
+        environment = {
+            **os.environ,
+            "POSTGRES_HOST": "host-db-override.invalid",
+            "POSTGRES_PORT": "65530",
+            "POSTGRES_HOST_PORT": "55432",
+            "APP_ACCESS_TOKEN": "test-only-placeholder",
+            "DINGTALK_STREAM_CLIENT_ID": "test-only-placeholder",
+            "DINGTALK_STREAM_CLIENT_SECRET": "test-only-placeholder",
+        }
+
+        result = subprocess.run(
+            (
+                docker,
+                "compose",
+                "-f",
+                "docker-compose.prod.yml",
+                "--profile",
+                "*",
+                "config",
+                "--format",
+                "json",
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        services = json.loads(result.stdout)["services"]
+
+        for service in APPLICATION_SERVICES:
+            with self.subTest(service=service):
+                self.assertEqual("postgres", services[service]["environment"]["POSTGRES_HOST"])
+                self.assertEqual("5432", services[service]["environment"]["POSTGRES_PORT"])
+        self.assertIn(
+            {"host_ip": "127.0.0.1", "published": "55432", "target": 5432},
+            [
+                {
+                    "host_ip": port.get("host_ip"),
+                    "published": port.get("published"),
+                    "target": port.get("target"),
+                }
+                for port in services["postgres"]["ports"]
+            ],
+        )
+
     def test_rendered_gateway_owns_both_ports_and_derives_canonical_access_token(self) -> None:
         docker = shutil.which("docker")
         if docker is None:
