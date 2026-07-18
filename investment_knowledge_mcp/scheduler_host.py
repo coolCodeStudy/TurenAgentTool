@@ -6,6 +6,7 @@ import math
 from numbers import Real
 import re
 import signal
+import subprocess
 from threading import Event
 from time import monotonic
 from typing import Callable, Protocol, Sequence
@@ -24,6 +25,146 @@ class JobExecutor(Protocol):
     def submit(self, callback: Callable[[], object]) -> SubmittedJob: ...
 
     def shutdown(self, *, wait: bool, cancel_futures: bool) -> None: ...
+
+
+class HistoryChildProcess(Protocol):
+    def poll(self) -> int | None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class HistoryChildState:
+    running: bool
+    starts: int
+    last_exit_code: int | None = None
+    last_error: str | None = None
+
+
+class HistoryChildSupervisor:
+    """Own at most one externally bounded history-worker subprocess."""
+
+    def __init__(
+        self,
+        pending_work: Callable[[], bool],
+        child_factory: Callable[[], HistoryChildProcess],
+    ) -> None:
+        if not callable(pending_work):
+            raise ValueError("pending_work must be callable")
+        if not callable(child_factory):
+            raise ValueError("child_factory must be callable")
+        self._pending_work = pending_work
+        self._child_factory = child_factory
+        self._child: HistoryChildProcess | None = None
+        self._starts = 0
+        self._last_exit_code: int | None = None
+        self._last_error: str | None = None
+        self._closed = False
+
+    def poll(self) -> HistoryChildState:
+        if self._child is not None:
+            try:
+                exit_code = self._child.poll()
+            except Exception as exc:
+                self._last_error = f"poll:{type(exc).__name__}"
+                return self.health()
+            if exit_code is None:
+                return self.health()
+            self._record_exit(exit_code)
+
+        if self._closed:
+            return self.health()
+        try:
+            pending = bool(self._pending_work())
+        except Exception as exc:
+            self._last_error = f"probe:{type(exc).__name__}"
+            return self.health()
+        if not pending:
+            return self.health()
+        try:
+            child = self._child_factory()
+            if child is None:
+                raise TypeError("child factory returned no process")
+        except Exception as exc:
+            self._last_error = f"factory:{type(exc).__name__}"
+            return self.health()
+        self._child = child
+        self._starts += 1
+        return self.health()
+
+    def health(self) -> HistoryChildState:
+        return HistoryChildState(
+            running=self._child is not None,
+            starts=self._starts,
+            last_exit_code=self._last_exit_code,
+            last_error=self._last_error,
+        )
+
+    def close(self, *, timeout_seconds: float = 5.0) -> HistoryChildState:
+        _require_positive_finite(timeout_seconds, "timeout_seconds")
+        self._closed = True
+        child = self._child
+        if child is None:
+            return self.health()
+
+        try:
+            exit_code = child.poll()
+        except Exception as exc:
+            self._last_error = f"close_poll:{type(exc).__name__}"
+        else:
+            if exit_code is not None:
+                self._record_exit(exit_code)
+                return self.health()
+
+        try:
+            child.terminate()
+            exit_code = child.wait(timeout=float(timeout_seconds))
+        except subprocess.TimeoutExpired:
+            return self._kill_and_reap(child, timeout_seconds=float(timeout_seconds))
+        except Exception as exc:
+            first_error = f"close:{type(exc).__name__}"
+            state = self._kill_and_reap(child, timeout_seconds=float(timeout_seconds))
+            if not state.running:
+                self._last_error = first_error
+                return self.health()
+            return state
+
+        self._record_exit(exit_code, already_reaped=True)
+        return self.health()
+
+    def _kill_and_reap(
+        self,
+        child: HistoryChildProcess,
+        *,
+        timeout_seconds: float,
+    ) -> HistoryChildState:
+        try:
+            child.kill()
+            exit_code = child.wait(timeout=timeout_seconds)
+        except Exception as exc:
+            self._last_error = f"close:{type(exc).__name__}"
+            return self.health()
+        self._record_exit(exit_code, already_reaped=True)
+        return self.health()
+
+    def _record_exit(self, exit_code: int, *, already_reaped: bool = False) -> None:
+        child = self._child
+        normalized_code = int(exit_code)
+        reap_error: str | None = None
+        if child is not None and not already_reaped:
+            try:
+                child.wait(timeout=0.0)
+            except Exception as exc:
+                reap_error = f"reap:{type(exc).__name__}"
+        self._child = None
+        self._last_exit_code = normalized_code
+        self._last_error = reap_error or (
+            None if normalized_code == 0 else f"exit:{normalized_code}"
+        )
 
 
 @dataclass(frozen=True)

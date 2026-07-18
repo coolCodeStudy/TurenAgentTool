@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+import subprocess
 import unittest
 
-from investment_knowledge_mcp.scheduler_host import JobDefinition, SchedulerHost
+from investment_knowledge_mcp.scheduler_host import (
+    HistoryChildSupervisor,
+    JobDefinition,
+    SchedulerHost,
+)
 
 
 class RecordingExecutor:
@@ -36,6 +41,44 @@ class RecordingExecutor:
 class FailingSubmitExecutor(RecordingExecutor):
     def submit(self, callback):
         raise RuntimeError("sensitive executor detail")
+
+
+class FakeChild:
+    def __init__(
+        self,
+        *,
+        returncode: int | None = None,
+        wait_times_out: bool = False,
+        terminate_error: Exception | None = None,
+    ) -> None:
+        self.returncode = returncode
+        self.wait_times_out = wait_times_out
+        self.terminate_error = terminate_error
+        self.poll_calls = 0
+        self.wait_calls: list[float | None] = []
+        self.terminate_calls = 0
+        self.kill_calls = 0
+
+    def poll(self) -> int | None:
+        self.poll_calls += 1
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls.append(timeout)
+        if self.wait_times_out and self.kill_calls == 0:
+            raise subprocess.TimeoutExpired("history-child", timeout)
+        if self.returncode is None:
+            self.returncode = -9 if self.kill_calls else -15
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        if self.terminate_error is not None:
+            raise self.terminate_error
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self.returncode = -9
 
 
 class SchedulerHostTests(unittest.TestCase):
@@ -235,6 +278,116 @@ class SchedulerHostTests(unittest.TestCase):
                 clock=lambda: 0.0,
                 executor=RecordingExecutor(),
             )
+
+
+class HistoryChildSupervisorTests(unittest.TestCase):
+    def test_pending_work_starts_exactly_one_child_while_it_is_live(self) -> None:
+        child = FakeChild()
+        factory_calls = 0
+
+        def factory() -> FakeChild:
+            nonlocal factory_calls
+            factory_calls += 1
+            return child
+
+        supervisor = HistoryChildSupervisor(lambda: True, factory)
+
+        first = supervisor.poll()
+        second = supervisor.poll()
+
+        self.assertTrue(first.running)
+        self.assertTrue(second.running)
+        self.assertEqual(1, first.starts)
+        self.assertEqual(1, factory_calls)
+
+    def test_no_child_is_created_without_pending_work(self) -> None:
+        factory_calls = 0
+
+        def factory() -> FakeChild:
+            nonlocal factory_calls
+            factory_calls += 1
+            return FakeChild()
+
+        state = HistoryChildSupervisor(lambda: False, factory).poll()
+
+        self.assertFalse(state.running)
+        self.assertEqual(0, state.starts)
+        self.assertEqual(0, factory_calls)
+
+    def test_clean_and_nonzero_exits_are_recorded_without_raising(self) -> None:
+        for exit_code in (0, 7):
+            with self.subTest(exit_code=exit_code):
+                child = FakeChild()
+                pending = iter((True, False))
+                supervisor = HistoryChildSupervisor(lambda: next(pending), lambda: child)
+                supervisor.poll()
+                child.returncode = exit_code
+
+                state = supervisor.poll()
+
+                self.assertFalse(state.running)
+                self.assertEqual(exit_code, state.last_exit_code)
+                self.assertEqual(None if exit_code == 0 else "exit:7", state.last_error)
+                self.assertEqual([0.0], child.wait_calls)
+
+    def test_crashed_child_can_be_replaced_when_work_remains(self) -> None:
+        first = FakeChild()
+        children = [first, FakeChild()]
+        supervisor = HistoryChildSupervisor(lambda: True, lambda: children.pop(0))
+        supervisor.poll()
+        first.returncode = 9
+
+        state = supervisor.poll()
+
+        self.assertTrue(state.running)
+        self.assertEqual(2, state.starts)
+        self.assertEqual(9, state.last_exit_code)
+        self.assertEqual("exit:9", state.last_error)
+
+    def test_factory_and_probe_failures_are_sanitized(self) -> None:
+        secret = "password=sensitive"
+
+        def factory() -> FakeChild:
+            raise RuntimeError(secret)
+
+        factory_state = HistoryChildSupervisor(lambda: True, factory).poll()
+        probe_state = HistoryChildSupervisor(
+            lambda: (_ for _ in ()).throw(ValueError(secret)), lambda: FakeChild()
+        ).poll()
+
+        self.assertEqual("factory:RuntimeError", factory_state.last_error)
+        self.assertEqual("probe:ValueError", probe_state.last_error)
+        self.assertNotIn(secret, repr(factory_state))
+        self.assertNotIn(secret, repr(probe_state))
+
+    def test_close_terminates_then_kills_and_reaps_a_live_child(self) -> None:
+        child = FakeChild(wait_times_out=True)
+        supervisor = HistoryChildSupervisor(lambda: True, lambda: child)
+        supervisor.poll()
+
+        state = supervisor.close(timeout_seconds=0.1)
+
+        self.assertFalse(state.running)
+        self.assertEqual(1, child.terminate_calls)
+        self.assertEqual(1, child.kill_calls)
+        self.assertEqual([0.1, 0.1], child.wait_calls)
+        self.assertEqual(-9, state.last_exit_code)
+
+    def test_close_still_kills_and_reaps_when_terminate_raises(self) -> None:
+        secret = "credential detail"
+        child = FakeChild(terminate_error=RuntimeError(secret))
+        supervisor = HistoryChildSupervisor(lambda: True, lambda: child)
+        supervisor.poll()
+
+        state = supervisor.close(timeout_seconds=0.1)
+
+        self.assertFalse(state.running)
+        self.assertEqual(1, child.terminate_calls)
+        self.assertEqual(1, child.kill_calls)
+        self.assertEqual([0.1], child.wait_calls)
+        self.assertEqual(-9, state.last_exit_code)
+        self.assertEqual("close:RuntimeError", state.last_error)
+        self.assertNotIn(secret, repr(state))
 
 
 if __name__ == "__main__":

@@ -349,6 +349,52 @@ class DailyMarketHistoryWorkerTests(unittest.TestCase):
         requeue.assert_called_once_with(now - timedelta(seconds=worker.STALE_AFTER_SECONDS))
         self.assertEqual(2, run_once.call_count)
 
+    def test_drain_until_idle_recovers_once_and_processes_every_available_item(self) -> None:
+        outcomes = iter(
+            (
+                {"item_id": 1, "status": "completed"},
+                {"item_id": 2, "status": "failed"},
+                {"item_id": 3, "status": "cancelled"},
+                {"item_id": 4, "status": "skipped"},
+                {"item_id": 5, "status": "lease_lost"},
+                None,
+            )
+        )
+        now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(worker, "_default_worker_name", return_value="stable-worker"),
+            mock.patch.object(worker, "_utcnow", return_value=now),
+            mock.patch.object(worker, "requeue_stale_history_items", return_value=2) as requeue,
+            mock.patch.object(worker, "run_worker_once", side_effect=outcomes) as run_once,
+        ):
+            processed = worker.drain_worker_until_idle()
+
+        self.assertEqual(5, processed)
+        requeue.assert_called_once_with(now - timedelta(seconds=worker.STALE_AFTER_SECONDS))
+        self.assertEqual(6, run_once.call_count)
+        self.assertEqual(
+            {"worker_name": "stable-worker"},
+            run_once.call_args_list[0].kwargs,
+        )
+        self.assertTrue(
+            all(call.kwargs == {"worker_name": "stable-worker"} for call in run_once.call_args_list)
+        )
+
+    def test_drain_cli_returns_fixed_nonzero_code_without_exception_message(self) -> None:
+        secret = "password=do-not-log"
+        with (
+            mock.patch.object(worker, "drain_worker_until_idle", side_effect=RuntimeError(secret)),
+            mock.patch.object(worker.LOGGER, "error") as log_error,
+        ):
+            exit_code = worker.main(["--drain-until-idle"])
+
+        self.assertEqual(worker.DRAIN_ERROR_EXIT_CODE, exit_code)
+        self.assertEqual(
+            ("history drain failed: exception_type=%s", "RuntimeError"),
+            log_error.call_args.args,
+        )
+        self.assertNotIn(secret, repr(log_error.call_args))
+
     def test_returns_none_when_queue_is_empty(self) -> None:
         with mock.patch.object(worker, "claim_next_history_item", return_value=None):
             self.assertIsNone(worker.run_worker_once(worker_name="fixture-worker"))
