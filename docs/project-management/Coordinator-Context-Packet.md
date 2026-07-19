@@ -17,7 +17,7 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
 - Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
-- Current authoritative branch/ref: code-review-approved head `61e950f` on `codex/stock-valuation-research`, based on `origin/main@ba49ccf`; final review found no remaining code blocker. No release ref is admitted yet.
+- Current authoritative branch/ref: code-review-approved head `61e950f` on `codex/stock-valuation-research`; semantic comparison against latest `origin/main@c58c41a` found only unrelated frontend/financial-workspace documentation changes and no stock-valuation runtime overlap. No release ref is admitted yet.
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
@@ -33,7 +33,7 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
 - Next owner: Feature Coordinator for release integration; after smoke, one independent Quality & Acceptance Lead owns `AT-2026-07-19-001` retest.
-- Next handoff: Reconcile latest main, push/report immutable candidate `61e950f` (or its post-reconciliation SHA), await shared-service comparison, then deploy once and route the same acceptance item to independent testing.
+- Next handoff: Push/report the immutable candidate `61e950f` (plus coordinator state commit) and semantic `origin/main@c58c41a` comparison, await shared-service comparison, then deploy once and route the same acceptance item to independent testing.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
 - Deploy decision: `dispatch_deploy_owner` is not needed; coordinator will `self_deploy` only after latest-main reconciliation, exact-ref push, and Frontend immutable-ref comparison clear. Mode is classifier-selected workflow `quick` with five existing application targets.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
