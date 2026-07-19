@@ -17,25 +17,25 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
 - Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
-- Current authoritative branch/ref: coordinator branch merge `bddfa0f`, including `origin/main@ba49ccf`; accepted local implementation/readiness ends at `c864dbb`. Latest-main reconciliation remains mandatory after whole-branch review.
+- Current authoritative branch/ref: repaired coordinator head `c92ce44`, based on and still containing current `origin/main@ba49ccf`. Latest-main reconciliation remains mandatory after fresh whole-branch re-review.
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
 - Quality route: `L3`
 - Route rationale: The feature changes an authenticated cloud Command Workbench, external data-source behavior, saved evidence, and the deployed release boundary.
-- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): No release ref is admitted. Route `L3`; surface `http://47.84.190.191:8010/command`; accepted task-scoped evidence ends at `c864dbb`, but the whole-branch review of `91acf60` rejected release on four Important and two Minor findings. Fix, fresh re-review, deploy event, cloud smoke, and independent result are pending. No protected credential value may enter evidence.
-- Current state: Product-ready PRD `91b741b`; plan status `implementation_changes_requested`; one bounded TDD fix wave is active after whole-branch `reject_and_return`. No deployment has started.
-- Known blockers: Release-blocking implementation gaps are semantic valuation/freshness/source content, typed confirmed-case handling, HK request-budget/single-collection behavior, and official-family counting. The exact specialist label and atomic artifact persistence are bundled into the same fix. No Owner decision or cross-feature conflict is currently required.
-- Active child threads or role sessions: One fresh Development Agent owns the complete whole-branch finding set under TDD. This Feature Coordinator owns the active polling/watch path and will apply the Return Gate immediately on completion.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): No release ref is admitted until fresh re-review. Route `L3`; surface `http://47.84.190.191:8010/command`; repair head `c92ce44` closes all rejected findings. Accepted local evidence is valuation 71/71, focused 144/144, preservation 88/88, broader 128/128, compilation, and diff checks. Deploy event, cloud smoke, and independent result are pending. No protected credential value may enter evidence.
+- Current state: Product-ready PRD `91b741b`; plan status `implementation_complete_pending_whole_branch_review`; Development repair `c92ce44` is accepted and a fresh complete-feature re-review is active. No deployment has started.
+- Known blockers: No open implementation finding or Owner decision. Release is gated by fresh re-review/latest-main reconciliation and a cross-feature deployment overlap: Frontend Experience is investigating truncation on shared `weekly-review-web`/`:8010`; this coordinator must report the exact immutable ref and five-service recreation set to thread `019f6b6b-76d0-7dd0-89cb-34a844098597` before deploy.
+- Active child threads or role sessions: One fresh Senior Code Reviewer owns the complete repaired feature review. This Feature Coordinator owns the active polling/watch path and will apply the Return Gate immediately on completion.
 - Watch contract:
   - Watched item: Development implementation/review return, serialized deploy, and one Quality & Acceptance return for release candidate `AT-2026-07-19-001`.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: One fresh Development Agent for the bounded whole-branch fix wave, watched by this Feature Coordinator.
-- Next handoff: Return one clean commit with exact RED/GREEN evidence for all six findings and focused/preservation/broader regressions. Coordinator then runs a fresh whole-branch re-review.
+- Next owner: One fresh Senior Code Reviewer for the complete repaired feature, watched by this Feature Coordinator.
+- Next handoff: Return a release verdict over current-main through `c92ce44`, including all prior reproductions, provider budget/cache behavior, canonical public projection, atomic persistence, and regressions.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
-- Deploy decision: `blocked` by rejected whole-branch review until the fix wave and fresh re-review pass; then reconcile latest `main`, push one immutable ref, and `self_deploy` through the shared serialized workflow if no deploy conflict exists.
+- Deploy decision: `blocked` until fresh whole-branch re-review, latest-main reconciliation, exact-ref push, and explicit Frontend Experience overlap coordination; then `self_deploy` through the shared serialized workflow if no deploy conflict exists.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
 - User decision needed: None for Product/technical delivery; final user acceptance remains explicit and cannot be inferred.
 - Completion gate: Independent cloud acceptance must pass before `ready_for_user_acceptance`; `product_done` additionally requires explicit Owner acceptance.
