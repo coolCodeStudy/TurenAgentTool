@@ -17,23 +17,23 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
 - Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
-- Current authoritative branch/ref: `origin/main@ba49ccf`; the active Task 1 review range remains based on merged `main@1feb45e` and will reconcile the newer release-lineage, active-SHA, and browser JavaScript/response-framing commits before Task 2 starts.
+- Current authoritative branch/ref: coordinator branch merge `bddfa0f`, including `origin/main@ba49ccf`; the exact 117-test valuation/preservation suite passed after reconciliation.
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
 - Quality route: `L3`
 - Route rationale: The feature changes an authenticated cloud Command Workbench, external data-source behavior, saved evidence, and the deployed release boundary.
-- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Release ref pending Development; route `L3`; surface `http://47.84.190.191:8010/command`; current developer baseline is 75 focused current-main tests passing and plan traceability covers all 17 PRD criteria; deploy event and independent result are pending; no protected credential value may enter evidence.
-- Current state: Product-ready PRD commit `91b741b`, ready current-main technical plan commit `fc07ebc`, and Task 1 domain/artifact range `fc9ab36..dd88c2e` are accepted. The canonical engine passed 40 focused valuation tests, the broader repository suite passed 759 with one skip, and final independent Task 1 review returned compliant/approved with no findings. Authoritative-main reconciliation is the active gate before Task 2 provider/source integration.
-- Known blockers: No product blocker. Historical implementation must be reconciled onto current `main` without reverting frontend, Kline, access, scheduler, deployment-control-plane, or shared-data-source changes.
-- Active child threads or role sessions: None during authoritative-main reconciliation. This Feature Coordinator remains the active watcher and will dispatch a fresh Task 2 Development Agent after the merge.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Release ref pending Development; route `L3`; surface `http://47.84.190.191:8010/command`; accepted evidence is Task 1 review plus 40 valuation tests, the 759-passed/1-skipped repository run, and the post-reconciliation 117-test preservation suite; plan traceability covers all 17 PRD criteria; deploy event and independent result are pending; no protected credential value may enter evidence.
+- Current state: Product-ready PRD commit `91b741b`, ready current-main technical plan commit `fc07ebc`, and Task 1 domain/artifact range `fc9ab36..dd88c2e` are accepted. The canonical engine passed final independent review with no findings, and merge `bddfa0f` reconciled authoritative `main@ba49ccf` without breaking the exact 117-test valuation/current-main preservation suite. Task 2 provider/source integration is active.
+- Known blockers: No product blocker and no current cross-feature integration blocker. Task 2 must preserve the accepted trust boundary and current-main browser/release contracts.
+- Active child threads or role sessions: One fresh Task 2 Development Agent for shared provider and official-source attempts. This Feature Coordinator owns the active polling/watch path and will apply the Return Gate immediately on completion.
 - Watch contract:
   - Watched item: Development implementation/review return, serialized deploy, and one Quality & Acceptance return for release candidate `AT-2026-07-19-001`.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: This Feature Coordinator for authoritative-main reconciliation, then a Task 2 Development Agent for current shared provider and official-source attempts.
-- Next handoff: Merge `origin/main@ba49ccf` without reverting browser/release contracts, generate the Task 2 brief from the accepted plan, and return injected-fixture/no-network provider tests plus a clean implementation commit for independent review.
+- Next owner: Task 2 Development Agent for current shared provider and official-source attempts, watched by this Feature Coordinator.
+- Next handoff: Return injected-fixture/no-network US/HK/KR provider tests, sanitized source/fallback evidence, and a clean `feat: add valuation data source adapters` implementation commit for independent review.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
 - Deploy decision: `blocked` until a current-main-compatible implementation ref passes Development and review gates; then `self_deploy` through the shared workflow if no serialized deploy conflict exists.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
