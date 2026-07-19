@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to implement this plan task by task, with a task-scoped review after each task and a whole-branch review before release.
 
-**Status:** implementation_complete_pending_whole_branch_review
+**Status:** implementation_changes_requested
 
 **Linked PRD:** [`PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -160,7 +160,7 @@ Coordinator cloud smoke must verify `/command`, the action catalog, authenticate
 |---|---|---|---|
 | 1 | Four Workbench actions and single normalized target | Command preview/execute tests and cloud catalog smoke | **verified** — `investment_knowledge_mcp/command_workbench.py`, `investment_knowledge_mcp/command_router.py`; `StockValuationWorkbenchTests` and `StockValuationCommandRouterTests` in `tests/test_command_workbench.py`/`tests/test_stock_valuation.py`; commits `d0e1cb1`, `4166469`; whole-branch focused suite 144/144. |
 | 2 | Five core plus three specialist-only method definitions | Method-library unit test and cloud methods command | **verified** — `test_public_interfaces_and_eight_method_definitions` asserts all eight exact Product names, including `Residual Income / ROE-PB`; whole-branch focused suite 144/144. |
-| 3 | 1-3 selected frames plus versioned saved artifact | Packet/card/save-load tests | **verified** — `investment_knowledge_mcp/stock_valuation.py` now takes a stock-scoped inter-process lock across collision detection and both atomic replacements, retains interruption semantics, and fsyncs the artifact directory; `test_same_stock_same_second_multiprocess_race_is_process_safe` and `test_identical_multiprocess_writes_are_idempotent` pass in the fresh 85-test valuation suite. |
+| 3 | 1-3 selected frames plus versioned saved artifact | Packet/card/save-load tests | **needs_review** — final hostile review reproduced a `KeyboardInterrupt` during temporary-file creation leaving a hidden artifact temp because cleanup catches `Exception`, not `BaseException`; interruption cleanup correction is active. |
 | 4 | Assumptions, supported market bridge, triggers, failures, confidence, freshness, gaps | Complete/degraded packet fixtures | **verified** — complete, stale, financial-missing, market-missing, and both-missing semantic fixtures assert as-of/freshness, per-frame assumptions/triggers/failures/confidence/provenance, bridge rendering, and recovery semantics; whole-branch focused suite 144/144. |
 | 5 | Locked `stock_valuation_packet.v1` schema | Exact-key and schema-version tests | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `test_builds_deterministic_packet_with_all_metrics_and_fact_refs` and loader canonicalization tests; commits `8ae5b91..dd88c2e`; 130/130. |
 | 6 | Source/period on facts and `input_refs` on calculations | Traceability assertions | **verified** — `investment_knowledge_mcp/stock_valuation.py`, `investment_knowledge_mcp/data_sources/valuation.py`; `test_bridge_lines_and_frame_scores_have_bounded_input_provenance`, `test_derived_calculations_flatten_all_upstream_fact_provenance`, `test_fact_and_source_ids_are_stable_opaque_and_all_refs_resolve`; commits `dd88c2e`, `a653725`; 130/130. |
