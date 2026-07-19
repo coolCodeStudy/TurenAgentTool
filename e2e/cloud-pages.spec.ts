@@ -15,9 +15,13 @@ for (const [route, heading] of [
 
     await expect(page.getByRole("main")).toBeVisible();
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();
-    await expect(page.locator("html")).toEvaluate(
-      (documentElement) => documentElement.scrollWidth <= documentElement.clientWidth,
-    );
+    await expect
+      .poll(() =>
+        page
+          .locator("html")
+          .evaluate((documentElement) => documentElement.scrollWidth <= documentElement.clientWidth),
+      )
+      .toBe(true);
   });
 }
 
