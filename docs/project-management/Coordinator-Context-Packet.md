@@ -17,25 +17,25 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
 - Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
-- Current authoritative branch/ref: rejected re-review head `eef6d2e`, based on current `origin/main@ba49ccf`. A second bounded fix and fresh full review are required before latest-main reconciliation.
+- Current authoritative branch/ref: hardened repair head `b789221`, based on current `origin/main@ba49ccf`. A third fresh full review and latest-main reconciliation are required before release.
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
 - Quality route: `L3`
 - Route rationale: The feature changes an authenticated cloud Command Workbench, external data-source behavior, saved evidence, and the deployed release boundary.
-- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): No release ref is admitted. Route `L3`; surface `http://47.84.190.191:8010/command`; local suites through `c92ce44` pass, but full re-review of `eef6d2e` rejected release on six Important findings. Second fix, fresh review, deploy event, cloud smoke, and independent result are pending. No protected credential value may enter evidence.
-- Current state: Product-ready PRD `91b741b`; plan status `implementation_changes_requested`; a second bounded TDD repair is active after fresh re-review `reject_and_return`. No deployment has started.
-- Known blockers: Release-blocking gaps are confirmation self-assertion, process-unsafe collision exclusion, deep-JSON boundary escape, unsupported Comparable confidence without peers, timeout/saturation mislabeled complete-missing, and missing visible Facts/Calculations card layers. No Owner decision is needed. Cross-feature coordination is only immutable-ref comparison before `weekly-review-web` recreation; Frontend confirms no ingress/Compose change is in flight.
-- Active child threads or role sessions: One fresh Development Agent owns all six findings under TDD. This Feature Coordinator owns the active polling/watch path and will apply the Return Gate immediately on completion.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): No release ref is admitted until the third fresh review. Route `L3`; surface `http://47.84.190.191:8010/command`; hardened head `b789221` has valuation 85/85, focused 158/158, preservation 88/88, broader 128/128, adversarial 11/11, compile, and diff evidence. Deploy event, cloud smoke, and independent result remain pending. No protected credential value may enter evidence.
+- Current state: Product-ready PRD `91b741b`; plan status `implementation_complete_pending_whole_branch_review`; the second Development repair is accepted and a third complete-feature review is active. No deployment has started.
+- Known blockers: No implementation finding is open from the second repair. Release is gated by the third fresh review/latest-main reconciliation and immutable-ref comparison before `weekly-review-web` recreation. Frontend confirms no ingress/Compose change is in flight; no Owner decision is needed.
+- Active child threads or role sessions: One third fresh Senior Code Reviewer owns the complete hardened feature review. This Feature Coordinator owns the active polling/watch path and will apply the Return Gate immediately on completion.
 - Watch contract:
   - Watched item: Development implementation/review return, serialized deploy, and one Quality & Acceptance return for release candidate `AT-2026-07-19-001`.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: One fresh Development Agent for the complete adversarial fix set, watched by this Feature Coordinator.
-- Next handoff: Return one clean commit with exact RED/GREEN evidence for all six findings and all required regression gates. Coordinator then runs a fresh complete-feature review.
+- Next owner: One third fresh Senior Code Reviewer for the complete hardened feature, watched by this Feature Coordinator.
+- Next handoff: Return a release verdict over current main through `b789221`, including all prior adversarial reproductions, canonical fail-closed semantics, process locks, provider outcomes, card safety, and regressions.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
-- Deploy decision: `blocked` until the second fix and fresh full review pass, then latest-main reconciliation/exact-ref push and Frontend immutable-ref comparison must clear before `self_deploy` through the serialized workflow.
+- Deploy decision: `blocked` until the third fresh full review and latest-main reconciliation pass, then exact-ref push and Frontend immutable-ref comparison must clear before `self_deploy` through the serialized workflow.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
 - User decision needed: None for Product/technical delivery; final user acceptance remains explicit and cannot be inferred.
 - Completion gate: Independent cloud acceptance must pass before `ready_for_user_acceptance`; `product_done` additionally requires explicit Owner acceptance.
