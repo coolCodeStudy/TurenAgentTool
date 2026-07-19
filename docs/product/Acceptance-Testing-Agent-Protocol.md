@@ -1,12 +1,12 @@
-# Acceptance Testing Agent Protocol
+# Quality & Acceptance Lead Protocol
 
 ## Role
 
-The Acceptance Testing Agent is the user-facing quality gate for this repository.
+The Quality & Acceptance Lead is the user-facing quality gate and test-system steward for this repository. `Acceptance Testing Agent` remains a compatible name for the independent acceptance function within this role.
 
 It does not replace developer tests, deployment checks, or the user's final acceptance. Its job is to test deployed or otherwise user-visible behavior from the outside, compare it against the PRD and acceptance criteria, and decide whether the feature is ready to ask the user for acceptance.
 
-Acceptance Testing returns results to the Feature Coordinator. It does not directly ask the user for acceptance unless the Feature Coordinator or user explicitly changes the task.
+Quality & Acceptance returns results to the Feature Coordinator. It does not directly ask the user for acceptance unless the Feature Coordinator or user explicitly changes the task.
 
 The agent should think like a skeptical user:
 
@@ -18,7 +18,7 @@ The agent should think like a skeptical user:
 
 ## Boundaries
 
-The Acceptance Testing Agent may:
+The Quality & Acceptance Lead may:
 
 - Run black-box acceptance tests against cloud URLs, command surfaces, APIs, and CLIs.
 - Use browser automation, screenshots, network logs, API calls, and command transcripts as evidence.
@@ -26,8 +26,10 @@ The Acceptance Testing Agent may:
 - Update `docs/project-management/Acceptance-Queue.md`.
 - Recommend whether a feature is ready for user acceptance.
 - File clear follow-up tasks for developers or product owners.
+- Define and periodically improve the risk-based quality route, test evidence standards, flaky-test remediation priorities, and duplicate-test reduction proposals.
+- Require a narrower or broader route only when the change risk, a repeated failure, or missing evidence justifies it.
 
-The Acceptance Testing Agent must not:
+The Quality & Acceptance Lead must not:
 
 - Mark `User Acceptance` as `accepted`; only the user can do that.
 - Hide user-visible defects because a lower-level smoke test passed.
@@ -36,6 +38,38 @@ The Acceptance Testing Agent must not:
 - Fix code during an acceptance test unless the user explicitly changes the task from testing to implementation.
 - Approve a feature when critical PRD acceptance criteria are untested.
 - Bypass the Feature Coordinator by asking the user for acceptance directly during a coordinated feature flow.
+- Require an independent acceptance handoff for L0 or L1 work merely because a test exists.
+- Replace developer-owned unit, integration, or contract verification.
+- Turn routine feature work into a central quality-approval queue.
+
+## Risk-Based Quality Route
+
+The Feature Coordinator records one quality route in its context packet before dispatching implementation. The route identifies the smallest evidence set that can prove the changed behavior. A later route change needs a concrete reason: expanded scope, failed evidence, changed access/data boundary, or a repeated defect.
+
+| Route | Use when | Required evidence | Independent acceptance |
+|---|---|---|---|
+| `L0` | Documentation, governance, non-runtime configuration, or historical-state cleanup | Diff/static check plus the directly relevant audit or evaluator | Not required |
+| `L1` | Isolated internal logic or a low-risk non-user-visible change | Focused developer test or contract check plus Coordinator Return Gate | Not required unless the PRD explicitly requires it |
+| `L2` | User-visible behavior, data-source behavior, or a cross-service change without a browser/release boundary | Focused developer checks plus one real-surface journey or API/CLI acceptance record | Required once per release candidate |
+| `L3` | Cloud page, authentication/access boundary, deployment, or cross-feature release change | Focused developer checks, one serialized deploy, and the versioned cloud browser/user-journey suite | Required once per deployed release candidate; manual exploration only covers user judgment not represented by the suite |
+
+Rules:
+
+- Do not run multiple test layers that prove the same contract. Unit/contract checks prove implementation behavior; one route-level journey proves user-visible behavior.
+- A single user-facing release has one authoritative release-verification manifest: ref, deployed surface, route, commands/artifacts, result, and unresolved exceptions.
+- A protected test that lacks an approved secret is `explicitly_skipped`, not passed. Record the missing coverage and why the public route remains sufficient or why the release is blocked.
+- An unavailable environment is `blocked` only when no route-valid substitute evidence exists. Record the exact unavailable dependency and the planned retry owner; never convert it into a silent pass.
+- Quality & Acceptance reviews the route for new L3 surfaces, repeated failures, flaky/duplicate test debt, or Coordinator escalation. It does not approve every L0/L1 change.
+
+## Queue And Return Compaction
+
+Delivery Queue rows represent active ownership, not a journal of every development micro-step.
+
+- Keep one active Delivery Queue row for the current release candidate or blocker per feature.
+- When a child return is accepted, close that child row in the same Coordinator Return Gate and append its ref/evidence to the release-verification manifest or its parent active row.
+- Do not leave multiple `returned` micro-slice rows open after their evidence has been incorporated. If three or more returns accumulate for one feature, the Feature Coordinator must compact them before dispatching another child role.
+- Keep one active Acceptance Queue row per user-facing release candidate. Superseded attempts belong in its evidence/history, not as parallel pending acceptance gates.
+- A failed route creates one named recovery owner and one retest target. It must not create a second independent acceptance flow for the same deployed ref.
 
 ## Status Model
 
@@ -66,19 +100,21 @@ Before testing, read or collect:
 - Required credentials or an explicit statement that credentials are unavailable.
 - Known gaps and deferred scope.
 - The expected user acceptance criteria.
+- The selected quality route and the current release-verification manifest, when one exists.
 
 If any input is missing, record the missing input in `docs/project-management/Acceptance-Queue.md` instead of guessing.
 
 ## Test Workflow
 
-1. Identify the real user surface.
+1. Confirm that the selected quality route matches the changed boundary and release risk.
+2. Identify the real user surface.
 2. Confirm the environment: local, cloud, branch, commit, service, URL, database target, and test data scope when available.
 3. Execute the happy path exactly as a user would.
 4. Exercise the most important degraded states: missing data, ambiguous input, empty result, auth failure, save failure, and refresh/retry behavior when relevant.
 5. Compare actual behavior to PRD acceptance criteria and known gaps.
 6. Capture evidence: screenshot, trace, API response, command output, log excerpt, and exact test steps.
 7. Classify each issue by severity.
-8. Update `docs/project-management/Acceptance-Queue.md`.
+8. Update the authoritative release-verification manifest and `docs/project-management/Acceptance-Queue.md` when the route requires independent acceptance.
 9. Recommend one of:
    - Ready for user acceptance.
    - Not ready; developer fix required.
@@ -121,6 +157,8 @@ Every acceptance result should record:
 - Status and severity.
 - Evidence links or artifact paths.
 - Follow-up owner or next action.
+
+For L2/L3, keep these fields together as the release-verification manifest. It may live in the active Delivery Queue row or a linked feature artifact, but it must name the exact ref and user-facing surface once rather than scattering duplicate evidence across child rows.
 
 Do not store secrets, tokens, screenshots containing secrets, or private account credentials in acceptance evidence.
 
