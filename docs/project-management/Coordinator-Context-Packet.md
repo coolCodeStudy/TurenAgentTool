@@ -17,25 +17,25 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
 - Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
-- Current authoritative branch/ref: final-review head `ea2f6a3`, based on current `origin/main@ba49ccf`; one hidden-temp interruption cleanup defect remains. A bounded correction and final full review are required before release.
+- Current authoritative branch/ref: code-review-approved head `61e950f` on `codex/stock-valuation-research`, based on `origin/main@ba49ccf`; final review found no remaining code blocker. No release ref is admitted yet.
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
 - Quality route: `L3`
 - Route rationale: The feature changes an authenticated cloud Command Workbench, external data-source behavior, saved evidence, and the deployed release boundary.
-- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): No release ref is admitted. Route `L3`; surface `http://47.84.190.191:8010/command`; `ea2f6a3` passes valuation 85/85, focused 158/158, preservation 88/88, broader 128/128, adversarial 11/11, compile, and diff, but final review found one hidden-temp interruption leak. Correction, final review, deploy event, cloud smoke, and independent result are pending. No protected credential value may enter evidence.
-- Current state: Product-ready PRD `91b741b`; plan status `implementation_changes_requested`; one bounded Development correction is active after final review `With fixes`. No deployment has started.
-- Known blockers: One release-blocking cleanup path remains: `_validated_packet_temp` must remove temp files for `BaseException` interruptions. Cross-feature coordination remains immutable-ref comparison only; Frontend confirms no ingress/Compose change is active. No Owner decision is needed.
-- Active child threads or role sessions: Existing Development Agent owns the one cleanup correction; this Feature Coordinator owns the active watch and will apply the Return Gate, then route final review.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Candidate `61e950f`, route `L3`, surface `http://47.84.190.191:8010/command`; final review independently passed valuation 87/87, focused 161/161, preservation 89/89, broader 129/129, adversarial 11/11, compile, and diff. No current-main release ref, deploy event, cloud smoke, or independent result exists. AC17 and Owner acceptance remain pending. No protected credential value may enter evidence.
+- Current state: Product-ready PRD `91b741b`; technical plan `implementation_complete_pending_release`; Development and final review are accepted at `61e950f`. No deployment has started.
+- Known blockers: No code blocker remains. The pre-deploy gate is an immutable candidate/ref comparison with the shared weekly-review service; Frontend confirms no ingress/Compose change is active. No Owner decision is needed.
+- Active child threads or role sessions: Development and final-review sessions returned and are closed; this Feature Coordinator owns the active watch for latest-main reconciliation, Frontend comparison, serialized deploy, cloud smoke, and independent acceptance.
 - Watch contract:
   - Watched item: Development implementation/review return, serialized deploy, and one Quality & Acceptance return for release candidate `AT-2026-07-19-001`.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: Existing Development Agent for the hidden-temp interruption correction, watched by this Feature Coordinator.
-- Next handoff: Return one clean commit with the BaseException cleanup regression and all prior gates; coordinator then runs one final complete-feature review.
+- Next owner: Feature Coordinator for release integration; after smoke, one independent Quality & Acceptance Lead owns `AT-2026-07-19-001` retest.
+- Next handoff: Reconcile latest main, push/report immutable candidate `61e950f` (or its post-reconciliation SHA), await shared-service comparison, then deploy once and route the same acceptance item to independent testing.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
-- Deploy decision: `blocked` until the cleanup correction and final full review pass, then latest-main reconciliation/exact-ref push and Frontend immutable-ref comparison must clear before `self_deploy` through the serialized workflow.
+- Deploy decision: `dispatch_deploy_owner` is not needed; coordinator will `self_deploy` only after latest-main reconciliation, exact-ref push, and Frontend immutable-ref comparison clear. Mode is classifier-selected workflow `quick` with five existing application targets.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
 - User decision needed: None for Product/technical delivery; final user acceptance remains explicit and cannot be inferred.
 - Completion gate: Independent cloud acceptance must pass before `ready_for_user_acceptance`; `product_done` additionally requires explicit Owner acceptance.
