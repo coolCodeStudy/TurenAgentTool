@@ -26,6 +26,7 @@ class AppGatewayRouteTableTests(unittest.TestCase):
         expected = {
             ("GET", "/"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/weekly-review"): ("weekly_review", AccessClass.PUBLIC_READ),
+            ("GET", "/assets/weekly-review.js"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/daily-market-brief"): ("daily_market_brief", AccessClass.PUBLIC_READ),
             ("GET", "/health"): ("gateway", AccessClass.PUBLIC_READ),
             ("GET", "/command"): ("command", AccessClass.PUBLIC_READ),
@@ -83,6 +84,9 @@ class _FakeHandler:
 
     def _write_html(self, status: HTTPStatus, content: str) -> None:
         self.calls.append(("html", status, content))
+
+    def _write_javascript(self, status: HTTPStatus, content: str) -> None:
+        self.calls.append(("javascript", status, content))
 
     def _read_json_body(self) -> dict[str, object] | None:
         self.calls.append(("read",))

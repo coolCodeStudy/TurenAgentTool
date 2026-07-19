@@ -51,6 +51,7 @@ class RouteContract:
 _ROUTES = (
     RouteContract("GET", "/", "weekly_review", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/weekly-review", "weekly_review", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/assets/weekly-review.js", "weekly_review", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/daily-market-brief", "daily_market_brief", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/health", "gateway", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/command", "command", AccessClass.PUBLIC_READ),
