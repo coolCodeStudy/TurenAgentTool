@@ -46,23 +46,31 @@ const protectedContracts = [
   { method: "post", path: "/api/candidate-insights/1/reject" },
 ] as const;
 
+const admittedDailyMarkets = ["CN", "HK", "US"] as const;
+
 async function readDailyMutationState(request: APIRequestContext) {
-  const [historyJobsResponse, cnDatesResponse] = await Promise.all([
+  const [historyJobsResponse, ...savedDatesResponses] = await Promise.all([
     request.get("/api/daily-market-brief/history-jobs"),
-    request.get("/api/daily-market-brief/dates?market=CN"),
+    ...admittedDailyMarkets.map((market) =>
+      request.get(`/api/daily-market-brief/dates?market=${market}`),
+    ),
   ]);
 
   expect(historyJobsResponse.status()).toBe(200);
-  expect(cnDatesResponse.status()).toBe(200);
+  for (const savedDatesResponse of savedDatesResponses) {
+    expect(savedDatesResponse.status()).toBe(200);
+  }
 
-  const [historyJobs, cnDates] = await Promise.all([
+  const [historyJobs, ...savedDates] = await Promise.all([
     historyJobsResponse.json(),
-    cnDatesResponse.json(),
+    ...savedDatesResponses.map((response) => response.json()),
   ]);
 
   return {
     historyJobIds: historyJobs.jobs.map((job: { id: number }) => job.id),
-    cnSavedDates: cnDates.dates,
+    savedDatesByMarket: Object.fromEntries(
+      admittedDailyMarkets.map((market, index) => [market, savedDates[index].dates]),
+    ),
   };
 }
 
