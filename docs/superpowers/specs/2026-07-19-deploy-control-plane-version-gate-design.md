@@ -25,7 +25,7 @@ Make an independent Ops control-plane version mismatch explicit and mechanically
 
 ### Selected: explicit version handshake and two-step release
 
-The Ops bootstrap records its resolved commit as `OPS_CONTROL_PLANE_REF`. Authenticated deployment status returns that exact SHA. The target-side classifier marks whether the diff changes any installed control-plane file. GitHub Actions compares the required target SHA with the installed control-plane SHA and stops before build when they differ. The Coordinator runs the existing serialized Ops API install workflow for the target SHA, waits for health, and reruns the same application deployment.
+The Ops bootstrap records its resolved commit as `OPS_CONTROL_PLANE_REF`. Authenticated deployment status returns that exact SHA. The target-side classifier marks whether the cumulative application diff changes any installed control-plane file. When it does, GitHub Actions classifies the narrower lineage from the installed control-plane ref to the target: it stops before build only when that lineage still contains control-plane changes. Documentation/test-only descendants of an installed control-plane ref remain compatible. The Coordinator runs the existing serialized Ops API install workflow for an incompatible target SHA, waits for health, and reruns the same application deployment.
 
 This preserves the current trust boundary and the global deployment lock while making the required ordering mechanical and observable.
 
@@ -53,7 +53,7 @@ Git diff collection disables rename collapsing so a rename includes the old inst
 
 ### Workflow gate
 
-The GitHub planning job reads both `current_sha` and `control_plane_ref` from `/deploy/status`. It emits both the target plan and the installed control-plane identity. A missing legacy identity is treated as incompatible and requires one explicit install. When the plan requires a control-plane update and the identities differ, the job fails before the image build with an actionable message naming the exact target SHA and the dedicated `ops-api.yml` install workflow.
+The GitHub planning job reads both `current_sha` and `control_plane_ref` from `/deploy/status`. It emits both the target plan and the installed control-plane identity. A missing legacy identity is treated as incompatible and requires one explicit install. When the cumulative plan includes control-plane changes and the identities differ, the job classifies `control_plane_ref..target_sha`; it fails before image build only when that delta still changes control-plane files, with an actionable message naming the target SHA and the dedicated `ops-api.yml` install workflow.
 
 After the dedicated install succeeds, rerunning the same target sees matching identities and proceeds through the existing plan, build, Ops API delegation, health, stability, and route checks.
 
@@ -61,7 +61,7 @@ After the dedicated install succeeds, rerunning the same target sees matching id
 
 The deployment engine converts classifier `ValueError` failures into a typed `DeploymentError` that says the installed control-plane contract rejected the target and requires an Ops API install. This is defense in depth for callers that bypass or predate the workflow gate. Selector mutation and service activation remain untouched.
 
-The engine also enforces the SHA comparison for every computed non-`no_deploy` plan that changes a control-plane file. Authenticated direct clients therefore cannot bypass the GitHub planning gate.
+The engine applies the same lineage check for every computed non-`no_deploy` plan whose cumulative application diff changes a control-plane file. Authenticated direct clients therefore cannot bypass the GitHub planning gate, while documentation/test-only descendants do not force redundant control-plane restarts.
 
 ## Verification
 

@@ -656,10 +656,23 @@ class DeploymentEngine:
             and requires_control_plane_update(context.computed_plan.changed_files)
             and self.control_plane_ref != context.target_sha
         ):
-            raise DeploymentError(
-                "Ops control plane update required: installed control-plane ref "
-                f"does not match target {context.target_sha}"
-            )
+            try:
+                control_plane_delta = self.plan_builder(
+                    self.repo,
+                    self.control_plane_ref,
+                    context.target_sha,
+                    self.runner,
+                )
+            except ValueError as error:
+                raise DeploymentError(
+                    "Ops control plane update required: installed control-plane ref "
+                    f"cannot classify target {context.target_sha}: {error}"
+                ) from error
+            if requires_control_plane_update(control_plane_delta.changed_files):
+                raise DeploymentError(
+                    "Ops control plane update required: installed control-plane ref "
+                    f"does not cover target {context.target_sha}"
+                )
         context.plan = self._validate_request(request, context.computed_plan)
         if context.plan.mode is DeployMode.NO_DEPLOY:
             return DeployOutcome(

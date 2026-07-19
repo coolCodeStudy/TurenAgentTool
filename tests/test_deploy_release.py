@@ -32,6 +32,7 @@ from scripts.deploy_support import CommandResult
 OLD_SHA = "a" * 40
 TARGET_SHA = "b" * 40
 OLDER_SHA = "0" * 40
+CONTROL_PLANE_SHA = "c" * 40
 
 
 def _without_compose_file(command: tuple[str, ...]) -> tuple[str, ...]:
@@ -1141,6 +1142,38 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual([], self.stage_calls)
         self.assertIn("Ops control plane update required", outcome.message)
         self.assertIn(TARGET_SHA, outcome.message)
+
+    def test_installed_control_plane_covers_later_docs_only_target(self) -> None:
+        cumulative_plan = replace(
+            self.plan,
+            changed_files=(
+                "scripts/deploy_contract.py",
+                "investment_knowledge_mcp/weekly_review_web.py",
+                "docs/project-management/Delivery-Queue.md",
+            ),
+        )
+        lineage_plan = DeploymentPlan(
+            mode=DeployMode.NO_DEPLOY,
+            targets=(),
+            changed_files=("docs/project-management/Delivery-Queue.md",),
+            image_input_files=(),
+            reasons=("documentation",),
+        )
+        bases: list[str] = []
+
+        def classify_by_base(repo, base_sha, target_sha, runner):
+            del repo, target_sha, runner
+            bases.append(base_sha)
+            return lineage_plan if base_sha == CONTROL_PLANE_SHA else cumulative_plan
+
+        self.engine.plan_builder = classify_by_base
+        self.engine.control_plane_ref = CONTROL_PLANE_SHA
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual([OLD_SHA, CONTROL_PLANE_SHA], bases)
+        self.assertEqual([TARGET_SHA], self.stage_calls)
 
     def test_manual_quick_cannot_bypass_control_plane_only_ref_mismatch(self) -> None:
         self.plan = DeploymentPlan(
