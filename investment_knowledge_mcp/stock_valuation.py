@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import fcntl
 import hashlib
 import json
 import math
@@ -33,13 +35,18 @@ _SAFE_PERIOD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FACT_METRICS = frozenset({"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capex", "free_cash_flow", "cash", "debt", "net_debt", "shares_outstanding", "price", "market_cap", "enterprise_value", "ebitda", "book_value"})
 _MONEY_METRICS = _FACT_METRICS - {"shares_outstanding", "price"}
 _SOURCE_FAMILIES = frozenset({"company_ir", "market_snapshot", "official_financial", "regulator_filing", "unknown", "vendor_financial"})
-_SOURCE_STATUSES = frozenset({"available", "attempted", "complete_missing", "failed", "failure", "missing", "not_attempted", "partial", "present", "stale", "success", "unavailable", "unknown"})
+_SOURCE_STATUSES = frozenset({"available", "attempted", "complete_missing", "failed", "failure", "missing", "not_attempted", "partial", "present", "stale", "success", "timeout", "unavailable", "unknown"})
 _FRESHNESS_LABELS = frozenset({"latest_filing", "latest_market_session", "fresh", "stale"})
 _MISSING_CATEGORIES = frozenset({"market_data", "official_financial_facts"})
 _SOURCE_STATES = frozenset({"complete", "stale", "financial_missing", "market_missing", "both_missing"})
 _MARKET_FACT_METRICS = frozenset({"price", "market_cap", "enterprise_value", "shares_outstanding"})
 _OFFICIAL_FAMILIES = frozenset({"official_financial", "regulator_filing", "company_ir"})
 _MARKET_STALE_AFTER = timedelta(days=7)
+_PEER_STALE_AFTER = timedelta(days=30)
+_MAX_ARTIFACT_BYTES = 1_000_000
+_MAX_JSON_DEPTH = 40
+_MAX_JSON_CONTAINERS = 2_048
+_MAX_JSON_NODES = 10_000
 _STOCK_WRITE_LOCKS = tuple(threading.Lock() for _ in range(64))
 _CURRENT_MARKET_STATUSES = frozenset({"available", "present", "success"})
 _LIMITED_MARKET_STATUSES = frozenset({"partial", "stale"})
@@ -86,6 +93,8 @@ _GAP_COPY = {
     "missing_net_income": "net income is missing",
     "missing_source_metadata": "source metadata is missing",
     "missing_confirmed_case": "no user-confirmed valuation case",
+    "missing_peer_evidence": "comparable peer evidence is missing",
+    "stale_peer_evidence": "comparable peer evidence is stale",
 }
 _REASON_COPY = {
     **_GAP_COPY,
@@ -143,7 +152,16 @@ def build_valuation_artifact(
     facts = [_decorate_fact(fact, currency) for fact in facts]
     coverage = _coverage(facts, registry, safe_snapshot, instant)
     confirmed_case = _confirmed_case(safe_context, symbol, market)
-    domain = _canonical_domain(stock, facts, registry, confirmed_case, market, str(coverage["market_snapshot_status"]))
+    peer_evidence = _normalize_peer_evidence(safe_context, safe_snapshot, symbol, market, instant)
+    domain = _canonical_domain(
+        stock,
+        facts,
+        registry,
+        confirmed_case,
+        peer_evidence,
+        market,
+        str(coverage["market_snapshot_status"]),
+    )
     calculations, gap_codes = domain["calculations"], domain["gap_codes"]
     identity_codes = []
     if context_mismatch:
@@ -158,7 +176,7 @@ def build_valuation_artifact(
         "stock": stock,
         "target_resolution": _target_resolution(symbol, market, currency, _mapping_category(safe_snapshot)),
         "facts": facts,
-        "assumptions": _assumptions(confirmed_case, selected),
+        "assumptions": _assumptions(confirmed_case, peer_evidence, selected),
         "deterministic_calculations": calculations,
         "internal_frame_scores": scores,
         "selected_frames": selected,
@@ -180,12 +198,20 @@ def load_latest_valuation_artifact(*, symbol: str, market: str, output_dir: Path
     if not path.is_file():
         return None
     try:
-        packet = json.loads(path.read_text(encoding="utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
-    except (OSError, json.JSONDecodeError, ValueError):
+        with path.open("rb") as handle:
+            raw = handle.read(_MAX_ARTIFACT_BYTES + 1)
+        if len(raw) > _MAX_ARTIFACT_BYTES:
+            return None
+        packet = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+        )
+        _ensure_bounded_json_tree(packet)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
         return None
     try:
         return packet if isinstance(packet, dict) and _valid_packet(packet, symbol, market) else None
-    except (OverflowError, TypeError, ValueError):
+    except (OverflowError, RecursionError, TypeError, ValueError):
         return None
 
 
@@ -203,16 +229,35 @@ def render_valuation_card(packet: dict[str, object]) -> str:
     public = _checked_public_projection(packet)
     stock, degraded = public["stock"], public["degraded_state"]
     coverage = public["source_coverage"]
-    calculations = {str(item["metric"]): item for item in public["deterministic_calculations"]}
     target = ".".join(str(stock[key]) for key in ("market", "symbol") if stock.get(key))
     lines = [f"Valuation research card: {target}{' ' + str(stock['name']) if stock.get('name') else ''}".rstrip(), f"Status: {'degraded' if degraded.get('degraded') else 'ok'}", "Data gaps:"]
     lines.extend(f"- {gap}" for gap in degraded.get("data_gaps", []))
     if not degraded.get("data_gaps"):
         lines.append("- none identified by the normalized packet")
-    lines.append("Valuation snapshot:")
-    for label, metric in (("Market cap", "market_cap"), ("Enterprise value", "enterprise_value"), ("FCF margin", "fcf_margin"), ("PE", "pe"), ("P/S", "ps"), ("EV/EBITDA", "ev_ebitda"), ("EV/FCF", "ev_fcf")):
-        if metric in calculations:
-            lines.append(f"- {label}: {calculations[metric]['display_value']}")
+    lines.append("Facts:")
+    if public["facts"]:
+        for fact in public["facts"]:
+            observed = (
+                f"period {fact['period_end']}" if fact.get("period_end")
+                else f"as of {fact['timestamp']}" if fact.get("timestamp")
+                else "period unavailable"
+            )
+            lines.append(
+                f"- {fact['metric']}: {fact['display_value']} "
+                f"({fact['source_family']}; {observed})"
+            )
+    else:
+        lines.append("- none available")
+    lines.append("Calculations:")
+    if public["deterministic_calculations"]:
+        for calculation in public["deterministic_calculations"]:
+            refs = ", ".join(str(ref) for ref in calculation.get("input_refs", [])[:8])
+            lines.append(
+                f"- {calculation['metric']}: {calculation['display_value']} "
+                f"(inputs: {refs or 'unavailable'})"
+            )
+    else:
+        lines.append("- none available")
     lines.append("Data freshness:")
     lines.append(f"- Financials as of: {coverage.get('financials_as_of', 'unavailable')}")
     lines.append(f"- Market data as of: {coverage.get('market_data_as_of', 'unavailable')}")
@@ -220,6 +265,16 @@ def render_valuation_card(packet: dict[str, object]) -> str:
     lines.append("Source coverage:")
     lines.append(f"- Attempted source families: {', '.join(coverage.get('attempted_source_families', [])) or 'none'}")
     lines.append(f"- Missing categories: {', '.join(coverage.get('missing_categories', [])) or 'none'}")
+    retry_attempts = [
+        item for item in coverage.get("source_attempts", [])
+        if isinstance(item, dict) and item.get("status") in {"failed", "timeout"}
+    ]
+    if retry_attempts:
+        retry_summary = ", ".join(
+            f"{item['family']} ({'timed out' if item['status'] == 'timeout' else 'failed'})"
+            for item in retry_attempts
+        )
+        lines.append(f"- Retry needed: {retry_summary}")
     recovery = {
         "financial_missing": "official financial facts are missing",
         "market_missing": "current market data is missing",
@@ -489,7 +544,13 @@ def _calculate(values: dict[str, float], facts: dict[str, str], currency: str | 
     return result
 
 
-def _data_gap_codes(values: dict[str, float], calculations: list[dict[str, object]], registry: list[dict[str, object]], confirmed_case: bool) -> list[str]:
+def _data_gap_codes(
+    values: dict[str, float],
+    calculations: list[dict[str, object]],
+    registry: list[dict[str, object]],
+    confirmed_case: bool,
+    peer_evidence: dict[str, object],
+) -> list[str]:
     del confirmed_case
     derived, gaps = {str(item["metric"]) for item in calculations}, []
     if "price" not in values and "market_cap" not in values: gaps.append("missing_market_data")
@@ -497,15 +558,27 @@ def _data_gap_codes(values: dict[str, float], calculations: list[dict[str, objec
     for metric in ("revenue", "free_cash_flow", "net_income"):
         if metric not in values and metric not in derived: gaps.append(f"missing_{metric.replace('free_cash_flow', 'fcf')}")
     if not any(item.get("source_type") != "unknown" for item in registry): gaps.append("missing_source_metadata")
+    if peer_evidence.get("status") == "missing":
+        gaps.append("missing_peer_evidence")
+    elif peer_evidence.get("status") == "stale_candidate":
+        gaps.append("stale_peer_evidence")
     return gaps
 
 
-def _frame_supported(frame_id: str, values: dict[str, float], calculations: list[dict[str, object]], market_status: str | None = None) -> bool:
+def _frame_supported(
+    frame_id: str,
+    values: dict[str, float],
+    calculations: list[dict[str, object]],
+    market_status: str | None = None,
+    peer_evidence: dict[str, object] | None = None,
+) -> bool:
     calculated = {str(item["metric"]): item for item in calculations}
     if frame_id == "fcf": return "free_cash_flow" in values or {"operating_cash_flow", "capex"} <= values.keys()
     if frame_id == "comparable_multiples":
         market_value = values.get("market_cap") if "market_cap" in values else _calculated_value(calculated.get("market_cap"))
         if _market_fit_state(market_status) == "unsupported": return False
+        if not isinstance(peer_evidence, dict) or peer_evidence.get("status") not in {"candidate", "stale_candidate"}:
+            return False
         return market_value is not None and market_value > 0 and any((values.get(metric) or 0) > 0 for metric in ("revenue", "net_income", "ebitda"))
     return True
 
@@ -516,10 +589,18 @@ def _market_fit_state(status: str | None) -> str:
     return "unsupported"
 
 
-def _score_frames(stock: dict[str, object], values: dict[str, float], calculations: list[dict[str, object]], gaps: list[str], facts: dict[str, str], market_status: str | None = None) -> list[dict[str, object]]:
+def _score_frames(
+    stock: dict[str, object],
+    values: dict[str, float],
+    calculations: list[dict[str, object]],
+    gaps: list[str],
+    facts: dict[str, str],
+    market_status: str | None = None,
+    peer_evidence: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
     score = {"fcf": .15, "comparable_multiples": .2, "sotp_asset_value": .05, "cyclical": .05, "growth_scenario": .1}
     if _frame_supported("fcf", values, calculations): score["fcf"] += .55
-    if _frame_supported("comparable_multiples", values, calculations, market_status): score["comparable_multiples"] += .45
+    if _frame_supported("comparable_multiples", values, calculations, market_status, peer_evidence): score["comparable_multiples"] += .45
     matched = {key: [] for key in score}
     signals = stock.get("scoring_signals") if isinstance(stock.get("scoring_signals"), dict) else {}
     for frame_id in _FRAME_WORDS:
@@ -557,7 +638,16 @@ def _calculated_value(item: dict[str, object] | None) -> float | None:
     return _finite(item.get("value")) if _finite(item.get("value")) is not None else _finite(item.get("raw_value"))
 
 
-def _build_bridge(values: dict[str, float], calculations: list[dict[str, object]], scores: list[dict[str, object]], gaps: list[str], currency: str | None, facts: dict[str, str], market_status: str | None = None) -> dict[str, object]:
+def _build_bridge(
+    values: dict[str, float],
+    calculations: list[dict[str, object]],
+    scores: list[dict[str, object]],
+    gaps: list[str],
+    currency: str | None,
+    facts: dict[str, str],
+    market_status: str | None = None,
+    peer_evidence: dict[str, object] | None = None,
+) -> dict[str, object]:
     derived = {str(item["metric"]): item for item in calculations}
     enterprise_value = values.get("enterprise_value") if values.get("enterprise_value") is not None else _calculated_value(derived.get("enterprise_value"))
     revenue, lines = values.get("revenue"), []
@@ -567,10 +657,17 @@ def _build_bridge(values: dict[str, float], calculations: list[dict[str, object]
     if (fcf_yield := derived.get("fcf_yield")) and isinstance(fcf_yield.get("display_value"), str): add("fcf_yield", "FCF yield is not meaningful with negative FCF." if fcf_yield.get("meaningful") is False else f"FCF yield: {fcf_yield['display_value']}.", fcf_yield["input_refs"])
     ranking = []
     for item in scores:
-        supported = _frame_supported(str(item["id"]), values, calculations, market_status)
-        limited = item["id"] == "comparable_multiples" and _market_fit_state(market_status) == "limited"
+        frame_gaps = list(gaps) if item["id"] == "comparable_multiples" else [
+            gap for gap in gaps if gap not in {"missing_peer_evidence", "stale_peer_evidence"}
+        ]
+        supported = _frame_supported(str(item["id"]), values, calculations, market_status, peer_evidence)
+        limited = item["id"] == "comparable_multiples" and (
+            _market_fit_state(market_status) == "limited"
+            or (isinstance(peer_evidence, dict) and peer_evidence.get("status") == "stale_candidate")
+        )
+        unconfirmed_peer = item["id"] == "comparable_multiples" and isinstance(peer_evidence, dict) and peer_evidence.get("status") in {"candidate", "stale_candidate"}
         fit = "insufficient_data" if not supported else "partial_fit" if limited else "fits" if item["score"] >= .6 else "partial_fit" if item["score"] >= .2 else "insufficient_data"
-        ranking.append({**item, "fit_to_current_market_value": fit, "why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": list(gaps), "confidence": "low" if gaps or not supported or limited else "medium"})
+        ranking.append({**item, "fit_to_current_market_value": fit, "why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": frame_gaps, "confidence": "low" if frame_gaps or not supported or limited or unconfirmed_peer else "medium"})
     return {"bridge_lines": lines, "frame_fit_ranking": ranking}
 
 
@@ -668,9 +765,14 @@ def _watch_items(selected: list[dict[str, object]]) -> list[str]:
     return result
 
 
-def _assumptions(confirmed_case: bool, selected: list[dict[str, object]]) -> dict[str, object]:
+def _assumptions(
+    confirmed_case: bool,
+    peer_evidence: dict[str, object],
+    selected: list[dict[str, object]],
+) -> dict[str, object]:
     return {
         "user_confirmed_valuation_case": confirmed_case,
+        "peer_evidence": dict(peer_evidence),
         "items": list(_ASSUMPTIONS),
         "by_frame": [
             {"frame_id": str(item["id"]), "items": list(_CORE_BY_ID[str(item["id"])]["assumptions"])}
@@ -692,30 +794,105 @@ def _infer_currency(facts: list[dict[str, object]], market: str) -> str | None:
 
 
 def _confirmed_case(context: dict[str, object], symbol: str, market: str) -> bool:
-    cases = context.get("valuation_cases")
-    if not isinstance(cases, list):
-        return False
-    for item in cases:
-        if not isinstance(item, dict):
-            continue
-        if (
-            item.get("schema") == "stock_valuation_case.v1"
-            and item.get("confirmed_by_user") is True
-            and _optional_target(item.get("symbol")) == symbol
-            and _optional_target(item.get("market")) == market
-        ):
-            return True
+    del context, symbol, market
+    # P0 has no trusted repository/verifier argument at artifact load time.
+    # A stored boolean or checksum would therefore be self-asserted and forgeable.
     return False
 
 
-def _canonical_domain(stock: dict[str, object], facts: list[dict[str, object]], registry: list[dict[str, object]], confirmed_case: bool, market: str, market_status: str | None = None) -> dict[str, object]:
+def _normalize_peer_evidence(
+    context: dict[str, object],
+    snapshot: dict[str, object],
+    symbol: str,
+    market: str,
+    created_at: datetime,
+) -> dict[str, object]:
+    result = _missing_peer_evidence()
+    for owner in (context, snapshot):
+        raw = owner.get("peer_evidence")
+        if not isinstance(raw, dict) or raw.get("schema") != "stock_valuation_peer_evidence.v1":
+            continue
+        if raw.get("status") not in {"candidate", "manual_candidate", "confirmed"}:
+            continue
+        as_of = _timestamp(raw.get("as_of"))
+        peers = raw.get("peers")
+        if as_of is None or not isinstance(peers, (list, tuple)) or not 1 <= len(peers) <= 3:
+            continue
+        normalized_peers: set[tuple[str, str]] = set()
+        for peer in peers:
+            if not isinstance(peer, dict):
+                normalized_peers.clear()
+                break
+            peer_symbol = _optional_target(peer.get("symbol"))
+            peer_market = _optional_target(peer.get("market"))
+            if not peer_symbol or not peer_market or (peer_symbol, peer_market) == (symbol, market):
+                normalized_peers.clear()
+                break
+            normalized_peers.add((peer_symbol, peer_market))
+        if not normalized_peers or len(normalized_peers) != len(peers):
+            continue
+        observed_at = datetime.fromisoformat(as_of)
+        if observed_at > created_at + timedelta(days=1):
+            continue
+        status = "stale_candidate" if created_at - observed_at > _PEER_STALE_AFTER else "candidate"
+        result = {
+            "status": status,
+            "as_of": as_of,
+            "peer_count": len(normalized_peers),
+            "user_confirmed": False,
+        }
+    return result
+
+
+def _missing_peer_evidence() -> dict[str, object]:
+    return {"status": "missing", "peer_count": 0, "user_confirmed": False}
+
+
+def _canonical_peer_evidence(value: object, created_at: datetime) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return _missing_peer_evidence()
+    status = value.get("status")
+    peer_count = value.get("peer_count")
+    if status == "missing" and peer_count == 0 and value.get("user_confirmed") is False:
+        return _missing_peer_evidence()
+    as_of = _timestamp(value.get("as_of"))
+    if (
+        status not in {"candidate", "stale_candidate"}
+        or not isinstance(peer_count, int)
+        or isinstance(peer_count, bool)
+        or not 1 <= peer_count <= 3
+        or value.get("user_confirmed") is not False
+        or as_of is None
+    ):
+        return _missing_peer_evidence()
+    observed_at = datetime.fromisoformat(as_of)
+    if observed_at > created_at + timedelta(days=1):
+        return _missing_peer_evidence()
+    canonical_status = "stale_candidate" if created_at - observed_at > _PEER_STALE_AFTER else "candidate"
+    return {
+        "status": canonical_status,
+        "as_of": as_of,
+        "peer_count": peer_count,
+        "user_confirmed": False,
+    }
+
+
+def _canonical_domain(
+    stock: dict[str, object],
+    facts: list[dict[str, object]],
+    registry: list[dict[str, object]],
+    confirmed_case: bool,
+    peer_evidence: dict[str, object],
+    market: str,
+    market_status: str | None = None,
+) -> dict[str, object]:
     values = {str(fact["metric"]): float(fact["value"]) for fact in facts}
     fact_refs = {str(fact["metric"]): str(fact["id"]) for fact in facts}
     currency = _infer_currency(facts, market)
     calculations = _calculate(values, fact_refs, currency)
-    gaps = _data_gap_codes(values, calculations, registry, confirmed_case)
-    scores = _score_frames(stock, values, calculations, gaps, fact_refs, market_status)
-    bridge = _build_bridge(values, calculations, scores, gaps, currency, fact_refs, market_status)
+    gaps = _data_gap_codes(values, calculations, registry, confirmed_case, peer_evidence)
+    scores = _score_frames(stock, values, calculations, gaps, fact_refs, market_status, peer_evidence)
+    bridge = _build_bridge(values, calculations, scores, gaps, currency, fact_refs, market_status, peer_evidence)
     return {"values": values, "currency": currency, "calculations": calculations, "gap_codes": gaps, "scores": scores, "bridge": bridge, "selected": _select_frames(bridge["frame_fit_ranking"])}
 
 
@@ -760,32 +937,36 @@ def _write_packet(packet: dict[str, object], output_dir: Path, symbol: str, mark
     timestamped = directory / f"{symbol}_{market}_valuation_{instant.strftime('%Y%m%dT%H%M%SZ')}.json"
     latest = directory / f"{symbol}_{market}_valuation_latest.json"
     serialized = json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    if len(serialized.encode("utf-8")) > _MAX_ARTIFACT_BYTES:
+        raise ValueError("valuation artifact exceeds byte limit")
     lock = _stock_write_lock(directory, symbol, market)
     with lock:
-        if timestamped.is_file():
-            try:
-                existing = timestamped.read_text(encoding="utf-8")
-            except OSError as exc:
-                raise FileExistsError("valuation artifact timestamp collision") from exc
-            if existing != serialized:
-                raise FileExistsError("valuation artifact timestamp collision")
+        with _interprocess_stock_write_lock(directory, symbol, market):
+            if timestamped.is_file():
+                try:
+                    existing = timestamped.read_text(encoding="utf-8")
+                except OSError as exc:
+                    raise FileExistsError("valuation artifact timestamp collision") from exc
+                if existing != serialized:
+                    raise FileExistsError("valuation artifact timestamp collision")
 
-        timestamp_temp: Path | None = None
-        latest_temp: Path | None = None
-        try:
-            timestamp_temp = _validated_packet_temp(
-                directory, timestamped.name, serialized, symbol=symbol, market=market,
-            )
-            latest_temp = _validated_packet_temp(
-                directory, latest.name, serialized, symbol=symbol, market=market,
-            )
-            os.replace(timestamp_temp, timestamped)
-            os.replace(latest_temp, latest)
-        finally:
-            if timestamp_temp is not None:
-                timestamp_temp.unlink(missing_ok=True)
-            if latest_temp is not None:
-                latest_temp.unlink(missing_ok=True)
+            timestamp_temp: Path | None = None
+            latest_temp: Path | None = None
+            try:
+                timestamp_temp = _validated_packet_temp(
+                    directory, timestamped.name, serialized, symbol=symbol, market=market,
+                )
+                latest_temp = _validated_packet_temp(
+                    directory, latest.name, serialized, symbol=symbol, market=market,
+                )
+                os.replace(timestamp_temp, timestamped)
+                os.replace(latest_temp, latest)
+                _fsync_directory(directory)
+            finally:
+                if timestamp_temp is not None:
+                    timestamp_temp.unlink(missing_ok=True)
+                if latest_temp is not None:
+                    latest_temp.unlink(missing_ok=True)
     return timestamped
 
 
@@ -793,6 +974,29 @@ def _stock_write_lock(directory: Path, symbol: str, market: str) -> threading.Lo
     key = f"{directory.resolve()}\0{market}\0{symbol}".encode("utf-8")
     index = int.from_bytes(hashlib.sha256(key).digest()[:2], "big") % len(_STOCK_WRITE_LOCKS)
     return _STOCK_WRITE_LOCKS[index]
+
+
+@contextmanager
+def _interprocess_stock_write_lock(directory: Path, symbol: str, market: str):
+    lock_path = directory / f".{symbol}_{market}_valuation.lock"
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _validated_packet_temp(
@@ -832,8 +1036,9 @@ def _validated_packet_temp(
 
 def _checked_public_projection(packet: dict[str, object]) -> dict[str, object]:
     try:
+        _ensure_bounded_json_tree(packet)
         return _public_projection(packet)
-    except (OverflowError, TypeError, ValueError) as exc:
+    except (OverflowError, RecursionError, TypeError, ValueError) as exc:
         raise ValueError("valuation packet contains unsupported nested values") from exc
 
 
@@ -848,10 +1053,23 @@ def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     facts = _project_facts(packet.get("facts"), registry_by_id)
     internal_stock = _project_stock(packet.get("stock"), symbol, market) if has_input_identity and not stock_mismatch else ({"symbol": symbol, "market": market} if has_input_identity else {})
     raw_assumptions = packet.get("assumptions") if isinstance(packet.get("assumptions"), dict) else {}
-    confirmed = raw_assumptions.get("user_confirmed_valuation_case") is True and has_input_identity and not stock_mismatch
+    confirmed = False
     created_at = _datetime_from_timestamp(input_data.get("created_at")) or datetime.fromtimestamp(0, timezone.utc)
+    peer_evidence = (
+        _missing_peer_evidence()
+        if identity_mismatch
+        else _canonical_peer_evidence(raw_assumptions.get("peer_evidence"), created_at)
+    )
     coverage = _project_coverage(raw_coverage, facts, registry, created_at)
-    domain = _canonical_domain(internal_stock, facts, registry, confirmed, market, _status(coverage.get("market_snapshot_status")))
+    domain = _canonical_domain(
+        internal_stock,
+        facts,
+        registry,
+        confirmed,
+        peer_evidence,
+        market,
+        _status(coverage.get("market_snapshot_status")),
+    )
     allowed = _allowed_refs({str(item["id"]) for item in facts}, internal_stock)
     calculations = _matching_records(packet.get("deterministic_calculations"), domain["calculations"], "metric", ("value", "raw_value", "meaningful", "meaningfulness_reason", "formula", "inputs", "input_refs", "currency"), allowed)
     scores = _matching_records(packet.get("internal_frame_scores"), domain["scores"], "id", ("score", "input_refs"), allowed)
@@ -864,7 +1082,7 @@ def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     if target_mismatch: identity_codes.append("snapshot_identity_mismatch")
     reasons = _reason_codes(domain["gap_codes"], coverage, internal_stock, identity_codes)
     public_selected = [_public_frame(item) for item in selected]
-    assumptions = _assumptions(confirmed, public_selected)
+    assumptions = _assumptions(confirmed, peer_evidence, public_selected)
     degraded = {
         **_degraded_state(reasons, list(domain["gap_codes"]), coverage),
         "reasons": [_REASON_COPY[code] for code in reasons],
@@ -1001,14 +1219,60 @@ def _project_safety() -> dict[str, object]:
 
 # Strict internal packet validation ---------------------------------------
 
+def _ensure_bounded_json_tree(value: object) -> None:
+    stack: list[tuple[object, int]] = [(value, 0)]
+    nodes = 0
+    containers = 0
+    text_bytes = 0
+    while stack:
+        current, depth = stack.pop()
+        nodes += 1
+        if nodes > _MAX_JSON_NODES or depth > _MAX_JSON_DEPTH:
+            raise ValueError("JSON shape exceeds valuation artifact limits")
+        if current is None or isinstance(current, bool):
+            continue
+        if isinstance(current, str):
+            text_bytes += len(current.encode("utf-8"))
+            if text_bytes > _MAX_ARTIFACT_BYTES:
+                raise ValueError("JSON text exceeds valuation artifact limits")
+            continue
+        if isinstance(current, int):
+            if current.bit_length() > 4096:
+                raise ValueError("integer exceeds valuation artifact limits")
+            continue
+        if isinstance(current, float):
+            if not math.isfinite(current):
+                raise ValueError("non-finite number is not supported")
+            continue
+        if not isinstance(current, (dict, list, tuple)):
+            raise TypeError("valuation packet must contain JSON-compatible values")
+        containers += 1
+        if containers > _MAX_JSON_CONTAINERS:
+            raise ValueError("JSON container count exceeds valuation artifact limits")
+        if isinstance(current, dict):
+            for key, item in current.items():
+                if not isinstance(key, str):
+                    raise TypeError("valuation packet keys must be strings")
+                text_bytes += len(key.encode("utf-8"))
+                if text_bytes > _MAX_ARTIFACT_BYTES:
+                    raise ValueError("JSON text exceeds valuation artifact limits")
+                stack.append((item, depth + 1))
+        else:
+            stack.extend((item, depth + 1) for item in current)
+
+
 def _plain(value: object) -> object:
-    return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+    _ensure_bounded_json_tree(value)
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+    except RecursionError as exc:
+        raise ValueError("valuation packet contains unsupported nested values") from exc
 
 
 def _valid_packet(packet: dict[str, object], symbol: str, market: str) -> bool:
     if set(packet) != _PACKET_KEYS or packet.get("schema") != "stock_valuation_packet.v1": return False
     try: plain = _plain(packet)
-    except (TypeError, ValueError, json.JSONDecodeError): return False
+    except (RecursionError, TypeError, ValueError, json.JSONDecodeError): return False
     assert isinstance(plain, dict)
     input_data, stock = plain.get("input"), plain.get("stock")
     if not isinstance(input_data, dict) or set(input_data) != {"symbol", "market", "command", "created_at"}: return False
@@ -1020,12 +1284,22 @@ def _valid_packet(packet: dict[str, object], symbol: str, market: str) -> bool:
     if facts != plain.get("facts"): return False
     raw_assumptions = plain.get("assumptions")
     if not isinstance(raw_assumptions, dict) or not isinstance(raw_assumptions.get("user_confirmed_valuation_case"), bool): return False
+    if raw_assumptions.get("user_confirmed_valuation_case") is not False: return False
     created_at = _datetime_from_timestamp(input_data.get("created_at"))
     if created_at is None: return False
+    peer_evidence = _canonical_peer_evidence(raw_assumptions.get("peer_evidence"), created_at)
     expected_coverage = _coverage(facts, registry, coverage, created_at)
     if coverage != _plain(expected_coverage): return False
-    domain = _canonical_domain(stock, facts, registry, raw_assumptions["user_confirmed_valuation_case"] is True, market, _status(coverage.get("market_snapshot_status")))
-    assumptions = _assumptions(raw_assumptions["user_confirmed_valuation_case"] is True, domain["selected"])
+    domain = _canonical_domain(
+        stock,
+        facts,
+        registry,
+        False,
+        peer_evidence,
+        market,
+        _status(coverage.get("market_snapshot_status")),
+    )
+    assumptions = _assumptions(False, peer_evidence, domain["selected"])
     if assumptions != plain.get("assumptions"): return False
     raw_target = plain.get("target_resolution"); mapping = _enum(raw_target.get("mapping_category"), frozenset(_MAPPING_MAP.values())) if isinstance(raw_target, dict) else None
     if raw_target != _target_resolution(symbol, market, domain["currency"], mapping): return False

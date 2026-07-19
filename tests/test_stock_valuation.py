@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import inspect
 import json
 import math
+import multiprocessing
 import os
 from pathlib import Path
 import tempfile
@@ -14,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from investment_knowledge_mcp import command_router
+from investment_knowledge_mcp import valuation_data_provider as valuation_provider
 from investment_knowledge_mcp.command_workbench import parse_workbench_command
 from investment_knowledge_mcp.data_sources.contracts import SourceCapability
 from investment_knowledge_mcp.data_sources.pool import DataSourcePool, MemoryResultCache
@@ -41,6 +43,59 @@ from investment_knowledge_mcp.valuation_data_provider import (
     fetch_valuation_snapshot,
     normalize_valuation_target,
 )
+
+
+def _multiprocess_valuation_writer(
+    output_dir: str,
+    core_business: str,
+    barrier: object,
+    result_queue: object,
+) -> None:
+    context = {
+        "stock": {
+            "symbol": "ACME",
+            "market": "US",
+            "core_business": core_business,
+        },
+    }
+    snapshot = {
+        "facts": [
+            {
+                "metric": "revenue",
+                "value": 1000.0,
+                "source_type": "sec_companyfacts",
+                "currency": "USD",
+                "period_end": "2025-12-31",
+            },
+            {
+                "metric": "market_cap",
+                "value": 1500.0,
+                "source_type": "market_snapshot",
+                "currency": "USD",
+                "timestamp": "2026-07-19T00:00:00+00:00",
+            },
+        ],
+        "target_resolution": {"normalized_target": "US.ACME"},
+        "financial_fact_status": "present",
+        "market_snapshot_status": "present",
+    }
+    barrier.wait()
+    try:
+        packet, _ = build_valuation_artifact(
+            context,
+            symbol="ACME",
+            market="US",
+            output_dir=Path(output_dir),
+            command="valuation US.ACME",
+            provider_snapshot=snapshot,
+            now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
+        )
+    except FileExistsError:
+        result_queue.put(("collision", None))
+    except Exception as exc:
+        result_queue.put(("error", type(exc).__name__))
+    else:
+        result_queue.put(("ok", packet))
 
 
 class StockValuationTests(unittest.TestCase):
@@ -558,19 +613,19 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(calls, 1)
 
     def test_slow_hk_official_provider_returns_safe_degradation_within_total_budget(self) -> None:
-        from investment_knowledge_mcp import valuation_data_provider
-
         self.assertIn("official_budget_seconds", inspect.signature(default_valuation_pool).parameters)
-        declared_budget = getattr(valuation_data_provider, "VALUATION_OFFICIAL_PROVIDER_TOTAL_BUDGET_SECONDS", None)
+        declared_budget = getattr(valuation_provider, "VALUATION_OFFICIAL_PROVIDER_TOTAL_BUDGET_SECONDS", None)
         self.assertIsInstance(declared_budget, float)
 
         calls = 0
+        finished = threading.Event()
 
         class SlowProvider:
             def collect(self, symbol: str, market: str, company_name: str | None = None) -> ResearchBundle:
                 nonlocal calls
                 calls += 1
                 time.sleep(0.25)
+                finished.set()
                 return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
 
         target = normalize_valuation_target("01888", "HK")
@@ -589,10 +644,178 @@ class StockValuationTests(unittest.TestCase):
         self.assertLess(elapsed, 0.15)
         self.assertEqual(calls, 1)
         self.assertEqual(snapshot["financial_fact_status"], "unavailable")
-        self.assertTrue(all(item["status"] == "complete_missing" for item in snapshot["source_attempts"][:3]))
+        self.assertTrue(all(item["status"] == "timeout" for item in snapshot["source_attempts"][:3]))
         serialized = json.dumps(snapshot).lower()
-        for unsafe in ("timeout", "exception", "traceback", "thread", "http://", "https://"):
+        self.assertIn("timeout", serialized)
+        for unsafe in ("exception", "traceback", "thread", "http://", "https://"):
             self.assertNotIn(unsafe, serialized)
+        self.assertTrue(finished.wait(0.5))
+
+    def test_official_collection_outcomes_distinguish_every_bounded_terminal_state(self) -> None:
+        source = SourceDocument(
+            key="hkex_annual_results_2025",
+            source_type="annual_results",
+            title="Annual Results 2025",
+            publisher="HKEXnews",
+        )
+
+        class Provider:
+            def __init__(self, result: object = None, failure: Exception | None = None) -> None:
+                self.result = result
+                self.failure = failure
+
+            def collect(self, **kwargs: object) -> object:
+                del kwargs
+                if self.failure is not None:
+                    raise self.failure
+                return self.result
+
+        cases = (
+            (
+                "success",
+                Provider(ResearchBundle(symbol="01888", market="HK", sources=[source])),
+                0.2,
+                None,
+            ),
+            (
+                "complete_missing",
+                Provider(ResearchBundle(symbol="01888", market="HK")),
+                0.2,
+                None,
+            ),
+            ("provider_failure", Provider(failure=RuntimeError("Bearer secret diagnostic")), 0.2, None),
+            ("invalid_result", Provider({"sources": []}), 0.2, None),
+        )
+        for expected, provider, budget, patches in cases:
+            del patches
+            with self.subTest(expected=expected):
+                outcome = valuation_provider._collect_official_bundle_with_budget(
+                    provider, "01888", "HK", "Kingboard", budget,
+                )
+                self.assertEqual(getattr(outcome, "status", None), expected)
+
+        release_event = threading.Event()
+        finished_event = threading.Event()
+
+        class SlowProvider:
+            def collect(self, **kwargs: object) -> ResearchBundle:
+                del kwargs
+                release_event.wait(0.1)
+                finished_event.set()
+                return ResearchBundle(symbol="01888", market="HK")
+
+        outcome = valuation_provider._collect_official_bundle_with_budget(
+            SlowProvider(), "01888", "HK", "Kingboard", 0.001,
+        )
+        self.assertEqual(getattr(outcome, "status", None), "timeout")
+        release_event.set()
+        self.assertTrue(finished_event.wait(0.2))
+
+        class SaturatedSlots:
+            def acquire(self, blocking: bool = False) -> bool:
+                del blocking
+                return False
+
+        with patch.object(valuation_provider, "_OFFICIAL_COLLECT_SLOTS", SaturatedSlots()):
+            outcome = valuation_provider._collect_official_bundle_with_budget(
+                Provider(ResearchBundle(symbol="01888", market="HK")),
+                "01888", "HK", "Kingboard", 0.2,
+            )
+        self.assertEqual(getattr(outcome, "status", None), "saturated")
+
+        class SubmissionSlots:
+            def __init__(self) -> None:
+                self.releases = 0
+
+            def acquire(self, blocking: bool = False) -> bool:
+                del blocking
+                return True
+
+            def release(self) -> None:
+                self.releases += 1
+
+        class FailedExecutor:
+            def submit(self, *args: object, **kwargs: object) -> object:
+                del args, kwargs
+                raise RuntimeError("Authorization: secret submission failure")
+
+        slots = SubmissionSlots()
+        with (
+            patch.object(valuation_provider, "_OFFICIAL_COLLECT_SLOTS", slots),
+            patch.object(valuation_provider, "_OFFICIAL_COLLECT_EXECUTOR", FailedExecutor()),
+        ):
+            outcome = valuation_provider._collect_official_bundle_with_budget(
+                Provider(ResearchBundle(symbol="01888", market="HK")),
+                "01888", "HK", "Kingboard", 0.2,
+            )
+        self.assertEqual(getattr(outcome, "status", None), "submission_failure")
+        self.assertEqual(slots.releases, 1)
+
+    def test_hk_typed_timeout_outcome_is_collected_once_and_fanned_out_safely(self) -> None:
+        calls = 0
+
+        class SlowProvider:
+            def collect(self, **kwargs: object) -> ResearchBundle:
+                nonlocal calls
+                del kwargs
+                calls += 1
+                time.sleep(0.08)
+                return ResearchBundle(symbol="01888", market="HK")
+
+        target = normalize_valuation_target("01888", "HK")
+        pool = default_valuation_pool(
+            target,
+            official_provider=SlowProvider(),
+            official_budget_seconds=0.005,
+            market_loader=lambda symbol, market: [],
+        )
+
+        snapshot = _fetch_valuation_snapshot(target, pool)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            [attempt["status"] for attempt in snapshot["source_attempts"][:3]],
+            ["timeout", "timeout", "timeout"],
+        )
+        packet = self._build(snapshot={
+            **snapshot,
+            "target_resolution": {"normalized_target": "US.ACME"},
+        })
+        card = render_valuation_card(packet)
+        self.assertIn("timed out", card.lower())
+        for unsafe in ("secret", "authorization", "exception", "traceback", "http://", "https://"):
+            self.assertNotIn(unsafe, json.dumps(snapshot).lower() + card.lower())
+
+    def test_official_attempt_loader_projects_typed_outcomes_truthfully(self) -> None:
+        complete = ResearchBundle(symbol="01888", market="HK")
+        source = SourceDocument(
+            key="hkex_annual_results_2025",
+            source_type="annual_results",
+            title="Annual Results 2025",
+            publisher="HKEXnews",
+        )
+        success = ResearchBundle(symbol="01888", market="HK", sources=[source])
+        cases = (
+            (valuation_provider._OfficialBundleOutcome("success", success), "complete_missing"),
+            (valuation_provider._OfficialBundleOutcome("complete_missing", complete), "complete_missing"),
+            (valuation_provider._OfficialBundleOutcome("timeout"), "timeout"),
+            (valuation_provider._OfficialBundleOutcome("saturated"), "failed"),
+            (valuation_provider._OfficialBundleOutcome("submission_failure"), "failed"),
+            (valuation_provider._OfficialBundleOutcome("provider_failure"), "failed"),
+            (valuation_provider._OfficialBundleOutcome("invalid_result"), "failed"),
+        )
+
+        for outcome, expected_status in cases:
+            with self.subTest(outcome=outcome.status):
+                loader = valuation_provider._official_attempt_loader(
+                    object(),
+                    "hkex_annual_results",
+                    bundle_loader=lambda symbol, market, result=outcome: result,
+                )
+                payload = loader("01888", "HK")
+                self.assertEqual(payload["attempt_status"], expected_status)
+                self.assertNotIn("error", payload)
+                self.assertNotIn("diagnostic", payload)
 
     def test_cache_miss_attempts_every_source_before_safe_degradation(self) -> None:
         calls: list[str] = []
@@ -1306,6 +1529,69 @@ class StockValuationTests(unittest.TestCase):
             self.assertEqual(latest, json.loads(json.dumps(winner)))
             self.assertEqual(list((output_dir / "valuation").glob("*.tmp")), [])
 
+    def test_same_stock_same_second_multiprocess_race_is_process_safe(self) -> None:
+        start_method = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+        process_context = multiprocessing.get_context(start_method)
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            barrier = process_context.Barrier(2)
+            result_queue = process_context.Queue()
+            processes = [
+                process_context.Process(
+                    target=_multiprocess_valuation_writer,
+                    args=(temporary, core_business, barrier, result_queue),
+                )
+                for core_business in (
+                    "Cyclical semiconductor business.",
+                    "AI growth platform.",
+                )
+            ]
+            for process in processes:
+                process.start()
+            results = [result_queue.get(timeout=5.0) for _ in processes]
+            for process in processes:
+                process.join(timeout=5.0)
+                self.assertEqual(process.exitcode, 0)
+
+            self.assertEqual(sorted(status for status, _ in results), ["collision", "ok"])
+            winner = next(packet for status, packet in results if status == "ok")
+            self.assertEqual(
+                load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir),
+                json.loads(json.dumps(winner)),
+            )
+            artifact_dir = output_dir / "valuation"
+            self.assertEqual(list(artifact_dir.glob("*.tmp")), [])
+            lock_files = list(artifact_dir.glob(".*.lock"))
+            self.assertEqual([path.name for path in lock_files], [".ACME_US_valuation.lock"])
+            self.assertNotIn(temporary, render_valuation_card(winner))
+
+    def test_identical_multiprocess_writes_are_idempotent(self) -> None:
+        start_method = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+        process_context = multiprocessing.get_context(start_method)
+        with tempfile.TemporaryDirectory() as temporary:
+            barrier = process_context.Barrier(2)
+            result_queue = process_context.Queue()
+            processes = [
+                process_context.Process(
+                    target=_multiprocess_valuation_writer,
+                    args=(temporary, "Cyclical semiconductor business.", barrier, result_queue),
+                )
+                for _ in range(2)
+            ]
+            for process in processes:
+                process.start()
+            results = [result_queue.get(timeout=5.0) for _ in processes]
+            for process in processes:
+                process.join(timeout=5.0)
+                self.assertEqual(process.exitcode, 0)
+
+            self.assertEqual([status for status, _ in results], ["ok", "ok"])
+            self.assertEqual(results[0][1], results[1][1])
+            latest = load_latest_valuation_artifact(
+                symbol="ACME", market="US", output_dir=Path(temporary),
+            )
+            self.assertEqual(latest, json.loads(json.dumps(results[0][1])))
+
     def test_interrupted_latest_replace_keeps_previous_latest_valid_and_cleans_temps(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary)
@@ -1433,7 +1719,7 @@ class StockValuationTests(unittest.TestCase):
 
         for key in ("assumptions", "interpretation", "watch_items", "degraded_state", "selected_frames", "internal_frame_scores"):
             self.assertIn(key, evidence)
-        self.assertEqual(evidence["assumptions"]["user_confirmed_valuation_case"], True)
+        self.assertEqual(evidence["assumptions"]["user_confirmed_valuation_case"], False)
         self.assertGreater(len(evidence["interpretation"]), 0)
         self.assertGreater(len(evidence["watch_items"]), 0)
         for heading in ("Assumptions:", "Interpretation:", "Watch items:", "Data gaps:"):
@@ -1635,7 +1921,7 @@ class StockValuationTests(unittest.TestCase):
             "confirmed_by_user": True,
         }]
         packet = json.loads(json.dumps(self._build(context=context)))
-        self.assertTrue(packet["assumptions"]["user_confirmed_valuation_case"])
+        self.assertFalse(packet["assumptions"]["user_confirmed_valuation_case"])
         packet["stock"].update({"symbol": "EVIL", "market": "HK"})
 
         evidence = build_valuation_artifact_evidence(packet)
@@ -1654,9 +1940,9 @@ class StockValuationTests(unittest.TestCase):
         self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["reason_codes"])
         self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["gap_codes"])
 
-    def test_only_exact_typed_target_matched_valuation_case_can_be_confirmed(self) -> None:
+    def test_exact_typed_target_matched_valuation_case_remains_unverified_without_trusted_loader(self) -> None:
         cases = (
-            ({"schema": "stock_valuation_case.v1", "symbol": "ACME", "market": "US", "confirmed_by_user": True}, True),
+            ({"schema": "stock_valuation_case.v1", "symbol": "ACME", "market": "US", "confirmed_by_user": True}, False),
             ({"schema": "stock_valuation_case.v0", "symbol": "ACME", "market": "US", "confirmed_by_user": True}, False),
             ({"schema": "stock_valuation_case.v1", "symbol": "OTHER", "market": "US", "confirmed_by_user": True}, False),
             ({"schema": "stock_valuation_case.v1", "symbol": "ACME", "market": "HK", "confirmed_by_user": True}, False),
@@ -1673,6 +1959,37 @@ class StockValuationTests(unittest.TestCase):
                 evidence = build_valuation_artifact_evidence(self._build(context=context))
                 self.assertEqual(evidence["assumptions"]["user_confirmed_valuation_case"], expected)
                 self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["gap_codes"])
+
+    def test_confirmation_boolean_and_forgeable_provenance_fail_closed_everywhere(self) -> None:
+        packet = json.loads(json.dumps(self._build()))
+        packet["assumptions"]["user_confirmed_valuation_case"] = True
+        packet["assumptions"]["confirmation_provenance"] = {
+            "schema": "stock_valuation_confirmation.v1",
+            "verified": True,
+            "repository_record": {
+                "Authorization": "Bearer CONFIRMATION-SENTINEL",
+                "path": "../../private/confirmation.json",
+            },
+        }
+
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        self.assertFalse(evidence["assumptions"]["user_confirmed_valuation_case"])
+        self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["gap_codes"])
+        public = json.dumps(evidence) + card
+        for hostile in ("CONFIRMATION-SENTINEL", "Authorization", "confirmation.json"):
+            self.assertNotIn(hostile, public)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            valuation_dir = output_dir / "valuation"
+            valuation_dir.mkdir()
+            latest = valuation_dir / "ACME_US_valuation_latest.json"
+            latest.write_text(json.dumps(packet), encoding="utf-8")
+            self.assertIsNone(
+                load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir),
+            )
 
     def test_public_projection_drops_records_with_incomplete_required_refs(self) -> None:
         packet = json.loads(json.dumps(self._build()))
@@ -1792,6 +2109,85 @@ class StockValuationTests(unittest.TestCase):
             build_valuation_artifact_evidence(non_json)
         with self.assertRaises(ValueError):
             render_valuation_card(non_json)
+
+    def test_evidence_and_card_reject_excessive_depth_and_container_count(self) -> None:
+        deeply_nested: object = "DEPTH-SENTINEL"
+        for _ in range(1100):
+            deeply_nested = [deeply_nested]
+        excessive_containers = [[] for _ in range(6000)]
+
+        branches = (
+            ("facts", lambda packet, value: packet["facts"][0].update({"hostile": value})),
+            (
+                "calculation",
+                lambda packet, value: packet["deterministic_calculations"][0].update({"input_refs": value}),
+            ),
+            (
+                "degraded",
+                lambda packet, value: packet["degraded_state"].update({"diagnostics": value}),
+            ),
+        )
+        for label, inject in branches:
+            for boundary in (build_valuation_artifact_evidence, render_valuation_card):
+                packet = self._build()
+                inject(packet, deeply_nested)
+                with self.subTest(label=label, boundary=boundary.__name__, shape="depth"):
+                    with self.assertRaisesRegex(ValueError, "unsupported nested values"):
+                        boundary(packet)
+
+        for boundary in (build_valuation_artifact_evidence, render_valuation_card):
+            packet = self._build()
+            packet["degraded_state"]["diagnostics"] = excessive_containers
+            with self.subTest(boundary=boundary.__name__, shape="containers"):
+                with self.assertRaisesRegex(ValueError, "unsupported nested values"):
+                    boundary(packet)
+
+    def test_latest_loader_bounds_artifact_bytes_and_json_depth_without_recursion_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            valuation_dir = output_dir / "valuation"
+            valuation_dir.mkdir()
+            latest = valuation_dir / "ACME_US_valuation_latest.json"
+
+            latest.write_text('{"padding":"' + ("x" * 2_000_000) + '"}', encoding="utf-8")
+            self.assertIsNone(
+                load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir),
+            )
+
+            latest.write_text(
+                '{"nested":' + ("[" * 1100) + "0" + ("]" * 1100) + "}",
+                encoding="utf-8",
+            )
+            try:
+                result = load_latest_valuation_artifact(
+                    symbol="ACME", market="US", output_dir=output_dir,
+                )
+            except RecursionError as exc:
+                self.fail(f"loader leaked RecursionError: {exc}")
+            self.assertIsNone(result)
+
+    def test_card_exposes_separate_safe_fact_and_calculation_layers(self) -> None:
+        snapshot = self._snapshot()
+        for fact in snapshot["facts"]:
+            if fact["source_type"] == "sec_companyfacts":
+                fact["period_end"] = "2025-12-31"
+        packet = self._build(snapshot=snapshot)
+        packet["facts"][0]["diagnostic"] = "https://private.example/fact"
+        packet["deterministic_calculations"][0]["provider_path"] = "../../private/calculation.json"
+
+        card = render_valuation_card(packet)
+
+        headings = (
+            "Facts:", "Calculations:", "Assumptions:", "Interpretation:", "Watch items:",
+            "Source coverage:", "Market-implied bridge:", "Safety:",
+        )
+        for heading in headings:
+            self.assertIn(heading, card)
+        self.assertLess(card.index("Facts:"), card.index("Calculations:"))
+        self.assertRegex(card, r"- revenue: \$1\.0K \(official_financial; period 2025-12-31\)")
+        self.assertRegex(card, r"- ps: 1\.0x \(inputs: fact:price, fact:shares_outstanding, fact:revenue\)")
+        for unsafe in ("private.example", "calculation.json", "provider_path", "diagnostic"):
+            self.assertNotIn(unsafe, card)
 
     def test_latest_loader_returns_none_for_malformed_nested_json_categories(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1923,6 +2319,110 @@ class StockValuationTests(unittest.TestCase):
                 self.assertEqual(fit["fit_to_current_market_value"], "insufficient_data")
                 self.assertEqual(fit["confidence"], "low")
 
+    def test_complete_financial_packet_without_peer_evidence_caps_comparable_frame(self) -> None:
+        packet = self._build()
+        comparable_score = next(
+            item for item in packet["internal_frame_scores"]
+            if item["id"] == "comparable_multiples"
+        )
+        comparable_fit = next(
+            item for item in packet["market_implied_bridge"]["frame_fit_ranking"]
+            if item["id"] == "comparable_multiples"
+        )
+
+        self.assertIn("missing_peer_evidence", packet["degraded_state"]["gap_codes"])
+        self.assertEqual(comparable_score["score"], 0.2)
+        self.assertEqual(comparable_fit["fit_to_current_market_value"], "insufficient_data")
+        self.assertEqual(comparable_fit["confidence"], "low")
+        fcf_score = next(item for item in packet["internal_frame_scores"] if item["id"] == "fcf")
+        fcf_fit = next(
+            item for item in packet["market_implied_bridge"]["frame_fit_ranking"]
+            if item["id"] == "fcf"
+        )
+        self.assertGreater(fcf_score["score"], comparable_score["score"])
+        self.assertEqual(fcf_fit["fit_to_current_market_value"], "fits")
+        self.assertEqual(fcf_fit["confidence"], "medium")
+
+    def test_stale_candidate_peer_evidence_is_visible_but_never_confirmed(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["peer_evidence"] = {
+            "schema": "stock_valuation_peer_evidence.v1",
+            "status": "candidate",
+            "as_of": "2026-05-01T00:00:00+00:00",
+            "peers": [
+                {"symbol": "PEER1", "market": "US"},
+                {"symbol": "PEER2", "market": "US"},
+            ],
+            "confirmed_by_user": True,
+        }
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+        comparable = next(
+            item for item in evidence["market_implied_bridge"]["frame_fit_ranking"]
+            if item["id"] == "comparable_multiples"
+        )
+
+        self.assertIn("peer_evidence", evidence["assumptions"])
+        self.assertEqual(evidence["assumptions"]["peer_evidence"], {
+            "status": "stale_candidate",
+            "as_of": "2026-05-01T00:00:00+00:00",
+            "peer_count": 2,
+            "user_confirmed": False,
+        })
+        self.assertIn("stale_peer_evidence", evidence["degraded_state"]["gap_codes"])
+        self.assertNotIn("missing_peer_evidence", evidence["degraded_state"]["gap_codes"])
+        self.assertEqual(comparable["fit_to_current_market_value"], "partial_fit")
+        self.assertEqual(comparable["confidence"], "low")
+
+    def test_fresh_manual_peer_candidate_can_support_fit_but_not_confirmation(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["peer_evidence"] = {
+            "schema": "stock_valuation_peer_evidence.v1",
+            "status": "manual_candidate",
+            "as_of": "2026-07-18T00:00:00+00:00",
+            "peers": [{"symbol": "PEER1", "market": "US"}],
+        }
+
+        evidence = build_valuation_artifact_evidence(self._build(snapshot=snapshot))
+        comparable = next(
+            item for item in evidence["market_implied_bridge"]["frame_fit_ranking"]
+            if item["id"] == "comparable_multiples"
+        )
+
+        self.assertIn("peer_evidence", evidence["assumptions"])
+        self.assertEqual(evidence["assumptions"]["peer_evidence"]["status"], "candidate")
+        self.assertFalse(evidence["assumptions"]["peer_evidence"]["user_confirmed"])
+        self.assertNotIn("missing_peer_evidence", evidence["degraded_state"]["gap_codes"])
+        self.assertEqual(comparable["fit_to_current_market_value"], "fits")
+        self.assertEqual(comparable["confidence"], "low")
+
+    def test_hostile_or_falsely_confirmed_peer_rows_are_canonical_candidates_only(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["peer_evidence"] = {
+            "schema": "stock_valuation_peer_evidence.v1",
+            "status": "confirmed",
+            "as_of": "2026-07-18T00:00:00+00:00",
+            "confirmed_by_user": True,
+            "peers": [{
+                "symbol": "PEER1",
+                "market": "US",
+                "multiple": {"Authorization": "Bearer PEER-SENTINEL"},
+                "diagnostic": "https://peer.example/private",
+            }],
+        }
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+        self.assertIn("peer_evidence", evidence["assumptions"])
+        peer_evidence = evidence["assumptions"]["peer_evidence"]
+
+        self.assertEqual(peer_evidence["status"], "candidate")
+        self.assertFalse(peer_evidence["user_confirmed"])
+        public_text = json.dumps({"packet": packet, "evidence": evidence})
+        for hostile in ("PEER-SENTINEL", "Authorization", "peer.example", "diagnostic"):
+            self.assertNotIn(hostile, public_text)
+
     def test_stale_market_status_caps_comparable_fit_and_confidence(self) -> None:
         snapshot = {
             "facts": [
@@ -1931,6 +2431,12 @@ class StockValuationTests(unittest.TestCase):
             ],
             "target_resolution": {"normalized_target": "US.ACME"},
             "market_snapshot_status": "stale",
+            "peer_evidence": {
+                "schema": "stock_valuation_peer_evidence.v1",
+                "status": "candidate",
+                "as_of": "2026-07-18T00:00:00+00:00",
+                "peers": [{"symbol": "PEER1", "market": "US"}],
+            },
         }
 
         packet = self._build(context={"stock": {"symbol": "ACME", "market": "US"}}, snapshot=snapshot)
@@ -1949,6 +2455,12 @@ class StockValuationTests(unittest.TestCase):
                 {"metric": "revenue", "value": 50.0, "source_type": "sec_companyfacts", "currency": "USD"},
             ],
             "target_resolution": {"normalized_target": "US.ACME"},
+            "peer_evidence": {
+                "schema": "stock_valuation_peer_evidence.v1",
+                "status": "candidate",
+                "as_of": "2026-07-18T00:00:00+00:00",
+                "peers": [{"symbol": "PEER1", "market": "US"}],
+            },
         }
         cases = (
             (("present", "available", "success"), 0.65, "fits"),
@@ -2254,6 +2766,35 @@ class StockValuationCommandRouterTests(unittest.TestCase):
         public_text = "\n".join((repository_failure.message, missing.message, path_like.message)).lower()
         for unsafe in ("postgresql://", "secret", "private-db", "/etc/passwd", "traceback"):
             self.assertNotIn(unsafe, public_text)
+
+    def test_router_contains_deep_artifact_failures_without_content_leakage(self) -> None:
+        deeply_nested: object = "ROUTER-DEPTH-SENTINEL"
+        for _ in range(1100):
+            deeply_nested = [deeply_nested]
+        with tempfile.TemporaryDirectory() as temporary:
+            full_packet, _ = build_valuation_artifact(
+                self._context(),
+                symbol="INTC",
+                market="US",
+                output_dir=Path(temporary),
+                command="valuation US.INTC",
+                provider_snapshot=self._snapshot(),
+                now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+            )
+        full_packet["internal_frame_scores"][0]["input_refs"] = deeply_nested
+
+        with patch.object(command_router, "load_latest_valuation_artifact", return_value=full_packet):
+            try:
+                evidence = command_router.handle_command("valuation artifact evidence US.INTC")
+                latest = command_router.handle_command("latest valuation US.INTC")
+            except RecursionError as exc:
+                self.fail(f"router leaked RecursionError: {exc}")
+
+        self.assertFalse(evidence.ok)
+        self.assertFalse(latest.ok)
+        public_text = evidence.message + latest.message
+        self.assertNotIn("ROUTER-DEPTH-SENTINEL", public_text)
+        self.assertNotIn("RecursionError", public_text)
 
 
 if __name__ == "__main__":

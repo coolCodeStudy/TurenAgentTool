@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import math
 import re
@@ -73,6 +74,29 @@ _SEC_FACT_TAGS: dict[str, tuple[str, ...]] = {
     "debt": ("LongTermDebtAndFinanceLeaseObligations", "LongTermDebt", "DebtCurrent"),
     "shares_outstanding": ("EntityCommonStockSharesOutstanding",),
 }
+_OFFICIAL_OUTCOME_STATUSES = frozenset({
+    "success",
+    "complete_missing",
+    "timeout",
+    "saturated",
+    "submission_failure",
+    "provider_failure",
+    "invalid_result",
+})
+
+
+@dataclass(frozen=True)
+class _OfficialBundleOutcome:
+    status: str
+    bundle: ResearchBundle | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in _OFFICIAL_OUTCOME_STATUSES:
+            raise ValueError("invalid official collection outcome")
+        if self.status in {"success", "complete_missing"} and not isinstance(self.bundle, ResearchBundle):
+            raise ValueError("completed official collection requires a bundle")
+        if self.status not in {"success", "complete_missing"} and self.bundle is not None:
+            raise ValueError("failed official collection cannot retain a bundle")
 
 
 def normalize_valuation_target(
@@ -289,6 +313,8 @@ def _safe_attempts(result: DataResult, source_order: tuple[str, ...]) -> list[di
             status = "not_attempted"
         elif failures.get(source_id) in {"complete_missing", "empty_result"}:
             status = "complete_missing"
+        elif failures.get(source_id) == "timeout":
+            status = "timeout"
         else:
             status = "failed"
         attempts.append({
@@ -446,7 +472,7 @@ def _latest_sec_entry(payload: object, *, shares: bool) -> dict[str, Any] | None
 
 
 class _OfficialBundleMemo:
-    """Collect one target bundle once, including bounded complete-missing results."""
+    """Collect one typed target outcome once for all source categories."""
 
     def __init__(self, provider: object, company_name: str | None, budget_seconds: float) -> None:
         self._provider = provider
@@ -454,12 +480,12 @@ class _OfficialBundleMemo:
         self._budget_seconds = budget_seconds
         self._lock = threading.Lock()
         self._resolved = False
-        self._bundle: ResearchBundle | None = None
+        self._outcome: _OfficialBundleOutcome | None = None
 
-    def load(self, symbol: str, market: str) -> ResearchBundle:
+    def load(self, symbol: str, market: str) -> _OfficialBundleOutcome:
         with self._lock:
             if not self._resolved:
-                self._bundle = _collect_official_bundle_with_budget(
+                self._outcome = _collect_official_bundle_with_budget(
                     self._provider,
                     symbol,
                     market,
@@ -467,9 +493,9 @@ class _OfficialBundleMemo:
                     self._budget_seconds,
                 )
                 self._resolved = True
-            if self._bundle is not None:
-                return self._bundle
-            return ResearchBundle(symbol=symbol, market=market, company_name=self._company_name)
+            if self._outcome is not None:
+                return self._outcome
+            return _OfficialBundleOutcome("provider_failure")
 
 
 def _collect_official_bundle_with_budget(
@@ -478,9 +504,9 @@ def _collect_official_bundle_with_budget(
     market: str,
     company_name: str | None,
     budget_seconds: float,
-) -> ResearchBundle:
+) -> _OfficialBundleOutcome:
     if not _OFFICIAL_COLLECT_SLOTS.acquire(blocking=False):
-        return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+        return _OfficialBundleOutcome("saturated")
 
     def collect_and_release() -> object:
         try:
@@ -493,16 +519,16 @@ def _collect_official_bundle_with_budget(
         future = _OFFICIAL_COLLECT_EXECUTOR.submit(collect_and_release)
     except Exception:
         _OFFICIAL_COLLECT_SLOTS.release()
-        return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+        return _OfficialBundleOutcome("submission_failure")
     try:
         bundle = future.result(timeout=budget_seconds)
+    except FutureTimeoutError:
+        return _OfficialBundleOutcome("timeout")
     except Exception:
-        return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
-    return bundle if isinstance(bundle, ResearchBundle) else ResearchBundle(
-        symbol=symbol,
-        market=market,
-        company_name=company_name,
-    )
+        return _OfficialBundleOutcome("provider_failure")
+    if not isinstance(bundle, ResearchBundle):
+        return _OfficialBundleOutcome("invalid_result")
+    return _OfficialBundleOutcome("success" if bundle.sources else "complete_missing", bundle)
 
 
 def _official_attempt_loader(
@@ -510,22 +536,43 @@ def _official_attempt_loader(
     source_id: str,
     *,
     company_name: str | None = None,
-    bundle_loader: Callable[[str, str], ResearchBundle] | None = None,
+    bundle_loader: Callable[[str, str], _OfficialBundleOutcome] | None = None,
 ):
     def load(symbol: str, market: str) -> dict[str, object]:
-        bundle = (
-            bundle_loader(symbol, market)
-            if bundle_loader is not None
-            else provider.collect(symbol=symbol, market=market, company_name=company_name)
-        )
+        if bundle_loader is not None:
+            try:
+                outcome = bundle_loader(symbol, market)
+            except Exception:
+                outcome = _OfficialBundleOutcome("provider_failure")
+        else:
+            try:
+                collected = provider.collect(symbol=symbol, market=market, company_name=company_name)
+            except Exception:
+                outcome = _OfficialBundleOutcome("provider_failure")
+            else:
+                if isinstance(collected, ResearchBundle):
+                    outcome = _OfficialBundleOutcome(
+                        "success" if collected.sources else "complete_missing",
+                        collected,
+                    )
+                else:
+                    outcome = _OfficialBundleOutcome("invalid_result")
+        if not isinstance(outcome, _OfficialBundleOutcome):
+            outcome = _OfficialBundleOutcome("invalid_result")
+        bundle = outcome.bundle
         matching = [
             source
-            for source in bundle.sources
+            for source in (bundle.sources if bundle is not None else ())
             if _official_document_matches(source_id, source)
         ]
+        attempt_status = {
+            "timeout": "timeout",
+            "success": "complete_missing",
+            "complete_missing": "complete_missing",
+        }.get(outcome.status, "failed")
         return {
             "facts": [],
-            "attempt_status": "complete_missing",
+            "attempt_status": attempt_status,
             "fetched_at": datetime.now(timezone.utc),
             "source_count": len(matching),
         }

@@ -153,8 +153,13 @@ class ValuationFactsSource:
         except (OverflowError, TypeError, ValueError):
             return self._unavailable("provider_contract_error", fetched_at=fetched_at)
         if not records:
-            code = "complete_missing" if _payload_attempt_status(payload) == "complete_missing" else "empty_result"
-            return self._unavailable(code, fetched_at=fetched_at)
+            attempt_status = _payload_attempt_status(payload)
+            code = attempt_status or "empty_result"
+            return self._unavailable(
+                code,
+                retryable=attempt_status in {"failed", "timeout"},
+                fetched_at=fetched_at,
+            )
 
         coverage = _coverage(records, request.required_fields)
         status = DataStatus.OK if coverage == 1.0 else DataStatus.PARTIAL
@@ -294,7 +299,7 @@ def _payload_attempt_status(payload: object) -> str | None:
     if not isinstance(payload, Mapping):
         return None
     value = payload.get("attempt_status")
-    return value if value == "complete_missing" else None
+    return value if value in {"complete_missing", "failed", "timeout"} else None
 
 
 def _payload_facts(payload: object) -> Sequence[object]:
