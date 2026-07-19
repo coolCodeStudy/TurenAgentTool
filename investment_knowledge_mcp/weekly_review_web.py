@@ -960,12 +960,7 @@ def render_weekly_review_workbench_html() -> str:
       font-size: 12px;
     }}
     .aside {{
-      border-left: 1px solid var(--line);
-      background: #ffffff;
-      padding: 22px 16px;
-      position: sticky;
-      top: 0;
-      height: 100vh;
+      display: none;
     }}
     .aside a {{
       display: block;
@@ -1062,7 +1057,15 @@ def render_weekly_review_workbench_html() -> str:
     </div>
   </div>
   <script>
-    const state = {{ context: null, markdown: "", holdings: [], week: null, reportStatus: "loading" }};
+    const state = {{
+      context: null,
+      markdown: "",
+      holdings: [],
+      week: null,
+      reportStatus: "loading",
+      loadController: null,
+      loadGeneration: 0
+    }};
     const $ = (selector) => document.querySelector(selector);
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
     const message = $("#message");
@@ -1074,14 +1077,26 @@ def render_weekly_review_workbench_html() -> str:
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
     loadReview();
+    if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
 
     async function loadReview() {{
+      cancelReviewLoad();
+      const generation = state.loadGeneration;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15_000);
+      state.loadController = controller;
       showStatus("正在读取复盘状态...");
       try {{
         const weekStart = $("#week-date").value;
-        const response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(weekStart)}}`);
-        const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "处理失败");
+        const response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(weekStart)}}`, {{ signal: controller.signal }});
+        let data;
+        try {{
+          data = await response.json();
+        }} catch (_error) {{
+          throw new Error("服务器返回无效响应，请重试。");
+        }}
+        if (generation !== state.loadGeneration || controller.signal.aborted) return;
+        if (!response.ok || !data.ok) throw new Error(data.error || "处理失败");
         state.week = data.week || state.week;
         if (state.week && state.week.start) $("#week-date").value = state.week.start;
         state.reportStatus = data.status || "existing";
@@ -1091,8 +1106,22 @@ def render_weekly_review_workbench_html() -> str:
         renderAll();
         showStatus(statusMessage(data));
       }} catch (error) {{
+        if (generation !== state.loadGeneration) return;
+        if (controller.signal.aborted) {{
+          showError("读取超时，请重试。");
+          return;
+        }}
         showError(`处理失败：${{error.message}}`);
+      }} finally {{
+        window.clearTimeout(timeout);
+        if (generation === state.loadGeneration && state.loadController === controller) state.loadController = null;
       }}
+    }}
+
+    function cancelReviewLoad() {{
+      state.loadGeneration += 1;
+      if (state.loadController) state.loadController.abort();
+      state.loadController = null;
     }}
 
     function showStatus(text) {{
@@ -1616,6 +1645,7 @@ def render_daily_market_brief_html() -> str:
     const $ = (selector) => document.querySelector(selector);
     const message = $("#message");
     const errorMessage = $("#error-message");
+    const REQUEST_TIMEOUT_MS = 15_000;
 
     document.querySelectorAll("[data-market]").forEach((button) => {{
       button.addEventListener("click", () => {{
@@ -1623,15 +1653,14 @@ def render_daily_market_brief_html() -> str:
         state.market = button.dataset.market;
         $("#market-date").value = "";
         document.querySelectorAll("[data-market]").forEach((item) => item.classList.toggle("active", item === button));
-        loadSavedDates();
-        loadBrief("read");
+        void refreshSelectedMarket();
       }});
     }});
     $("#read").addEventListener("click", () => loadBrief("read"));
     $("#generate").addEventListener("click", () => loadBrief("generate"));
     $("#market-date").addEventListener("change", () => {{
       stopHistoryJobPolling();
-      loadBrief("read");
+      showStatus("日期已更新，点击读取查看简报。");
     }});
     $("#saved-date").addEventListener("change", (event) => {{
       stopHistoryJobPolling();
@@ -1639,17 +1668,53 @@ def render_daily_market_brief_html() -> str:
       $("#market-date").value = event.target.value;
       loadBrief("read");
     }});
-    loadSavedDates();
-    loadRecentHistoryJobs();
-    loadBrief("read");
+    void initializePage();
+    if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
+
+    async function initializePage() {{
+      await loadBrief("read");
+      void loadSavedDates();
+      void loadRecentHistoryJobs();
+    }}
+
+    async function refreshSelectedMarket() {{
+      await loadBrief("read");
+      void loadSavedDates();
+    }}
+
+    async function fetchJson(url, options = {{}}) {{
+      const controller = new AbortController();
+      const parentSignal = options.signal;
+      const cancelFromParent = () => controller.abort();
+      const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      if (parentSignal) parentSignal.addEventListener("abort", cancelFromParent, {{ once: true }});
+      try {{
+        const {{ signal: _unusedSignal, ...requestOptions }} = options;
+        const response = await fetch(url, {{ ...requestOptions, signal: controller.signal }});
+        let data;
+        try {{
+          data = await response.json();
+        }} catch (_error) {{
+          throw new Error("服务器返回无效响应，请重试。");
+        }}
+        if (!response.ok || !data.ok) throw new Error(data.error || `请求失败（${{response.status}}）`);
+        return data;
+      }} catch (error) {{
+        if (error.name === "AbortError" && !parentSignal?.aborted) {{
+          throw new Error("请求超时，请重试。");
+        }}
+        throw error;
+      }} finally {{
+        window.clearTimeout(timeout);
+        if (parentSignal) parentSignal.removeEventListener("abort", cancelFromParent);
+      }}
+    }}
 
     async function loadSavedDates() {{
       const savedDate = $("#saved-date");
       savedDate.innerHTML = '<option value="">已保存日期</option>';
       try {{
-        const response = await fetch(`/api/daily-market-brief/dates?market=${{encodeURIComponent(state.market)}}`);
-        const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "读取已保存日期失败");
+        const data = await fetchJson(`/api/daily-market-brief/dates?market=${{encodeURIComponent(state.market)}}`);
         (data.dates || []).forEach((value) => {{
           const option = document.createElement("option");
           option.value = value;
@@ -1671,21 +1736,20 @@ def render_daily_market_brief_html() -> str:
       const date = $("#market-date").value;
       showStatus(action === "read" ? "正在读取简报..." : "正在生成并保存简报...");
       try {{
-        let response;
+        let data;
         if (action === "read") {{
           const query = new URLSearchParams({{ market: state.market, date }});
-          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`, {{
+          data = await fetchJson(`/api/daily-market-brief?${{query.toString()}}`, {{
             signal: controller.signal
           }});
         }} else {{
-          response = await fetch("/api/daily-market-brief/generate", {{
+          data = await fetchJson("/api/daily-market-brief/generate", {{
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
             body: JSON.stringify({{ market: state.market, date }}),
             signal: controller.signal
           }});
         }}
-        const data = await response.json();
         if (generation !== state.loadGeneration || controller.signal.aborted) return;
         if (!data.ok) throw new Error(data.error || "处理失败");
         if (data.market_date) $("#market-date").value = data.market_date;
@@ -1724,9 +1788,7 @@ def render_daily_market_brief_html() -> str:
 
     async function loadRecentHistoryJobs() {{
       try {{
-        const response = await fetch("/api/daily-market-brief/history-jobs?limit=10");
-        const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "读取任务失败");
+        const data = await fetchJson("/api/daily-market-brief/history-jobs?limit=10");
         renderRecentHistoryJobs(data.jobs || []);
       }} catch (error) {{
         $("#history-jobs").textContent = "历史生成任务暂时无法读取。";
@@ -1742,10 +1804,8 @@ def render_daily_market_brief_html() -> str:
 
     async function pollHistoryJob(jobId, marketDate, generation) {{
       try {{
-        const response = await fetch(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
-        const data = await response.json();
+        const data = await fetchJson(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
         if (generation !== state.pollGeneration || state.jobId !== jobId) return;
-        if (!data.ok) throw new Error(data.error || "读取任务失败");
         const job = data.job;
         renderHistoryJob(job);
         if (["completed", "partial", "failed", "cancelled"].includes(job.status)) {{

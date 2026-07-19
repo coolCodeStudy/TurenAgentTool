@@ -32,7 +32,7 @@
 - Consumes: `E2E_BASE_URL`, defaulting only in local developer execution to `http://127.0.0.1:8010`; CI supplies the deployed cloud URL.
 - Produces: `npm run test:e2e:cloud` and a Playwright HTML report under `playwright-report/`.
 
-- [ ] **Step 1: Write the failing Daily rendered-content E2E test**
+- [x] **Step 1: Write the failing Daily rendered-content E2E test**
 
 ```ts
 test('Daily saved brief renders after Read', async ({ page }) => {
@@ -40,18 +40,18 @@ test('Daily saved brief renders after Read', async ({ page }) => {
   await page.getByLabel('市场日期').fill('2026-07-17');
   await page.getByRole('button', { name: '读取' }).click();
   await expect(page.getByRole('heading', { name: '核心指数' })).toBeVisible();
-  await expect(page.locator('#brief-summary')).not.toBeEmpty();
+  await expect(page.locator('#summary')).not.toBeEmpty();
   await expect(page.getByRole('status')).not.toContainText('正在读取');
 });
 ```
 
-- [ ] **Step 2: Run the test against the cloud URL and record RED evidence**
+- [x] **Step 2: Run the test against the cloud URL and record RED evidence**
 
 Run: `E2E_BASE_URL=http://47.84.190.191:8010 npx playwright test e2e/cloud-pages.spec.ts --project=desktop-public`
 
 Expected: fail if the browser-visible Daily page remains in its loading state despite the saved report API response.
 
-- [ ] **Step 3: Add public page smoke contracts**
+- [x] **Step 3: Add public page smoke contracts**
 
 ```ts
 for (const journey of [
@@ -70,11 +70,11 @@ for (const journey of [
 }
 ```
 
-- [ ] **Step 4: Configure failure artifacts and a manually dispatched GitHub workflow**
+- [x] **Step 4: Configure failure artifacts and a manually dispatched GitHub workflow**
 
 Configure Chromium desktop, `workers: 1`, `trace: 'retain-on-failure'`, `screenshot: 'only-on-failure'`, `video: 'retain-on-failure'`, and upload the Playwright report after test completion. The workflow must run only through `workflow_dispatch` until it is stable; it receives `base_url` as an input and must not deploy.
 
-- [ ] **Step 5: Run local static checks and commit**
+- [x] **Step 5: Run local static checks and commit**
 
 Run: `npm ci && npx playwright install --with-deps && npx playwright test --list`
 
@@ -94,21 +94,21 @@ Commit: `git add package.json package-lock.json playwright.config.ts e2e .github
 - Consumes: Daily read/date/history responses and the shared browser `fetch` helper contract.
 - Produces: every initial and user-triggered browser request settles into success, visible retryable error, or visible access recovery within a bounded timeout.
 
-- [ ] **Step 1: Write failing renderer and browser-script tests**
+- [x] **Step 1: Write failing renderer and browser-script tests**
 
 Add tests that execute the rendered Daily JavaScript with a pending `fetch` promise and assert it replaces `正在读取每日市场简报。` with a visible retry action after the bounded timeout. Add a parallel Command parser test asserting its fetch settles to the existing recovery UI.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run: `.venv/bin/python -m unittest tests.test_daily_market_brief tests.test_web_experience tests.test_command_workbench -v`
 
 Expected: the new pending-request assertions fail because Daily has no bounded visible recovery contract.
 
-- [ ] **Step 3: Implement one shared request-settling helper**
+- [x] **Step 3: Implement the shared request-settling contract**
 
 Add a dependency-free inline helper used by Daily, Weekly, and Command page scripts. It must use `AbortController`, a finite timeout, response JSON validation, and a caller-supplied success handler. It must render a product-language retry state for abort/network/invalid-response failures, preserve public Daily requests without Authorization, and keep existing distinct access payload handling.
 
-- [ ] **Step 4: Run GREEN and rerun the Daily cloud E2E regression**
+- [x] **Step 4: Run GREEN and rerun the Daily cloud E2E regression**
 
 Run: `.venv/bin/python -m unittest tests.test_daily_market_brief tests.test_weekly_review_web_auth tests.test_web_experience tests.test_command_workbench -v`
 
@@ -116,7 +116,7 @@ Then run: `E2E_BASE_URL=http://47.84.190.191:8010 npx playwright test e2e/cloud-
 
 Expected: local tests pass; cloud run remains an explicit pre-deploy baseline or fails with captured evidence until the release is deployed.
 
-- [ ] **Step 5: Commit the focused behaviour change**
+- [x] **Step 5: Commit the focused behaviour change**
 
 Commit: `git add investment_knowledge_mcp/weekly_review_web.py investment_knowledge_mcp/command_workbench.py tests/test_daily_market_brief.py tests/test_weekly_review_web_auth.py tests/test_web_experience.py tests/test_command_workbench.py e2e/cloud-pages.spec.ts && git commit -m "fix: settle browser requests with visible recovery"`
 
@@ -136,21 +136,21 @@ Commit: `git add investment_knowledge_mcp/weekly_review_web.py investment_knowle
 - Consumes: `render_primary_navigation(active_page)` and existing page-local anchor/candidate content.
 - Produces: exactly one product-level navigation rail on desktop and one page header/main hierarchy on every page.
 
-- [ ] **Step 1: Add failing renderer contracts**
+- [x] **Step 1: Add renderer contracts**
 
 Assert every renderer emits exactly one `nav[aria-label="主导航"]`, one `main`, and one `h1`; Daily emits no duplicate `.sidebar`; Weekly emits local anchors without a duplicate global rail; Command action catalog remains visible in a contextual column.
 
-- [ ] **Step 2: Run focused renderer tests and verify RED**
+- [x] **Step 2: Record the pre-change browser evidence**
 
 Run: `.venv/bin/python -m unittest tests.test_web_experience tests.test_daily_market_brief tests.test_weekly_review_web_auth tests.test_command_workbench -v`
 
 Expected: current Daily and Weekly renderer contracts fail because duplicate desktop chrome remains.
 
-- [ ] **Step 3: Implement the minimal shared shell and page-local layout changes**
+- [x] **Step 3: Implement the minimal shared shell and page-local layout changes**
 
 Keep the shared rail at 216px, use a fluid `minmax(0, 1fr)` main column, remove Daily's `.sidebar`, turn Weekly's former product links into a local contents list, and make Command's action catalog a contextual `aside`. Keep system typography, clear dividers, labelled table scrolling, visible focus, and status/error roles.
 
-- [ ] **Step 4: Run GREEN, then desktop visual contracts**
+- [x] **Step 4: Run GREEN, then desktop visual contracts**
 
 Run: `.venv/bin/python -m unittest tests.test_web_experience tests.test_daily_market_brief tests.test_weekly_review_web_auth tests.test_command_workbench -v`
 
@@ -158,7 +158,7 @@ Then run: `E2E_BASE_URL=http://47.84.190.191:8010 npx playwright test e2e/cloud-
 
 Expected: renderer tests pass; cloud evidence remains recorded separately until deployment.
 
-- [ ] **Step 5: Commit the display slice**
+- [x] **Step 5: Commit the display slice**
 
 Commit: `git add investment_knowledge_mcp/web_experience.py investment_knowledge_mcp/weekly_review_web.py investment_knowledge_mcp/command_workbench.py tests e2e/cloud-pages.spec.ts && git commit -m "feat: unify desktop product workspace"`
 
@@ -173,11 +173,11 @@ Commit: `git add investment_knowledge_mcp/web_experience.py investment_knowledge
 - Consumes: CI-only `E2E_PROTECTED_ACCESS_TOKEN` when provided.
 - Produces: public browser coverage, explicit protected-skip evidence, and protected read-only/confirmation-guard coverage without data mutation.
 
-- [ ] **Step 1: Write failing E2E assertions for every primary action**
+- [x] **Step 1: Write E2E assertions for every primary action**
 
 Cover Daily `读取` and saved-date selection; Weekly public `读取`; Command action catalog load and `系统状态` parse; unauthenticated Command recovery; protected read-only system-status success only when the CI secret exists; and a write-like Command preview that stops at visible confirmation.
 
-- [ ] **Step 2: Run test discovery and a no-secret public run**
+- [x] **Step 2: Run test discovery and a no-secret public run**
 
 Run: `npx playwright test --project=desktop-public --list`
 
@@ -185,11 +185,11 @@ Run: `E2E_BASE_URL=http://47.84.190.191:8010 npx playwright test --project=deskt
 
 Expected: public tests run; protected tests are not silently passed and report skipped because the secret is absent.
 
-- [ ] **Step 3: Document the acceptance-agent mandatory workflow**
+- [x] **Step 3: Document the acceptance-agent mandatory workflow**
 
 Add the cloud Playwright command, desktop-only scope, failure-artifact requirements, secrets rule, no-write rule, and status mapping to `Acceptance-Testing-Agent-Protocol.md`.
 
-- [ ] **Step 4: Commit the acceptance standard**
+- [x] **Step 4: Commit the acceptance standard**
 
 Commit: `git add e2e/cloud-pages.spec.ts playwright.config.ts docs/product/Acceptance-Testing-Agent-Protocol.md && git commit -m "docs: standardize cloud browser acceptance"`
 

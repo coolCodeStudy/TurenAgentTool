@@ -221,6 +221,11 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertNotIn("/api/weekly-review/refresh", html)
         self.assertNotIn("/api/weekly-review/save", html)
         self.assertNotIn("/api/candidate-insights", html)
+        self.assertIn("loadGeneration: 0", html)
+        self.assertIn("const controller = new AbortController();", html)
+        self.assertIn("读取超时，请重试。", html)
+        self.assertIn("function cancelReviewLoad()", html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
 
     def test_public_weekly_page_uses_shared_shell_without_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()
