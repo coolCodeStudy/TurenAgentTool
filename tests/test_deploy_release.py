@@ -1645,6 +1645,29 @@ class DeploymentEngineTests(TestCase):
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
         self.assertIn("dingtalk-api", outcome.activated_services)
 
+    def test_emergency_full_recovery_accepts_no_deploy_baseline_with_complete_targets(self) -> None:
+        archive = self._managed_archive()
+        self.plan = DeploymentPlan(
+            mode=DeployMode.NO_DEPLOY,
+            targets=(),
+            changed_files=("docs/project-management/Delivery-Queue.md",),
+            image_input_files=(),
+            reasons=("release recovery record",),
+        )
+        request = self._full_request(
+            "main",
+            DeployMode.FULL_IMAGE,
+            APPLICATION_SERVICES,
+            archive,
+            "Restore the accepted application after an active release overwrite.",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
+        self.assertEqual(APPLICATION_SERVICES, outcome.activated_services)
+
     def test_feature_ref_is_rejected_even_with_valid_emergency_reason(self) -> None:
         request = replace(
             self.targeted_request,

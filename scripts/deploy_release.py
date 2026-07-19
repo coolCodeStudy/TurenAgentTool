@@ -1403,7 +1403,12 @@ class DeploymentEngine:
             )
         ):
             if request.emergency_reason is not None:
-                if requested_targets != plan.targets:
+                full_recovery_from_no_deploy = (
+                    request.requested_mode is DeployMode.FULL_IMAGE
+                    and plan.mode is DeployMode.NO_DEPLOY
+                    and requested_targets == tuple(sorted(APPLICATION_SERVICES))
+                )
+                if requested_targets != plan.targets and not full_recovery_from_no_deploy:
                     raise DeploymentError(
                         "emergency override cannot change server-computed deployment targets"
                     )
