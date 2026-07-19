@@ -28,6 +28,7 @@ class AppGatewayRouteTableTests(unittest.TestCase):
             ("GET", "/weekly-review"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/assets/weekly-review.js"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/daily-market-brief"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/assets/daily-market-brief.js"): ("daily_market_brief", AccessClass.PUBLIC_READ),
             ("GET", "/health"): ("gateway", AccessClass.PUBLIC_READ),
             ("GET", "/command"): ("command", AccessClass.PUBLIC_READ),
             ("GET", "/api/command-workbench/actions"): ("command", AccessClass.PUBLIC_READ),

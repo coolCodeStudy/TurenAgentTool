@@ -316,6 +316,18 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual("missing", payload["status"])
 
+    def test_public_daily_script_asset_remains_tokenless(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web as web
+
+        html = web.render_daily_market_brief_html()
+        script = web.render_daily_market_brief_script()
+
+        self.assertIn('<script src="/assets/daily-market-brief.js"></script>', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
+        self.assertIn("/api/daily-market-brief", script)
+        self.assertNotIn("api-token", html)
+        self.assertNotIn("api-token", script)
+
     def test_candidate_read_fails_closed_without_configured_tokens_while_weekly_read_stays_public(self) -> None:
         config = SimpleNamespace(
             app_access_token=None,

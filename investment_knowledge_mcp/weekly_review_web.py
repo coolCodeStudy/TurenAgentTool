@@ -104,6 +104,9 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     def _render_daily_market_brief_page(self) -> str:
         return render_daily_market_brief_html()
 
+    def _render_daily_market_brief_script(self) -> str:
+        return render_daily_market_brief_script()
+
     def _handle_workbench_parse(self, payload: dict[str, Any]) -> None:
         response = execute_workbench_request(
             CommandHttpRequest(
@@ -1166,7 +1169,7 @@ def render_weekly_review_script() -> str:
     return script
 
 
-def render_daily_market_brief_html() -> str:
+def _render_daily_market_brief_html_with_inline_script() -> str:
     today = ""
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -1818,6 +1821,16 @@ def render_daily_market_brief_html() -> str:
   </script>
 </body>
 </html>"""
+
+
+def render_daily_market_brief_html() -> str:
+    before, _, after = _split_inline_script(_render_daily_market_brief_html_with_inline_script())
+    return f'{before}<script src="/assets/daily-market-brief.js"></script>{after}'
+
+
+def render_daily_market_brief_script() -> str:
+    _, script, _ = _split_inline_script(_render_daily_market_brief_html_with_inline_script())
+    return script
 
 
 def _resolve_week_request(payload: dict[str, Any]) -> tuple[date, date]:
