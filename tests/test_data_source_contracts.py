@@ -12,12 +12,171 @@ from investment_knowledge_mcp.data_sources.contracts import (
     SourceCapability,
     SourcePlan,
 )
+from investment_knowledge_mcp.data_sources.pool import DataSourcePool
+from investment_knowledge_mcp.data_sources.valuation import (
+    ValuationFactsSource,
+    valuation_financial_plan,
+)
 
 
 class DataSourceContractTests(TestCase):
     def test_capability_and_status_values_are_provider_neutral(self) -> None:
         self.assertEqual(SourceCapability.MARKET_BARS.value, "market_bars")
+        self.assertEqual(SourceCapability.OFFICIAL_FINANCIAL_FACTS.value, "official_financial_facts")
+        self.assertEqual(SourceCapability.MARKET_SNAPSHOT.value, "market_snapshot")
         self.assertEqual(DataStatus.PARTIAL.value, "partial")
+
+    def test_valuation_source_normalizes_fact_metadata_and_coverage(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def loader(symbol: str, market: str) -> dict[str, object]:
+            calls.append((symbol, market))
+            return {
+                "facts": [
+                    {
+                        "metric": "revenue",
+                        "value": 52_600_000_000,
+                        "currency": "usd",
+                        "period_end": "2025-12-31",
+                        "timestamp": "2026-02-01T01:02:03Z",
+                        "source_type": "vendor_financial",
+                        "provider": "vendor",
+                        "raw": {"authorization": "Bearer secret"},
+                    }
+                ],
+                "fetched_at": datetime(2026, 2, 1, 1, 2, 3, tzinfo=timezone.utc),
+            }
+
+        source = ValuationFactsSource(
+            "sec_companyfacts",
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "sec_companyfacts",
+            "sec",
+            loader,
+        )
+        request = DataRequest(
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "US",
+            ("INTC",),
+            freshness="latest_filing",
+            required_fields=("revenue", "net_income"),
+        )
+
+        result = source.fetch(request)
+
+        self.assertEqual(calls, [("INTC", "US")])
+        self.assertIs(result.status, DataStatus.PARTIAL)
+        self.assertEqual(result.coverage, 0.5)
+        self.assertEqual(
+            result.records,
+            ({
+                "metric": "revenue",
+                "value": 52_600_000_000.0,
+                "source_type": "sec_companyfacts",
+                "provider": "sec",
+                "currency": "USD",
+                "period_end": "2025-12-31",
+                "timestamp": "2026-02-01T01:02:03+00:00",
+                "freshness": "latest_filing",
+            },),
+        )
+        self.assertNotIn("secret", repr(result))
+
+    def test_valuation_plan_uses_ordered_vendor_fallback_and_redacted_failures(self) -> None:
+        calls: list[str] = []
+
+        def missing(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("sec_companyfacts")
+            return []
+
+        def vendor(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("vendor_financial")
+            return [{"metric": "revenue", "value": 10.0, "currency": "USD"}]
+
+        pool = DataSourcePool(now=lambda: datetime(2026, 7, 19, tzinfo=timezone.utc))
+        pool.register(ValuationFactsSource(
+            "sec_companyfacts", SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "sec_companyfacts", "sec", missing,
+        ))
+        pool.register(ValuationFactsSource(
+            "vendor_financial", SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "vendor_financial", "vendor", vendor,
+        ))
+        request = DataRequest(
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "US",
+            ("INTC",),
+            freshness="latest_filing",
+            required_fields=("revenue",),
+        )
+
+        result = pool.fetch(request, valuation_financial_plan("US", available_sources=("sec_companyfacts", "vendor_financial")))
+
+        self.assertEqual(calls, ["sec_companyfacts", "vendor_financial"])
+        self.assertEqual(result.attempted_sources, ("sec_companyfacts", "vendor_financial"))
+        self.assertEqual(result.selected_source, "vendor_financial")
+        self.assertEqual(result.records[0]["source_type"], "vendor_financial")
+        self.assertEqual(result.failures[0].code, "empty_result")
+        self.assertIsNone(result.failures[0].detail)
+
+    def test_valuation_source_returns_safe_unavailable_result_for_loader_failure(self) -> None:
+        def broken(symbol: str, market: str) -> object:
+            raise RuntimeError("token=secret https://private.example/raw")
+
+        source = ValuationFactsSource(
+            "hkexnews",
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "hkexnews",
+            "hkex",
+            broken,
+        )
+        request = DataRequest(
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "HK",
+            ("01888",),
+            freshness="latest_filing",
+        )
+
+        result = source.fetch(request)
+
+        self.assertIs(result.status, DataStatus.UNAVAILABLE)
+        self.assertEqual(result.failures[0].code, "provider_unavailable")
+        self.assertEqual(result.failures[0].detail, "RuntimeError")
+        self.assertNotIn("secret", repr(result))
+        self.assertNotIn("private.example", repr(result))
+
+    def test_valuation_source_admits_only_metrics_for_its_capability(self) -> None:
+        payload = [
+            {"metric": "revenue", "value": 10.0, "currency": "USD"},
+            {"metric": "price", "value": 2.0, "currency": "USD"},
+        ]
+        financial = ValuationFactsSource(
+            "sec_companyfacts",
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "sec_companyfacts",
+            "sec",
+            lambda symbol, market: payload,
+        ).fetch(DataRequest(
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "US",
+            ("INTC",),
+            freshness="latest_filing",
+        ))
+        market = ValuationFactsSource(
+            "yahoo",
+            SourceCapability.MARKET_SNAPSHOT,
+            "market_snapshot",
+            "yahoo",
+            lambda symbol, market: payload,
+        ).fetch(DataRequest(
+            SourceCapability.MARKET_SNAPSHOT,
+            "US",
+            ("INTC",),
+            freshness="latest_market_session",
+        ))
+
+        self.assertEqual([record["metric"] for record in financial.records], ["revenue"])
+        self.assertEqual([record["metric"] for record in market.records], ["price"])
 
     def test_provider_failure_is_immutable_and_redacts_sensitive_detail(self) -> None:
         failure = ProviderFailure(

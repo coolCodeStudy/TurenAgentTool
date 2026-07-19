@@ -14,6 +14,8 @@ from typing import Any, Iterable, Optional, Tuple
 class SourceCapability(str, Enum):
     MARKET_BARS = "market_bars"
     MARKET_ACTIVITY = "market_activity"
+    OFFICIAL_FINANCIAL_FACTS = "official_financial_facts"
+    MARKET_SNAPSHOT = "market_snapshot"
     OFFICIAL_EVENTS = "official_events"
     NEWS_EVENTS = "news_events"
     POSITIONS = "positions"

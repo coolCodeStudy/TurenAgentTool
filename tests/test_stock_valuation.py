@@ -7,6 +7,11 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+
+from investment_knowledge_mcp.data_sources.contracts import SourceCapability
+from investment_knowledge_mcp.data_sources.pool import DataSourcePool, MemoryResultCache
+from investment_knowledge_mcp.data_sources.valuation import ValuationFactsSource
 
 from investment_knowledge_mcp.stock_valuation import (
     CORE_FRAMES,
@@ -17,6 +22,10 @@ from investment_knowledge_mcp.stock_valuation import (
     render_valuation_card,
     render_valuation_methods,
     valuation_method_library,
+)
+from investment_knowledge_mcp.valuation_data_provider import (
+    fetch_valuation_snapshot,
+    normalize_valuation_target,
 )
 
 
@@ -71,6 +80,188 @@ class StockValuationTests(unittest.TestCase):
             now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
         )
         return packet
+
+    def _provider_pool(
+        self,
+        loaders: dict[str, tuple[SourceCapability, str, str, object]],
+        *,
+        cache: MemoryResultCache | None = None,
+    ) -> DataSourcePool:
+        pool = DataSourcePool(cache=cache, now=lambda: datetime(2026, 7, 19, tzinfo=timezone.utc))
+        for source_id, (capability, source_type, provider, loader) in loaders.items():
+            pool.register(ValuationFactsSource(
+                source_id,
+                capability,
+                source_type,
+                provider,
+                loader,
+            ))
+        return pool
+
+    def test_valuation_provider_public_signatures_and_target_normalization(self) -> None:
+        self.assertEqual(
+            list(inspect.signature(normalize_valuation_target).parameters),
+            ["symbol", "market", "company_name"],
+        )
+        self.assertEqual(
+            list(inspect.signature(fetch_valuation_snapshot).parameters),
+            ["symbol", "market", "company_name"],
+        )
+        cases = (
+            (("US.INTC", "US", None), ("US.INTC", "INTC", "USD")),
+            (("KR.000660", "KR", None), ("KR.000660", "000660.KS", "KRW")),
+            (("000660 KR", "KR", None), ("KR.000660", "000660.KS", "KRW")),
+            (("HK.01888", "HK", None), ("HK.01888", "1888.HK", "HKD")),
+            (("1888 HK", "HK", None), ("HK.01888", "1888.HK", "HKD")),
+            (("建滔积层板", "HK", None), ("HK.01888", "1888.HK", "HKD")),
+            (("建滔積層板", "HK", None), ("HK.01888", "1888.HK", "HKD")),
+            (("Kingboard Laminates", "HK", None), ("HK.01888", "1888.HK", "HKD")),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                target = normalize_valuation_target(*arguments)
+                self.assertEqual(target["normalized_target"], expected[0])
+                self.assertEqual(target["provider_market_ticker"], expected[1])
+                self.assertEqual(target["currency"], expected[2])
+
+    def test_us_snapshot_uses_sec_facts_and_shared_yahoo_market_source(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def sec(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append(("sec_companyfacts", symbol))
+            return [{
+                "metric": "revenue", "value": 52_600_000_000,
+                "currency": "USD", "period_end": "2025-12-31",
+            }]
+
+        def yahoo(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append(("yahoo", symbol))
+            return [{
+                "metric": "price", "value": 31.5, "currency": "USD",
+                "timestamp": "2026-07-19T00:00:00+00:00",
+            }]
+
+        pool = self._provider_pool({
+            "sec_companyfacts": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "sec_companyfacts", "sec", sec),
+            "yahoo": (SourceCapability.MARKET_SNAPSHOT, "market_snapshot", "yahoo", yahoo),
+        })
+        with patch("investment_knowledge_mcp.valuation_data_provider.default_valuation_pool", return_value=pool):
+            snapshot = fetch_valuation_snapshot("US.INTC", "US")
+
+        self.assertEqual(calls, [("sec_companyfacts", "INTC"), ("yahoo", "INTC")])
+        self.assertEqual(snapshot["financial_fact_status"], "partial")
+        self.assertEqual(snapshot["market_snapshot_status"], "partial")
+        self.assertEqual(
+            {(fact["metric"], fact["source_type"], fact["provider"]) for fact in snapshot["facts"]},
+            {("revenue", "sec_companyfacts", "sec"), ("price", "market_snapshot", "yahoo")},
+        )
+        self.assertNotIn("errors", snapshot)
+
+    def test_kr_snapshot_attempts_dart_fss_company_ir_then_distinct_vendor(self) -> None:
+        calls: list[str] = []
+
+        def missing(source_id: str):
+            def loader(symbol: str, market: str) -> list[dict[str, object]]:
+                calls.append(source_id)
+                return []
+            return loader
+
+        def vendor(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("vendor_financial")
+            return [{"metric": "revenue", "value": 10.0, "currency": "KRW", "period_end": "2025-12-31"}]
+
+        def yahoo(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("yahoo")
+            return [{"metric": "price", "value": 250_000.0, "currency": "KRW", "timestamp": "2026-07-19T00:00:00Z"}]
+
+        pool = self._provider_pool({
+            "dart_filing": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "dart_filing", "dart", missing("dart_filing")),
+            "fss_filing": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "fss_filing", "fss", missing("fss_filing")),
+            "company_ir": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "company_ir", "company_ir", missing("company_ir")),
+            "vendor_financial": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "vendor_financial", "vendor", vendor),
+            "yahoo": (SourceCapability.MARKET_SNAPSHOT, "market_snapshot", "yahoo", yahoo),
+        })
+        with patch("investment_knowledge_mcp.valuation_data_provider.default_valuation_pool", return_value=pool):
+            snapshot = fetch_valuation_snapshot("000660 KR", "KR")
+
+        self.assertEqual(calls, ["dart_filing", "fss_filing", "company_ir", "vendor_financial", "yahoo"])
+        self.assertEqual(
+            [attempt["source_type"] for attempt in snapshot["source_attempts"][:4]],
+            ["dart_filing", "fss_filing", "company_ir", "vendor_financial"],
+        )
+        revenue = next(fact for fact in snapshot["facts"] if fact["metric"] == "revenue")
+        self.assertEqual(revenue["source_type"], "vendor_financial")
+        self.assertEqual(revenue["provider"], "vendor")
+        self.assertNotIn("official", json.dumps(revenue).lower())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                {"stock": {"symbol": "000660", "market": "KR"}},
+                symbol="000660",
+                market="KR",
+                output_dir=Path(temporary),
+                command="valuation KR.000660",
+                provider_snapshot=snapshot,
+                now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+            )
+        registry = packet["source_coverage"]["source_registry"]
+        self.assertIn("vendor_financial", {source["source_type"] for source in registry})
+        self.assertIn("market_snapshot", {source["source_type"] for source in registry})
+
+    def test_hk_alias_snapshot_attempts_hkexnews_then_company_report(self) -> None:
+        calls: list[str] = []
+
+        def hkex(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("hkexnews")
+            return []
+
+        def company_report(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("company_report")
+            return [{"metric": "revenue", "value": 20.0, "currency": "HKD", "period_end": "2025-12-31"}]
+
+        def yahoo(symbol: str, market: str) -> list[dict[str, object]]:
+            calls.append("yahoo")
+            return [{"metric": "price", "value": 8.8, "currency": "HKD", "timestamp": "2026-07-19T00:00:00Z"}]
+
+        pool = self._provider_pool({
+            "hkexnews": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "hkexnews", "hkex", hkex),
+            "company_report": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "company_report", "official_research", company_report),
+            "yahoo": (SourceCapability.MARKET_SNAPSHOT, "market_snapshot", "yahoo", yahoo),
+        })
+        with patch("investment_knowledge_mcp.valuation_data_provider.default_valuation_pool", return_value=pool):
+            snapshot = fetch_valuation_snapshot("Kingboard Laminates Holdings Limited", "HK")
+
+        self.assertEqual(calls, ["hkexnews", "company_report", "yahoo"])
+        self.assertEqual(snapshot["target_resolution"]["normalized_target"], "HK.01888")
+        revenue = next(fact for fact in snapshot["facts"] if fact["metric"] == "revenue")
+        self.assertEqual((revenue["source_type"], revenue["provider"]), ("company_report", "official_research"))
+
+    def test_cache_miss_attempts_every_source_before_safe_degradation(self) -> None:
+        calls: list[str] = []
+
+        def missing(source_id: str):
+            def loader(symbol: str, market: str) -> list[dict[str, object]]:
+                calls.append(source_id)
+                return []
+            return loader
+
+        pool = self._provider_pool({
+            "dart_filing": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "dart_filing", "dart", missing("dart_filing")),
+            "fss_filing": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "fss_filing", "fss", missing("fss_filing")),
+            "company_ir": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "company_ir", "company_ir", missing("company_ir")),
+            "vendor_financial": (SourceCapability.OFFICIAL_FINANCIAL_FACTS, "vendor_financial", "vendor", missing("vendor_financial")),
+            "yahoo": (SourceCapability.MARKET_SNAPSHOT, "market_snapshot", "yahoo", missing("yahoo")),
+        }, cache=MemoryResultCache(clock=lambda: 0.0))
+        with patch("investment_knowledge_mcp.valuation_data_provider.default_valuation_pool", return_value=pool):
+            snapshot = fetch_valuation_snapshot("KR.000660", "KR")
+
+        self.assertEqual(calls, ["dart_filing", "fss_filing", "company_ir", "vendor_financial", "yahoo"])
+        self.assertEqual(snapshot["facts"], [])
+        self.assertEqual(snapshot["financial_fact_status"], "unavailable")
+        self.assertEqual(snapshot["market_snapshot_status"], "unavailable")
+        serialized = json.dumps(snapshot).lower()
+        for unsafe in ("authorization", "bearer", "token=", "http://", "https://"):
+            self.assertNotIn(unsafe, serialized)
 
     def _assert_public_refs_resolve(self, public: dict[str, object]) -> None:
         facts = public.get("facts")
