@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -47,13 +48,33 @@ _FACT_PATTERNS: dict[str, tuple[str, ...]] = {
 _MONEY_METRICS = frozenset({"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capex", "free_cash_flow", "cash", "debt", "net_debt", "market_cap", "enterprise_value", "ebitda", "book_value"})
 _EVIDENCE_PROVIDER_STATUS_NAMES = ("market_snapshot", "financial_facts")
 _EVIDENCE_STATUS_VALUES = frozenset({
-    "available", "attempted", "complete_missing", "failed", "failure", "missing",
-    "not_attempted", "partial", "success", "unavailable", "unknown",
+    "available", "attempted", "complete_missing", "failed", "failure", "missing", "present",
+    "not_attempted", "partial", "stale", "success", "unavailable", "unknown",
 })
 _EVIDENCE_ATTEMPT_FAMILIES = frozenset({
     "company_ir", "market_snapshot", "official_financial", "regulator_filing",
     "unknown", "vendor_financial",
 })
+_EVIDENCE_METRICS = frozenset({
+    *_FACT_PATTERNS,
+    "gross_margin", "operating_margin", "fcf_margin", "fcf_yield", "pe", "ps",
+    "ev_ebitda", "ev_fcf",
+})
+_EVIDENCE_DISPLAY_KINDS = frozenset({"currency", "currency_per_share", "multiple", "number", "percent"})
+_EVIDENCE_BRIDGE_TYPES = frozenset({"sales_anchor", "ev_sales_anchor", "fcf_yield"})
+_EVIDENCE_FRAME_NAMES = {item["id"]: item["name"] for item in CORE_FRAMES}
+_EVIDENCE_FRAME_FITS = frozenset({"fits", "partial_fit", "insufficient_data", "does_not_fit"})
+_EVIDENCE_CONFIDENCE = frozenset({"low", "medium", "high"})
+# Evidence references are opaque identifiers only: ASCII token segments separated by
+# `:`/`.`/`_`/`-`, never URLs, paths, credentials, headers, or diagnostics.
+_SAFE_EVIDENCE_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_UNSAFE_EVIDENCE_TEXT = re.compile(
+    r"(?:https?://|file:|\\\\|(?:\.\.?[/\\\\])|(?:^|\s)(?:/|~[/\\\\]|[A-Za-z]:[/\\\\])|"
+    r"authorization|bearer|credential|secret|token|api[_ -]?key|password|header|"
+    r"config(?:uration)?|exception|traceback|diagnostic|endpoint|\burl\b)",
+    re.IGNORECASE,
+)
+_SAFE_EVIDENCE_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T[\d:.+-]+)?$")
 
 
 def valuation_method_library() -> list[dict[str, Any]]:
@@ -96,8 +117,8 @@ def build_valuation_artifact(
     fact_refs = {str(item["metric"]): str(item["id"]) for item in facts}
     calculations = _calculate_metrics(values, fact_refs, currency)
     gaps = _data_gaps(values, calculations, context, snapshot)
-    internal_scores = _score_core_frames(context, values, calculations, gaps)
-    bridge = _market_implied_bridge(values, calculations, internal_scores, gaps, currency)
+    internal_scores = _score_core_frames(context, values, calculations, gaps, fact_refs)
+    bridge = _market_implied_bridge(values, calculations, internal_scores, gaps, currency, fact_refs)
     selected_frames = _select_frames(bridge["frame_fit_ranking"])
     coverage = _source_coverage(context, facts, snapshot)
     reasons = _degraded_reasons(gaps, coverage, context)
@@ -137,7 +158,7 @@ def load_latest_valuation_artifact(*, symbol: str, market: str, output_dir: Path
 
 
 def build_valuation_artifact_evidence(packet: dict[str, object]) -> dict[str, object]:
-    """Project a packet through an explicit safe allow-list; never reads paths."""
+    """Project a packet through typed, bounded safe fields; never reads paths."""
     if not isinstance(packet, dict):
         raise TypeError("packet must be a mapping")
     input_data = packet.get("input") if isinstance(packet.get("input"), dict) else {}
@@ -147,19 +168,15 @@ def build_valuation_artifact_evidence(packet: dict[str, object]) -> dict[str, ob
     safety = packet.get("safety") if isinstance(packet.get("safety"), dict) else {}
     return {
         "schema": "stock_valuation_evidence.v1",
-        "target": _allow_dict(packet.get("target_resolution"), ("input_target", "normalized_target", "normalized_symbol", "normalized_market", "company_name", "provider_market_ticker", "currency", "mapping_confidence", "mapping_source")),
-        "stock": _allow_dict(stock, ("symbol", "market", "name")),
-        "facts": [_allow_dict(item, ("id", "metric", "value", "display_value", "display_kind", "currency", "source_id", "source_type", "period_end", "timestamp", "provider")) for item in packet.get("facts", []) if isinstance(item, dict)],
-        "deterministic_calculations": [_allow_dict(item, ("metric", "value", "raw_value", "display_value", "display_kind", "currency", "meaningful", "meaningfulness_reason", "formula", "inputs", "input_refs")) for item in packet.get("deterministic_calculations", []) if isinstance(item, dict)],
-        "market_implied_bridge": {"bridge_lines": [_allow_dict(item, ("type", "display")) for item in bridge.get("bridge_lines", []) if isinstance(item, dict)], "frame_fit_ranking": [_allow_dict(item, ("id", "name", "score", "fit_to_current_market_value", "why_it_fits_or_not", "main_data_gaps", "confidence")) for item in bridge.get("frame_fit_ranking", []) if isinstance(item, dict)]},
-        "source_coverage": {
-            **_allow_dict(coverage, ("fact_count", "fact_source_id_count", "source_count", "official_source_count", "market_snapshot_status", "financial_fact_status")),
-            "provider_statuses": _evidence_provider_statuses(coverage.get("provider_statuses")),
-            "source_attempts": _evidence_source_attempts(coverage.get("source_attempts")),
-        },
-        "degraded_state": _allow_dict(packet.get("degraded_state"), ("degraded", "reasons", "data_gaps")),
-        "safety": {"direct_investment_advice": bool(safety.get("direct_investment_advice")), "writes_formal_user_insight": bool(safety.get("writes_formal_user_insight")), "research_aid_only": bool(safety.get("research_aid_only")), "omits_local_path": True, "provider_error_detail_omitted": True},
-        "input": _allow_dict(input_data, ("symbol", "market", "created_at")),
+        "target": _evidence_target(packet.get("target_resolution")),
+        "stock": _evidence_stock(stock),
+        "facts": _evidence_records(packet.get("facts"), _evidence_fact),
+        "deterministic_calculations": _evidence_records(packet.get("deterministic_calculations"), _evidence_calculation),
+        "market_implied_bridge": _evidence_bridge(bridge),
+        "source_coverage": _evidence_coverage(coverage),
+        "degraded_state": _evidence_degraded_state(packet.get("degraded_state")),
+        "safety": _evidence_safety(safety),
+        "input": _evidence_input(input_data),
     }
 
 
@@ -292,7 +309,7 @@ def _data_gaps(values: dict[str, float], calculations: list[dict[str, object]], 
     return gaps
 
 
-def _score_core_frames(context: dict[str, object], values: dict[str, float], calculations: list[dict[str, object]], gaps: list[str]) -> list[dict[str, object]]:
+def _score_core_frames(context: dict[str, object], values: dict[str, float], calculations: list[dict[str, object]], gaps: list[str], fact_refs: dict[str, str]) -> list[dict[str, object]]:
     text = json.dumps(context, ensure_ascii=False).lower()
     score = {"fcf": .15, "comparable_multiples": .2, "sotp_asset_value": .05, "cyclical": .05, "growth_scenario": .1}
     if {"free_cash_flow", "operating_cash_flow", "capex"} & values.keys(): score["fcf"] += .55
@@ -301,16 +318,36 @@ def _score_core_frames(context: dict[str, object], values: dict[str, float], cal
     if any(word in text for word in ("cycle", "cyclical", "semiconductor", "memory", "周期", "半导体")): score["cyclical"] += .65
     if any(word in text for word in ("growth", "tam", "scenario", "ai", "增长", "市场空间")): score["growth_scenario"] += .55
     frames = {item["id"]: item for item in CORE_FRAMES}
-    return [{"id": ident, "name": frames[ident]["name"], "score": round(min(value, 1), 3), "reason": "ranked from available facts and local context", "degraded_by": [gap for gap in gaps if ident.split("_")[0] in gap]} for ident, value in sorted(score.items(), key=lambda item: (-item[1], item[0]))]
+    calculated = {str(item["metric"]): item for item in calculations}
+    fact_inputs = {
+        "fcf": ("free_cash_flow", "operating_cash_flow", "capex"),
+        "comparable_multiples": ("market_cap", "revenue", "net_income", "ebitda"),
+        "sotp_asset_value": (), "cyclical": (), "growth_scenario": (),
+    }
+    context_words = {
+        "sotp_asset_value": ("asset", "segment", "holding", "资产", "分部"),
+        "cyclical": ("cycle", "cyclical", "semiconductor", "memory", "周期", "半导体"),
+        "growth_scenario": ("growth", "tam", "scenario", "ai", "增长", "市场空间"),
+    }
+    result = []
+    for ident, value in sorted(score.items(), key=lambda item: (-item[1], item[0])):
+        input_refs = [f"packet:method_library:{ident}"]
+        input_refs.extend(_flatten_input_refs(fact_inputs[ident], fact_refs, calculated))
+        if any(word in text for word in context_words.get(ident, ())):
+            input_refs.extend(("packet:stock:core_business", "packet:stock:stock_character"))
+        result.append({"id": ident, "name": frames[ident]["name"], "score": round(min(value, 1), 3), "reason": "ranked from available facts and local context", "input_refs": tuple(dict.fromkeys(input_refs)), "degraded_by": [gap for gap in gaps if ident.split("_")[0] in gap]})
+    return result
 
 
-def _market_implied_bridge(values: dict[str, float], calculations: list[dict[str, object]], scores: list[dict[str, object]], gaps: list[str], currency: str | None) -> dict[str, object]:
+def _market_implied_bridge(values: dict[str, float], calculations: list[dict[str, object]], scores: list[dict[str, object]], gaps: list[str], currency: str | None, fact_refs: dict[str, str]) -> dict[str, object]:
     calculated = {str(item["metric"]): item for item in calculations}
     market_cap = values.get("market_cap") or _numeric(calculated.get("market_cap")); ev = values.get("enterprise_value") or _numeric(calculated.get("enterprise_value")); fcf = values.get("free_cash_flow") or _numeric(calculated.get("free_cash_flow")); revenue = values.get("revenue")
-    lines: list[dict[str, str]] = []
-    if market_cap is not None and revenue not in (None, 0): lines.append({"type": "sales_anchor", "display": f"P/S: {_format_value(market_cap / revenue, 'multiple', currency)} anchors current market value."})
-    if ev is not None and revenue not in (None, 0): lines.append({"type": "ev_sales_anchor", "display": f"EV/Sales: {_format_value(ev / revenue, 'multiple', currency)}."})
-    if fcf is not None and market_cap not in (None, 0): lines.append({"type": "fcf_yield", "display": "FCF yield is not meaningful with negative FCF." if fcf < 0 else f"FCF yield: {_format_value(fcf / market_cap, 'percent', currency)}."})
+    lines: list[dict[str, object]] = []
+    def add_line(line_type: str, display: str, inputs: tuple[str, ...]) -> None:
+        lines.append({"type": line_type, "display": display, "input_refs": _flatten_input_refs(inputs, fact_refs, calculated)})
+    if market_cap is not None and revenue not in (None, 0): add_line("sales_anchor", f"P/S: {_format_value(market_cap / revenue, 'multiple', currency)} anchors current market value.", ("market_cap", "revenue"))
+    if ev is not None and revenue not in (None, 0): add_line("ev_sales_anchor", f"EV/Sales: {_format_value(ev / revenue, 'multiple', currency)}.", ("enterprise_value", "revenue"))
+    if fcf is not None and market_cap not in (None, 0): add_line("fcf_yield", "FCF yield is not meaningful with negative FCF." if fcf < 0 else f"FCF yield: {_format_value(fcf / market_cap, 'percent', currency)}.", ("free_cash_flow", "market_cap"))
     fit = []
     for item in scores:
         confidence = "low" if gaps else "medium"
@@ -394,13 +431,250 @@ def _allow_dict(value: object, keys: tuple[str, ...]) -> dict[str, object]:
     return {key: value[key] for key in keys if isinstance(value, dict) and value.get(key) is not None}
 
 
+def _evidence_records(value: object, projector: Any) -> list[dict[str, object]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [projected for item in value if isinstance(item, dict) if (projected := projector(item))]
+
+
+def _evidence_target(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    projected: dict[str, object] = {}
+    for key in ("input_target", "normalized_target", "normalized_symbol", "normalized_market", "provider_market_ticker", "mapping_source"):
+        if reference := _evidence_reference(value.get(key)):
+            projected[key] = reference
+    if name := _evidence_text(value.get("company_name")):
+        projected["company_name"] = name
+    if currency := _evidence_currency(value.get("currency")):
+        projected["currency"] = currency
+    if confidence := _evidence_enum(value.get("mapping_confidence"), _EVIDENCE_CONFIDENCE):
+        projected["mapping_confidence"] = confidence
+    return projected
+
+
+def _evidence_stock(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    projected: dict[str, object] = {}
+    for key in ("symbol", "market"):
+        if reference := _evidence_reference(value.get(key)):
+            projected[key] = reference
+    if name := _evidence_text(value.get("name")):
+        projected["name"] = name
+    return projected
+
+
+def _evidence_fact(value: dict[str, object]) -> dict[str, object]:
+    metric = _evidence_metric(value.get("metric"))
+    if not metric:
+        return {}
+    projected: dict[str, object] = {"metric": metric}
+    for key in ("id", "source_id", "source_type", "provider"):
+        if reference := _evidence_reference(value.get(key)):
+            projected[key] = reference
+    for key in ("value",):
+        if number := _evidence_number(value.get(key)):
+            projected[key] = number
+        elif value.get(key) == 0:
+            projected[key] = 0.0
+    if display := _evidence_text(value.get("display_value")):
+        projected["display_value"] = display
+    if kind := _evidence_enum(value.get("display_kind"), _EVIDENCE_DISPLAY_KINDS):
+        projected["display_kind"] = kind
+    if currency := _evidence_currency(value.get("currency")):
+        projected["currency"] = currency
+    for key in ("period_end", "timestamp"):
+        if timestamp := _evidence_timestamp(value.get(key)):
+            projected[key] = timestamp
+    return projected
+
+
+def _evidence_calculation(value: dict[str, object]) -> dict[str, object]:
+    metric = _evidence_metric(value.get("metric"))
+    if not metric:
+        return {}
+    projected: dict[str, object] = {"metric": metric}
+    for key in ("value", "raw_value"):
+        number = _evidence_number(value.get(key))
+        if number is not None:
+            projected[key] = number
+        elif value.get(key) is None and key in value:
+            projected[key] = None
+    for key in ("display_value", "meaningfulness_reason", "formula"):
+        if text := _evidence_text(value.get(key)):
+            projected[key] = text
+    if kind := _evidence_enum(value.get("display_kind"), _EVIDENCE_DISPLAY_KINDS):
+        projected["display_kind"] = kind
+    if currency := _evidence_currency(value.get("currency")):
+        projected["currency"] = currency
+    if isinstance(value.get("meaningful"), bool):
+        projected["meaningful"] = value["meaningful"]
+    inputs = _evidence_metric_list(value.get("inputs"))
+    if inputs:
+        projected["inputs"] = inputs
+    input_refs = _evidence_reference_list(value.get("input_refs"))
+    if input_refs:
+        projected["input_refs"] = input_refs
+    return projected
+
+
+def _evidence_bridge(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {"bridge_lines": [], "frame_fit_ranking": []}
+    return {
+        "bridge_lines": _evidence_records(value.get("bridge_lines"), _evidence_bridge_line),
+        "frame_fit_ranking": _evidence_records(value.get("frame_fit_ranking"), _evidence_frame_fit),
+    }
+
+
+def _evidence_bridge_line(value: dict[str, object]) -> dict[str, object]:
+    line_type = _evidence_enum(value.get("type"), _EVIDENCE_BRIDGE_TYPES)
+    display = _evidence_text(value.get("display"))
+    if not line_type or not display:
+        return {}
+    projected: dict[str, object] = {"type": line_type, "display": display}
+    if input_refs := _evidence_reference_list(value.get("input_refs")):
+        projected["input_refs"] = input_refs
+    return projected
+
+
+def _evidence_frame_fit(value: dict[str, object]) -> dict[str, object]:
+    frame_id = _evidence_enum(value.get("id"), frozenset(_EVIDENCE_FRAME_NAMES))
+    if not frame_id:
+        return {}
+    projected: dict[str, object] = {"id": frame_id, "name": _EVIDENCE_FRAME_NAMES[frame_id]}
+    if score := _evidence_number(value.get("score")):
+        projected["score"] = score
+    elif value.get("score") == 0:
+        projected["score"] = 0.0
+    if fit := _evidence_enum(value.get("fit_to_current_market_value"), _EVIDENCE_FRAME_FITS):
+        projected["fit_to_current_market_value"] = fit
+    if why := _evidence_text(value.get("why_it_fits_or_not")):
+        projected["why_it_fits_or_not"] = why
+    if gaps := _evidence_text_list(value.get("main_data_gaps")):
+        projected["main_data_gaps"] = gaps
+    if confidence := _evidence_enum(value.get("confidence"), _EVIDENCE_CONFIDENCE):
+        projected["confidence"] = confidence
+    if input_refs := _evidence_reference_list(value.get("input_refs")):
+        projected["input_refs"] = input_refs
+    return projected
+
+
+def _evidence_coverage(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {"provider_statuses": {}, "source_attempts": []}
+    projected: dict[str, object] = {}
+    for key in ("fact_count", "fact_source_id_count", "source_count", "official_source_count"):
+        if count := _evidence_count(value.get(key)):
+            projected[key] = count
+        elif value.get(key) == 0:
+            projected[key] = 0
+    for key in ("market_snapshot_status", "financial_fact_status"):
+        if status := _evidence_status(value.get(key)):
+            projected[key] = status
+    projected["provider_statuses"] = _evidence_provider_statuses(value.get("provider_statuses"))
+    projected["source_attempts"] = _evidence_source_attempts(value.get("source_attempts"))
+    return projected
+
+
+def _evidence_degraded_state(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    projected: dict[str, object] = {}
+    if isinstance(value.get("degraded"), bool):
+        projected["degraded"] = value["degraded"]
+    for key in ("reasons", "data_gaps"):
+        if items := _evidence_text_list(value.get(key)):
+            projected[key] = items
+    return projected
+
+
+def _evidence_safety(value: object) -> dict[str, object]:
+    source = value if isinstance(value, dict) else {}
+    projected = {"omits_local_path": True, "provider_error_detail_omitted": True}
+    for key in ("direct_investment_advice", "writes_formal_user_insight", "research_aid_only"):
+        if isinstance(source.get(key), bool):
+            projected[key] = source[key]
+    return projected
+
+
+def _evidence_input(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    projected: dict[str, object] = {}
+    for key in ("symbol", "market"):
+        if reference := _evidence_reference(value.get(key)):
+            projected[key] = reference
+    if timestamp := _evidence_timestamp(value.get("created_at")):
+        projected["created_at"] = timestamp
+    return projected
+
+
+def _evidence_reference(value: object) -> str | None:
+    if not isinstance(value, str) or not _SAFE_EVIDENCE_REFERENCE.fullmatch(value):
+        return None
+    return value if not _UNSAFE_EVIDENCE_TEXT.search(value) else None
+
+
+def _evidence_text(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 240:
+        return None
+    return value if not _UNSAFE_EVIDENCE_TEXT.search(value) else None
+
+
+def _evidence_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _evidence_count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _evidence_currency(value: object) -> str | None:
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Z]{3}", value) else None
+
+
+def _evidence_timestamp(value: object) -> str | None:
+    return value if isinstance(value, str) and _SAFE_EVIDENCE_TIMESTAMP.fullmatch(value) else None
+
+
+def _evidence_enum(value: object, allowed: frozenset[str]) -> str | None:
+    return value if isinstance(value, str) and value in allowed else None
+
+
+def _evidence_metric(value: object) -> str | None:
+    return _evidence_enum(value, _EVIDENCE_METRICS)
+
+
+def _evidence_text_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [text for item in value[:20] if (text := _evidence_text(item))]
+
+
+def _evidence_reference_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(dict.fromkeys(reference for item in value[:20] if (reference := _evidence_reference(item))))
+
+
+def _evidence_metric_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(dict.fromkeys(metric for item in value[:20] if (metric := _evidence_metric(item))))
+
+
 def _evidence_provider_statuses(value: object) -> dict[str, dict[str, str]]:
     if not isinstance(value, dict):
         return {}
     return {
-        name: {"status": _evidence_status(item.get("status"))}
+        name: {"status": status}
         for name in _EVIDENCE_PROVIDER_STATUS_NAMES
-        if isinstance((item := value.get(name)), dict)
+        if isinstance((item := value.get(name)), dict) and (status := _evidence_status(item.get("status")))
     }
 
 
@@ -411,17 +685,15 @@ def _evidence_source_attempts(value: object) -> list[dict[str, str]]:
     for _, item in sorted(value.items(), key=lambda entry: str(entry[0])):
         if not isinstance(item, dict):
             continue
-        family = str(item.get("family") or "unknown").lower()
-        attempts.append({
-            "family": family if family in _EVIDENCE_ATTEMPT_FAMILIES else "unknown",
-            "status": _evidence_status(item.get("status")),
-        })
+        family = _evidence_enum(item.get("family"), _EVIDENCE_ATTEMPT_FAMILIES)
+        status = _evidence_status(item.get("status"))
+        if family and status:
+            attempts.append({"family": family, "status": status})
     return attempts
 
 
-def _evidence_status(value: object) -> str:
-    status = str(value or "unknown").lower()
-    return status if status in _EVIDENCE_STATUS_VALUES else "unknown"
+def _evidence_status(value: object) -> str | None:
+    return _evidence_enum(value, _EVIDENCE_STATUS_VALUES)
 
 
 def _safe_attempts(value: object) -> dict[str, object]:

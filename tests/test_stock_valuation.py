@@ -116,6 +116,8 @@ class StockValuationTests(unittest.TestCase):
         serialized = json.dumps(evidence).lower()
         self.assertIn("display_value", serialized)
         self.assertIn("meaningful", serialized)
+        self.assertEqual(evidence["source_coverage"]["market_snapshot_status"], "present")
+        self.assertEqual(evidence["source_coverage"]["financial_fact_status"], "present")
         for unsafe in ("artifact_path", "authorization", "secret", "provider.example", "exception", "traceback"):
             self.assertNotIn(unsafe, serialized)
         with self.assertRaises((TypeError, ValueError)):
@@ -171,6 +173,16 @@ class StockValuationTests(unittest.TestCase):
         ):
             self.assertNotIn(unsafe, serialized)
 
+    def test_evidence_preserves_safe_stale_source_status(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["market_snapshot_status"] = "stale"
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=Path(temporary), command="valuation US.ACME", provider_snapshot=snapshot,
+            )
+        evidence = build_valuation_artifact_evidence(packet)
+        self.assertEqual(evidence["source_coverage"]["market_snapshot_status"], "stale")
+
     def test_derived_calculations_flatten_all_upstream_fact_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             packet, _ = build_valuation_artifact(
@@ -193,6 +205,100 @@ class StockValuationTests(unittest.TestCase):
                 "fact:operating_cash_flow:sec:ocf", "fact:capex:sec:capex",
             ),
         )
+
+    def test_evidence_projects_every_branch_through_typed_safe_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=Path(temporary), command="valuation US.ACME", provider_snapshot=self._snapshot(),
+            )
+        hostile = json.loads(json.dumps(packet))
+        hostile["target_resolution"].update({
+            "input_target": {"endpoint": "https://evil.example/target"},
+            "normalized_target": "https://evil.example/target",
+            "company_name": "Bearer evidence-secret",
+        })
+        hostile["stock"].update({
+            "symbol": {"path": "/private/stock"},
+            "name": "Authorization: evidence-secret",
+        })
+        hostile["facts"].append({
+            "id": {"headers": "evidence-secret"}, "metric": "revenue", "value": {"raw": 1},
+            "display_value": ["https://evil.example/fact"], "source_id": "Bearer evidence-secret",
+            "provider": "https://evil.example/provider",
+        })
+        hostile["deterministic_calculations"].append({
+            "metric": "ps", "value": {"raw": 1}, "raw_value": [1],
+            "display_value": "https://evil.example/calculation", "formula": {"config": "evidence-secret"},
+            "inputs": [{"metric": "revenue"}], "input_refs": [{"traceback": "evidence-secret"}],
+        })
+        hostile["market_implied_bridge"]["bridge_lines"].append({
+            "type": {"header": "evidence-secret"}, "display": "https://evil.example/bridge",
+            "input_refs": ["/private/bridge"],
+        })
+        hostile["market_implied_bridge"]["frame_fit_ranking"].append({
+            "id": "fcf", "name": "https://evil.example/frame", "score": {"raw": 1},
+            "fit_to_current_market_value": ["fits"], "why_it_fits_or_not": "Bearer evidence-secret",
+            "main_data_gaps": [{"exception": "evidence-secret"}], "confidence": {"raw": "medium"},
+        })
+        hostile["source_coverage"].update({
+            "fact_count": {"raw": 1}, "market_snapshot_status": "https://evil.example/status",
+            "provider_statuses": {"market_snapshot": {"status": "Bearer evidence-secret"}},
+            "source_attempts": {"secret": {"family": "https://evil.example/family", "status": "Bearer evidence-secret"}},
+        })
+        hostile["degraded_state"] = {
+            "degraded": "yes", "reasons": ["safe gap", {"path": "/private/gap"}],
+            "data_gaps": ["https://evil.example/gap", "safe data gap", "../relative/path"],
+        }
+        hostile["safety"] = {
+            "direct_investment_advice": "yes", "writes_formal_user_insight": {"raw": True},
+            "research_aid_only": True,
+        }
+        hostile["input"] = {"symbol": "https://evil.example/input", "market": {"raw": "US"}, "created_at": ["evidence-secret"]}
+
+        evidence = build_valuation_artifact_evidence(hostile)
+        serialized = json.dumps(evidence).lower()
+
+        revenue = next(item for item in evidence["facts"] if item.get("id") == "fact:revenue:sec:revenue")
+        self.assertEqual(revenue["value"], 1000.0)
+        self.assertEqual(revenue["display_value"], "$1.0K")
+        self.assertEqual(evidence["target"]["currency"], "USD")
+        self.assertEqual(evidence["degraded_state"], {"reasons": ["safe gap"], "data_gaps": ["safe data gap"]})
+        self.assertEqual(evidence["safety"]["research_aid_only"], True)
+        self.assertNotIn("direct_investment_advice", evidence["safety"])
+        for unsafe in ("evil.example", "evidence-secret", "authorization", "bearer", "private/", "relative/path", "traceback", "headers", "config"):
+            self.assertNotIn(unsafe, serialized)
+
+    def test_bridge_lines_and_frame_scores_have_bounded_input_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=Path(temporary), command="valuation US.ACME", provider_snapshot=self._snapshot(),
+            )
+        bridge_lines = {item["type"]: item for item in packet["market_implied_bridge"]["bridge_lines"]}
+        self.assertEqual(
+            bridge_lines["sales_anchor"]["input_refs"],
+            ("fact:price:quote:price", "fact:shares_outstanding:quote:shares", "fact:revenue:sec:revenue"),
+        )
+        self.assertEqual(
+            bridge_lines["ev_sales_anchor"]["input_refs"],
+            (
+                "fact:price:quote:price", "fact:shares_outstanding:quote:shares",
+                "fact:debt:sec:debt", "fact:cash:sec:cash", "fact:revenue:sec:revenue",
+            ),
+        )
+        self.assertEqual(
+            bridge_lines["fcf_yield"]["input_refs"],
+            (
+                "fact:operating_cash_flow:sec:ocf", "fact:capex:sec:capex",
+                "fact:price:quote:price", "fact:shares_outstanding:quote:shares",
+            ),
+        )
+        scores = {item["id"]: item for item in packet["internal_frame_scores"]}
+        self.assertEqual(
+            scores["fcf"]["input_refs"],
+            ("packet:method_library:fcf", "fact:operating_cash_flow:sec:ocf", "fact:capex:sec:capex"),
+        )
+        self.assertIn("packet:stock:core_business", scores["cyclical"]["input_refs"])
+        self.assertNotIn("Cyclical semiconductor business", json.dumps(packet["internal_frame_scores"]))
 
     def test_negative_fcf_multiples_are_explicitly_not_meaningful(self) -> None:
         snapshot = self._snapshot()
