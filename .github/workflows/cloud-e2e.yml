@@ -1,0 +1,47 @@
+name: Cloud browser acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Deployed application base URL to test
+        required: true
+        default: http://47.84.190.191:8010
+        type: string
+
+jobs:
+  desktop-public:
+    name: Desktop public journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run public cloud acceptance
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
+        run: npm run test:e2e:cloud -- --project=desktop-public
+
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-e2e-public-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14

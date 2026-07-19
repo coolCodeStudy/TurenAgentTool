@@ -903,6 +903,7 @@ class DailyMarketBriefTests(unittest.TestCase):
             html,
         )
         self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
 
     def test_daily_brief_uses_shared_shell_and_remains_tokenless(self) -> None:
         html = render_daily_market_brief_html()
@@ -974,13 +975,18 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("loadGeneration", html)
         self.assertIn("new AbortController()", html)
         self.assertGreaterEqual(html.count("signal: controller.signal"), 2)
+        self.assertIn("const REQUEST_TIMEOUT_MS = 15_000;", html)
+        self.assertIn("async function fetchJson(url, options = {})", html)
+        self.assertIn("请求超时，请重试。", html)
+        self.assertIn("async function initializePage()", html)
+        self.assertLess(html.index('await loadBrief("read");'), html.index("void loadSavedDates();"))
         self.assertIn("generation !== state.loadGeneration || controller.signal.aborted", html)
         self.assertIn('error.name === "AbortError"', html)
         self.assertLess(
             html.index("generation !== state.loadGeneration || controller.signal.aborted"),
             html.index("startHistoryJobPolling(data.job.id, data.market_date)"),
         )
-        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();', html)
+        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();\n      showStatus("日期已更新，点击读取查看简报。");', html)
         self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', html)
         self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
 

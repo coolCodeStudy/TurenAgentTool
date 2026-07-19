@@ -348,6 +348,15 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn("--experience-accent", css)
         self.assertIn(".experience-skip-link", css)
         self.assertIn(".table-scroll", css)
+        self.assertIn("position: sticky", css)
+        self.assertIn(".experience-brand", css)
+        self.assertNotIn("grid-template-columns: 216px", css)
+
+    def test_primary_navigation_is_a_single_product_header(self) -> None:
+        html = render_primary_navigation("daily_market_brief")
+
+        self.assertIn('<span class="experience-brand">InvestmentKnowledge</span>', html)
+        self.assertEqual(1, html.count('aria-label="主导航"'))
 
     def test_command_uses_shared_shell_and_canonical_access(self) -> None:
         from investment_knowledge_mcp.command_workbench import render_command_workbench_html
@@ -357,6 +366,7 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn("investment_knowledge_access_token", html)
         self.assertNotIn('id="api-token"', html)
         self.assertIn('id="access-panel"', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
         self.assertIn('role="alert"', html)
         self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
         self.assertIn('<header class="page-header">', html)
@@ -649,6 +659,8 @@ assert.equal(workbench.state.pendingRequest, null);
         self.assertIn("access_rejected", html)
         self.assertIn("access_not_configured", html)
         self.assertIn("request_failed", html)
+        self.assertIn('id="catalog-retry"', html)
+        self.assertIn("async function getJson(url)", html)
         self.assertRegex(html, r"input, select, button, textarea\s*\{[^}]*min-height:\s*44px")
 
     def test_command_candidate_groups_use_dividers_without_nested_cards(self) -> None:

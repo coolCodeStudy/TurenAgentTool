@@ -164,6 +164,24 @@ Recommended automation capabilities:
 
 Playwright is the preferred browser automation tool when browser tests are added because it supports screenshots, traces, and reliable browser interaction.
 
+## Standard Cloud Playwright Workflow
+
+For a cloud-served desktop surface with a committed Playwright suite, Acceptance Testing must use Playwright Test as the primary interaction gate. Browser-control tools may be used for diagnosis, but they do not replace a repeatable Playwright result.
+
+1. Confirm the deployed base URL, commit, service health, and the scope of the release.
+2. Run the public desktop suite with fresh browser storage:
+
+   ```bash
+   E2E_BASE_URL=<deployed-base-url> npm run test:e2e:cloud -- --project=desktop-public
+   ```
+
+3. Require the suite to verify the rendered heading, main region, navigation, desktop overflow, and every non-mutating primary action. A direct API `200` does not pass a visible page that remains loading, blank, or non-interactive.
+4. Run protected coverage only if the approved CI secret `E2E_PROTECTED_ACCESS_TOKEN` is available. The value must be injected as an environment secret, never written to source, artifacts, logs, screenshots, or queue entries. If it is unavailable, record the protected case as explicitly skipped rather than passed.
+5. Do not use browser acceptance to generate reports, save changes, or execute write-like commands. Test their visible confirmation or recovery state only.
+6. On any failure, retain and link the Playwright trace, screenshot, video, and HTML report. Classify a visible loading loop, a non-responsive primary action, unexpected horizontal overflow, or inaccessible auth recovery as `failed` with severity `major` or `blocker`.
+
+The repository workflow `cloud-e2e.yml` is manually dispatched with a deployed `base_url`; it must not deploy application code. Run its public job after a production browser-surface release when GitHub-hosted evidence is required.
+
 ## Weekly Review Acceptance Rule
 
 The weekly-review surface is not acceptable merely because a report is generated.
