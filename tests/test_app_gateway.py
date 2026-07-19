@@ -123,7 +123,7 @@ class AppGatewayDispatchTests(unittest.TestCase):
 
         self.assertEqual("HTTP/1.1", web.WeeklyReviewWebHandler.protocol_version)
         self.assertIn(("Content-Type", "text/html; charset=utf-8"), headers)
-        self.assertIn(("Content-Length", str(len("每日简报".encode("utf-8")))), headers)
+        self.assertNotIn("Content-Length", {name for name, _ in headers})
         self.assertIn(("Connection", "close"), headers)
         self.assertTrue(handler.close_connection)
         self.assertEqual("每日简报".encode("utf-8"), handler.wfile.getvalue())
