@@ -108,6 +108,26 @@ class _FakeHandler:
 
 
 class AppGatewayDispatchTests(unittest.TestCase):
+    def test_html_responses_use_explicit_http11_close_framing(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web as web
+
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler.wfile = BytesIO()
+        handler.close_connection = False
+        headers: list[tuple[str, str]] = []
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock(side_effect=lambda name, value: headers.append((name, value)))
+        handler.end_headers = mock.Mock()
+
+        handler._write_html(HTTPStatus.OK, "每日简报")
+
+        self.assertEqual("HTTP/1.1", web.WeeklyReviewWebHandler.protocol_version)
+        self.assertIn(("Content-Type", "text/html; charset=utf-8"), headers)
+        self.assertIn(("Content-Length", str(len("每日简报".encode("utf-8")))), headers)
+        self.assertIn(("Connection", "close"), headers)
+        self.assertTrue(handler.close_connection)
+        self.assertEqual("每日简报".encode("utf-8"), handler.wfile.getvalue())
+
     def test_mixed_access_post_is_decided_by_shared_policy_before_body_read(self) -> None:
         from investment_knowledge_mcp import app_gateway
         from investment_knowledge_mcp.web_access import AccessClass

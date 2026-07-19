@@ -80,6 +80,7 @@ _MAX_ACTIVE_WEB_HISTORY_JOBS = 3
 
 class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     server_version = "InvestmentKnowledgeWeeklyReviewWeb/0.1"
+    protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
         from investment_knowledge_mcp.app_gateway import dispatch_get
@@ -461,8 +462,10 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
+        self.close_connection = True
 
 
 def render_weekly_review_workbench_html() -> str:
