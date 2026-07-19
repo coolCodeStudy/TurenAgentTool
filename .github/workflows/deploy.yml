@@ -237,7 +237,7 @@ jobs:
             --header "Authorization: Bearer $OPS_API_TOKEN" \
             "$OPS_API_URL/deploy/status" > "$status_json"
 
-          base_sha="$(
+          status_refs="$(
             python3 - "$status_json" <<'PY'
           import json
           import re
@@ -245,24 +245,50 @@ jobs:
 
           with open(sys.argv[1], encoding="utf-8") as handle:
               payload = json.load(handle)
-          current_sha = (payload.get("data") or {}).get("current_sha")
+          data = payload.get("data") or {}
+          current_sha = data.get("current_sha")
+          control_plane_ref = data.get("control_plane_ref")
           if not isinstance(current_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", current_sha):
               raise SystemExit("deploy status did not return a 40-character current_sha")
-          print(current_sha)
+          if not isinstance(control_plane_ref, str) or not re.fullmatch(r"[0-9a-f]{40}", control_plane_ref):
+              control_plane_ref = "unknown"
+          print(f"{current_sha} {control_plane_ref}")
           PY
           )"
+          read -r base_sha control_plane_ref <<< "$status_refs"
+          if [ "$control_plane_ref" = "unknown" ]; then
+            echo "::error::Ops control plane identity is unavailable. Run .github/workflows/ops-api.yml with mode=install from $target_sha, wait for health, then rerun this deployment."
+            exit 1
+          fi
 
-          plan_json="$(mktemp)"
+          contract_plan_json="$(mktemp)"
+          python3 scripts/classify_deploy_change.py \
+            --repo . \
+            --base-sha "$base_sha" \
+            --target-sha "$target_sha" \
+            --format json > "$contract_plan_json"
           if [ "$REQUESTED_MODE" = "auto" ]; then
-            python3 scripts/classify_deploy_change.py \
-              --repo . \
-              --base-sha "$base_sha" \
-              --target-sha "$target_sha" \
-              --format json > "$plan_json"
+            plan_json="$contract_plan_json"
           else
+            plan_json="$(mktemp)"
             python3 scripts/classify_deploy_change.py \
               --manual-mode "$REQUESTED_MODE" \
               --format json > "$plan_json"
+          fi
+
+          control_plane_update_required="$(
+            python3 - "$contract_plan_json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              plan = json.load(handle)
+          print("true" if plan.get("control_plane_update_required") is True else "false")
+          PY
+          )"
+          if [ "$control_plane_update_required" = "true" ] && [ "$control_plane_ref" != "$target_sha" ]; then
+            echo "::error::Ops control plane update required for $target_sha. Run .github/workflows/ops-api.yml with mode=install from that exact SHA, wait for health, then rerun this deployment."
+            exit 1
           fi
 
           python3 - "$plan_json" "$target_sha" "$base_sha" "$EMERGENCY_REASON" >> "$GITHUB_OUTPUT" <<'PY'

@@ -26,6 +26,7 @@ try:
         DeployMode,
         DeploymentPlan,
         classify_deployment,
+        requires_control_plane_update,
     )
     from scripts.deploy_preflight import (
         ResourceSnapshot,
@@ -64,6 +65,7 @@ except ModuleNotFoundError:  # Direct execution through scripts/deploy_release.p
         DeployMode,
         DeploymentPlan,
         classify_deployment,
+        requires_control_plane_update,
     )
     from deploy_preflight import (
         ResourceSnapshot,
@@ -561,6 +563,7 @@ class DeploymentEngine:
         compose_project_name: str = "turenagenttool_prod",
         env_file: Path | None = None,
         artifact_staging_dir: Path | None = None,
+        control_plane_ref: str = "",
         lock_factory: LockFactory = deployment_lock,
     ) -> None:
         self.repo = repo
@@ -575,6 +578,7 @@ class DeploymentEngine:
         self.image_inventory = image_inventory or self._image_inventory
         self.referenced_image_ids = referenced_image_ids or self._referenced_image_ids
         self.compose_project_name = compose_project_name
+        self.control_plane_ref = control_plane_ref
         self.lock_factory = lock_factory
         self.releases_dir = app_root / "releases"
         self.shared_dir = app_root / "shared"
@@ -635,12 +639,27 @@ class DeploymentEngine:
         context.previous_state = load_state(self.state_path)
         if context.previous_state.current_sha is None:
             raise DeploymentError("deployment state does not identify the active commit")
-        context.computed_plan = self.plan_builder(
-            self.repo,
-            context.previous_state.current_sha,
-            context.target_sha,
-            self.runner,
-        )
+        try:
+            context.computed_plan = self.plan_builder(
+                self.repo,
+                context.previous_state.current_sha,
+                context.target_sha,
+                self.runner,
+            )
+        except ValueError as error:
+            raise DeploymentError(
+                "Ops control plane update required: installed deployment contract "
+                f"rejected target: {error}"
+            ) from error
+        if (
+            request.requested_mode is not DeployMode.NO_DEPLOY
+            and requires_control_plane_update(context.computed_plan.changed_files)
+            and self.control_plane_ref != context.target_sha
+        ):
+            raise DeploymentError(
+                "Ops control plane update required: installed control-plane ref "
+                f"does not match target {context.target_sha}"
+            )
         context.plan = self._validate_request(request, context.computed_plan)
         if context.plan.mode is DeployMode.NO_DEPLOY:
             return DeployOutcome(

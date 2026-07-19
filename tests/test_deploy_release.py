@@ -1101,6 +1101,68 @@ class DeploymentEngineTests(TestCase):
             ),
         )
 
+    def test_classifier_rejection_requires_control_plane_update_before_mutation(self) -> None:
+        rejected_path = ".github/workflows/future.yml"
+
+        def reject_target(repo, base_sha, target_sha, runner):
+            del repo, base_sha, target_sha, runner
+            raise ValueError(
+                f"unclassified deployment-sensitive path: {rejected_path}"
+            )
+
+        self.engine.plan_builder = reject_target
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertFalse(outcome.ok)
+        self.assertEqual((), outcome.activated_services)
+        self.assertEqual([], self.stage_calls)
+        self.assertIn("Ops control plane update required", outcome.message)
+        self.assertIn(rejected_path, outcome.message)
+
+    def test_direct_deploy_rejects_mismatched_control_plane_before_mutation(self) -> None:
+        self.plan = replace(
+            self.plan,
+            changed_files=(
+                "scripts/deploy_contract.py",
+                "investment_knowledge_mcp/weekly_review_web.py",
+            ),
+        )
+        self.engine.control_plane_ref = OLD_SHA
+        legacy_quick_request = replace(
+            self.targeted_request,
+            requested_targets=(),
+        )
+
+        outcome = self.engine.deploy(legacy_quick_request)
+
+        self.assertFalse(outcome.ok)
+        self.assertEqual((), outcome.activated_services)
+        self.assertEqual([], self.stage_calls)
+        self.assertIn("Ops control plane update required", outcome.message)
+        self.assertIn(TARGET_SHA, outcome.message)
+
+    def test_manual_quick_cannot_bypass_control_plane_only_ref_mismatch(self) -> None:
+        self.plan = DeploymentPlan(
+            mode=DeployMode.NO_DEPLOY,
+            targets=(),
+            changed_files=("scripts/deploy_contract.py",),
+            image_input_files=(),
+            reasons=("control plane",),
+        )
+        self.engine.control_plane_ref = OLD_SHA
+        legacy_quick_request = replace(
+            self.targeted_request,
+            requested_targets=(),
+        )
+
+        outcome = self.engine.deploy(legacy_quick_request)
+
+        self.assertFalse(outcome.ok)
+        self.assertEqual((), outcome.activated_services)
+        self.assertEqual([], self.stage_calls)
+        self.assertIn("Ops control plane update required", outcome.message)
+
     def test_no_deploy_does_not_read_or_rewrite_image_selector(self) -> None:
         self.plan = DeploymentPlan(
             mode=DeployMode.NO_DEPLOY,
@@ -2200,6 +2262,7 @@ class DeploymentEngineTests(TestCase):
             self.targeted_request,
             requested_targets=("investment-ops-api.service",),
         )
+        self.engine.control_plane_ref = TARGET_SHA
 
         outcome = self.engine.deploy(request)
 

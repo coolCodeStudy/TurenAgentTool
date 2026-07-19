@@ -43,19 +43,25 @@ This would restart the control plane on unrelated releases, duplicate the dedica
 
 `bootstrap_ops_api_v2_on_ecs.sh` already resolves `BOOTSTRAP_REF` to an immutable commit. It passes that commit to `install_ops_api_on_ecs.sh`, which validates the value as a lowercase 40-character SHA and persists it in the root-only Ops environment. `ecs_ops_api.py` exposes it only as non-secret authenticated deployment-status metadata.
 
+The bootstrap credential and resolved identity are captured in readonly shell variables before the business environment is loaded. A business environment that attempts to rebind either preserved value fails the install rather than changing control-plane identity or authentication.
+
 ### Update requirement
 
 `deploy_contract.py` owns the list of files copied into `/opt/investment-ops` or otherwise responsible for installing that directory. `serialize_plan()` adds `control_plane_update_required`, derived from the classified changed files. The flag does not change application deploy mode or targets.
 
+Git diff collection disables rename collapsing so a rename includes the old installed control-plane path as a deletion and cannot evade the update requirement.
+
 ### Workflow gate
 
-The GitHub planning job reads both `current_sha` and `control_plane_ref` from `/deploy/status`. It emits both the target plan and the installed control-plane identity. When the plan requires a control-plane update and the identities differ, the job fails before the image build with an actionable message naming the exact target SHA and the dedicated `ops-api.yml` install workflow.
+The GitHub planning job reads both `current_sha` and `control_plane_ref` from `/deploy/status`. It emits both the target plan and the installed control-plane identity. A missing legacy identity is treated as incompatible and requires one explicit install. When the plan requires a control-plane update and the identities differ, the job fails before the image build with an actionable message naming the exact target SHA and the dedicated `ops-api.yml` install workflow.
 
 After the dedicated install succeeds, rerunning the same target sees matching identities and proceeds through the existing plan, build, Ops API delegation, health, stability, and route checks.
 
 ### Executor diagnostics
 
 The deployment engine converts classifier `ValueError` failures into a typed `DeploymentError` that says the installed control-plane contract rejected the target and requires an Ops API install. This is defense in depth for callers that bypass or predate the workflow gate. Selector mutation and service activation remain untouched.
+
+The engine also enforces the SHA comparison for every computed non-`no_deploy` plan that changes a control-plane file. Authenticated direct clients therefore cannot bypass the GitHub planning gate.
 
 ## Verification
 

@@ -92,6 +92,7 @@ COMPOSE_ENV_FILE = Path(os.getenv("COMPOSE_ENV_FILE", str(APP_ROOT / ".env")))
 HOST = os.getenv("OPS_API_HOST", "127.0.0.1")
 PORT = int(os.getenv("OPS_API_PORT", "8767"))
 TOKEN = os.getenv("OPS_API_TOKEN") or ""
+OPS_CONTROL_PLANE_REF = os.getenv("OPS_CONTROL_PLANE_REF") or ""
 MAX_LOG_LINES = 400
 COMMAND_TIMEOUT_SECONDS = float(os.getenv("OPS_API_COMMAND_TIMEOUT_SECONDS", "8"))
 DEPLOY_TIMEOUT_SECONDS = float(os.getenv("OPS_API_DEPLOY_TIMEOUT_SECONDS", "600"))
@@ -395,6 +396,7 @@ def build_deploy_status() -> dict[str, Any]:
     state = load_state(DEPLOY_STATE_PATH)
     resources = collect_deploy_resources()
     return {
+        "control_plane_ref": OPS_CONTROL_PLANE_REF,
         "current_sha": state.current_sha,
         "previous_sha": state.previous_sha,
         "active_mode": state.last_mode,
@@ -781,6 +783,7 @@ def build_deployment_engine() -> DeploymentEngine:
         compose_project_name=COMPOSE_PROJECT_NAME,
         env_file=COMPOSE_ENV_FILE,
         artifact_staging_dir=DEPLOY_ARTIFACTS_DIR,
+        control_plane_ref=OPS_CONTROL_PLANE_REF,
     )
 
 
