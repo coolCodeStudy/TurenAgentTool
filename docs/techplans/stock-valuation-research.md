@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to implement this plan task by task, with a task-scoped review after each task and a whole-branch review before release.
 
-**Status:** ready
+**Status:** implementation_verified_pending_release
 
 **Linked PRD:** [`PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -98,12 +98,12 @@ Artifact names are deterministic and stock-scoped:
 
 **Produces:** the locked `stock_valuation.py` interfaces; no repository, network, database, or model dependency.
 
-- [ ] Write failing tests for: the eight method definitions (five core plus three specialist-only); 1-3 selected core frames; FCF, net debt, market cap, EV, margins, PE, PS, EV/EBITDA, EV/FCF; negative-ratio meaningfulness; raw/display value preservation; fact-input IDs; `stock_valuation_packet.v1`; timestamped/latest artifact save-load; bounded evidence projection; path-like target rejection; research-aid/no-insight-write safety; and explicit missing-data degradation.
-- [ ] Run `.venv/bin/python -m unittest tests.test_stock_valuation -v`; expected result is RED because `investment_knowledge_mcp.stock_valuation` does not exist.
-- [ ] Port the historical pure valuation behavior into the locked interfaces. Keep all calculations in small pure helpers and add a deterministic `input_refs` tuple to every calculation. Select at most three core frames after ranking `fit_to_current_market_value`; specialist frames are metadata only unless explicitly triggered and never displace the five-core internal score list.
-- [ ] Make `build_valuation_artifact_evidence()` an allow-list projection. It may expose raw/display numeric facts, meaningfulness, source/provider statuses, target mapping, bridge, frame fit, and safety flags; it must never accept a path, read an arbitrary file, or return `artifact_path`, raw provider errors, headers, configuration, or exception text.
-- [ ] Run `.venv/bin/python -m unittest tests.test_stock_valuation -v`; expected result is GREEN for all Task 1 tests.
-- [ ] Commit Task 1 as `feat: add deterministic stock valuation artifacts`.
+- [x] Write failing tests for: the eight method definitions (five core plus three specialist-only); 1-3 selected core frames; FCF, net debt, market cap, EV, margins, PE, PS, EV/EBITDA, EV/FCF; negative-ratio meaningfulness; raw/display value preservation; fact-input IDs; `stock_valuation_packet.v1`; timestamped/latest artifact save-load; bounded evidence projection; path-like target rejection; research-aid/no-insight-write safety; and explicit missing-data degradation. Final coverage is in `tests/test_stock_valuation.py` through `dd88c2e`.
+- [x] Run `.venv/bin/python -m unittest tests.test_stock_valuation -v`; historical RED was retained because `investment_knowledge_mcp.stock_valuation` did not yet exist.
+- [x] Port the historical pure valuation behavior into the locked interfaces. `investment_knowledge_mcp/stock_valuation.py` keeps the deterministic calculation/provenance and core-frame constraints; final Task 1 correction is `dd88c2e`.
+- [x] Make `build_valuation_artifact_evidence()` an allow-list projection. It is covered by typed-projection and leakage tests in `tests/test_stock_valuation.py` through `dd88c2e`.
+- [x] Run `.venv/bin/python -m unittest tests.test_stock_valuation -v`; final Task 4 focused suite includes this module and passed 130 tests overall.
+- [x] Commit Task 1 as `feat: add deterministic stock valuation artifacts` (`8ae5b91`), with accepted corrections through `dd88c2e`.
 
 ## Task 2: Current Shared Provider And Official-Source Attempts
 
@@ -113,13 +113,13 @@ Artifact names are deterministic and stock-scoped:
 
 **Produces:** `normalize_valuation_target()` and `fetch_valuation_snapshot()`.
 
-- [ ] Add failing contract tests for `SourceCapability.OFFICIAL_FINANCIAL_FACTS` and `SourceCapability.MARKET_SNAPSHOT`, normalized records with source/period/currency/freshness, fallback attempt order, partial/unavailable states, and redacted failures.
-- [ ] Add failing provider tests using injected fixtures for: `US.INTC`/SEC company facts plus shared Yahoo-style market snapshot; `KR.000660` and `000660 KR` -> `000660.KS`, `KRW`, DART/FSS/company-IR attempt; `HK.01888`, `1888 HK`, simplified/traditional Chinese and English Kingboard aliases -> `1888.HK`, `HKD`, HKEXnews/company-report attempt; vendor fallback fundamentals kept distinct from official facts; cache miss triggering attempts before degradation; and no network in tests.
-- [ ] Run `.venv/bin/python -m unittest tests.test_data_source_contracts tests.test_stock_valuation -v`; expected result is RED for missing capabilities/adapters.
-- [ ] Extend the provider-neutral contract only with the two capabilities. Implement valuation adapters through `DataSourcePool`; reuse the existing official-research transport for US/HK source discovery and add an explicit KR DART/FSS/company-IR attempt adapter. Normalize provider output before the domain engine sees it. Do not restore historical direct provider policy inside the command router.
-- [ ] Implement target normalization as a pure allow-listed mapping for the representative fixtures plus generic market-qualified symbols. Fallback fundamentals must use a vendor source type and can never be labeled official, audited, HKEX, SEC, DART, or FSS.
-- [ ] Run `.venv/bin/python -m unittest tests.test_data_source_contracts tests.test_data_source_pool tests.test_stock_valuation -v`; expected result is GREEN.
-- [ ] Commit Task 2 as `feat: add valuation data source adapters`.
+- [x] Add failing contract tests for `SourceCapability.OFFICIAL_FINANCIAL_FACTS` and `SourceCapability.MARKET_SNAPSHOT`, normalized records with source/period/currency/freshness, fallback attempt order, partial/unavailable states, and redacted failures. Final coverage is in `tests/test_data_source_contracts.py` and `tests/test_stock_valuation.py`.
+- [x] Add failing provider tests using injected fixtures for: `US.INTC`/SEC company facts plus shared Yahoo-style market snapshot; `KR.000660` and `000660 KR` -> `000660.KS`, `KRW`, DART/FSS/company-IR attempt; `HK.01888`, `1888 HK`, simplified/traditional Chinese and English Kingboard aliases -> `1888.HK`, `HKD`, HKEXnews/company-report attempt; vendor fallback fundamentals kept distinct from official facts; cache miss triggering attempts before degradation; and no network in tests. The final focused suite passed 130 tests.
+- [x] Run `.venv/bin/python -m unittest tests.test_data_source_contracts tests.test_stock_valuation -v`; historical RED was retained for the intentionally missing capabilities/adapters.
+- [x] Extend the provider-neutral contract only with the two capabilities. `investment_knowledge_mcp/data_sources/contracts.py`, `investment_knowledge_mcp/data_sources/valuation.py`, and `investment_knowledge_mcp/valuation_data_provider.py` implement current-pool adapters through `a653725`.
+- [x] Implement target normalization as a pure allow-listed mapping for the representative fixtures plus generic market-qualified symbols. Final provider normalization and source-family protections are covered in `tests/test_stock_valuation.py` through `a653725`.
+- [x] Run `.venv/bin/python -m unittest tests.test_data_source_contracts tests.test_data_source_pool tests.test_stock_valuation -v`; final Task 4 focused suite passed 130 tests overall.
+- [x] Commit Task 2 as `feat: add valuation data source adapters` (`310b572`), with accepted source-truthfulness correction `a653725`.
 
 ## Task 3: Command Router And Authenticated Workbench
 
@@ -129,24 +129,24 @@ Artifact names are deterministic and stock-scoped:
 
 **Produces:** actions `stock_valuation`, `stock_valuation_latest`, `stock_valuation_artifact_evidence`, and `valuation_methods`.
 
-- [ ] Add failing tests for `valuation`, `value`, and `估值`; `latest valuation`/`查看估值`; bounded `valuation artifact evidence`/`valuation evidence`/`估值证据`; and `valuation methods`/`估值方法`. Assert preview exact commands, normalized US/HK/KR targets, artifact-write side effect metadata, no confirmation because the only write is a local research artifact, current access recovery, unknown valid symbol bootstrap behavior, and alias consistency.
-- [ ] Run `.venv/bin/python -m unittest tests.test_stock_valuation tests.test_command_workbench -v`; expected result is RED because routes/actions are absent.
-- [ ] Register the four actions in the current catalog without modifying HTML/access-session code. Parse valuation intent before generic stock bootstrap only when the target is one of the supported name aliases; market-qualified unknown symbols keep the current bounded bootstrap/recovery behavior.
-- [ ] Add router handlers that load existing stock context, attempt provider sources, build/save the artifact, return safe cards, load the latest stock-scoped artifact, project bounded evidence, and list methods. Add valuation creation to artifact-write classification but never to candidate/user-insight writes.
-- [ ] Run `.venv/bin/python -m unittest tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway -v`; expected result is GREEN with the existing access/gateway suite unchanged.
-- [ ] Commit Task 3 as `feat: expose stock valuation in command workbench`.
+- [x] Add failing tests for `valuation`, `value`, and `估值`; `latest valuation`/`查看估值`; bounded `valuation artifact evidence`/`valuation evidence`/`估值证据`; and `valuation methods`/`估值方法`. Exact command, target, side-effect, confirmation, recovery, bootstrap, and alias coverage is in `tests/test_stock_valuation.py` and `tests/test_command_workbench.py`.
+- [x] Run `.venv/bin/python -m unittest tests.test_stock_valuation tests.test_command_workbench -v`; historical RED was retained because routes/actions were absent.
+- [x] Register the four actions in the current catalog without modifying HTML/access-session code. `investment_knowledge_mcp/command_workbench.py` implements the bounded alias parsing through `4166469`.
+- [x] Add router handlers that load existing stock context, attempt provider sources, build/save the artifact, return safe cards, load the latest stock-scoped artifact, project bounded evidence, and list methods. `investment_knowledge_mcp/command_router.py` and the focused tests verify only local-artifact writes and no candidate/user-insight writes through `4166469`.
+- [x] Run `.venv/bin/python -m unittest tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway -v`; final Task 4 focused suite passed 130 tests overall.
+- [x] Commit Task 3 as `feat: expose stock valuation in command workbench` (`d0e1cb1`), with accepted alias trust-boundary correction `4166469`.
 
 ## Task 4: Regression, Delivery State, And Release Readiness
 
 **Files:** update `docs/techplans/stock-valuation-research.md`; coordinator later updates `Feature-Registry.md`, `Acceptance-Queue.md`, `Delivery-Queue.md`, and `Coordinator-Context-Packet.md` after accepting the Development return.
 
-- [ ] Run the focused new suite: `.venv/bin/python -m unittest tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway tests.test_data_source_contracts tests.test_data_source_pool -v`; expected result is all tests GREEN.
-- [ ] Run the current-main preservation suite: `.venv/bin/python -m unittest tests.test_command_workbench tests.test_app_gateway tests.test_data_source_pool tests.test_data_source_contracts tests.test_data_source_market_bars tests.test_data_source_market_activity`; baseline before implementation is `Ran 75 tests ... OK`, and the final run must remain GREEN with the added tests.
-- [ ] Run the planner's broader gateway/access/frontend/provider suite recorded in the Development report; baseline is `114 tests ... OK`, and the exact final command/output must be returned.
-- [ ] Run `.venv/bin/python -m py_compile investment_knowledge_mcp/stock_valuation.py investment_knowledge_mcp/valuation_data_provider.py investment_knowledge_mcp/data_sources/valuation.py investment_knowledge_mcp/command_router.py investment_knowledge_mcp/command_workbench.py`; expected result is exit 0.
-- [ ] Run `.venv/bin/python scripts/audit_delivery_state.py --feature "Stock valuation research"`, `.venv/bin/python scripts/audit_agent_flow_health.py --feature "Stock valuation research"`, and `git diff --check`; expected result is no unowned Development/Return-Gate gap and no whitespace error. Acceptance/deploy gaps remain valid until the coordinator performs those gates.
-- [ ] Run `.venv/bin/python scripts/classify_deploy_change.py --base-sha origin/main --target-sha HEAD`; use the emitted mode and service set. Because runtime Python modules and the Command Workbench change without dependency/image-layer changes, the expected decision is the classifier's quick/targeted shared workflow, not an ad hoc restart; if the classifier says `full`, follow it.
-- [ ] Update every traceability row below to `implemented` or `verified` with exact file/test evidence, commit the documentation/status update, and return a clean branch to the Feature Coordinator for whole-branch review.
+- [x] Run the focused new suite: `.venv/bin/python -m unittest tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway tests.test_data_source_contracts tests.test_data_source_pool -v`; exit 0, `Ran 130 tests in 0.187s`, `OK`.
+- [x] Run the current-main preservation suite: `.venv/bin/python -m unittest tests.test_command_workbench tests.test_app_gateway tests.test_data_source_pool tests.test_data_source_contracts tests.test_data_source_market_bars tests.test_data_source_market_activity`; exit 0, `Ran 88 tests in 0.032s`, `OK` (pre-feature baseline: 75).
+- [x] Run the planner's broader gateway/access/frontend/provider suite: `.venv/bin/python -m unittest tests.test_command_workbench tests.test_app_gateway tests.test_command_http tests.test_web_experience tests.test_data_source_pool tests.test_data_source_contracts tests.test_data_source_market_bars tests.test_data_source_market_activity -v`; exit 0, `Ran 128 tests in 0.417s`, `OK` (pre-feature baseline: 114).
+- [x] Run `.venv/bin/python -m py_compile investment_knowledge_mcp/stock_valuation.py investment_knowledge_mcp/valuation_data_provider.py investment_knowledge_mcp/data_sources/valuation.py investment_knowledge_mcp/command_router.py investment_knowledge_mcp/command_workbench.py`; exit 0.
+- [x] Run `.venv/bin/python scripts/audit_delivery_state.py --feature "Stock valuation research"`, `.venv/bin/python scripts/audit_agent_flow_health.py --feature "Stock valuation research"`, and `git diff --check`; no whitespace error. The delivery audit has no unowned Development/Return-Gate gap: it names this completed Task 4 under `DQ-2026-07-19-004`; its coordinator-owned deploy and independent-acceptance gaps remain pending. Flow-health emitted only the unrelated seven-cell `DQ-2026-07-04-020` warning.
+- [x] Run `.venv/bin/python scripts/classify_deploy_change.py --base-sha origin/main --target-sha HEAD`; selected deployment mode `targeted_quick`, workflow-compatible mode `quick`, targets `dingtalk-api`, `dingtalk-stream-bot`, `mcp`, `scheduler-host`, and `weekly-review-web`. This is a release input only; no deployment was started.
+- [x] Update every traceability row below to `implemented` or `verified` with exact file/test evidence, commit the documentation/status update, and return a clean branch to the Feature Coordinator for whole-branch review.
 
 ## Deploy And Independent Acceptance Contract
 
@@ -156,25 +156,25 @@ Coordinator cloud smoke must verify `/command`, the action catalog, authenticate
 
 ## Implementation Traceability
 
-| PRD AC | Planned implementation | Planned verification | Initial status |
+| PRD AC | Planned implementation | Planned verification | Status and exact local evidence |
 |---|---|---|---|
-| 1 | Four Workbench actions and single normalized target | Command preview/execute tests and cloud catalog smoke | not_started |
-| 2 | Five core plus three specialist-only method definitions | Method-library unit test and cloud methods command | not_started |
-| 3 | 1-3 selected frames plus versioned saved artifact | Packet/card/save-load tests | not_started |
-| 4 | Assumptions, supported market bridge, triggers, failures, confidence, freshness, gaps | Complete/degraded packet fixtures | not_started |
-| 5 | Locked `stock_valuation_packet.v1` schema | Exact-key and schema-version tests | not_started |
-| 6 | Source/period on facts and `input_refs` on calculations | Traceability assertions | not_started |
-| 7 | SEC, HKEX/company, DART/FSS/company source plans | US/HK/KR injected provider fixtures and attempt-order tests | not_started |
-| 8 | Shared market snapshot pool, provider/currency/time/freshness, attempts before degradation | Pool fallback/partial/unavailable tests | not_started |
-| 9 | Pure calculations and deterministic five-frame scoring | Model-free unit tests | not_started |
-| 10 | Separate facts/assumptions/calculations/interpretation/watch layers and provenance | Packet/card section tests | not_started |
-| 11 | Candidate/manual peer status only | Missing/stale/candidate peer confidence tests | not_started |
-| 12 | Named financial/market/both-missing degraded states | Three degraded-state fixtures | not_started |
-| 13 | Stock-scoped allow-list evidence projection | Evidence and path-like rejection/leakage tests plus cloud probe | not_started |
-| 14 | Research-aid copy and no direct action instruction | Card safety assertions and cloud scan | not_started |
-| 15 | No repository candidate/formal insight write path | Import/call-boundary assertion and code review | not_started |
-| 16 | No out-of-scope surface/table/service work | Changed-file review and deploy classifier | not_started |
-| 17 | Real deployed Command Workbench independent test | Coordinator smoke plus independent Acceptance Queue pass | not_started |
+| 1 | Four Workbench actions and single normalized target | Command preview/execute tests and cloud catalog smoke | **verified** — `investment_knowledge_mcp/command_workbench.py`, `investment_knowledge_mcp/command_router.py`; `StockValuationWorkbenchTests` and `StockValuationCommandRouterTests` in `tests/test_command_workbench.py`/`tests/test_stock_valuation.py`; commits `d0e1cb1`, `4166469`; Task 4 focused suite 130/130. |
+| 2 | Five core plus three specialist-only method definitions | Method-library unit test and cloud methods command | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `StockValuationTests.test_public_interfaces_and_eight_method_definitions`; commits `8ae5b91..dd88c2e`; Task 4 focused suite 130/130. |
+| 3 | 1-3 selected frames plus versioned saved artifact | Packet/card/save-load tests | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `test_builds_deterministic_packet_with_all_metrics_and_fact_refs`, `test_single_utc_timestamp_drives_packet_and_filename`, and loader tests in `tests/test_stock_valuation.py`; commits `8ae5b91..dd88c2e`; 130/130. |
+| 4 | Assumptions, supported market bridge, triggers, failures, confidence, freshness, gaps | Complete/degraded packet fixtures | **verified** — `investment_knowledge_mcp/stock_valuation.py`, `investment_knowledge_mcp/valuation_data_provider.py`; `test_missing_data_degrades_explicitly_without_fabricating_facts`, `test_attempt_statuses_and_task1_projection_are_truthful_and_sanitized`; commits `dd88c2e`, `a653725`; 130/130. |
+| 5 | Locked `stock_valuation_packet.v1` schema | Exact-key and schema-version tests | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `test_builds_deterministic_packet_with_all_metrics_and_fact_refs` and loader canonicalization tests; commits `8ae5b91..dd88c2e`; 130/130. |
+| 6 | Source/period on facts and `input_refs` on calculations | Traceability assertions | **verified** — `investment_knowledge_mcp/stock_valuation.py`, `investment_knowledge_mcp/data_sources/valuation.py`; `test_bridge_lines_and_frame_scores_have_bounded_input_provenance`, `test_derived_calculations_flatten_all_upstream_fact_provenance`, `test_fact_and_source_ids_are_stable_opaque_and_all_refs_resolve`; commits `dd88c2e`, `a653725`; 130/130. |
+| 7 | SEC, HKEX/company, DART/FSS/company source plans | US/HK/KR injected provider fixtures and attempt-order tests | **verified** — `investment_knowledge_mcp/data_sources/valuation.py`, `investment_knowledge_mcp/valuation_data_provider.py`; `test_us_snapshot_uses_sec_facts_and_shared_yahoo_market_source`, `test_hk_alias_snapshot_attempts_hkexnews_then_company_report`, `test_kr_snapshot_attempts_dart_fss_company_ir_then_distinct_vendor`; commits `310b572`, `a653725`; 130/130. |
+| 8 | Shared market snapshot pool, provider/currency/time/freshness, attempts before degradation | Pool fallback/partial/unavailable tests | **verified** — `investment_knowledge_mcp/data_sources/contracts.py`, `investment_knowledge_mcp/data_sources/valuation.py`, `investment_knowledge_mcp/valuation_data_provider.py`; valuation contract and `DataSourcePoolTests`; commits `310b572`, `a653725`; focused 130/130 and preservation 88/88. |
+| 9 | Pure calculations and deterministic five-frame scoring | Model-free unit tests | **verified** — `investment_knowledge_mcp/stock_valuation.py`; calculation, meaningfulness, fit, and score tests in `tests/test_stock_valuation.py`, including `test_scoring_reads_only_declared_stock_fields_and_cites_exact_field`; commits `8ae5b91..dd88c2e`; 130/130. |
+| 10 | Separate facts/assumptions/calculations/interpretation/watch layers and provenance | Packet/card section tests | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `test_public_projection_preserves_assumptions_interpretation_watch_and_degraded_sections`, `test_card_and_evidence_share_the_same_safe_public_projection`; commits `8ae5b91..dd88c2e`; 130/130. |
+| 11 | Candidate/manual peer status only | Missing/stale/candidate peer confidence tests | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `test_comparable_market_status_policy_fails_closed`, `test_stale_market_status_caps_comparable_fit_and_confidence`, `test_sparse_single_facts_do_not_create_supported_frame_fit`; commits `8ae5b91..dd88c2e`; 130/130. |
+| 12 | Named financial/market/both-missing degraded states | Three degraded-state fixtures | **verified** — `investment_knowledge_mcp/stock_valuation.py`, `investment_knowledge_mcp/valuation_data_provider.py`; `test_missing_data_degrades_explicitly_without_fabricating_facts`, `test_cache_miss_attempts_every_source_before_safe_degradation`, and attempt-status tests; commits `dd88c2e`, `a653725`; 130/130. |
+| 13 | Stock-scoped allow-list evidence projection | Evidence and path-like rejection/leakage tests plus cloud probe | **verified** — `investment_knowledge_mcp/stock_valuation.py`, `investment_knowledge_mcp/command_router.py`; evidence allow-list, hostile-input, and path-like rejection tests in `tests/test_stock_valuation.py`; commits `dd88c2e`, `4166469`; 130/130. Cloud probe remains release work. |
+| 14 | Research-aid copy and no direct action instruction | Card safety assertions and cloud scan | **verified** — `investment_knowledge_mcp/stock_valuation.py`; `test_card_and_evidence_share_the_same_safe_public_projection` and research-write classifier coverage; commits `dd88c2e`, `4166469`; 130/130. Cloud scan remains release work. |
+| 15 | No repository candidate/formal insight write path | Import/call-boundary assertion and code review | **verified** — `investment_knowledge_mcp/command_router.py`; `test_creation_aliases_write_only_a_local_research_artifact`, `test_valuation_write_classifier_matches_only_executable_creation_forms`; commit `4166469`; 130/130. |
+| 16 | No out-of-scope surface/table/service work | Changed-file review and deploy classifier | **verified** — valuation implementation commits `8ae5b91..dd88c2e`, `310b572..a653725`, and `d0e1cb1..4166469` are limited to the planned modules/tests; `git diff --check` passed; classifier selected `targeted_quick`/`quick` with five existing service targets. |
+| 17 | Real deployed Command Workbench independent test | Coordinator smoke plus independent Acceptance Queue pass | **implemented** — router/Workbench implementation and in-process tests are in `investment_knowledge_mcp/command_router.py`, `investment_knowledge_mcp/command_workbench.py`, `tests/test_stock_valuation.py`, and `tests/test_command_workbench.py` through `4166469`; focused 130/130 and broader 128/128 passed. Serialized deploy, coordinator cloud smoke, and the independent Acceptance Queue result remain pending. |
 
 ## Risks And Limits
 
@@ -182,3 +182,5 @@ Coordinator cloud smoke must verify `/command`, the action catalog, authenticate
 - Local database-backed smoke may be unavailable at `localhost:55432`. Fixture-driven command/router tests remain mandatory, and cloud acceptance remains the real user-surface gate.
 - Historical acceptance evidence proves useful behavior but is not evidence for current main. All deployment and independent acceptance evidence must be regenerated against the final current-main ref.
 - The feature remains `waiting_for_user_acceptance` after independent acceptance passes; only the Owner can mark user acceptance accepted and close `product_done`.
+- Accepted Task 2 Minor for final whole-branch review: one HK snapshot redundantly invokes official bundle collection per category. It is non-blocking for local readiness and must be triaged before serialized deployment.
+- Release remains coordinator-owned: use the recorded `targeted_quick`/workflow `quick` decision and its five service targets only after whole-branch review, push, serialized deploy intent, cloud smoke, and independent acceptance routing. No Task 4 deployment was performed.
