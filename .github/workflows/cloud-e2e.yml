@@ -10,6 +10,23 @@ on:
         type: string
 
 jobs:
+  protected-fixture-availability:
+    name: Check protected fixture availability
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.fixture.outputs.available }}
+    steps:
+      - name: Check protected fixture secret
+        id: fixture
+        env:
+          E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
+        run: |
+          if [ -n "$E2E_PROTECTED_ACCESS_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   desktop-public:
     name: Desktop public journeys
     runs-on: ubuntu-latest
@@ -48,9 +65,8 @@ jobs:
 
   desktop-protected:
     name: Desktop protected fixture
-    env:
-      E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
-    if: ${{ env.E2E_PROTECTED_ACCESS_TOKEN != '' }}
+    needs: protected-fixture-availability
+    if: ${{ needs.protected-fixture-availability.outputs.available == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -72,6 +88,7 @@ jobs:
       - name: Run protected cloud acceptance
         env:
           E2E_BASE_URL: ${{ inputs.base_url }}
+          E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
         run: npm run test:e2e:cloud -- --project=desktop-protected
 
       - name: Upload protected Playwright evidence
