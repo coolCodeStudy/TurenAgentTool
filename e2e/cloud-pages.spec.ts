@@ -88,6 +88,51 @@ test.describe("Daily Market Brief desktop journey", () => {
     expect(historyRequests.some(({ url }) => url.includes("id=history-task-42"))).toBe(true);
     expect(historyRequests.every(({ method }) => method === "GET")).toBe(true);
   });
+
+  test("selecting a running history task polls it without creating another task", async ({ page }) => {
+    const job = {
+      id: "history-task-queued",
+      status: "running",
+      completed_count: 0,
+      total_count: 1,
+      current_market: "CN",
+      current_market_date: "2026-07-17",
+      items: [{ market: "CN", market_date: "2026-07-17" }],
+    };
+    const historyRequests: { method: string; url: string }[] = [];
+    const mutationRequests: { method: string; url: string }[] = [];
+
+    await page.route((url) => url.pathname === "/api/daily-market-brief/history-jobs", async (route) => {
+      const request = route.request();
+      historyRequests.push({ method: request.method(), url: request.url() });
+      if (request.url().includes("id=history-task-queued")) {
+        await route.fulfill({ json: { ok: true, job } });
+        return;
+      }
+      await route.fulfill({ json: { ok: true, jobs: [job] } });
+    });
+    await page.route((url) => url.pathname === "/api/daily-market-brief/generate", async (route) => {
+      const request = route.request();
+      mutationRequests.push({ method: request.method(), url: request.url() });
+      await route.fulfill({ status: 500, json: { ok: false, error: "Unexpected mutation" } });
+    });
+    await page.route((url) => url.pathname === "/api/daily-market-brief/dates", (route) =>
+      route.fulfill({ json: { ok: true, dates: [] } }),
+    );
+    await page.route((url) => url.pathname === "/api/daily-market-brief", (route) =>
+      route.fulfill({ json: { ok: true, status: "missing", market_date: "2026-07-17" } }),
+    );
+
+    await openExperience(page, "/daily-market-brief");
+    const task = page.getByRole("button", { name: /#history-task-queued/ });
+    await expect(task).toBeVisible();
+    await task.click();
+
+    await expect(page.getByRole("status")).toContainText("历史简报任务 #history-task-queued");
+    await expect.poll(() => historyRequests.filter(({ url }) => url.includes("id=history-task-queued")).length).toBeGreaterThanOrEqual(2);
+    expect(historyRequests.every(({ method }) => method === "GET")).toBe(true);
+    expect(mutationRequests).toEqual([]);
+  });
 });
 
 test.describe("Weekly Review desktop journey", () => {
