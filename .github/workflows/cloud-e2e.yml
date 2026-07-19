@@ -88,16 +88,6 @@ jobs:
       - name: Run protected cloud acceptance
         env:
           E2E_BASE_URL: ${{ inputs.base_url }}
+          E2E_PROTECTED_NO_ARTIFACTS: "1"
           E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
         run: npm run test:e2e:cloud -- --project=desktop-protected
-
-      - name: Upload protected Playwright evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cloud-e2e-protected-${{ github.run_id }}
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: warn
-          retention-days: 14
