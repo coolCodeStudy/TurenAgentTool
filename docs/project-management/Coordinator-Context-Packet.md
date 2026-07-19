@@ -13,24 +13,27 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Operating model source: `docs/product/Agent-Operating-Model.md`
 - Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
 - Product doc / PRD: `docs/product/PRD-Stock-Valuation-Research.md`
-- Technical plan: Missing on authoritative `origin/main@957220a`; unreconciled historical plan exists on `origin/codex/release-kline-stock-valuation-p03@acd9856` and must be rewritten for current main before implementation.
+- Technical plan: `docs/techplans/stock-valuation-research.md`, ready at coordinator commit `fc07ebc`; it replaces the stale historical plan for current-main delivery.
 - Feature Registry row: `Stock valuation research`
-- Acceptance Queue row: Missing on authoritative state; historical rows `AT-2026-07-01-001`, `AT-2026-07-04-002`, and `AT-2026-07-05-003` require evidence review before reconciliation.
-- Delivery Queue rows: Product recovery `DQ-2026-07-19-002` is closed by the Coordinator Return Gate; technical-planning dispatch `DQ-2026-07-19-003` is active. Older stock-valuation rows exist only on historical coordinator/release refs.
-- Current authoritative branch/ref: `origin/main@957220a8a7d430225679c74b4ed8231027a90209`
+- Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
+- Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
+- Current authoritative branch/ref: `origin/main@af4fdd15d03af9789bbf7c33aac82f850b36df45`
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
-- Current state: Product-ready PRD commit `91b741b` is accepted. Technical planning is rewriting the historical P0 contract for current main before selective Development recovery.
+- Quality route: `L3`
+- Route rationale: The feature changes an authenticated cloud Command Workbench, external data-source behavior, saved evidence, and the deployed release boundary.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Release ref pending Development; route `L3`; surface `http://47.84.190.191:8010/command`; current developer baseline is 75 focused current-main tests passing and plan traceability covers all 17 PRD criteria; deploy event and independent result are pending; no protected credential value may enter evidence.
+- Current state: Product-ready PRD commit `91b741b` and ready current-main technical plan commit `fc07ebc` are accepted. Development implementation is the active gate.
 - Known blockers: No product blocker. Historical implementation must be reconciled onto current `main` without reverting frontend, Kline, access, scheduler, deployment-control-plane, or shared-data-source changes.
-- Active child threads or role sessions: Technical Planning / Development Agent owns `DQ-2026-07-19-003`; this Feature Coordinator remains the active watcher.
+- Active child threads or role sessions: Development Agent owns `DQ-2026-07-19-004`; this Feature Coordinator remains the active watcher.
 - Watch contract:
-  - Watched item: Product readiness return, followed by Development integration/review and independent Acceptance Testing returns.
+  - Watched item: Development implementation/review return, serialized deploy, and one Quality & Acceptance return for release candidate `AT-2026-07-19-001`.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: Technical Planning / Development Agent for a current-main implementation plan; implementation follows only after the coordinator accepts the plan as ready.
-- Next handoff: Map all 17 PRD acceptance criteria to exact current-main files, tests, artifact contracts, verification, deploy impact, and independent cloud acceptance without wholesale stale-branch merging.
+- Next owner: Development Agent for plan execution with TDD and task-scoped review.
+- Next handoff: Implement `docs/techplans/stock-valuation-research.md` in one pass, return exact commits/tests/classifier result, and preserve all current-main access/provider/frontend/deploy contracts.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
 - Deploy decision: `blocked` until a current-main-compatible implementation ref passes Development and review gates; then `self_deploy` through the shared workflow if no serialized deploy conflict exists.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.

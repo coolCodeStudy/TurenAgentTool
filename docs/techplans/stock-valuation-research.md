@@ -152,7 +152,7 @@ Artifact names are deterministic and stock-scoped:
 
 After Development and whole-branch review pass, the Feature Coordinator records Deploy Intent with the exact pushed ref, classifier-selected mode, affected `weekly-review-web`/gateway service set, cloud URL `http://47.84.190.191:8010/command`, and this coordinator task as watch owner. Deployment uses only the serialized GitHub Actions/Ops API workflow and the current control-plane version gate.
 
-Coordinator cloud smoke must verify `/command`, the action catalog, authenticated preview/execute for representative US/HK/KR valuation commands, methods, latest read-back, bounded evidence, safe invalid/path-like input, source/freshness labels, and no token/raw-error/path leakage. Then the same Acceptance Queue item moves to `needs_retest` and an independent Acceptance Testing Agent repeats the black-box user journey. Independent acceptance must not print, store, commit, or summarize token values and must not mark user acceptance accepted.
+Coordinator cloud smoke must verify `/command`, the action catalog, authenticated preview/execute for representative US/HK/KR valuation commands, methods, latest read-back, bounded evidence, safe invalid/path-like input, source/freshness labels, and no token/raw-error/path leakage. Then the same Acceptance Queue item moves to `needs_retest` and an independent Quality & Acceptance Lead repeats the black-box user journey. Independent acceptance must not print, store, commit, or summarize token values and must not mark user acceptance accepted.
 
 ## Implementation Traceability
 
