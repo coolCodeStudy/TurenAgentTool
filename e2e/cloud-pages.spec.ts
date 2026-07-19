@@ -142,7 +142,7 @@ test.describe("Weekly Review desktop journey", () => {
 
     await expect(page.getByRole("status")).not.toContainText("正在读取", { timeout: 10_000 });
     await expect(page.locator("#error-message")).toBeHidden();
-    await expect(page.getByRole("heading", { name: "本周复盘" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "本周复盘", exact: true })).toBeVisible();
   });
 
   test("Weekly missing review offers protected recovery without an access token", async ({ page }) => {
