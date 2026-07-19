@@ -104,6 +104,12 @@ PATH_RULES = (
     PathRule("prompts/**", DeployMode.NO_DEPLOY, (), "repository prompt"),
     PathRule("tests/**", DeployMode.NO_DEPLOY, (), "tests"),
     PathRule("e2e/**", DeployMode.NO_DEPLOY, (), "browser acceptance tests"),
+    PathRule(
+        "playwright.config.ts",
+        DeployMode.NO_DEPLOY,
+        (),
+        "browser acceptance configuration",
+    ),
     PathRule(".github/workflows/codex-worker.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule(".github/workflows/cloud-e2e.yml", DeployMode.NO_DEPLOY, (), "browser acceptance workflow"),
     PathRule(".github/workflows/deploy.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),

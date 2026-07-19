@@ -79,7 +79,7 @@ the shared-image application service set is `weekly-review-web`, `command-api`,
 | --- | --- | --- | --- |
 | Agent governance | `AGENTS.md`, `docs/**`, `*.md`, `**/*.md` | `no_deploy` | Durable rules and docs do not change the running service. |
 | Local delivery audits and evals | `scripts/agent_preflight.py`, `scripts/audit_agent_flow_health.py`, `scripts/audit_delivery_state.py`, `scripts/audit_prd_status.py`, `scripts/classify_deploy_change.py`, `scripts/evaluate_agent_flow_cases.py` | `no_deploy` | These scripts are local coordination controls, not production runtime surfaces. |
-| Tests | `tests/**` | `no_deploy` | Tests validate behavior but do not need production restart by themselves. |
+| Tests | `tests/**`, `e2e/**`, `playwright.config.ts` | `no_deploy` | Test code and browser-acceptance configuration validate behavior but do not need production restart by themselves. |
 | Workflow governance | `.github/workflows/*.yml`, `.github/workflows/*.yaml` | `no_deploy` | Workflow updates should be validated by the workflow, but they should not restart app services unless combined with runtime changes. |
 | App runtime | `investment_knowledge_mcp/**`, application Web modules, command router modules, scheduler entrypoints | `targeted_quick` | Python runtime code changes affect served behavior and need a targeted release update. |
 | Database initialization and runtime scripts | `db/**`, most runtime `scripts/*.py`, most runtime `scripts/*.sh` | `targeted_quick` | These can update through the release path without rebuilding the image unless they change image inputs. |
