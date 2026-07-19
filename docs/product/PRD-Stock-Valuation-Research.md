@@ -1,5 +1,7 @@
 # PRD: Stock Valuation Research
 
+Status: ready for technical planning.
+
 ## Background
 
 InvestmentKnowledge already supports stock research, sector context, user insights, research jobs, portfolio analysis, and weekly review planning. The next product gap is valuation.
@@ -20,14 +22,16 @@ The product should help answer a more useful question than "what is the target p
 
 ## Goals
 
-First-stage goals:
+P0 goals:
 
-- Build a user-confirmed valuation method library.
-- For a stock, identify the 1-3 most relevant valuation frames.
+- Provide the confirmed valuation method library.
+- For one stock at a time, identify the 1-3 most relevant valuation frames.
 - Explain the assumptions that support each frame.
 - Show what current market price may imply.
 - Identify rerating triggers and valuation failure conditions.
-- Feed the valuation view into stock decision cards, research jobs, and weekly reviews.
+- Return a concise result through the authenticated Command Workbench and save a traceable valuation artifact for later retrieval.
+
+P0 is intentionally a single-stock, artifact-backed valuation workflow. Dedicated valuation tables, portfolio or batch valuation, weekly-review integration, decision-card integration, and other delivery surfaces are follow-ups after the single-stock packet, calculation, source, and degraded-state behavior is reliable.
 
 ## Non-Goals
 
@@ -36,6 +40,7 @@ First-stage goals:
 - Do not require a full financial model in the first version.
 - Do not reduce valuation to a single target price.
 - Do not write system-inferred valuation opinions into formal user insights without user confirmation.
+- Do not require a new paid data account for P0.
 
 ## Valuation Method Library
 
@@ -460,11 +465,26 @@ data gaps
 
 Product rule:
 
-- The LLM explains frames, assumptions, triggers, and failure conditions.
+- The LLM may explain frames, assumptions, triggers, and failure conditions when available.
 - The LLM should not be asked to browse the whole internet every time.
 - If the valuation packet is incomplete, the output must state which frame is weak because of missing data.
+- P0 calculations, frame scores, artifact generation, source coverage, and degraded output must not depend on an LLM or other model.
 
 ### Data Source Strategy
+
+#### P0 Provider And Source Policy
+
+P0 uses the narrowest repository-consistent source set that can produce traceable valuation packets without opening a new paid account:
+
+- US official financial facts: SEC EDGAR first, with official company reports or investor-relations material as a bounded fallback.
+- HK official financial facts: HKEXnews and official company annual/interim reports first.
+- KR official financial facts: DART/FSS disclosures and official company investor-relations reports first.
+- Manual or Codex-worker extraction is a bounded fallback when an official document is available but structured extraction is unavailable or unreliable. The extracted fact must retain the official document reference, extraction method, and confidence; manual or model extraction does not turn an unofficial claim into an official fact.
+- Fresh price and market snapshot fields use the shared market-data path already available in the repository. P0 may use an available broker or free public fallback, but it must not require a new paid provider account.
+- Every price, market-cap, enterprise-value, FX, peer, commodity, rate, or estimate field must carry its provider or source reference, observation time, currency where applicable, and freshness/stale label.
+- A valid stock with a local cache miss must attempt the allowed provider-backed source path before returning a final degraded result. A provider failure remains a valid degraded outcome only when the attempted source family and missing category are named.
+- Analyst estimates are optional. When present, they are labeled as estimates with source and timestamp; when absent, they are shown as a gap rather than inferred.
+- Peer sets begin as manual or system-suggested candidates. They become user-confirmed only after explicit user confirmation and must remain labeled candidate otherwise.
 
 #### Source Trust Tiers
 
@@ -484,16 +504,18 @@ Product rule:
 - Financial statement facts should come from Tier 1 or Tier 2 whenever possible.
 - Market prices and peer multiples can use lower-cost sources, but must carry source and timestamp.
 - Unofficial sources can help exploration, but should not silently overwrite official facts.
+- Model-discovered claims can propose leads, but they are not accepted as valuation facts until tied to a saved source or artifact.
 
 #### Candidate Free Or Low-Cost Sources
 
-These sources are candidates for implementation and should be validated before coding.
+These sources define the allowed low-cost source envelope. The technical plan should reuse the shared provider path and add only the official-source adapters needed for the P0 acceptance boundary.
 
 | Source | Best Use | Trust | Cost | Notes |
 | --- | --- | --- | --- | --- |
 | SEC EDGAR APIs | US filings, submissions, XBRL company facts | Very high | Free | Best default source for US listed-company financial facts. |
 | Company investor relations pages | Annual reports, presentations, earnings releases | Very high | Free | Requires crawler/extractor; source quality is high but formats vary. |
 | HKEXnews | HK announcements, annual/interim reports | Very high | Free | Best default source for HK official filings and reports. |
+| DART / FSS | KR disclosures, filings, and financial reports | Very high | Free public access | Best default source family for KR listed-company official facts, with company IR as an official fallback. |
 | Futu OpenAPI | Holdings, user account data, possibly quotes | High for user account data | Existing integration | Good for portfolio context; quote/data licensing should be respected. |
 | Alpha Vantage | Prices, fundamentals, cash flow, earnings, commodities, macro | Medium | Free tier + paid tiers | Useful fallback API; needs rate-limit handling and source audit. |
 | FRED | Rates, macro, inflation, GDP, economic indicators | High | Free API key | Useful for discount-rate and macro context, not company financials. |
@@ -504,19 +526,21 @@ These sources are candidates for implementation and should be validated before c
 Implementation guidance:
 
 - Start with SEC EDGAR for US financial facts.
-- Start with HKEXnews for HK financial reports and announcements.
-- Use Alpha Vantage or Yahoo/yfinance only for low-cost market snapshots and fallback fundamentals, with clear source labels.
+- Start with HKEXnews and official company reports for HK financial facts.
+- Start with DART/FSS and official company IR reports for KR financial facts.
+- Reuse the repository's shared market-data provider path; use a configured broker source or a free public fallback only with explicit provider and freshness labels.
+- Do not make P0 conditional on buying or configuring a new paid market-data account.
 - Use FRED for interest-rate and macro inputs when valuation frames need discount-rate context.
 - Cache every fetched payload or normalized source fact that affects valuation output.
 
-#### Use Database First
+#### Reuse Existing Stored Data First
 
-Use the database for:
+Reuse existing database records and saved artifacts for:
 
 - Reusable financial statements.
 - Historical valuation cases.
 - User-confirmed valuation views.
-- Peer sets confirmed by the user or system.
+- Candidate peer sets and peer sets explicitly confirmed by the user.
 - Previous valuation artifacts.
 - Weekly review snapshots.
 
@@ -569,25 +593,35 @@ Use the LLM for:
 Do not use the LLM for:
 
 - Primary arithmetic.
+- Frame scoring or selection required to produce the P0 result.
 - Repeated extraction of the same financial tables.
 - Silent source invention.
 - Uncached peer set discovery on every query.
 
 ### Valuation Pipeline
 
+P0 output surface:
+
+- Primary surface: the authenticated Command Workbench using its existing preview-and-execute command path for one stock at a time.
+- Command result: a concise valuation card with the selected frames, assumptions, deterministic calculations, source coverage, degraded-state explanation, and watch items.
+- Artifact storage: save the packet inputs, facts, source references, calculations, all internal frame scores, the 1-3 selected frames, interpretations, freshness, and safety state under the existing research/artifact pattern before adding dedicated tables.
+- Retrieval: the user can retrieve bounded evidence from the latest saved artifact for the same stock through the Command Workbench; P0 does not expose arbitrary filesystem access.
+- Follow-up surfaces: weekly review, decision cards, portfolio/batch valuation, and other report or messaging integrations do not block P0 acceptance.
+
 Interactive command:
 
 ```text
-value SYMBOL MARKET
+valuation SYMBOL MARKET
   -> load stock profile
   -> load cached valuation packet
   -> check stale status
-  -> fetch latest market snapshot if cheap
+  -> attempt allowed official-fact and shared market-data sources when required
   -> compute deterministic metrics
-  -> score valuation frames
-  -> send compact packet to model
+  -> score valuation frames deterministically
+  -> optionally request model narrative when available
   -> return valuation card
-  -> optionally create candidate valuation case
+  -> save the valuation artifact
+  -> optionally create a candidate valuation case or insight for later confirmation
 ```
 
 Async refresh:
@@ -598,11 +632,13 @@ refresh valuation SYMBOL MARKET
   -> discover official sources
   -> extract financial facts
   -> compute derived metrics
-  -> refresh peer set
+  -> refresh a candidate peer set without confirming it
   -> generate valuation packet
   -> audit source coverage
   -> save artifact
 ```
+
+Async refresh is a follow-up optimization unless the current-main technical plan needs it to satisfy the bounded official-source attempt. It is not a separate P0 user journey.
 
 ### Frame Scoring Inputs
 
@@ -640,7 +676,7 @@ Growth / Scenario:
   - scenario lacks observable milestones
 ```
 
-The model can challenge the score, but the first pass should come from deterministic rules and available facts.
+Frame scores and the selected 1-3 frames come from deterministic rules and available facts. A model may explain the result or label an alternative as inference, but it must not replace the stored score, silently change the selected frames, or be required for a usable P0 result.
 
 ### Token Budget Rules
 
@@ -682,9 +718,35 @@ Peer multiples: stale, last refreshed 2026-05-30.
 Confidence: medium because peer set is stale.
 ```
 
-### Suggested Additional Tables
+### Evidence, Citation, And Calculation Standard
 
-The first implementation can use artifacts, but the product should move toward explicit storage:
+Every P0 valuation card and saved artifact must separate five layers:
+
+- Facts: financial statement facts, market snapshots, peer rows, and relevant user-confirmed context.
+- Assumptions: scenario inputs, cycle-normalization choices, peer-premium/discount reasoning, and market-implied variables.
+- Calculations: deterministic metrics and reverse-implied values.
+- Interpretation: rule-based or optional model explanation of why a frame may matter.
+- Watch items: rerating triggers, failure conditions, and next validation steps.
+
+Evidence rules:
+
+- Every displayed fact carries a source ID, artifact reference, or provider reference plus timestamp when applicable.
+- Every deterministic calculation links to its input fact IDs or packet fields and retains inspectable raw values even when the card uses compact formatting.
+- Every stale, missing, unofficial, estimated, fallback, manually extracted, Codex-extracted, or user-provided input is labeled in source coverage.
+- Any model inference is labeled as inference and cites the packet fields it used.
+- Model inference, analyst estimates, user hypotheses, and candidate peer sets are not presented as confirmed facts.
+- Target-price-like ranges, if present, are secondary to assumptions and show the inputs that drive the range.
+
+Safety wording:
+
+- Outputs are research aids, not investment advice.
+- Do not use direct buy/sell/hold instructions.
+- Prefer language such as "the frame may imply", "the assumption to validate is", "the data gap is", and "the watch item is".
+- If evidence is too thin, say which frame cannot be supported rather than filling the gap with narrative.
+
+### Post-P0 Optional Tables
+
+P0 is artifact-backed and does not require a database migration. After the workflow proves useful, the product may move toward explicit storage:
 
 ```text
 financial_facts
@@ -759,21 +821,27 @@ created_at
 
 ### First Version Data Boundary
 
-P1 should not try to solve everything. It should support:
+P0 should support:
 
 - Cached valuation packet artifact.
 - Deterministic calculation of basic metrics.
 - Manual or official-source financial facts.
 - Frame scoring from available data.
-- LLM explanation from compact packet.
+- Useful rule-based output with optional model explanation from a compact packet.
 - Clear data-gap disclosure.
+- Command Workbench execution and bounded latest-artifact retrieval for one stock.
 
-P1 should not require:
+P0 should not require:
 
 - Full automated global financial-data coverage.
 - Perfect peer multiples.
 - Intraday market data.
 - Full Excel-style valuation model generation.
+- Universal ticker/provider coverage; acceptance proves at least one supported representative stock in each P0 market (US, HK, and KR) and labels unsupported or failed source paths explicitly.
+- Dedicated valuation database tables.
+- Weekly-review or decision-card integration.
+- Portfolio or batch valuation.
+- A new paid provider account.
 
 ### Recommended Implementation Sequence
 
@@ -781,21 +849,22 @@ The technical implementation should be staged to avoid high token cost and unrel
 
 #### Step 1: Valuation Data Foundation
 
-- Add or simulate `financial_facts`, `market_snapshots`, `peer_sets`, `valuation_packets`, and `valuation_runs`.
+- Define a versioned valuation artifact under the repository's existing output/artifact pattern; do not gate P0 on dedicated tables.
 - Implement deterministic calculations for FCF, margins, growth, EV, basic multiples, and TTM metrics.
-- Build a compact valuation packet artifact before using LLM interpretation.
+- Build and save the compact valuation packet before any optional model interpretation.
 
 #### Step 2: Official Financial Fact Ingestion
 
 - US stocks: ingest SEC EDGAR companyfacts and submissions first.
-- HK stocks: ingest HKEXnews annual/interim reports and announcements first.
-- Non-US/non-HK stocks: fall back to company IR pages and manual/Codex worker extraction.
+- HK stocks: ingest HKEXnews annual/interim reports and official company reports first.
+- KR stocks: ingest DART/FSS disclosures and official company IR reports first.
+- If structured official extraction is unavailable, use bounded manual or Codex-worker extraction against the identified official document and retain extraction provenance.
 - Store extracted facts with source IDs and confidence.
 
-#### Step 3: Cheap Market Snapshot Provider
+#### Step 3: Shared Market Snapshot Provider
 
-- Add one low-cost price/market snapshot provider.
-- Candidate order: existing Futu quote path if licensing/availability is acceptable, Alpha Vantage free tier, Yahoo/yfinance fallback, Stooq fallback for historical prices.
+- Reuse the repository's available market-data provider path and configured/free fallbacks; do not add a paid-account dependency for P0.
+- The technical plan chooses the exact current-main provider order based on availability, licensing, and verified failure behavior without changing the Product contract.
 - Every market snapshot must store source, timestamp, currency, and stale status.
 
 #### Step 4: Frame Scoring Without LLM
@@ -806,11 +875,12 @@ The technical implementation should be staged to avoid high token cost and unrel
 
 #### Step 5: LLM Explanation From Compact Packet
 
-- Send only compact valuation packets to the model.
+- Keep this optional: the deterministic P0 card and artifact must remain usable when no model is configured.
+- When a model is used, send only compact valuation packets.
 - Require the model to cite packet fields, data gaps, and source status.
 - Forbid claims not traceable to packet data unless clearly labeled as inference.
 
-#### Step 6: Async Refresh Jobs
+#### Step 6: Follow-Up Async Refresh Jobs
 
 - Add valuation refresh jobs for missing or stale packets.
 - Use Codex workers for source discovery, table extraction, and audit.
@@ -820,18 +890,20 @@ The technical implementation should be staged to avoid high token cost and unrel
 
 ### Single-Stock Valuation Research
 
+This is the complete P0 user journey. It runs through the authenticated Command Workbench and does not depend on portfolio or batch context.
+
 ```text
-User: value RKLB US
+User: valuation RKLB US
 System:
   1. Read stock context.
-  2. Read knowledge items, sources, research drafts, and portfolio status.
-  3. Identify candidate valuation frames.
-  4. Output a concise valuation-frame matrix.
-  5. Explain the most likely rerating path.
-  6. Generate candidate valuation insights for user confirmation.
+  2. Load cached facts and attempt the bounded official-fact and shared market-data paths where needed.
+  3. Compute reproducible metrics and deterministically rank all five core frames.
+  4. Return a concise card with the 1-3 most relevant frames, assumptions, market-implied bridge when supported, triggers, failure conditions, source/freshness coverage, confidence, and degraded-state details.
+  5. Save the complete valuation artifact and expose bounded latest-artifact retrieval.
+  6. Keep any valuation case, peer set, or insight as a candidate until the user explicitly confirms it.
 ```
 
-### Research Job Integration
+### Follow-Up Research Job Integration
 
 ```text
 research_job
@@ -842,7 +914,7 @@ research_job
   -> decision card
 ```
 
-### Weekly Review Integration
+### Follow-Up Weekly Review Integration
 
 Weekly review should add:
 
@@ -851,11 +923,15 @@ Weekly review should add:
 - Which valuation assumptions were supported or challenged.
 - Whether the user missed a valuation-frame switch.
 
+This follow-up is not a P0 acceptance blocker.
+
 ## System Integration
 
 ### Data Model
 
-Recommendation: add valuation-specific tables instead of forcing valuation into generic knowledge items.
+P0 uses a versioned saved artifact before valuation-specific tables. The artifact must be durable enough for latest-result retrieval and future integrations, while any later schema work remains a technical follow-up.
+
+Possible post-P0 tables include:
 
 ```text
 valuation_methods
@@ -904,28 +980,30 @@ relation_type
 created_at
 ```
 
-If the first version should avoid schema changes, save valuation artifacts under `drafts/valuation/` and write a short summary into `knowledge_items`. In the medium term, use dedicated tables.
+The current-main technical plan must choose the exact existing artifact root and schema version. It may not make P0 depend on adding these tables or write a valuation conclusion into `knowledge_items` as a formal user insight without explicit confirmation.
 
-### MCP / Command Entry Points
+### Command Workbench Entry Points
 
-New MCP tools:
+P0 commands run through the existing Command Workbench preview-and-execute route and the shared command router. Supported intent should include:
 
-- `list_valuation_methods`
-- `inspect_stock_valuation`
-- `create_stock_valuation_case`
-- `confirm_stock_valuation_case`
-- `reject_stock_valuation_case`
-
-New commands:
-
-- `value 000660 KR`
 - `valuation 000660 KR`
+- `value 000660 KR`
 - `how is SK Hynix valued`
 - `valuation methods`
-- `confirm valuation case 12`
-- `show valuation case 000660 KR`
+- `latest valuation 000660 KR`
+- a bounded latest-artifact evidence command for acceptance and audit, scoped to the parsed stock target rather than an arbitrary path.
 
-### Stock Decision Card Integration
+P0 Command Workbench behavior:
+
+- Preview identifies the valuation action, normalized single-stock target, safety classification, and whether execution will save an artifact.
+- Execute returns the concise valuation card and a saved-artifact reference without exposing local paths, raw provider errors, credentials, headers, or arbitrary file contents.
+- If no cached packet exists, execution attempts the bounded provider/source path before returning a named degraded result.
+- If financial facts exist but market data is missing, show supported frame logic and financial calculations while suppressing unsupported price/multiple conclusions.
+- If market data exists but official financial facts are missing, show a clearly labeled low-confidence market snapshot and name the official source gap.
+- If peer data is missing or stale, comparable-multiple confidence falls and no candidate peer set is treated as user-confirmed.
+- If no model is available, calculations, frame scores, selected frames, source coverage, artifact saving, and degraded behavior still work.
+
+### Follow-Up Stock Decision Card Integration
 
 Level 1 stock decision cards should add:
 
@@ -936,7 +1014,9 @@ valuation_risk: condition that could break valuation
 valuation_status: no_data / candidate / user_confirmed / stale
 ```
 
-### Research Draft Protocol Integration
+Decision-card consumption is not required for P0 acceptance.
+
+### Follow-Up Research Draft Protocol Integration
 
 Future `research_draft.json` can add:
 
@@ -1005,20 +1085,33 @@ Valuation failure conditions:
 Recommended priority:
 
 1. Confirm the valuation method library.
-2. Add `value SYMBOL MARKET` as a text/artifact output.
-3. Add valuation frame fields to Level 1 decision cards.
-4. Add dedicated valuation tables after the first workflow proves useful.
+2. Deliver single-stock valuation in the authenticated Command Workbench with saved and boundedly retrievable artifacts.
+3. Prove official-fact attempts, shared market-data fallback, deterministic calculations and frame scores, source traceability, and useful degraded behavior for the bounded P0 markets.
+4. Add decision-card, weekly-review, portfolio/batch, and dedicated-table integrations only after P0 proves useful.
 
-This should be built alongside the decision-card work, because valuation frame is part of the first-screen investment decision.
+The follow-up integrations may consume P0 artifact fields, but they do not block P0 acceptance.
 
 ## Acceptance Criteria
 
-- The system can list the user-confirmed valuation method library.
-- For a stock, the system can output 1-3 relevant valuation frames.
-- Output includes key assumptions, rerating triggers, and failure conditions.
-- Output clearly separates facts, valuation assumptions, and model inference.
-- The system does not write valuation inference into formal user insights without confirmation.
-- Weekly review can highlight potential valuation-frame changes in current holdings.
+P0 acceptance criteria:
+
+1. The authenticated Command Workbench can preview and execute a valuation command for exactly one normalized stock target and can list the valuation method library.
+2. The library contains the five default core frames—FCF, Comparable Multiples, SOTP / Asset Value, Cyclical, and Growth / Scenario—and clearly marks Dividend, Residual Income / ROE-PB, and Event-Driven as specialist-only.
+3. A successful execution returns a concise card with 1-3 selected core frames, not every possible frame, and saves a versioned valuation artifact for the same stock.
+4. The card and artifact include key assumptions, market-implied assumptions only when supported, rerating triggers, failure conditions, confidence, source coverage, freshness/stale fields, and explicit data gaps.
+5. The artifact preserves the packet inputs, displayed facts, source references, deterministic calculation inputs and results, all five internal frame scores, selected frames, interpretation provenance, watch items, degraded state, and safety state.
+6. Every displayed fact has a source ID, provider reference, or artifact reference and a timestamp or reporting period when applicable; every calculated value links to inspectable input facts or packet fields.
+7. US execution attempts SEC EDGAR first for official facts; HK execution attempts HKEXnews and official company reports first; KR execution attempts DART/FSS and official company IR first. A structured-source gap may use bounded manual or Codex extraction only when the official document and extraction provenance remain traceable.
+8. Fresh price and market fields use the repository's available shared market-data path, require no new paid account, and show provider, timestamp, currency, and stale status. A local cache miss alone is not a final result: the allowed provider path must be attempted before degradation.
+9. Calculations and frame scoring are deterministic and usable without a model. With model access unavailable, the card and artifact still contain calculations, all frame scores, selected frames, source coverage, watch items, and data gaps; optional narrative is labeled unavailable or omitted.
+10. Facts, assumptions, calculations, interpretation, and watch items are visibly distinct. Model or rule inference, analyst estimates, vendor fallback fundamentals, manually extracted facts, and user hypotheses are labeled by provenance and are not presented as official confirmed facts.
+11. Peer sets are candidate/manual-first. Missing or stale peer data lowers comparable-frame confidence, and no peer set or valuation case becomes user-confirmed without explicit user confirmation.
+12. Missing official financial facts returns a named degraded state and does not fabricate target-price precision. Missing market data suppresses unsupported market-implied or multiple conclusions. Missing both returns a recovery-oriented card naming attempted source families and missing categories.
+13. The latest saved artifact can be retrieved through a stock-scoped, bounded Command Workbench action suitable for acceptance evidence; the action cannot browse arbitrary paths or expose raw provider diagnostics, credentials, headers, stack traces, or local filesystem paths.
+14. The output uses research-aid language, provides no direct buy/sell/hold instruction, and does not present optional target-price-like ranges as the center of the result.
+15. No valuation inference, candidate peer set, valuation case, or candidate insight is written as a formal user insight without explicit user confirmation.
+16. Weekly-review, decision-card, research-draft, portfolio/batch, dedicated-table, standalone valuation web-page, and messaging integrations are not required for P0 acceptance. The authenticated Command Workbench itself remains the required P0 surface.
+17. Independent P0 surface acceptance runs from the deployed Command Workbench after current-main integration; local CLI or unit evidence alone does not satisfy the Command Workbench criteria.
 
 ## Risks
 
@@ -1032,16 +1125,19 @@ This should be built alongside the decision-card work, because valuation frame i
 1. Use five default core frames: FCF, Comparable Multiples, SOTP / Asset Value, Cyclical, and Growth / Scenario.
 2. Keep Dividend, Residual Income / ROE-PB, and Event-Driven as specialist frames that appear only when clearly triggered.
 3. Put valuation explanation before target price.
-4. Prioritize current holdings before broad market coverage.
-5. Include valuation-frame changes in weekly review.
-6. Build the feature as a valuation packet system, not an LLM-first valuation chat.
+4. P0 is a single-stock Command Workbench workflow with a saved valuation artifact and bounded latest-artifact retrieval.
+5. P0 is artifact-backed before dedicated valuation tables.
+6. Official facts use SEC EDGAR first for US, HKEXnews/company reports first for HK, and DART/FSS/company IR first for KR. Manual or Codex extraction is a bounded, provenance-preserving fallback.
+7. Market snapshots reuse the repository's shared available provider path with source/freshness labeling and no new paid-account dependency.
+8. Peer sets are candidate/manual-first and become user-confirmed only after explicit confirmation.
+9. Calculations and frame scoring have no model dependency; optional model narrative operates only on the compact packet and stays labeled as interpretation.
+10. Missing local data triggers bounded provider attempts before deterministic degradation. Missing or stale categories are named, not silently filled.
+11. Weekly-review, decision-card, research-draft, portfolio/batch, dedicated-table, standalone valuation web-page, and messaging integrations are follow-ups, not P0 acceptance blockers; the Command Workbench remains P0.
+12. The product never writes valuation inference into formal user insights without confirmation and never presents its output as investment advice.
 
-## Open Questions For Technical Design
+## Non-Blocking Technical-Plan Decisions
 
-- Whether P1 uses real database tables immediately or starts with artifact-backed valuation packets.
-- Which low-cost market snapshot provider should be implemented first after official financial facts.
-- How much of HKEX annual/interim report extraction should be scripted versus delegated to Codex workers.
-- Whether peer sets should be manually confirmed first or generated automatically with later review.
+The current-main technical plan may choose the exact artifact filename/schema, shared-provider order, synchronous versus asynchronous refresh boundary, and extraction implementation. Those choices must satisfy the confirmed Product decisions and acceptance criteria above; none requires another Product or Owner decision.
 
 ## Research Sources
 
