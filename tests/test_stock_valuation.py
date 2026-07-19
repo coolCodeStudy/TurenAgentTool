@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from investment_knowledge_mcp import command_router
 from investment_knowledge_mcp.data_sources.contracts import SourceCapability
 from investment_knowledge_mcp.data_sources.pool import DataSourcePool, MemoryResultCache
 from investment_knowledge_mcp.data_sources.valuation import (
@@ -1553,6 +1554,191 @@ class StockValuationTests(unittest.TestCase):
             "symbol": "ACME", "market": "US", "core_business": "服务细分市场空间需求。",
         }})
         self.assertEqual(cjk_substring["stock"]["scoring_signals"], {"core_business": ["growth_scenario"]})
+
+
+class StockValuationCommandRouterTests(unittest.TestCase):
+    def _context(self) -> dict[str, object]:
+        return {
+            "stock": {
+                "id": 1,
+                "symbol": "INTC",
+                "market": "US",
+                "name": "Intel Corporation",
+                "core_business": "Semiconductor manufacturing with cyclical demand.",
+                "stock_character": "Cyclical semiconductor company.",
+            },
+            "stock_knowledge": [],
+            "stock_insights": [],
+            "sources": [],
+        }
+
+    def _snapshot(self) -> dict[str, object]:
+        return {
+            "target_resolution": {
+                "normalized_symbol": "INTC",
+                "normalized_market": "US",
+                "normalized_target": "US.INTC",
+                "currency": "USD",
+                "mapping_source": "sec",
+            },
+            "facts": [
+                {
+                    "metric": "revenue",
+                    "value": 10_000.0,
+                    "currency": "USD",
+                    "period_end": "2025-12-31",
+                    "source_type": "sec_companyfacts",
+                    "provider": "sec",
+                },
+                {
+                    "metric": "price",
+                    "value": 25.0,
+                    "currency": "USD",
+                    "timestamp": "2026-07-19T00:00:00+00:00",
+                    "source_type": "market_snapshot",
+                    "provider": "yahoo",
+                },
+            ],
+            "sources": [
+                {"source_type": "sec_companyfacts", "provider": "sec"},
+                {"source_type": "market_snapshot", "provider": "yahoo"},
+            ],
+            "financial_fact_status": "partial",
+            "market_snapshot_status": "partial",
+            "source_attempts": [],
+        }
+
+    def test_creation_aliases_write_only_a_local_research_artifact(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(command_router.repository, "get_stock_context", return_value=self._context()) as get_context,
+            patch.object(
+                command_router,
+                "fetch_valuation_snapshot",
+                return_value=self._snapshot(),
+            ) as fetch_snapshot,
+            patch.object(command_router.repository, "record_user_insight") as record_insight,
+            patch.object(command_router.repository, "propose_candidate_insight") as propose_candidate,
+        ):
+            for command in ("valuation US.INTC", "value US.INTC", "估值 US.INTC"):
+                with self.subTest(command=command):
+                    result = command_router.handle_command(command, output_dir=Path(temporary))
+                    self.assertTrue(result.ok)
+                    self.assertIn("Valuation research card: US.INTC", result.message)
+                    self.assertNotIn(temporary, result.message)
+
+            self.assertTrue((Path(temporary) / "valuation" / "INTC_US_valuation_latest.json").is_file())
+            self.assertEqual(get_context.call_count, 3)
+            self.assertEqual(fetch_snapshot.call_count, 3)
+            fetch_snapshot.assert_called_with("INTC", "US", company_name="Intel Corporation")
+            record_insight.assert_not_called()
+            propose_candidate.assert_not_called()
+
+        self.assertTrue(command_router.is_research_write_command("valuation US.INTC"))
+        self.assertFalse(command_router.is_candidate_write_command("valuation US.INTC"))
+
+    def test_latest_evidence_and_methods_are_safe_read_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            build_valuation_artifact(
+                self._context(),
+                symbol="INTC",
+                market="US",
+                output_dir=output_dir,
+                command="valuation US.INTC",
+                provider_snapshot=self._snapshot(),
+                now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+            )
+
+            latest = command_router.handle_command("latest valuation US.INTC", output_dir=output_dir)
+            latest_zh = command_router.handle_command("查看估值 US.INTC", output_dir=output_dir)
+            evidence = command_router.handle_command("valuation artifact evidence US.INTC", output_dir=output_dir)
+            evidence_alias = command_router.handle_command("估值证据 US.INTC", output_dir=output_dir)
+            methods = command_router.handle_command("valuation methods", output_dir=output_dir)
+            methods_zh = command_router.handle_command("估值方法", output_dir=output_dir)
+
+        for result in (latest, latest_zh):
+            self.assertTrue(result.ok)
+            self.assertIn("Valuation research card: US.INTC", result.message)
+        for result in (evidence, evidence_alias):
+            self.assertTrue(result.ok)
+            public = json.loads(result.message)
+            self.assertEqual(public["schema"], "stock_valuation_evidence.v1")
+            self.assertNotIn("artifact_path", result.message)
+        for result in (methods, methods_zh):
+            self.assertTrue(result.ok)
+            self.assertIn("Valuation method library", result.message)
+        for command in (
+            "latest valuation US.INTC",
+            "valuation artifact evidence US.INTC",
+            "valuation methods",
+        ):
+            self.assertTrue(command_router.is_query_command(command), command)
+            self.assertFalse(command_router.is_research_write_command(command), command)
+
+    def test_supported_target_without_profile_builds_degraded_artifact_without_bootstrap_write(self) -> None:
+        snapshot = {
+            "target_resolution": {
+                "normalized_symbol": "000660",
+                "normalized_market": "KR",
+                "normalized_target": "KR.000660",
+                "currency": "KRW",
+                "mapping_source": "dart",
+            },
+            "facts": [],
+            "sources": [],
+            "financial_fact_status": "unavailable",
+            "market_snapshot_status": "unavailable",
+            "source_attempts": [],
+        }
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(command_router.repository, "get_stock_context", return_value={"stock": None}),
+            patch.object(command_router.repository, "upsert_stock_profile") as upsert_profile,
+            patch.object(command_router, "fetch_valuation_snapshot", return_value=snapshot) as fetch_snapshot,
+        ):
+            result = command_router.handle_command(
+                "valuation KR.000660",
+                output_dir=Path(temporary),
+            )
+            packet = load_latest_valuation_artifact(
+                symbol="000660",
+                market="KR",
+                output_dir=Path(temporary),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(packet)
+        self.assertIn("missing_stock_profile", packet["degraded_state"]["reason_codes"])
+        fetch_snapshot.assert_called_once_with(
+            "000660",
+            "KR",
+            company_name="SK hynix Inc.",
+        )
+        upsert_profile.assert_not_called()
+
+    def test_router_failures_are_bounded_and_do_not_echo_paths_or_raw_exceptions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            with patch.object(
+                command_router.repository,
+                "get_stock_context",
+                side_effect=RuntimeError("postgresql://user:secret@private-db/internal"),
+            ):
+                repository_failure = command_router.handle_command("valuation US.INTC", output_dir=output_dir)
+
+            missing = command_router.handle_command("latest valuation US.INTC", output_dir=output_dir)
+            path_like = command_router.handle_command(
+                "valuation artifact evidence ../../etc/passwd",
+                output_dir=output_dir,
+            )
+
+        self.assertFalse(repository_failure.ok)
+        self.assertFalse(missing.ok)
+        self.assertFalse(path_like.ok)
+        public_text = "\n".join((repository_failure.message, missing.message, path_like.message)).lower()
+        for unsafe in ("postgresql://", "secret", "private-db", "/etc/passwd", "traceback"):
+            self.assertNotIn(unsafe, public_text)
 
 
 if __name__ == "__main__":

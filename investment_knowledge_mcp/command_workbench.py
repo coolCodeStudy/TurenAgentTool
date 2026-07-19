@@ -130,6 +130,71 @@ ACTIONS: dict[str, CommandAction] = {
         data_sources=("stock profile", "knowledge base", "research jobs"),
         expected_output="Detailed stock context and a path to the generated context artifact.",
     ),
+    "stock_valuation": CommandAction(
+        id="stock_valuation",
+        action_family="Valuation",
+        label="Stock valuation",
+        description="Build a deterministic single-stock valuation research card.",
+        aliases=("估值", "valuation", "value"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="valuation {market}.{symbol}",
+        safety_level="writes_artifact",
+        confirmation_required=False,
+        result_type="stock_valuation_card",
+        side_effects="Writes a local valuation artifact. Does not trade and does not write formal user insights.",
+        data_sources=("stock profile", "valuation data providers", "valuation artifact"),
+        expected_output="Valuation card with deterministic calculations, source coverage, selected frames, and data gaps.",
+        pinned=True,
+    ),
+    "stock_valuation_latest": CommandAction(
+        id="stock_valuation_latest",
+        action_family="Valuation",
+        label="Latest valuation",
+        description="Read the latest saved valuation research card for one stock.",
+        aliases=("查看估值", "latest valuation"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="查看估值 {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="stock_valuation_card",
+        side_effects="Reads the latest stock-scoped valuation artifact only.",
+        data_sources=("valuation artifact",),
+        expected_output="Latest saved valuation card or bounded missing-artifact recovery.",
+    ),
+    "stock_valuation_artifact_evidence": CommandAction(
+        id="stock_valuation_artifact_evidence",
+        action_family="Valuation",
+        label="Valuation artifact evidence",
+        description="Read bounded evidence from the latest saved valuation artifact.",
+        aliases=("valuation artifact evidence", "valuation evidence", "估值证据"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="valuation artifact evidence {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="stock_valuation_artifact_evidence",
+        side_effects="Reads only the selected stock's latest valuation artifact and omits local paths and raw provider errors.",
+        data_sources=("valuation artifact",),
+        expected_output="Bounded JSON evidence with facts, calculations, source status, and frame fit.",
+    ),
+    "valuation_methods": CommandAction(
+        id="valuation_methods",
+        action_family="Valuation",
+        label="Valuation methods",
+        description="List the five core and three specialist-only valuation methods.",
+        aliases=("valuation methods", "估值方法"),
+        required_fields=(),
+        optional_fields=(),
+        template="估值方法",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="valuation_methods",
+        side_effects="Reads the static valuation method library.",
+        data_sources=("valuation method library",),
+        expected_output="Five core and three specialist-only valuation method definitions.",
+    ),
     "decision_refresh": CommandAction(
         id="decision_refresh",
         action_family="Decision",
@@ -445,6 +510,28 @@ ALIAS_STOCKS: dict[str, list[dict[str, Any]]] = {
     "baba": [{"symbol": "BABA", "market": "US", "name": "Alibaba Group", "confidence": 0.96}],
     "南方两倍做多海力士": [{"symbol": "07709", "market": "HK", "name": "南方两倍做多海力士", "confidence": 0.98}],
     "腾讯": [{"symbol": "00700", "market": "HK", "name": "Tencent Holdings", "confidence": 0.95}],
+}
+
+VALUATION_NAME_ALIASES: dict[str, dict[str, str]] = {
+    "英特尔": {"symbol": "INTC", "market": "US", "name": "Intel Corporation"},
+    "intel": {"symbol": "INTC", "market": "US", "name": "Intel Corporation"},
+    "intel corporation": {"symbol": "INTC", "market": "US", "name": "Intel Corporation"},
+    "海力士": {"symbol": "000660", "market": "KR", "name": "SK Hynix"},
+    "sk hynix": {"symbol": "000660", "market": "KR", "name": "SK Hynix"},
+    "sk海力士": {"symbol": "000660", "market": "KR", "name": "SK Hynix"},
+    "建滔积层板": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+    "建滔積層板": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+    "建滔积层板控股有限公司": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+    "建滔積層板控股有限公司": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+    "kingboard laminates": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+    "kingboard laminates holdings": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+    "kingboard laminates holdings limited": {"symbol": "01888", "market": "HK", "name": "Kingboard Laminates Holdings Limited"},
+}
+
+VALUATION_STOCK_ACTIONS = {
+    "stock_valuation",
+    "stock_valuation_latest",
+    "stock_valuation_artifact_evidence",
 }
 
 SERVICE_ALIASES = {
@@ -1376,6 +1463,8 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
         return _preview_from_action(_action_context(context, "research_list_jobs", "deterministic_alias", 0.99))
     if text in RESEARCH_JOB_CREATE_COMMANDS:
         return _preview_from_action(_action_context(context, "research_portfolio_jobs", "deterministic_alias", 0.99))
+    if text.lower() in {"valuation methods", "value methods", "估值方法", "估值框架"}:
+        return _preview_from_action(_action_context(context, "valuation_methods", "deterministic_alias", 0.99))
 
     service = _extract_service_log(text)
     if service:
@@ -1465,6 +1554,65 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    valuation_evidence_target = _match_first(
+        text,
+        [
+            r"^valuation artifact evidence\s+(.+)$",
+            r"^valuation evidence\s+(.+)$",
+            r"^估值artifact证据\s+(.+)$",
+            r"^估值证据\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation_artifact_evidence",
+                "deterministic_alias",
+                0.98,
+                fields={"stock": valuation_evidence_target},
+            )
+        )
+
+    valuation_latest_target = _match_first(
+        text,
+        [
+            r"^latest valuation\s+(.+)$",
+            r"^valuation latest\s+(.+)$",
+            r"^value latest\s+(.+)$",
+            r"^查看估值\s+(.+)$",
+            r"^最新估值\s+(.+)$",
+        ],
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation_latest",
+                "deterministic_alias",
+                0.96,
+                fields={"stock": valuation_latest_target},
+            )
+        )
+
+    valuation_target = _match_first(
+        text,
+        [r"^valuation\s+(.+)$", r"^value\s+(.+)$", r"^估值\s*(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_target:
+        return _preview_from_action(
+            _action_context(
+                context,
+                "stock_valuation",
+                "deterministic_alias",
+                0.96,
+                fields={"stock": valuation_target},
+            )
+        )
+
     decision_target = _match_first(
         text,
         [
@@ -1496,6 +1644,54 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
+    valuation_evidence_exact = _match_first(
+        text,
+        [r"^(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_evidence_exact and _parse_stock_target(valuation_evidence_exact) is not None:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="stock_valuation_artifact_evidence",
+                fields={"stock": valuation_evidence_exact},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
+    valuation_latest_exact = _match_first(
+        text,
+        [r"^(?:latest valuation|valuation latest|value latest|查看估值|最新估值)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_latest_exact and _parse_stock_target(valuation_latest_exact) is not None:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="stock_valuation_latest",
+                fields={"stock": valuation_latest_exact},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
+    valuation_exact = _match_first(
+        text,
+        [r"^(?:valuation|value|估值)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if valuation_exact and _parse_stock_target(valuation_exact) is not None:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="stock_valuation",
+                fields={"stock": valuation_exact},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
     if re.fullmatch(
         r"(?:强制)?补齐每日市场简报\s+.+?\s+"
         r"(?:\d{4}-\d{1,2}-\d{1,2}\s*(?:到|至)\s*\d{4}-\d{1,2}-\d{1,2}|最近\s*\d{1,4}\s*个?交易日)",
@@ -1638,6 +1834,10 @@ def _parse_exact_command(text: str) -> dict[str, Any] | None:
         "status": "system_status",
         "最近错误": "recent_errors",
         "worker状态": "worker_status",
+        "估值方法": "valuation_methods",
+        "估值框架": "valuation_methods",
+        "valuation methods": "valuation_methods",
+        "value methods": "valuation_methods",
     }
     action_id = simple_exact.get(text) or simple_exact.get(text.lower())
     if action_id:
@@ -1675,24 +1875,31 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
     confidence = context.confidence or 0.9
 
     needs_stock = any(field.get("type") == "stock" for field in action.required_fields)
+    valuation_alias_target = None
+    if action.id in VALUATION_STOCK_ACTIONS:
+        valuation_alias_target = _valuation_alias_candidate(str(fields.get("stock") or ""))
+        if target is None and valuation_alias_target is not None:
+            target = valuation_alias_target
+            confidence = min(confidence, float(target["confidence"]))
     if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
-        resolved_target = _candidate_with_stock_profile(target)
-        if resolved_target is None:
-            return _preview_from_action(
-                ParseContext(
-                    raw_input=context.raw_input,
-                    action_id="bootstrap_stock_profile",
-                    fields={"stock": f"{target['market']}.{target['symbol']}"},
-                    selected_target=target,
-                    parse_source=context.parse_source,
-                    confidence=min(confidence, float(target.get("confidence") or confidence)),
-                    recovery_message=(
-                        f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
-                        "Initialize a minimal stock profile, then preview the decision command again."
-                    ),
+        if valuation_alias_target is None:
+            resolved_target = _candidate_with_stock_profile(target)
+            if resolved_target is None:
+                return _preview_from_action(
+                    ParseContext(
+                        raw_input=context.raw_input,
+                        action_id="bootstrap_stock_profile",
+                        fields={"stock": f"{target['market']}.{target['symbol']}"},
+                        selected_target=target,
+                        parse_source=context.parse_source,
+                        confidence=min(confidence, float(target.get("confidence") or confidence)),
+                        recovery_message=(
+                            f'{target["market"]}.{target["symbol"]} is not in the stock profile database yet. '
+                            "Initialize a minimal stock profile, then preview the decision command again."
+                        ),
+                    )
                 )
-            )
-        target = resolved_target
+            target = resolved_target
 
     if action.id == "decision_card" and target is not None and _target_needs_research(target):
         return _preview_from_action(
@@ -1726,8 +1933,11 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             else:
                 confidence = min(confidence, float(target.get("confidence") or confidence))
         else:
-            candidates = resolve_stock_candidates(stock_query)
-            if not candidates:
+            if valuation_alias_target is not None:
+                target = valuation_alias_target
+            else:
+                candidates = resolve_stock_candidates(stock_query)
+            if target is None and not candidates:
                 bootstrap_target = _symbol_candidate_from_query(stock_query)
                 if bootstrap_target is not None:
                     return _preview_from_action(
@@ -1746,14 +1956,20 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
                         )
                     )
                 status = "needs_entity"
-                recovery_message = (
-                    f'I recognized {action.label}, but could not find a stock profile for "{stock_query}". '
-                    "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
-                )
-            elif len(candidates) == 1:
+                if action.id in VALUATION_STOCK_ACTIONS and _looks_path_like_query(stock_query):
+                    recovery_message = (
+                        f"I recognized {action.label}, but the target does not look like a stock symbol. "
+                        "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                    )
+                else:
+                    recovery_message = (
+                        f'I recognized {action.label}, but could not find a stock profile for the requested target. '
+                        "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
+                    )
+            elif target is None and len(candidates) == 1:
                 target = candidates[0]
                 confidence = min(confidence, float(target.get("confidence") or confidence))
-            else:
+            elif target is None:
                 status = "ambiguous_entity"
                 recovery_message = f'I found multiple matches for "{stock_query}". Choose one target before running the command.'
 
@@ -1880,6 +2096,29 @@ def _symbol_candidate_from_query(query: str) -> dict[str, Any] | None:
         name=f"{market.upper()}.{symbol.upper()}",
         confidence=1.0,
         source="symbol",
+    )
+
+
+def _valuation_alias_candidate(query: str) -> dict[str, Any] | None:
+    key = re.sub(r"\s+", " ", _clean_stock_text(query)).casefold()
+    target = VALUATION_NAME_ALIASES.get(key)
+    if target is None:
+        return None
+    return _candidate(
+        symbol=target["symbol"],
+        market=target["market"],
+        name=target["name"],
+        confidence=0.98,
+        source="valuation_name_alias",
+    )
+
+
+def _looks_path_like_query(query: str) -> bool:
+    return bool(
+        "/" in query
+        or "\\" in query
+        or ".." in query
+        or query.startswith(("~", "."))
     )
 
 

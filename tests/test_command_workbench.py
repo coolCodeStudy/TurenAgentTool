@@ -8,7 +8,12 @@ from unittest import mock
 from investment_knowledge_mcp import command_http
 from investment_knowledge_mcp import weekly_review_web as web
 from investment_knowledge_mcp.command_router import CommandResult
-from investment_knowledge_mcp.command_workbench import execution_blocker, parse_workbench_command
+from investment_knowledge_mcp.command_workbench import (
+    execution_blocker,
+    list_workbench_actions,
+    parse_workbench_command,
+    render_command_workbench_html,
+)
 
 
 class DailyMarketBriefWorkbenchTests(unittest.TestCase):
@@ -94,6 +99,119 @@ class DailyMarketBriefWorkbenchTests(unittest.TestCase):
         for secret in ("fake-password", "postgresql://", "SELECT *", "private_table"):
             self.assertNotIn(secret, public_text)
             self.assertNotIn(secret, audit_message)
+
+
+class StockValuationWorkbenchTests(unittest.TestCase):
+    def test_catalog_registers_four_valuation_actions_with_exact_side_effect_metadata(self) -> None:
+        actions = {action["id"]: action for action in list_workbench_actions()}
+        valuation_action_ids = {
+            "stock_valuation",
+            "stock_valuation_latest",
+            "stock_valuation_artifact_evidence",
+            "valuation_methods",
+        }
+
+        self.assertTrue(valuation_action_ids <= set(actions))
+        creation = actions["stock_valuation"]
+        self.assertEqual("writes_artifact", creation["safety_level"])
+        self.assertFalse(creation["confirmation_required"])
+        self.assertIn("local valuation artifact", creation["side_effects"])
+        self.assertIn("does not write formal user insights", creation["side_effects"].lower())
+        for action_id in valuation_action_ids - {"stock_valuation"}:
+            self.assertEqual("read_only", actions[action_id]["safety_level"])
+            self.assertFalse(actions[action_id]["confirmation_required"])
+
+    def test_supported_name_aliases_normalize_before_generic_stock_bootstrap(self) -> None:
+        cases = (
+            ("valuation Intel", "stock_valuation", "valuation US.INTC", "US.INTC"),
+            ("value SK Hynix", "stock_valuation", "valuation KR.000660", "KR.000660"),
+            ("估值 建滔積層板", "stock_valuation", "valuation HK.01888", "HK.01888"),
+            ("latest valuation Intel Corporation", "stock_valuation_latest", "查看估值 US.INTC", "US.INTC"),
+            ("查看估值 海力士", "stock_valuation_latest", "查看估值 KR.000660", "KR.000660"),
+            ("valuation evidence Kingboard Laminates", "stock_valuation_artifact_evidence", "valuation artifact evidence HK.01888", "HK.01888"),
+            ("估值证据 建滔积层板", "stock_valuation_artifact_evidence", "valuation artifact evidence HK.01888", "HK.01888"),
+        )
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[],
+        ):
+            for phrase, action_id, exact_command, canonical in cases:
+                with self.subTest(phrase=phrase):
+                    preview = parse_workbench_command(phrase, allow_llm=False)
+                    self.assertEqual("parsed", preview["status"])
+                    self.assertEqual(action_id, preview["action_id"])
+                    self.assertEqual(exact_command, preview["exact_command"])
+                    self.assertEqual(canonical, preview["target"]["canonical"])
+                    self.assertFalse(preview["confirmation_required"])
+                    self.assertIsNone(execution_blocker(preview, confirmed=False))
+
+    def test_market_qualified_unknown_symbol_keeps_current_bootstrap_recovery(self) -> None:
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[],
+        ):
+            preview = parse_workbench_command("valuation US.MSTR", allow_llm=False)
+
+        self.assertEqual("parsed", preview["status"])
+        self.assertEqual("bootstrap_stock_profile", preview["action_id"])
+        self.assertEqual("创建股票档案 MSTR US", preview["exact_command"])
+        self.assertTrue(preview["confirmation_required"])
+        self.assertIn("not in the stock profile database", preview["recovery_message"])
+
+    def test_profiled_targets_and_all_command_aliases_emit_stable_exact_commands(self) -> None:
+        profile = {"symbol": "INTC", "market": "US", "name": "Intel Corporation"}
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[profile],
+        ):
+            creation = [
+                parse_workbench_command(f"{alias} US.INTC", allow_llm=False)
+                for alias in ("valuation", "value", "估值")
+            ]
+            latest = [
+                parse_workbench_command(f"{alias} US.INTC", allow_llm=False)
+                for alias in ("latest valuation", "查看估值")
+            ]
+            evidence = [
+                parse_workbench_command(f"{alias} US.INTC", allow_llm=False)
+                for alias in ("valuation artifact evidence", "valuation evidence", "估值证据")
+            ]
+            methods = [
+                parse_workbench_command(alias, allow_llm=False)
+                for alias in ("valuation methods", "估值方法")
+            ]
+
+        self.assertEqual({item["exact_command"] for item in creation}, {"valuation US.INTC"})
+        self.assertEqual({item["exact_command"] for item in latest}, {"查看估值 US.INTC"})
+        self.assertEqual(
+            {item["exact_command"] for item in evidence},
+            {"valuation artifact evidence US.INTC"},
+        )
+        self.assertEqual({item["exact_command"] for item in methods}, {"估值方法"})
+        self.assertTrue(all(not item["confirmation_required"] for item in (*creation, *latest, *evidence, *methods)))
+
+    def test_path_like_valuation_target_returns_bounded_recovery(self) -> None:
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[],
+        ):
+            preview = parse_workbench_command(
+                "valuation artifact evidence ../../etc/passwd",
+                allow_llm=False,
+            )
+
+        self.assertEqual("needs_entity", preview["status"])
+        self.assertEqual("stock_valuation_artifact_evidence", preview["action_id"])
+        self.assertNotIn("/etc/passwd", preview["recovery_message"])
+        self.assertNotIn("..", preview["recovery_message"])
+
+    def test_existing_access_recovery_shell_is_preserved(self) -> None:
+        html = render_command_workbench_html()
+
+        self.assertIn('id="access-panel"', html)
+        self.assertIn("InvestmentKnowledgeAccess", html)
+        self.assertIn("access_required", html)
+        self.assertIn("retryPendingRequest", html)
 
 
 if __name__ == "__main__":
