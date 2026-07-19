@@ -1498,7 +1498,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       </fieldset>
       <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取每日市场简报。</div>
       <div id="error-message" class="notice error" role="alert" hidden></div>
-      <section><h2>历史生成任务</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
+      <section><h2>历史生成队列（本页面任务）</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
       <div id="summary" class="summary-grid"></div>
       <section><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
       <section><h2>核心指数</h2><div id="indexes"></div></section>
@@ -1547,6 +1547,11 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       if (!event.target.value) return;
       $("#market-date").value = event.target.value;
       loadBrief("read");
+    }});
+    $("#history-jobs").addEventListener("click", (event) => {{
+      const task = event.target.closest("[data-history-job-id]");
+      if (!task) return;
+      void selectHistoryJob(task.dataset.historyJobId);
     }});
     void initializePage();
     if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
@@ -1675,6 +1680,38 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       }}
     }}
 
+    async function selectHistoryJob(jobId) {{
+      stopHistoryJobPolling();
+      try {{
+        const data = await fetchJson(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
+        const job = data.job;
+        if (!job) throw new Error("历史任务不存在或已不可见。");
+        const item = (job.items || [])[0];
+        renderHistoryJob(job);
+        if (item?.market && item?.market_date) {{
+          state.market = item.market;
+          $("#market-date").value = item.market_date;
+          document.querySelectorAll("[data-market]").forEach((button) => {{
+            button.classList.toggle("active", button.dataset.market === state.market);
+          }});
+        }}
+        if (["queued", "running"].includes(job.status)) {{
+          showStatus(historyJobProgress(job));
+          startHistoryJobPolling(job.id, item?.market_date || "");
+          return;
+        }}
+        if (["completed", "partial"].includes(job.status) && item?.market && item?.market_date) {{
+          await loadSavedDates();
+          await loadBrief("read");
+          return;
+        }}
+        const failures = (job.items || []).map((row) => row.error_summary).filter(Boolean);
+        showError(failures[0] || "历史简报任务未能生成可读取的结果。");
+      }} catch (error) {{
+        showError(`历史任务读取失败：${{error.message}}`);
+      }}
+    }}
+
     function startHistoryJobPolling(jobId, marketDate) {{
       stopHistoryJobPolling(false);
       state.jobId = jobId;
@@ -1740,7 +1777,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       }}
       $("#history-jobs").innerHTML = jobs.map((job) => {{
         const item = (job.items || [])[0] || {{}};
-        return `<div><strong>#${{escapeHtml(job.id)}}</strong> ${{escapeHtml(item.market || "-")}} ${{escapeHtml(item.market_date || "-")}}：${{escapeHtml(job.status || "-")}}，${{escapeHtml(job.completed_count || 0)}}/${{escapeHtml(job.total_count || 0)}}</div>`;
+        return `<button type="button" class="history-task" data-history-job-id="${{escapeHtml(job.id)}}"><strong>#${{escapeHtml(job.id)}}</strong> ${{escapeHtml(item.market || "-")}} ${{escapeHtml(item.market_date || "-")}}：${{escapeHtml(job.status || "-")}}，${{escapeHtml(job.completed_count || 0)}}/${{escapeHtml(job.total_count || 0)}}</button>`;
       }}).join("");
     }}
 

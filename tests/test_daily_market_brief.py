@@ -33,6 +33,7 @@ from investment_knowledge_mcp.weekly_review_web import (
     _resolve_daily_market,
     _validate_public_daily_market_brief_date,
     render_daily_market_brief_html,
+    render_daily_market_brief_script,
 )
 
 
@@ -904,6 +905,25 @@ class DailyMarketBriefTests(unittest.TestCase):
         )
         self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
         self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
+
+    def test_recent_history_jobs_are_selectable_public_web_jobs(self) -> None:
+        html = render_daily_market_brief_html()
+        script = render_daily_market_brief_script()
+
+        self.assertIn('data-history-job-id', script)
+        self.assertIn('selectHistoryJob(jobId)', script)
+        self.assertIn('历史生成队列（本页面任务）', html)
+
+    def test_completed_history_task_selection_reads_existing_brief(self) -> None:
+        script = render_daily_market_brief_script()
+
+        self.assertIn('async function selectHistoryJob(jobId)', script)
+        self.assertIn('await loadBrief("read")', script)
+        self.assertIn('/api/daily-market-brief/history-jobs?id=${encodeURIComponent(jobId)}', script)
+        self.assertNotIn(
+            'fetch("/api/daily-market-brief/history-jobs", { method: "POST"',
+            script,
+        )
 
     def test_daily_brief_uses_shared_shell_and_remains_tokenless(self) -> None:
         html = render_daily_market_brief_html()

@@ -35,6 +35,59 @@ test.describe("Daily Market Brief desktop journey", () => {
     await expect(page.locator("#indexes")).not.toBeEmpty();
     await expect(page.getByRole("heading", { name: "核心指数" })).toBeVisible();
   });
+
+  test("selecting a completed history task reads it without creating another task", async ({ page }) => {
+    const job = {
+      id: "history-task-42",
+      status: "completed",
+      completed_count: 1,
+      total_count: 1,
+      items: [{ market: "CN", market_date: "2026-07-17" }],
+    };
+    const historyRequests: { method: string; url: string }[] = [];
+
+    await page.route((url) => url.pathname === "/api/daily-market-brief/history-jobs", async (route) => {
+      const request = route.request();
+      historyRequests.push({ method: request.method(), url: request.url() });
+      if (request.url().includes("id=history-task-42")) {
+        await route.fulfill({ json: { ok: true, job } });
+        return;
+      }
+      await route.fulfill({ json: { ok: true, jobs: [job] } });
+    });
+    await page.route((url) => url.pathname === "/api/daily-market-brief/dates", (route) =>
+      route.fulfill({ json: { ok: true, dates: ["2026-07-17"] } }),
+    );
+    await page.route((url) => url.pathname === "/api/daily-market-brief", (route) =>
+      route.fulfill({
+        json: {
+          ok: true,
+          status: "ready",
+          market_date: "2026-07-17",
+          context: {
+            market: { name: "A股", code: "CN" },
+            market_date: "2026-07-17",
+            generated_at: {},
+            indexes: [],
+            sectors: [],
+            gainers: [],
+            capital_flow: [],
+            source_status: {},
+          },
+          markdown: "# Daily brief",
+        },
+      }),
+    );
+
+    await openExperience(page, "/daily-market-brief");
+    const task = page.getByRole("button", { name: /#history-task-42/ });
+    await expect(task).toBeVisible();
+    await task.click();
+
+    await expect(page.locator("#summary")).not.toBeEmpty();
+    expect(historyRequests.some(({ url }) => url.includes("id=history-task-42"))).toBe(true);
+    expect(historyRequests.every(({ method }) => method === "GET")).toBe(true);
+  });
 });
 
 test.describe("Weekly Review desktop journey", () => {
