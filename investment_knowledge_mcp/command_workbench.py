@@ -535,17 +535,17 @@ def render_command_workbench_html() -> str:
     __EXPERIENCE_CSS__
     :root {
       color-scheme: light;
-      --bg: #f7f8fa;
-      --panel: #ffffff;
-      --ink: #1f252d;
-      --muted: #637083;
-      --line: #d8e0e8;
-      --accent: #146c74;
+      --bg: var(--experience-canvas);
+      --panel: var(--experience-surface);
+      --ink: var(--experience-ink);
+      --muted: var(--experience-muted);
+      --line: var(--experience-line);
+      --accent: var(--experience-accent);
       --accent-soft: #e7f4f3;
-      --warn: #8a5a00;
+      --warn: var(--experience-warning);
       --warn-bg: #fff7df;
-      --bad: #a33b35;
-      --good: #176b43;
+      --bad: var(--experience-danger);
+      --good: var(--experience-positive);
       --chip: #edf2f6;
     }
     * { box-sizing: border-box; }
@@ -636,12 +636,25 @@ def render_command_workbench_html() -> str:
       opacity: .55;
       cursor: not-allowed;
     }
-    section, .panel {
+    .panel {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 14px;
+    }
+    section.workspace-section {
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      padding: 22px 0;
+      margin: 0;
+    }
+    .input-row.workspace-command-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 92px;
+      align-items: end;
     }
     .preview-grid {
       display: grid;
@@ -824,14 +837,14 @@ def render_command_workbench_html() -> str:
         <h1>Command Workbench</h1>
         <p class="subtitle">Type a stock name, symbol, or supported command. The workbench resolves the target and shows the exact command before running it.</p>
       </header>
-      <div class="input-row">
+      <div class="input-row workspace-command-bar">
         <label for="smart-input" class="command-entry">
           <span class="label">Command</span>
           <input id="smart-input" autocomplete="off" placeholder="决策 英特尔, 本周复盘, 系统状态">
         </label>
         <button id="parse" class="primary">Preview</button>
       </div>
-      <section id="access-panel" aria-labelledby="access-title" hidden>
+      <section class="workspace-section" id="access-panel" aria-labelledby="access-title" hidden>
         <h2 id="access-title">Request recovery</h2>
         <p id="access-message" role="alert">Enter the private access credential to continue.</p>
         <div id="access-credential-fields" hidden>
@@ -846,15 +859,15 @@ def render_command_workbench_html() -> str:
         </div>
         <button id="request-retry" class="primary" hidden>Retry request</button>
       </section>
-      <section id="preview-section">
+      <section class="workspace-section" id="preview-section">
         <h2>Parsed Preview</h2>
         <div id="preview"><div class="notice">Start with an action or a target: 决策 英特尔, 刷新海力士决策, 本周复盘, 系统状态.</div></div>
       </section>
-      <section id="form-section" hidden>
+      <section class="workspace-section" id="form-section" hidden>
         <h2 id="form-title">Action</h2>
         <div id="form" class="form-grid"></div>
       </section>
-      <section>
+      <section class="workspace-section">
         <h2>Execution Result / 执行结果</h2>
         <div id="result" role="status" aria-live="polite"><span class="label">No command has run in this session.</span></div>
       </section>

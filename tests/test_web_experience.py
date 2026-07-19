@@ -352,6 +352,27 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn(".experience-brand", css)
         self.assertNotIn("grid-template-columns: 216px", css)
 
+    def test_shared_workspace_css_exposes_financial_tokens_and_primitives(self) -> None:
+        css = render_experience_css()
+
+        for token in (
+            "--experience-ink",
+            "--experience-canvas",
+            "--experience-positive",
+            "--experience-warning",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, css)
+        for primitive in (
+            ".workspace-command-bar",
+            ".workspace-section",
+            ".history-task",
+            ".financial-number",
+        ):
+            with self.subTest(primitive=primitive):
+                self.assertIn(primitive, css)
+        self.assertIn("font-variant-numeric: tabular-nums", css)
+
     def test_primary_navigation_is_a_single_product_header(self) -> None:
         html = render_primary_navigation("daily_market_brief")
 
@@ -373,6 +394,9 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn('<main id="main-content"', html)
         self.assertEqual(1, html.count("<main"))
         self.assertEqual(1, html.count("<h1"))
+        self.assertIn("workspace-command-bar", html)
+        self.assertIn('class="workspace-section" id="preview-section"', html)
+        self.assertIn("<aside>", html)
 
     def test_weekly_missing_state_has_protected_recovery_not_blank_sections(self) -> None:
         from investment_knowledge_mcp.weekly_review_web import (

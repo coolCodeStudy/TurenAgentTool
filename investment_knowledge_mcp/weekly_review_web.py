@@ -496,15 +496,15 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     {render_experience_css()}
     :root {{
       color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --ink: #20242a;
-      --muted: #657180;
-      --line: #dce2ea;
-      --accent: #1769aa;
-      --good: #126a3a;
-      --bad: #a33a32;
-      --warn: #966200;
+      --bg: var(--experience-canvas);
+      --panel: var(--experience-surface);
+      --ink: var(--experience-ink);
+      --muted: var(--experience-muted);
+      --line: var(--experience-line);
+      --accent: var(--experience-accent);
+      --good: var(--experience-positive);
+      --bad: var(--experience-danger);
+      --warn: var(--experience-warning);
       --chip: #eef3f8;
     }}
     * {{ box-sizing: border-box; }}
@@ -514,19 +514,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       background: var(--bg);
       color: var(--ink);
     }}
-    .shell {{
-      display: grid;
-      grid-template-columns: 232px minmax(0, 1fr) 220px;
-      min-height: 100vh;
-    }}
-    .sidebar {{
-      border-right: 1px solid var(--line);
-      background: #ffffff;
-      padding: 22px 16px;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-    }}
+    .shell {{ min-height: 100vh; }}
     .brand {{
       font-size: 18px;
       font-weight: 700;
@@ -553,10 +541,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       min-width: 0;
     }}
     .topbar {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 16px;
-      align-items: end;
+      display: block;
       margin-bottom: 16px;
     }}
     h1 {{
@@ -574,7 +559,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
-      justify-content: flex-end;
+      justify-content: flex-start;
     }}
     .controls label, .chips label {{
       display: grid;
@@ -636,11 +621,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       overflow-wrap: anywhere;
     }}
     section {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 16px;
-      margin-bottom: 14px;
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      padding: 22px 0;
+      margin: 0;
     }}
     section h2 {{
       margin: 0 0 12px;
@@ -787,13 +773,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       font-size: 13px;
     }}
     @media (max-width: 1100px) {{
-      .shell {{ grid-template-columns: 180px minmax(0, 1fr); }}
+      .shell {{ display: block; }}
       .aside {{ display: none; }}
       .status-grid {{ grid-template-columns: repeat(3, minmax(110px, 1fr)); }}
     }}
     @media (max-width: 760px) {{
       .shell {{ display: block; }}
-      .sidebar {{ position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }}
       main {{ padding: 16px; }}
       .topbar {{ grid-template-columns: 1fr; }}
       .controls {{ justify-content: flex-start; }}
@@ -809,20 +794,17 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     {render_primary_navigation("weekly_review")}
     <div class="experience-main">
       <div class="shell">
-    <aside class="sidebar">
-      <p class="brand">InvestmentKnowledge</p>
-      <nav class="nav" aria-label="On this page">
+    <main id="main-content" tabindex="-1">
+      <header class="page-header">
+        <h1>本周复盘</h1>
+        <p class="subtitle">只读查看基于交易记录、账户快照、当前持仓、IPO 和知识库生成的周复盘。</p>
+      </header>
+      <nav class="workspace-contents" aria-label="本页目录">
         <a href="#holdings">当前持仓</a>
         <a href="#markdown">报告原文</a>
         <a href="#source-status">数据源状态</a>
       </nav>
-    </aside>
-    <main id="main-content" tabindex="-1">
-      <div class="topbar">
-        <header class="page-header">
-          <h1>本周复盘</h1>
-          <p class="subtitle">只读查看基于交易记录、账户快照、当前持仓、IPO 和知识库生成的周复盘。</p>
-        </header>
+      <div class="topbar workspace-command-bar">
         <div class="controls">
           <button id="prev-week" type="button">上一周</button>
           <button id="this-week" type="button">本周</button>
@@ -832,32 +814,22 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       </div>
       <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取本周复盘状态。</div>
       <div id="error-message" class="notice error" role="alert" hidden></div>
-      <section id="weekly-recovery" aria-labelledby="weekly-recovery-title" hidden>
+      <section class="workspace-section" id="weekly-recovery" aria-labelledby="weekly-recovery-title" hidden>
         <h2 id="weekly-recovery-title">尚未生成本周复盘</h2>
         <p id="weekly-recovery-message">读取仍然公开。生成需要私有访问凭证。</p>
         <button id="weekly-generate" class="primary" type="button">生成 / 刷新复盘</button>
         {render_access_recovery_panel(prefix="weekly")}
       </section>
       <div id="source-status" class="status-grid" aria-live="polite"></div>
-      <section id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
-      <section id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
-      <section id="indexes"><h2>3. 指数</h2><div data-slot="indexes"></div></section>
-      <section id="story"><h2>4. 整体故事</h2><div data-slot="story"></div></section>
-      <section id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
-      <section id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><label for="market-filter">市场筛选<select id="market-filter"><option value="">全部市场</option></select></label><label for="status-filter">持仓状态筛选<select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></label></div><div data-slot="holdings"></div></section>
-      <section id="attribution"><h2>7. 持仓归因卡</h2><div data-slot="attribution"></div></section>
-      <section id="markdown"><h2>报告原文</h2><textarea id="markdown-text" class="markdown" spellcheck="false" readonly></textarea></section>
+      <section class="workspace-section" id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
+      <section class="workspace-section" id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
+      <section class="workspace-section" id="indexes"><h2>3. 指数</h2><div data-slot="indexes"></div></section>
+      <section class="workspace-section" id="story"><h2>4. 整体故事</h2><div data-slot="story"></div></section>
+      <section class="workspace-section" id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
+      <section class="workspace-section" id="holdings"><h2>6. 当前持仓分析</h2><div class="chips"><label for="market-filter">市场筛选<select id="market-filter"><option value="">全部市场</option></select></label><label for="status-filter">持仓状态筛选<select id="status-filter"><option value="">全部状态</option><option value="待处理">待处理</option><option value="补研究">补研究</option><option value="高波动">高波动</option><option value="历史拖累">历史拖累</option></select></label></div><div data-slot="holdings"></div></section>
+      <section class="workspace-section" id="attribution"><h2>7. 持仓归因卡</h2><div data-slot="attribution"></div></section>
+      <section class="workspace-section" id="markdown"><h2>报告原文</h2><textarea id="markdown-text" class="markdown" spellcheck="false" readonly></textarea></section>
     </main>
-    <aside class="aside" aria-label="复盘目录">
-      <a href="#highlights">1. 高光时刻</a>
-      <a href="#blowups">2. 炸裂时刻</a>
-      <a href="#indexes">3. 指数</a>
-      <a href="#story">4. 整体故事</a>
-      <a href="#next-week">5. 下周展望</a>
-      <a href="#holdings">6. 当前持仓分析</a>
-      <a href="#attribution">7. 持仓归因卡</a>
-      <a href="#source-status">数据源状态</a>
-    </aside>
       </div>
     </div>
   </div>
@@ -1244,15 +1216,15 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
     {render_experience_css()}
     :root {{
       color-scheme: light;
-      --bg: #f5f7f9;
-      --panel: #ffffff;
-      --ink: #20242a;
-      --muted: #657180;
-      --line: #dce2ea;
-      --accent: #1769aa;
-      --good: #126a3a;
-      --bad: #a33a32;
-      --warn: #966200;
+      --bg: var(--experience-canvas);
+      --panel: var(--experience-surface);
+      --ink: var(--experience-ink);
+      --muted: var(--experience-muted);
+      --line: var(--experience-line);
+      --accent: var(--experience-accent);
+      --good: var(--experience-positive);
+      --bad: var(--experience-danger);
+      --warn: var(--experience-warning);
       --chip: #eef3f8;
     }}
     * {{ box-sizing: border-box; }}
@@ -1262,16 +1234,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       background: var(--bg);
       color: var(--ink);
     }}
-    .shell {{
-      display: grid;
-      grid-template-columns: 220px minmax(0, 1fr);
-      min-height: 100vh;
-    }}
-    .sidebar {{
-      border-right: 1px solid var(--line);
-      background: #fff;
-      padding: 22px 16px;
-    }}
+    .shell {{ min-height: 100vh; }}
     .brand {{
       font-size: 18px;
       font-weight: 700;
@@ -1295,10 +1258,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       padding: 22px 24px 42px;
     }}
     .topbar {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 16px;
-      align-items: end;
+      display: block;
       margin-bottom: 16px;
     }}
     h1 {{
@@ -1315,7 +1275,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       display: flex;
       gap: 8px;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: flex-start;
       flex-wrap: wrap;
     }}
     .controls label {{
@@ -1389,7 +1349,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       gap: 8px;
       margin-bottom: 14px;
     }}
-    .summary-card, section {{
+    .summary-card {{
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -1410,8 +1370,12 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       overflow-wrap: anywhere;
     }}
     section {{
-      padding: 16px;
-      margin-bottom: 14px;
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      padding: 22px 0;
+      margin: 0;
     }}
     section h2 {{
       margin: 0 0 12px;
@@ -1453,7 +1417,6 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
     }}
     @media (max-width: 900px) {{
       .shell {{ display: block; }}
-      .sidebar {{ border-right: 0; border-bottom: 1px solid var(--line); }}
       main {{ padding: 16px; }}
       .topbar {{ grid-template-columns: 1fr; }}
       .controls {{ justify-content: flex-start; }}
@@ -1469,20 +1432,17 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
     {render_primary_navigation("daily_market_brief")}
     <div class="experience-main">
       <div class="shell">
-    <aside class="sidebar">
-      <p class="brand">InvestmentKnowledge</p>
-      <nav class="nav" aria-label="On this page">
+    <main id="main-content" tabindex="-1">
+      <header class="page-header">
+        <h1>每日市场简报</h1>
+        <p class="subtitle">按市场查看收盘后的核心指数、领涨方向、个股、资金流和数据缺口。</p>
+      </header>
+      <nav class="workspace-contents" aria-label="本页目录">
         <a href="#history-jobs">历史生成任务</a>
         <a href="#source-status">数据状态</a>
         <a href="#markdown">Markdown 原文</a>
       </nav>
-    </aside>
-    <main id="main-content" tabindex="-1">
-      <div class="topbar">
-        <header class="page-header">
-          <h1>每日市场简报</h1>
-          <p class="subtitle">按市场查看收盘后的核心指数、领涨方向、个股、资金流和数据缺口。</p>
-        </header>
+      <div class="topbar workspace-command-bar">
         <div class="controls">
           <label for="market-date">市场日期<input id="market-date" type="date" value="{today}"></label>
           <label for="saved-date">已保存日期<select id="saved-date"><option value="">已保存日期</option></select></label>
@@ -1498,15 +1458,15 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
       </fieldset>
       <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取每日市场简报。</div>
       <div id="error-message" class="notice error" role="alert" hidden></div>
-      <section><h2>历史生成队列（本页面任务）</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
+      <section class="workspace-section"><h2>历史生成队列（本页面任务）</h2><div id="history-jobs" class="empty">暂无历史生成任务。</div></section>
       <div id="summary" class="summary-grid"></div>
-      <section><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
-      <section><h2>核心指数</h2><div id="indexes"></div></section>
-      <section><h2>领涨行业/板块</h2><div id="sectors"></div></section>
-      <section><h2>领涨个股</h2><div id="gainers"></div></section>
-      <section><h2>资金流</h2><div id="capital-flow"></div></section>
-      <section><h2>数据状态</h2><div id="source-status"></div></section>
-      <section><h2>Markdown 原文</h2><textarea id="markdown" class="markdown" spellcheck="false"></textarea></section>
+      <section class="workspace-section"><h2>简报摘要</h2><div id="narrative" class="empty"></div></section>
+      <section class="workspace-section"><h2>核心指数</h2><div id="indexes"></div></section>
+      <section class="workspace-section"><h2>领涨行业/板块</h2><div id="sectors"></div></section>
+      <section class="workspace-section"><h2>领涨个股</h2><div id="gainers"></div></section>
+      <section class="workspace-section"><h2>资金流</h2><div id="capital-flow"></div></section>
+      <section class="workspace-section"><h2>数据状态</h2><div id="source-status"></div></section>
+      <section class="workspace-section"><h2>Markdown 原文</h2><textarea id="markdown" class="markdown" spellcheck="false"></textarea></section>
     </main>
       </div>
     </div>

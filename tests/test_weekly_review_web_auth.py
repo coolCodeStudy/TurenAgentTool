@@ -255,7 +255,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertLess(daily_index, weekly_index)
         self.assertLess(weekly_index, command_index)
 
-        local_nav_marker = '<nav class="nav" aria-label="On this page">'
+        local_nav_marker = '<nav class="workspace-contents" aria-label="本页目录">'
         self.assertIn(local_nav_marker, html)
         local_nav = html.split(local_nav_marker, 1)[1].split("</nav>", 1)[0]
         self.assertEqual(3, local_nav.count("<a "))
@@ -267,6 +267,8 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
 
         self.assertNotIn('id="api-token"', html)
         self.assertIn('id="weekly-access-token"', html)
+        self.assertIn("workspace-command-bar", html)
+        self.assertIn('class="workspace-contents"', html)
         self.assertNotIn("configured-access-token", html)
         self.assertIn("公开只读", html)
         self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
