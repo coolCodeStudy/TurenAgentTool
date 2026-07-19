@@ -58,6 +58,9 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Related coordinator branch/ref:
 - Current deployed ref or deploy event:
 - User-facing surface:
+- Quality route: `L0` / `L1` / `L2` / `L3`
+- Route rationale:
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions):
 - Current state:
 - Known blockers:
 - Active child threads or role sessions:
@@ -81,6 +84,8 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Fill this packet before starting a new Feature Coordinator when the feature already has delivery history.
 - Refresh this packet before reading long chat history. Repo-native state is first-line evidence.
 - If a child role has returned, the packet must name the returned branch, commit, verification, and queue row before the Coordinator Return Gate begins.
+- Select the smallest quality route before dispatch. Do not add an independent acceptance handoff to L0/L1 work unless the PRD or changed risk boundary requires it.
+- Keep one active release-verification manifest and one active Acceptance Queue row per user-facing release candidate. Close accepted micro-return rows rather than preserving them as open coordination work.
 - If the coordinator cannot maintain a runtime watch path, record `Monitoring not active` and the smallest resume action.
 - Do not use this packet to route normal feature work to the Global Project Manager. It should clarify why the Feature Coordinator can continue or why a true escalation exists.
 

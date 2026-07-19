@@ -158,6 +158,13 @@ class DeployContractTests(TestCase):
             classify_changed_files(("tests/test_weekly_review_holder_attribution.py",)).deploy_mode,
         )
 
+    def test_browser_acceptance_specs_are_no_deploy(self) -> None:
+        plan = classify_paths(("e2e/cloud-pages.spec.ts",), compose_image_changed=False)
+
+        self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
+        self.assertEqual((), plan.targets)
+        self.assertFalse(plan.image_input_files)
+
     def test_legacy_classifier_keeps_empty_diff_full(self) -> None:
         self.assertEqual("full", classify_changed_files(()).deploy_mode)
 

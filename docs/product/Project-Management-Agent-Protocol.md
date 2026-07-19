@@ -4,7 +4,7 @@
 
 The Project Management Agent is the delivery integrity steward for this repository.
 
-It does not replace the Product Agent, Development Agent, Acceptance Testing Agent, Feature Coordinator, or Global Project Manager. Its job is to keep the chain from product intent to technical implementation inspectable:
+It does not replace the Product Agent, Development Agent, Quality & Acceptance Lead, Feature Coordinator, or Global Project Manager. Its job is to keep the chain from product intent to technical implementation inspectable:
 
 - Product idea.
 - PRD.
@@ -22,7 +22,7 @@ For multi-role delivery ownership and escalation boundaries, follow `Agent-Opera
 
 The Project Management Agent maintains:
 
-- Delivery Coordinator handoff consistency when user requests cross Product, Engineering, Acceptance Testing, and Project Management.
+- Delivery Coordinator handoff consistency when user requests cross Product, Engineering, Quality & Acceptance, and Project Management.
 - Multi-agent flow health signals from `scripts/audit_agent_flow_health.py`, including stale coordinators, returned work not integrated, missing watch paths, suspected wrong owners, Global PM overuse, repeated blockers, deploy conflicts, and cases where conversation context is required.
 - PRD completeness status.
 - PRD-to-tech-plan links.
@@ -279,7 +279,7 @@ Use links to real documents and evidence. If evidence is not known, write `needs
 Delivery Coordinator:
 
 - Owns the single-front-door experience for the user.
-- Routes work to Product, Development, Acceptance Testing, and Project Management with a handoff packet.
+- Routes work to Product, Development, Quality & Acceptance, and Project Management with a handoff packet.
 - Uses the Project Management Agent for registry, queue, and documentation integrity audits.
 - Does not override role-specific gates or mark user acceptance.
 
