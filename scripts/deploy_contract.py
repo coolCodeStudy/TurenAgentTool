@@ -103,6 +103,7 @@ PATH_RULES = (
     PathRule("skills/**", DeployMode.NO_DEPLOY, (), "repository agent skill"),
     PathRule("prompts/**", DeployMode.NO_DEPLOY, (), "repository prompt"),
     PathRule("tests/**", DeployMode.NO_DEPLOY, (), "tests"),
+    PathRule("e2e/**", DeployMode.NO_DEPLOY, (), "browser acceptance tests"),
     PathRule(".github/workflows/codex-worker.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule(".github/workflows/cloud-e2e.yml", DeployMode.NO_DEPLOY, (), "browser acceptance workflow"),
     PathRule(".github/workflows/deploy.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
