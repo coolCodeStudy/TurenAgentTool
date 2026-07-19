@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import inspect
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -101,6 +102,18 @@ class StockValuationTests(unittest.TestCase):
         self.assertIsInstance(bridge, dict)
         assert_refs(bridge.get("bridge_lines"))
         assert_refs(bridge.get("frame_fit_ranking"))
+
+    def _assert_finite_json_tree(self, value: object) -> None:
+        if isinstance(value, float):
+            self.assertTrue(math.isfinite(value), value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                self._assert_finite_json_tree(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                self._assert_finite_json_tree(item)
+        elif isinstance(value, str):
+            self.assertNotRegex(value.lower(), r"(?:^|[^a-z])(inf|nan)(?:[^a-z]|$)")
 
     def test_public_interfaces_and_eight_method_definitions(self) -> None:
         for function in (
@@ -817,6 +830,226 @@ class StockValuationTests(unittest.TestCase):
             )
         self.assertNotIn("revenue", {fact["metric"] for fact in packet["facts"]})
         self.assertIn("missing_revenue", packet["degraded_state"]["reason_codes"])
+
+    def test_build_total_boundary_omits_malformed_scalar_categories(self) -> None:
+        context = {
+            "stock": {"symbol": "ACME", "market": "US", "core_business": "Detailed industrial profile."},
+            "facts": [
+                {"metric": [], "value": 1.0, "source_type": {}},
+                {"metric": {"revenue": True}, "value": 2.0, "source_type": []},
+                {"metric": {"non_json"}, "value": float("inf"), "source_type": {"bad"}},
+            ],
+            "sources": [{"source_type": ["sec_companyfacts"], "provider": {"SEC": True}}],
+        }
+        snapshot = {
+            "source_attempts": [
+                {"family": [], "status": {}},
+                {"family": {"official_financial": True}, "status": ["failed"]},
+            ],
+            "market_snapshot_status": [],
+            "financial_fact_status": {},
+            "target_resolution": {"normalized_target": "US.ACME", "mapping_source": []},
+        }
+
+        packet = self._build(context, snapshot)
+
+        self.assertEqual(packet["facts"], [])
+        self.assertEqual(packet["source_coverage"]["source_attempts"], [])
+        json.dumps(packet, allow_nan=False)
+
+    def test_evidence_and_card_total_boundary_for_malformed_nested_json(self) -> None:
+        packet = json.loads(json.dumps(self._build()))
+        packet["facts"][0]["metric"] = []
+        packet["stock"]["scoring_signals"]["core_business"] = [["cyclical"], {"growth": True}]
+        packet["source_coverage"]["source_registry"][0]["source_type"] = []
+        packet["source_coverage"]["source_registry"][0]["family"] = {"official": True}
+        packet["source_coverage"]["source_attempts"] = [{"family": [], "status": {}}]
+        packet["deterministic_calculations"][0]["metric"] = {}
+        packet["internal_frame_scores"][0]["id"] = []
+        packet["market_implied_bridge"]["bridge_lines"][0]["type"] = {}
+
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        json.dumps(evidence, allow_nan=False)
+        self._assert_public_refs_resolve(evidence)
+        self.assertIn("Valuation research card", card)
+
+        non_json = self._build()
+        non_json["deterministic_calculations"][0]["input_refs"] = {"fact:revenue"}
+        with self.assertRaises(ValueError):
+            build_valuation_artifact_evidence(non_json)
+        with self.assertRaises(ValueError):
+            render_valuation_card(non_json)
+
+    def test_latest_loader_returns_none_for_malformed_nested_json_categories(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=output_dir,
+                command="valuation US.ACME", provider_snapshot=self._snapshot(),
+                now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+            )
+            malformed = json.loads(json.dumps(packet))
+            malformed["facts"][0]["metric"] = []
+            malformed["stock"]["scoring_signals"]["core_business"] = [{"cyclical": True}]
+            malformed["source_coverage"]["source_registry"][0]["family"] = []
+            malformed["source_coverage"]["source_attempts"] = [{"family": {}, "status": []}]
+            latest = output_dir / "valuation" / "ACME_US_valuation_latest.json"
+            latest.write_text(json.dumps(malformed), encoding="utf-8")
+
+            self.assertIsNone(load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir))
+
+    def test_extreme_ratios_and_percent_displays_fail_closed(self) -> None:
+        cases = {
+            "multiple_overflow": [
+                {"metric": "market_cap", "value": 1e308, "source_type": "market_snapshot", "currency": "USD"},
+                {"metric": "revenue", "value": 1e-308, "source_type": "sec_companyfacts", "currency": "USD"},
+            ],
+            "percent_display_overflow": [
+                {"metric": "gross_profit", "value": 1e308, "source_type": "sec_companyfacts", "currency": "USD"},
+                {"metric": "revenue", "value": 10.0, "source_type": "sec_companyfacts", "currency": "USD"},
+            ],
+        }
+        for label, facts in cases.items():
+            snapshot = {"facts": facts, "target_resolution": {"normalized_target": "US.ACME"}}
+            with self.subTest(label=label):
+                packet = self._build(snapshot=snapshot)
+                evidence = build_valuation_artifact_evidence(packet)
+                card = render_valuation_card(packet)
+                calculation_metrics = {item["metric"] for item in packet["deterministic_calculations"]}
+                bridge_types = {item["type"] for item in packet["market_implied_bridge"]["bridge_lines"]}
+
+                if label == "multiple_overflow":
+                    self.assertNotIn("ps", calculation_metrics)
+                    self.assertNotIn("sales_anchor", bridge_types)
+                else:
+                    self.assertNotIn("gross_margin", calculation_metrics)
+                self._assert_finite_json_tree(packet)
+                self._assert_finite_json_tree(evidence)
+                self._assert_finite_json_tree(card)
+                json.dumps(packet, allow_nan=False)
+                json.dumps(evidence, allow_nan=False)
+
+    def test_recognized_provider_and_mapping_provenance_survives_canonically(self) -> None:
+        provider_categories = {
+            "SEC": "sec",
+            "OfficialResearchProvider": "official_research",
+            "HKEX": "hkex",
+            "DART": "dart",
+            "FSS": "fss",
+            "company_ir": "company_ir",
+            "yahoo_chart": "yahoo",
+            "shared_market": "shared_market",
+            "vendor_financial": "vendor",
+            "manual": "manual",
+            "provider": "generic_provider",
+        }
+        snapshot = self._snapshot()
+        snapshot["facts"][0]["provider"] = "OfficialResearchProvider"
+        snapshot["sources"] = [
+            {"source_type": "vendor_financial", "provider": raw}
+            for raw in provider_categories
+        ]
+        snapshot["target_resolution"]["mapping_source"] = "provider"
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+        revenue = next(item for item in packet["facts"] if item["metric"] == "revenue")
+        public_revenue = next(item for item in evidence["facts"] if item["metric"] == "revenue")
+        registry_categories = {
+            item["provider_category"]
+            for item in packet["source_coverage"]["source_registry"]
+            if "provider_category" in item
+        }
+
+        self.assertEqual(revenue["provider_category"], "official_research")
+        self.assertEqual(public_revenue["provider_category"], "official_research")
+        self.assertEqual(registry_categories, set(provider_categories.values()))
+        self.assertEqual(packet["target_resolution"]["mapping_category"], "generic_provider")
+        self.assertEqual(evidence["target"]["mapping_category"], "generic_provider")
+        for source in packet["source_coverage"]["source_registry"]:
+            self.assertRegex(source["id"], r"^source:[0-9a-f]{16}$")
+
+    def test_hostile_provider_and_mapping_provenance_is_omitted(self) -> None:
+        snapshot = self._snapshot()
+        for fact in snapshot["facts"]:
+            fact["provider"] = "reports.json"
+        snapshot["sources"] = [{"source_type": "sec_companyfacts", "provider": "PRIVATE-KEY"}]
+        snapshot["target_resolution"]["mapping_source"] = "api_key"
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+        serialized = json.dumps({"packet": packet, "evidence": evidence})
+
+        self.assertNotIn("provider_category", serialized)
+        self.assertNotIn("mapping_category", serialized)
+        for hostile in ("reports.json", "PRIVATE-KEY", "api_key"):
+            self.assertNotIn(hostile, serialized)
+
+    def test_comparable_support_requires_positive_market_value_and_denominator(self) -> None:
+        cases = {
+            "zero_market_cap": (("market_cap", 0.0), ("revenue", 100.0)),
+            "negative_market_cap": (("market_cap", -100.0), ("revenue", 100.0)),
+            "zero_revenue": (("market_cap", 100.0), ("revenue", 0.0)),
+            "negative_earnings": (("market_cap", 100.0), ("net_income", -10.0)),
+            "negative_ebitda": (("market_cap", 100.0), ("ebitda", -10.0)),
+        }
+        for label, facts in cases.items():
+            snapshot = {
+                "facts": [
+                    {"metric": metric, "value": value, "source_type": "market_snapshot" if metric == "market_cap" else "sec_companyfacts", "currency": "USD"}
+                    for metric, value in facts
+                ],
+                "target_resolution": {"normalized_target": "US.ACME"},
+                "market_snapshot_status": "present",
+            }
+            with self.subTest(label=label):
+                packet = self._build(context={"stock": {"symbol": "ACME", "market": "US"}}, snapshot=snapshot)
+                score = next(item for item in packet["internal_frame_scores"] if item["id"] == "comparable_multiples")
+                fit = next(item for item in packet["market_implied_bridge"]["frame_fit_ranking"] if item["id"] == "comparable_multiples")
+                self.assertEqual(score["score"], 0.2)
+                self.assertEqual(fit["fit_to_current_market_value"], "insufficient_data")
+                self.assertEqual(fit["confidence"], "low")
+
+    def test_stale_market_status_caps_comparable_fit_and_confidence(self) -> None:
+        snapshot = {
+            "facts": [
+                {"metric": "market_cap", "value": 100.0, "source_type": "market_snapshot", "currency": "USD"},
+                {"metric": "revenue", "value": 50.0, "source_type": "sec_companyfacts", "currency": "USD"},
+            ],
+            "target_resolution": {"normalized_target": "US.ACME"},
+            "market_snapshot_status": "stale",
+        }
+
+        packet = self._build(context={"stock": {"symbol": "ACME", "market": "US"}}, snapshot=snapshot)
+        score = next(item for item in packet["internal_frame_scores"] if item["id"] == "comparable_multiples")
+        fit = next(item for item in packet["market_implied_bridge"]["frame_fit_ranking"] if item["id"] == "comparable_multiples")
+
+        self.assertEqual(score["score"], 0.65)
+        self.assertEqual(fit["fit_to_current_market_value"], "partial_fit")
+        self.assertEqual(fit["confidence"], "low")
+
+    def test_profile_presence_is_distinct_from_canonical_scoring_signal(self) -> None:
+        detailed = self._context()
+        detailed["stock"]["name"] = "Acme Precision Systems"
+        detailed["stock"]["core_business"] = "Precision industrial systems for specialist customers."
+        detailed["stock"]["stock_character"] = "Mature operator with extensive disclosures."
+        packet = self._build(context=detailed)
+
+        self.assertTrue(packet["stock"]["profile_present"])
+        self.assertNotIn("scoring_signals", packet["stock"])
+        self.assertIn("no_canonical_scoring_signal", packet["degraded_state"]["reason_codes"])
+        self.assertNotIn("missing_stock_profile", packet["degraded_state"]["reason_codes"])
+        public = build_valuation_artifact_evidence(packet)
+        self.assertTrue(public["stock"]["profile_present"])
+        self.assertIn(
+            "no canonical valuation scoring signal was derived from the stock profile",
+            public["degraded_state"]["reasons"],
+        )
+
+        empty = self._build(context={"stock": {"symbol": "ACME", "market": "US"}})
+        self.assertIn("missing_stock_profile", empty["degraded_state"]["reason_codes"])
 
 
 if __name__ == "__main__":
