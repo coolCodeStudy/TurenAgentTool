@@ -1026,7 +1026,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       return tableRegion(positive ? "高光明细" : "拖累明细", `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
         ${{items.map((item) => {{
           const amount = item.amount ?? item.pl_val_delta;
-          return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money ${{moneyClass(amount)}}">${{formatMoney(amount, item.currency)}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
+          return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money financial-number ${{moneyClass(amount)}}">${{formatMoney(amount, item.currency)}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`);
     }}
@@ -1055,7 +1055,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         ${{items.map((item) => {{
           const move = item.largest_daily_move || {{}};
           const moveText = move.date ? `${{move.date}} ${{formatPercent(move.change_pct)}}` : "待补";
-          return `<tr><td>${{escapeHtml(item.name)}}</td><td>${{escapeHtml(item.market)}}</td><td class="money ${{moneyClass(item.weekly_change_pct)}}">${{formatPercent(item.weekly_change_pct)}}</td><td>${{escapeHtml(moveText)}}</td><td>${{escapeHtml(item.environment_label || "待观察")}}</td><td>${{escapeHtml(item.portfolio_relevance || "待观察")}}</td></tr>`;
+          return `<tr><td>${{escapeHtml(item.name)}}</td><td>${{escapeHtml(item.market)}}</td><td class="money financial-number ${{moneyClass(item.weekly_change_pct)}}">${{formatPercent(item.weekly_change_pct)}}</td><td>${{escapeHtml(moveText)}}</td><td>${{escapeHtml(item.environment_label || "待观察")}}</td><td>${{escapeHtml(item.portfolio_relevance || "待观察")}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`);
     }}
@@ -1083,7 +1083,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         return;
       }}
       slot("holdings").innerHTML = tableRegion("当前持仓", `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
-        ${{rows.map((row) => `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money">${{formatMoney(row.market_val, row.currency)}}</td><td class="money ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`).join("")}}
+        ${{rows.map((row) => `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money financial-number">${{formatMoney(row.market_val, row.currency)}}</td><td class="money financial-number ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`).join("")}}
       </tbody></table>`);
     }}
 
@@ -1794,7 +1794,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
           const previousVolume = relativePct(row.volume, row.baseline?.previous);
           const avg5Volume = relativePct(row.volume, row.baseline?.avg_5);
           const avg20Volume = relativePct(row.volume, row.baseline?.avg_20);
-          return `<tr><td>${{escapeHtml(row.name)}}</td><td>${{escapeHtml(row.code)}}</td><td class="money">${{fmt(row.close)}}</td><td class="money ${{numClass(row.change_pct)}}">${{pct(row.change_pct)}}</td><td class="money ${{numClass(previousVolume)}}">${{pct(previousVolume)}}</td><td class="money ${{numClass(avg5Volume)}}">${{pct(avg5Volume)}}</td><td class="money ${{numClass(avg20Volume)}}">${{pct(avg20Volume)}}</td></tr>`;
+          return `<tr><td>${{escapeHtml(row.name)}}</td><td>${{escapeHtml(row.code)}}</td><td class="money financial-number">${{fmt(row.close)}}</td><td class="money financial-number ${{numClass(row.change_pct)}}">${{pct(row.change_pct)}}</td><td class="money financial-number ${{numClass(previousVolume)}}">${{pct(previousVolume)}}</td><td class="money financial-number ${{numClass(avg5Volume)}}">${{pct(avg5Volume)}}</td><td class="money financial-number ${{numClass(avg20Volume)}}">${{pct(avg20Volume)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`);
     }}
@@ -1806,7 +1806,7 @@ def _render_daily_market_brief_html_with_inline_script() -> str:
           const numericValue = row.flow_value ?? row.value ?? row.change_pct;
           const valueText = flow ? fmt(numericValue) : pct(row.change_pct);
           const noteText = row.turnover !== undefined ? formatMarketAmount(row.turnover, state.context?.market?.code || state.market) : (row.message || row.metric || "-");
-          return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money">${{escapeHtml(noteText)}}</td></tr>`;
+          return `<tr><td>${{escapeHtml(row.name || row.segment || row.provider || "-")}}</td><td>${{escapeHtml(row.code || row.provider || "-")}}</td><td class="money financial-number ${{numClass(numericValue)}}">${{escapeHtml(valueText)}}</td><td class="money financial-number">${{escapeHtml(noteText)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`);
     }}

@@ -16,6 +16,22 @@ from investment_knowledge_mcp.web_experience import (
 )
 
 
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(color: str) -> float:
+        channels = tuple(int(color[index : index + 2], 16) / 255 for index in (1, 3, 5))
+        linear = tuple(
+            channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        )
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    foreground_luminance, background_luminance = sorted(
+        (luminance(foreground), luminance(background)),
+        reverse=True,
+    )
+    return (foreground_luminance + 0.05) / (background_luminance + 0.05)
+
+
 def _run_access_script(assertions: str) -> None:
     node = shutil.which("node")
     if node is None:
@@ -373,6 +389,12 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
                 self.assertIn(primitive, css)
         self.assertIn("font-variant-numeric: tabular-nums", css)
 
+    def test_active_primary_navigation_uses_verified_aa_contrast_source(self) -> None:
+        css = render_experience_css()
+
+        self.assertIn("color: #ffffff;\n  background: #164a78;", css)
+        self.assertGreaterEqual(_contrast_ratio("#ffffff", "#164a78"), 4.5)
+
     def test_primary_navigation_is_a_single_product_header(self) -> None:
         html = render_primary_navigation("daily_market_brief")
 
@@ -408,7 +430,18 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn('id="weekly-recovery"', html)
         self.assertIn('id="weekly-generate"', html)
         self.assertIn('id="weekly-access-panel"', html)
+        self.assertIn('<div id="weekly-access-panel"', html)
+        self.assertNotIn('<section id="weekly-access-panel"', html)
         self.assertIn("access.authorizationHeaders()", render_weekly_review_script())
+
+    def test_financial_values_apply_tabular_number_primitive(self) -> None:
+        from investment_knowledge_mcp.weekly_review_web import (
+            render_daily_market_brief_script,
+            render_weekly_review_script,
+        )
+
+        self.assertIn('class="money financial-number', render_weekly_review_script())
+        self.assertIn('class="money financial-number', render_daily_market_brief_script())
 
     def test_command_installs_handlers_when_browser_storage_is_denied(self) -> None:
         _run_command_script(

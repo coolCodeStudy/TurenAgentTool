@@ -142,7 +142,7 @@ def render_experience_css() -> str:
 
 .experience-nav a[aria-current="page"] {
   color: #ffffff;
-  background: color-mix(in srgb, var(--experience-accent) 72%, #ffffff);
+  background: #164a78;
   font-weight: 700;
 }
 
@@ -350,7 +350,7 @@ def render_access_session_script() -> str:
 def render_access_recovery_panel(*, prefix: str) -> str:
     """Render an initially hidden, credential-only recovery panel for protected actions."""
     safe_prefix = escape(prefix)
-    return f"""<section id="{safe_prefix}-access-panel" aria-labelledby="{safe_prefix}-access-title" hidden>
+    return f"""<div id="{safe_prefix}-access-panel" role="group" aria-labelledby="{safe_prefix}-access-title" hidden>
   <h2 id="{safe_prefix}-access-title">Private access</h2>
   <p id="{safe_prefix}-access-message" role="alert">Private access is required for generation.</p>
   <label for="{safe_prefix}-access-token">Access credential
@@ -360,7 +360,7 @@ def render_access_recovery_panel(*, prefix: str) -> str:
     <button id="{safe_prefix}-access-continue" class="primary" type="button">Continue</button>
     <button id="{safe_prefix}-access-forget" type="button">Forget access</button>
   </div>
-</section>"""
+</div>"""
 
 
 def access_error_payload(code: str) -> dict[str, object]:
