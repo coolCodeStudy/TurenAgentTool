@@ -17,23 +17,23 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: `AT-2026-07-19-001` is the single active current-main release-candidate item. Historical rows on stale refs are context only and are not parallel gates.
 - Delivery Queue rows: Product recovery `DQ-2026-07-19-002` and technical planning `DQ-2026-07-19-003` are closed; current implementation/release-candidate ownership is compacted into `DQ-2026-07-19-004`.
-- Current authoritative branch/ref: `origin/main@af4fdd15d03af9789bbf7c33aac82f850b36df45`
+- Current authoritative branch/ref: `origin/main@ba49ccf`; the active Task 1 review range remains based on merged `main@1feb45e` and will reconcile the newer release-lineage, active-SHA, and browser JavaScript/response-framing commits before Task 2 starts.
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
 - Quality route: `L3`
 - Route rationale: The feature changes an authenticated cloud Command Workbench, external data-source behavior, saved evidence, and the deployed release boundary.
 - Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Release ref pending Development; route `L3`; surface `http://47.84.190.191:8010/command`; current developer baseline is 75 focused current-main tests passing and plan traceability covers all 17 PRD criteria; deploy event and independent result are pending; no protected credential value may enter evidence.
-- Current state: Product-ready PRD commit `91b741b` and ready current-main technical plan commit `fc07ebc` are accepted. Development implementation is the active gate.
+- Current state: Product-ready PRD commit `91b741b`, ready current-main technical plan commit `fc07ebc`, and Task 1 domain/artifact range `fc9ab36..dd88c2e` are accepted. The canonical engine passed 40 focused valuation tests, the broader repository suite passed 759 with one skip, and final independent Task 1 review returned compliant/approved with no findings. Authoritative-main reconciliation is the active gate before Task 2 provider/source integration.
 - Known blockers: No product blocker. Historical implementation must be reconciled onto current `main` without reverting frontend, Kline, access, scheduler, deployment-control-plane, or shared-data-source changes.
-- Active child threads or role sessions: Development Agent owns `DQ-2026-07-19-004`; this Feature Coordinator remains the active watcher.
+- Active child threads or role sessions: None during authoritative-main reconciliation. This Feature Coordinator remains the active watcher and will dispatch a fresh Task 2 Development Agent after the merge.
 - Watch contract:
   - Watched item: Development implementation/review return, serialized deploy, and one Quality & Acceptance return for release candidate `AT-2026-07-19-001`.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: Development Agent for plan execution with TDD and task-scoped review.
-- Next handoff: Implement `docs/techplans/stock-valuation-research.md` in one pass, return exact commits/tests/classifier result, and preserve all current-main access/provider/frontend/deploy contracts.
+- Next owner: This Feature Coordinator for authoritative-main reconciliation, then a Task 2 Development Agent for current shared provider and official-source attempts.
+- Next handoff: Merge `origin/main@ba49ccf` without reverting browser/release contracts, generate the Task 2 brief from the accepted plan, and return injected-fixture/no-network provider tests plus a clean implementation commit for independent review.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
 - Deploy decision: `blocked` until a current-main-compatible implementation ref passes Development and review gates; then `self_deploy` through the shared workflow if no serialized deploy conflict exists.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
