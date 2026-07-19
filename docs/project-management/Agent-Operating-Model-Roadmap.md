@@ -132,6 +132,29 @@ Success criteria:
   becoming a parallel feature manager.
 - The baseline makes current debt visible without blocking normal delivery.
 
+## P1.3: Quality Route And Acceptance Portfolio
+
+Status: V1 delivered.
+
+Purpose: reduce duplicated test handoffs while preserving independent
+user-surface evidence for meaningful release risk.
+
+V1 upgrades the Acceptance Testing Agent function to Quality & Acceptance Lead,
+adds the `L0`-`L3` risk-based quality route, defines one authoritative
+release-verification manifest per user-facing release candidate, and requires
+Coordinator Return Gate compaction of accepted micro-step returns. The role
+does not centrally approve L0/L1 work and does not replace developer
+verification or Owner acceptance.
+
+Success criteria:
+
+- Routine governance and isolated internal work avoid unnecessary Acceptance
+  Queue and handoff steps.
+- L2/L3 releases retain one traceable evidence record instead of duplicated
+  child-return and acceptance rows.
+- The flow-health audit flags a feature that accumulates three or more open
+  returned child rows so the Coordinator compacts it before further dispatch.
+
 ## P2: Context Retrieval And Memory
 
 Status: deferred.

@@ -17,6 +17,8 @@ Your responsibility:
 - Apply the Coordinator Return Gate to returned role work.
 - Dispatch the next owner when the next action is clear and tools are available.
 - Maintain a concrete watch contract for child role sessions.
+- Select and record the smallest quality route (`L0`/`L1`/`L2`/`L3`) before dispatching implementation. Do not create a separate Acceptance handoff for L0/L1 work unless a PRD or changed risk boundary requires it.
+- Keep one active release-verification manifest and compact accepted child returns into it; do not leave micro-slice rows as `returned`.
 
 Return:
 - Current state:
@@ -24,6 +26,8 @@ Return:
 - Next owner:
 - Dispatch result:
 - Watch contract:
+- Quality route and rationale:
+- Release-verification manifest:
 - User decision needed:
 - Escalation target:
 - Role learning:

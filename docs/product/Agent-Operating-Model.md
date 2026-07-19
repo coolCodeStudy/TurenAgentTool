@@ -15,7 +15,7 @@ This model is the top-level operating contract for multi-role work. Role-specifi
 - Feature Coordinator: owns one feature flow from request to done. This is the steady-state owner for feature routing, child-role returns, queue updates, deploy decisions, acceptance routing, and user-acceptance readiness.
 - Product Agent: owns product judgment, PRDs, scope, non-goals, user flows, product decisions, and acceptance criteria.
 - Development Agent: owns technical planning, implementation, developer verification, deployment work, technical evidence, and code-level handoff.
-- Acceptance Testing Agent: owns independent user-facing testing from the real user surface and returns results to the Feature Coordinator.
+- Quality & Acceptance Lead: owns the risk-based quality route, independent user-facing acceptance from the real user surface, and recurring test-quality improvement. It returns results to the Feature Coordinator; it does not become an approval bottleneck for routine low-risk work.
 - Project Management Agent: owns audits, status integrity, stale-document detection, registry consistency, and missing-evidence discovery. It is not the default feature-flow owner.
 - Architecture & Code Health Agent: owns read-only cross-feature architecture review. It runs the repository harness, identifies structural risks with evidence, and proposes bounded implementation slices; it does not replace Feature Coordinators, directly start broad refactors, or decide product access policy.
 
@@ -35,7 +35,7 @@ Owner intent
   -> Product/Technical planning when needed
   -> Development implementation and verification
   -> Deploy decision and shared deploy path when needed
-  -> Acceptance Testing from the real surface
+  -> Quality route and, when required, acceptance from the real surface
   -> Coordinator Return Gate
   -> User acceptance request only when allowed
   -> Role learning check
@@ -57,7 +57,7 @@ The Feature Coordinator is the directly responsible owner for one feature until 
 - `waiting_for_user_acceptance`: independent acceptance has passed or known gaps are explicitly disclosed, and no internal role work remains before asking the Owner.
 - `explicitly_cancelled`: the Owner or Product decision cancels or parks the feature.
 
-The coordinator does not lose ownership when a Product, Development, Release Reviewer, Deploy Owner, or Acceptance Testing Agent returns. A returned branch or final message is input to the Coordinator Return Gate, not closure.
+The coordinator does not lose ownership when a Product, Development, Release Reviewer, Deploy Owner, or Quality & Acceptance Lead returns. A returned branch or final message is input to the Coordinator Return Gate, not closure.
 
 After every child-role return, the coordinator must choose one closure action before stopping:
 
@@ -125,7 +125,7 @@ The Global Project Manager should not report a feature as not started or unfinis
 
 - Code-done: code or docs are committed, pushed when expected, locally verified, and returned with evidence.
 - Deploy-done: the intended ref is on the relevant cloud/user surface, deploy health is verified, and the affected URL, service, or command is named.
-- Acceptance-passed: Acceptance Testing passed from the real user surface and updated the Acceptance Queue.
+- Acceptance-passed: the required quality route completed, including independent real-surface acceptance when the route requires it, and the Acceptance Queue is updated when applicable.
 - User-accepted: the Owner explicitly accepted the behavior, document, or delivery outcome.
 - Product-done: PRD, technical plan, implementation, verification, deployment, acceptance testing, user acceptance, delivery state, and learning gates are all satisfied or explicitly marked not required.
 

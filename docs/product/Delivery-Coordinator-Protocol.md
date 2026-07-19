@@ -6,13 +6,13 @@ The Delivery Coordinator is the single front door for product-feature delivery i
 
 This protocol implements `Agent-Operating-Model.md` for feature-level coordination. If this protocol and the Agent Operating Model appear to disagree, follow the Agent Operating Model and update this protocol.
 
-The user should be able to ask about a product feature once, and the coordinator should route the work across Product, Engineering, Acceptance Testing, and Project Management without making the user repeat context in several sessions.
+The user should be able to ask about a product feature once, and the coordinator should route the work across Product, Engineering, Quality & Acceptance, and Project Management without making the user repeat context in several sessions.
 
 The coordinator is an orchestration role. It does not replace the specialized roles:
 
 - Product Agent owns product judgment, PRDs, scope, non-goals, and acceptance criteria.
 - Development Agent owns implementation, technical verification, deployment, and code-level handoff.
-- Acceptance Testing Agent owns independent user-facing acceptance testing.
+- Quality & Acceptance Lead owns quality-route selection, independent user-facing acceptance when required, and recurring test-system improvement.
 - Project Management Agent owns delivery integrity, registry state, queue state, and documentation consistency.
 
 ### Feature Coordinator And Global Project Manager
@@ -28,7 +28,7 @@ Escalate from a Feature Coordinator to the Global Project Manager only when:
 - the coordinator is blocked or stale and needs recovery;
 - a delivery-system rule or process defect needs to be changed.
 
-Do not report every routine role transition upward. A healthy Feature Coordinator should continue through Product, Development, deploy, Acceptance Testing, and Return Gates autonomously. Report to the Global Project Manager or Owner only for milestone summaries, true blockers, user/global decisions, cross-feature conflicts, credentials/permissions, operating-model defects, or readiness for user acceptance.
+Do not report every routine role transition upward. A healthy Feature Coordinator should continue through Product, Development, deploy, the selected quality route, and Return Gates autonomously. Report to the Global Project Manager or Owner only for milestone summaries, true blockers, user/global decisions, cross-feature conflicts, credentials/permissions, operating-model defects, or readiness for user acceptance.
 
 ### Feature Ownership Closure Contract
 
@@ -61,6 +61,8 @@ The Delivery Coordinator must:
 - Dispatch work to the next role when dispatch tools are available and the user asked the coordinator to follow through.
 - Review returned role/session output, integrate or reject returned branches, and continue to the next owner when the next action is known.
 - Keep the user-facing answer focused on feature status, next owner, blockers, and decisions needed from the user.
+- Select the smallest applicable quality route (`L0`/`L1`/`L2`/`L3`) before implementation dispatch, and record it in the Coordinator Context Packet.
+- Keep one active release-verification manifest and one active Acceptance Queue item per user-facing release candidate; compact accepted child returns instead of preserving a chain of open micro-step rows.
 - Run or request delivery audits when status is unclear.
 - Fill or refresh `docs/project-management/Coordinator-Context-Packet.md` when taking over a feature, recovering a stale flow, or coordinating a feature with existing delivery history.
 - Prevent work from being called done when required registry, acceptance, verification, or lesson-capture gates are missing.
@@ -70,6 +72,7 @@ The Delivery Coordinator must not:
 - Mark user acceptance as `accepted`.
 - Invent product decisions or silently change PRD scope.
 - Treat developer verification as independent acceptance testing.
+- Create an independent acceptance handoff for L0/L1 work unless a PRD or changed risk boundary explicitly requires it.
 - Ask the user to accept a cloud-served or user-facing feature while its acceptance test is `failed`, `blocked`, or `needs_retest`.
 - Create routine daily logs.
 - Stop at "next owner is X" when the user asked the coordinator to follow through and dispatch tools are available.
@@ -260,7 +263,7 @@ For cloud-served or browser-tested features, a Development Agent return that say
 
 - `Development Agent` when the returned branch still needs merge conflict resolution, release prep, or deployment implementation work.
 - `Release/Deploy owner` when the branch is ready but the cloud service has not been updated.
-- `Acceptance Testing Agent` only after the relevant cloud service has been deployed or the coordinator has recorded why cloud deployment is not required.
+- `Quality & Acceptance Lead` only when the selected L2/L3 route requires independent acceptance and the relevant cloud service has been deployed or the coordinator has recorded why cloud deployment is not required.
 
 The coordinator's next action must name the exact branch or commit to deploy, the intended deploy path, the affected service or URL, and the retest owner. It must not stop at "after deploy, retest" without either executing the dispatch or recording `Dispatch not executed` with the smallest required user/project-manager action.
 
@@ -296,9 +299,10 @@ Route to Development Agent when:
 - A failed acceptance test requires a code, data, service, or deployment fix.
 - A technical plan needs implementation traceability or verification evidence.
 
-Route to Acceptance Testing Agent when:
+Route to Quality & Acceptance Lead when:
 
-- A user-facing or cloud-served feature is deployed or ready for review.
+- The selected L2/L3 route requires an independent real-surface result.
+- A repeated defect, flaky test, or duplicate-suite concern needs test-system stewardship.
 - A failed or blocked acceptance queue item has been fixed and needs retest.
 - The user asks whether a feature is ready for acceptance.
 
@@ -358,13 +362,13 @@ Routine progress notes belong nowhere by default. Durable state goes to `docs/å½
 
 ## Role Learning Loop
 
-For every substantial delivery flow that routes work across Product, Development, Acceptance Testing, or Project Management, the coordinator must close the loop on role learning before declaring the flow done.
+For every substantial delivery flow that routes work across Product, Development, Quality & Acceptance, or Project Management, the coordinator must close the loop on role learning before declaring the flow done.
 
 The coordinator must check and report:
 
 - Product learning: whether a product scope decision, acceptance standard, user preference, or rejected direction should update the PRD or product protocol.
 - Engineering learning: whether an implementation assumption, source constraint, verification limit, deployment lesson, or technical follow-up should update the technical plan or engineering handoff.
-- Testing learning: whether a new acceptance dimension, blind spot, failure mode, browser/tooling limit, or evidence standard should update the Acceptance Testing protocol or queue.
+- Testing learning: whether a new acceptance dimension, blind spot, failure mode, browser/tooling limit, or evidence standard should update the Quality & Acceptance protocol or queue.
 - Coordinator learning: whether routing, dispatch, state tracking, or handoff behavior should update this protocol, `AGENTS.md`, `docs/agent-lessons.md`, or project-management state.
 
 The coordinator must apply the quality bar and anti-overlearning guardrail from `../lesson-capture-protocol.md`.

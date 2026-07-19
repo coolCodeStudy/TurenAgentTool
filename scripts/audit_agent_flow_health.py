@@ -199,6 +199,7 @@ def audit_flow_health(
 ) -> list[FlowFinding]:
     findings: list[FlowFinding] = []
     findings.extend(audit_active_dispatches(delivery_rows, stale_days=stale_days, today=today))
+    findings.extend(audit_return_fanout(delivery_rows))
     findings.extend(audit_owner_routing(delivery_rows))
     findings.extend(audit_context_required(delivery_rows, acceptance_rows, registry_rows))
     findings.extend(audit_repeated_blockers(delivery_rows, acceptance_rows, include_history=include_history))
@@ -318,6 +319,31 @@ def audit_active_dispatches(
                         "active queue row appears stale from ID date",
                     )
                 )
+    return findings
+
+
+def audit_return_fanout(rows: Iterable[DeliveryRow]) -> list[FlowFinding]:
+    returned_by_feature: dict[str, list[DeliveryRow]] = defaultdict(list)
+    for row in rows:
+        if row.status == "returned":
+            returned_by_feature[normalize(row.feature)].append(row)
+
+    findings: list[FlowFinding] = []
+    for feature_rows in returned_by_feature.values():
+        if len(feature_rows) < 3:
+            continue
+        item_ids = ", ".join(row.item_id for row in feature_rows[:6])
+        findings.append(
+            FlowFinding(
+                "return_fanout",
+                "major",
+                feature_rows[0].feature,
+                f"{len(feature_rows)} open returned child rows are accumulating for one feature: {item_ids}.",
+                "Feature Coordinator must apply the Return Gate and compact accepted evidence into one active release-verification manifest before another child dispatch.",
+                "yes",
+                "open micro-step returns are hiding the current release state",
+            )
+        )
     return findings
 
 

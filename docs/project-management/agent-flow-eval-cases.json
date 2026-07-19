@@ -23,6 +23,46 @@
       "expected_categories": ["returned_not_integrated"]
     },
     {
+      "id": "returned-child-fanout-needs-compaction",
+      "description": "Three returned micro-slices for one feature must be compacted into one active release-verification manifest.",
+      "today": "2026-07-19",
+      "delivery_rows": [
+        {
+          "item_id": "DQ-2026-07-19-010",
+          "feature": "Example Feature",
+          "target_role": "Development Agent",
+          "status": "returned",
+          "thread_or_branch": "origin/codex/example-one",
+          "source": "Feature Coordinator dispatch",
+          "expected_result": "Return focused implementation evidence.",
+          "next_action": "Returned commit one."
+        },
+        {
+          "item_id": "DQ-2026-07-19-011",
+          "feature": "Example Feature",
+          "target_role": "Development Agent",
+          "status": "returned",
+          "thread_or_branch": "origin/codex/example-two",
+          "source": "Feature Coordinator dispatch",
+          "expected_result": "Return focused implementation evidence.",
+          "next_action": "Returned commit two."
+        },
+        {
+          "item_id": "DQ-2026-07-19-012",
+          "feature": "Example Feature",
+          "target_role": "Acceptance Testing Agent",
+          "status": "returned",
+          "thread_or_branch": "thread example-three",
+          "source": "Feature Coordinator dispatch",
+          "expected_result": "Return one release acceptance result.",
+          "next_action": "Returned acceptance evidence."
+        }
+      ],
+      "acceptance_rows": [],
+      "registry_rows": [],
+      "expected_categories": ["return_fanout", "returned_not_integrated"]
+    },
+    {
       "id": "missing-feature-watch-path",
       "description": "A dispatched child role has no feature-owned watch contract.",
       "today": "2026-07-07",
