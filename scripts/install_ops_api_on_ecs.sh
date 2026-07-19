@@ -13,13 +13,16 @@ OPS_DEPLOY_LOCK_PATH=${OPS_DEPLOY_LOCK_PATH:-/opt/investment-knowledge/shared/de
 OPS_DEPLOY_RELEASE_ROOT=${OPS_DEPLOY_RELEASE_ROOT:-/opt/investment-knowledge/releases}
 OPS_API_DEPLOY_TIMEOUT_SECONDS=${OPS_API_DEPLOY_TIMEOUT_SECONDS:-1800}
 OPS_DEPLOY_ALLOWED_REFS=${OPS_DEPLOY_ALLOWED_REFS:-main}
+OPS_CONTROL_PLANE_REF=${OPS_CONTROL_PLANE_REF:-}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-turenagenttool_prod}
 COMPOSE_ENV_FILE=${COMPOSE_ENV_FILE:-$APP_ROOT/.env}
 START_OPS=false
-# The bootstrap workflow supplies this credential explicitly.  Preserve it
-# before loading the business environment so a historical application value
-# cannot silently rebind the independent control plane.
+# The bootstrap workflow supplies this credential and identity explicitly.
+# Preserve both before loading the business environment so historical
+# application values cannot silently rebind the independent control plane.
 EXPLICIT_OPS_API_TOKEN=${OPS_API_TOKEN:-}
+EXPLICIT_OPS_CONTROL_PLANE_REF=${OPS_CONTROL_PLANE_REF:-}
+readonly EXPLICIT_OPS_API_TOKEN EXPLICIT_OPS_CONTROL_PLANE_REF
 
 usage() {
   cat <<'EOF'
@@ -43,6 +46,7 @@ Environment:
   OPS_DEPLOY_RELEASE_ROOT=/opt/investment-knowledge/releases
   OPS_API_DEPLOY_TIMEOUT_SECONDS=1800
   OPS_DEPLOY_ALLOWED_REFS=main
+  OPS_CONTROL_PLANE_REF=<40-character bootstrap commit SHA>
 EOF
 }
 
@@ -106,6 +110,7 @@ fi
 if [ -n "$EXPLICIT_OPS_API_TOKEN" ]; then
   OPS_API_TOKEN=$EXPLICIT_OPS_API_TOKEN
 fi
+OPS_CONTROL_PLANE_REF=$EXPLICIT_OPS_CONTROL_PLANE_REF
 
 if [ -z "${OPS_API_HOST:-}" ]; then
   OPS_API_HOST=$(
@@ -116,6 +121,11 @@ if [ -z "${OPS_API_HOST:-}" ]; then
   )
 fi
 OPS_API_HOST=${OPS_API_HOST:-127.0.0.1}
+
+if [[ ! "$OPS_CONTROL_PLANE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "OPS_CONTROL_PLANE_REF must be a lowercase 40-character SHA." >&2
+  exit 1
+fi
 
 OPS_API_TOKEN=${OPS_API_TOKEN:-}
 if [ -z "$OPS_API_TOKEN" ]; then
@@ -174,6 +184,7 @@ OPS_DEPLOY_LOCK_PATH=$OPS_DEPLOY_LOCK_PATH
 OPS_DEPLOY_RELEASE_ROOT=$OPS_DEPLOY_RELEASE_ROOT
 OPS_API_DEPLOY_TIMEOUT_SECONDS=$OPS_API_DEPLOY_TIMEOUT_SECONDS
 OPS_DEPLOY_ALLOWED_REFS=$OPS_DEPLOY_ALLOWED_REFS
+OPS_CONTROL_PLANE_REF=$OPS_CONTROL_PLANE_REF
 EOF
 chmod 600 /etc/investment-knowledge/ops-api.env
 

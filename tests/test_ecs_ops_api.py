@@ -52,6 +52,40 @@ def _managed_archive(sha: str = TARGET_SHA):
 
 
 class OpsApiInstallLayoutTests(unittest.TestCase):
+    def test_deploy_status_reports_control_plane_ref(self) -> None:
+        state = DeploymentState(
+            schema_version=1,
+            current_sha=TARGET_SHA,
+            previous_sha=PREVIOUS_SHA,
+            current_image=f"investment-knowledge-app:{TARGET_SHA}",
+            previous_image=f"investment-knowledge-app:{PREVIOUS_SHA}",
+            active_release=f"/releases/{TARGET_SHA}",
+            previous_release=f"/releases/{PREVIOUS_SHA}",
+            last_mode="targeted_quick",
+            requested_ref="main",
+            resolved_ref=TARGET_SHA,
+            targets=("weekly-review-web",),
+            last_event_id=None,
+            started_at=None,
+            completed_at=None,
+            preflight={},
+            final_health="healthy",
+        )
+        resources = ResourceSnapshot(
+            free_disk_bytes=16 * 1024**3,
+            disk_used_percent=42.0,
+            available_memory_bytes=2 * 1024**3,
+        )
+
+        with (
+            patch.object(ops, "OPS_CONTROL_PLANE_REF", TARGET_SHA, create=True),
+            patch.object(ops, "load_state", return_value=state),
+            patch.object(ops, "collect_deploy_resources", return_value=resources),
+        ):
+            status = ops.build_deploy_status()
+
+        self.assertEqual(TARGET_SHA, status["control_plane_ref"])
+
     def test_scheduler_host_health_uses_internal_snapshot_check(self) -> None:
         command = [
             "docker",
@@ -98,6 +132,61 @@ class OpsApiInstallLayoutTests(unittest.TestCase):
         self.assertLess(
             installer.index('. "$INVESTMENT_DIR/.env"'),
             installer.index('OPS_API_TOKEN=$EXPLICIT_OPS_API_TOKEN'),
+        )
+
+    def test_explicit_control_plane_ref_survives_business_environment(self) -> None:
+        installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'EXPLICIT_OPS_CONTROL_PLANE_REF=${OPS_CONTROL_PLANE_REF:-}',
+            installer,
+        )
+        self.assertIn(
+            'OPS_CONTROL_PLANE_REF=$EXPLICIT_OPS_CONTROL_PLANE_REF',
+            installer,
+        )
+        self.assertLess(
+            installer.index('EXPLICIT_OPS_CONTROL_PLANE_REF=${OPS_CONTROL_PLANE_REF:-}'),
+            installer.index('. "$INVESTMENT_DIR/.env"'),
+        )
+        self.assertLess(
+            installer.index('. "$INVESTMENT_DIR/.env"'),
+            installer.index('OPS_CONTROL_PLANE_REF=$EXPLICIT_OPS_CONTROL_PLANE_REF'),
+        )
+
+    def test_business_environment_cannot_rebind_preserved_control_plane_ref(self) -> None:
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            fake_id = directory / "id"
+            fake_id.write_text("#!/usr/bin/env bash\necho 0\n", encoding="utf-8")
+            fake_id.chmod(0o755)
+            business_env = directory / "business.env"
+            business_env.write_text(
+                f"EXPLICIT_OPS_CONTROL_PLANE_REF={PREVIOUS_SHA}\n",
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                ["bash", "scripts/install_ops_api_on_ecs.sh"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "PATH": f"{directory}:{os.environ.get('PATH', '')}",
+                    "COMPOSE_ENV_FILE": str(business_env),
+                    "OPS_API_TOKEN": "test-placeholder",
+                    "OPS_CONTROL_PLANE_REF": TARGET_SHA,
+                },
+            )
+
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("readonly variable", completed.stderr)
+        self.assertNotIn(
+            "OPS_CONTROL_PLANE_REF must be a lowercase 40-character SHA",
+            completed.stderr,
         )
 
     def test_default_artifact_staging_is_under_independent_ops_home(self) -> None:

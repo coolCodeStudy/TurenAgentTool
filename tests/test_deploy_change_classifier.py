@@ -33,7 +33,14 @@ class FakeRunner:
     def run(self, command: tuple[str, ...], timeout: int | None = None) -> CommandResult:
         del timeout
         self.commands.append(command)
-        if command[:5] == ("git", "-C", "/repo", "diff", "--name-only"):
+        if command[:6] == (
+            "git",
+            "-C",
+            "/repo",
+            "diff",
+            "--no-renames",
+            "--name-only",
+        ):
             return ok("\0".join(self.changed_files) + ("\0" if self.changed_files else ""))
         if command[:4] == ("git", "-C", "/repo", "show"):
             return ok("services: {}\n")
@@ -127,6 +134,20 @@ class DeployContractTests(TestCase):
 
         self.assertEqual(("docs/中文部署说明.md", "scripts/generate_prod_env.py"), paths)
         self.assertIn("-z", runner.command)
+
+    def test_diff_disables_rename_collapsing_for_control_plane_paths(self) -> None:
+        class RenameSafeRunner:
+            def run(self, command: tuple[str, ...], timeout: int | None = None) -> CommandResult:
+                del timeout
+                self.command = command
+                return ok("scripts/deploy_contract.py\0archive/deploy_contract.py\0")
+
+        runner = RenameSafeRunner()
+
+        paths = _read_changed_files(Path("/repo"), "a" * 40, "b" * 40, runner)
+
+        self.assertIn("--no-renames", runner.command)
+        self.assertIn("scripts/deploy_contract.py", paths)
 
     def test_legacy_classifier_keeps_dependency_changes_full(self) -> None:
         self.assertEqual("full", classify_changed_files(("requirements.txt",)).deploy_mode)
@@ -298,6 +319,22 @@ class DeployContractTests(TestCase):
         self.assertEqual(DeployMode.NO_DEPLOY, plan.mode)
         self.assertEqual((), plan.targets)
 
+    def test_serialized_plan_marks_control_plane_update_requirement(self) -> None:
+        plan = classify_paths(
+            ("scripts/deploy_contract.py",),
+            compose_image_changed=False,
+        )
+
+        self.assertTrue(serialize_plan(plan)["control_plane_update_required"])
+
+    def test_application_plan_does_not_require_control_plane_update(self) -> None:
+        plan = classify_paths(
+            ("investment_knowledge_mcp/weekly_review_web.py",),
+            compose_image_changed=False,
+        )
+
+        self.assertFalse(serialize_plan(plan)["control_plane_update_required"])
+
     def test_compose_image_inputs_require_a_full_image_deploy(self) -> None:
         plan = classify_paths(("docker-compose.prod.yml",), compose_image_changed=True)
 
@@ -449,6 +486,7 @@ class DeployContractTests(TestCase):
                 ],
                 "image_input_files": ["requirements.txt"],
                 "reasons": list(plan.reasons),
+                "control_plane_update_required": False,
             },
             serialize_plan(plan),
         )
@@ -477,6 +515,7 @@ class DeployContractTests(TestCase):
                 "changed_files": ["investment_knowledge_mcp/command_workbench.py"],
                 "image_input_files": [],
                 "reasons": ["investment_knowledge_mcp/command_workbench.py: command workbench"],
+                "control_plane_update_required": False,
                 "deploy_mode": "quick",
             },
             json.loads(completed.stdout),
