@@ -82,17 +82,25 @@ class StockValuationTests(unittest.TestCase):
         source_ids = {item["id"] for item in registry if isinstance(item, dict)}
         for fact in facts:
             self.assertIn(fact["source_id"], source_ids)
-        for section in ("deterministic_calculations", "internal_frame_scores", "selected_frames"):
-            records = public.get(section)
+        stock = public.get("stock") if isinstance(public.get("stock"), dict) else {}
+        signals = stock.get("scoring_signals") if isinstance(stock.get("scoring_signals"), dict) else {}
+        packet_refs = {f"packet:method_library:{item['id']}" for item in CORE_FRAMES}
+        packet_refs.update(
+            f"packet:stock:scoring_signals:{field}:{frame_id}"
+            for field, frame_ids in signals.items() if isinstance(frame_ids, list)
+            for frame_id in frame_ids
+        )
+        def assert_refs(records: object) -> None:
             self.assertIsInstance(records, list)
             for record in records:
                 for reference in record.get("input_refs", []):
-                    self.assertTrue(reference in fact_ids or reference.startswith("packet:"), reference)
+                    self.assertTrue(reference in fact_ids or reference in packet_refs, reference)
+        for section in ("deterministic_calculations", "internal_frame_scores", "selected_frames"):
+            assert_refs(public.get(section))
         bridge = public.get("market_implied_bridge")
         self.assertIsInstance(bridge, dict)
-        for record in bridge.get("bridge_lines", []):
-            for reference in record.get("input_refs", []):
-                self.assertTrue(reference in fact_ids or reference.startswith("packet:"), reference)
+        assert_refs(bridge.get("bridge_lines"))
+        assert_refs(bridge.get("frame_fit_ranking"))
 
     def test_public_interfaces_and_eight_method_definitions(self) -> None:
         for function in (
@@ -299,9 +307,10 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(revenue["value"], 1000.0)
         self.assertEqual(revenue["display_value"], "$1.0K")
         self.assertEqual(evidence["target"]["currency"], "USD")
-        self.assertEqual(evidence["degraded_state"], {"reasons": ["safe gap"], "data_gaps": ["safe data gap"]})
+        self.assertNotIn("safe gap", json.dumps(evidence["degraded_state"]))
+        self.assertNotIn("safe data gap", json.dumps(evidence["degraded_state"]))
         self.assertEqual(evidence["safety"]["research_aid_only"], True)
-        self.assertNotIn("direct_investment_advice", evidence["safety"])
+        self.assertFalse(evidence["safety"]["direct_investment_advice"])
         for unsafe in ("evil.example", "evidence-secret", "authorization", "bearer", "private/", "relative/path", "traceback", "headers", "config"):
             self.assertNotIn(unsafe, serialized)
 
@@ -334,7 +343,7 @@ class StockValuationTests(unittest.TestCase):
             scores["fcf"]["input_refs"],
             ("packet:method_library:fcf", "fact:operating_cash_flow", "fact:capex"),
         )
-        self.assertIn("packet:stock:core_business", scores["cyclical"]["input_refs"])
+        self.assertIn("packet:stock:scoring_signals:core_business:cyclical", scores["cyclical"]["input_refs"])
         self.assertNotIn("Cyclical semiconductor business", json.dumps(packet["internal_frame_scores"]))
 
     def test_negative_fcf_multiples_are_explicitly_not_meaningful(self) -> None:
@@ -370,7 +379,7 @@ class StockValuationTests(unittest.TestCase):
             )
         self.assertTrue(packet["degraded_state"]["degraded"])
         self.assertEqual(packet["facts"], [])
-        self.assertIn("revenue is missing", packet["degraded_state"]["reasons"])
+        self.assertIn("missing_revenue", packet["degraded_state"]["reason_codes"])
         self.assertFalse(packet["safety"]["writes_formal_user_insight"])
 
     def test_explicit_target_identity_cannot_be_overridden_by_context_or_snapshot(self) -> None:
@@ -413,8 +422,8 @@ class StockValuationTests(unittest.TestCase):
         invalid = self._build(invalid_context, invalid_snapshot)
         self.assertEqual(invalid["facts"], [])
         self.assertNotIn("core_business", invalid["stock"])
-        self.assertIn("context stock identity mismatched the explicit target and was omitted", invalid["degraded_state"]["reasons"])
-        self.assertIn("provider snapshot identity mismatched the explicit target and was omitted", invalid["degraded_state"]["reasons"])
+        self.assertIn("context_identity_mismatch", invalid["degraded_state"]["reason_codes"])
+        self.assertIn("snapshot_identity_mismatch", invalid["degraded_state"]["reason_codes"])
 
     def test_untrusted_ingress_is_normalized_before_packet_persistence(self) -> None:
         context = self._context()
@@ -547,8 +556,8 @@ class StockValuationTests(unittest.TestCase):
         packet = self._build(context=context)
         scores = {item["id"]: item for item in packet["internal_frame_scores"]}
 
-        self.assertIn("packet:stock:core_business", scores["cyclical"]["input_refs"])
-        self.assertNotIn("packet:stock:stock_character", scores["cyclical"]["input_refs"])
+        self.assertIn("packet:stock:scoring_signals:core_business:cyclical", scores["cyclical"]["input_refs"])
+        self.assertNotIn("packet:stock:scoring_signals:stock_character:cyclical", scores["cyclical"]["input_refs"])
         for frame in ("growth_scenario", "sotp_asset_value"):
             self.assertFalse(any(ref.startswith("packet:stock:") for ref in scores[frame]["input_refs"]))
 
@@ -607,6 +616,207 @@ class StockValuationTests(unittest.TestCase):
             unsafe["facts"][0]["provider_explanation"] = "https://evil.example/../raw-diagnostic"
             latest.write_text(json.dumps(unsafe), encoding="utf-8")
             self.assertIsNone(load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir))
+
+    def test_untrusted_source_and_degradation_tokens_are_canonicalized(self) -> None:
+        context = self._context()
+        context["stock"]["name"] = "reports.json"
+        context["stock"]["core_business"] = "Cyclical diagnostic prose status 403"
+        context["sources"] = [{"source_type": "status_403"}]
+        snapshot = self._snapshot()
+        snapshot["sources"] = [{"source_type": "status_403"}]
+        for fact in snapshot["facts"]:
+            fact["source_type"] = "status_403"
+            fact["provider"] = "reports.json"
+        snapshot["target_resolution"]["mapping_source"] = "diagnostic"
+        snapshot["target_resolution"]["company_name"] = "api_key"
+
+        packet = self._build(context, snapshot)
+        persisted = json.dumps(packet)
+        registry = packet["source_coverage"]["source_registry"]
+
+        self.assertTrue(registry)
+        self.assertTrue(all(source["source_type"] == "unknown" for source in registry))
+        self.assertTrue(all("provider" not in source for source in registry))
+        self.assertNotIn("mapping_source", packet["target_resolution"])
+        self.assertNotIn("name", packet["stock"])
+        self.assertNotIn("core_business", packet["stock"])
+        self.assertIn("cyclical", packet["stock"]["scoring_signals"]["core_business"])
+        for hostile in ("PRIVATE-KEY-SENTINEL", "api_key", "reports.json", "diagnostic prose", "status 403", "status_403"):
+            self.assertNotIn(hostile, persisted)
+
+        hostile_packet = json.loads(json.dumps(packet))
+        hostile_packet["degraded_state"] = {
+            "degraded": True,
+            "reason_codes": ["PRIVATE-KEY-SENTINEL", "api_key", "reports.json"],
+            "gap_codes": ["diagnostic prose status 403"],
+        }
+        evidence = build_valuation_artifact_evidence(hostile_packet)
+        public_text = json.dumps(evidence) + render_valuation_card(hostile_packet)
+        for hostile in ("PRIVATE-KEY-SENTINEL", "api_key", "reports.json", "diagnostic prose", "status 403"):
+            self.assertNotIn(hostile, public_text)
+
+    def test_loader_recomputes_canonical_packet_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=output_dir,
+                command="valuation US.ACME", provider_snapshot=self._snapshot(),
+                now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
+            )
+            latest = output_dir / "valuation" / "ACME_US_valuation_latest.json"
+            mutations: dict[str, dict[str, object]] = {}
+
+            forged_source = json.loads(json.dumps(packet))
+            original_source = forged_source["source_coverage"]["source_registry"][0]["id"]
+            forged_source["source_coverage"]["source_registry"][0]["id"] = "source:0000000000000000"
+            for fact in forged_source["facts"]:
+                if fact["source_id"] == original_source:
+                    fact["source_id"] = "source:0000000000000000"
+            mutations["forged source id"] = forged_source
+
+            altered_calculation = json.loads(json.dumps(packet))
+            ps = next(item for item in altered_calculation["deterministic_calculations"] if item["metric"] == "ps")
+            ps["value"] = 999.0
+            ps["display_value"] = "999.0x"
+            mutations["altered calculation"] = altered_calculation
+
+            missing_ref = json.loads(json.dumps(packet))
+            ps = next(item for item in missing_ref["deterministic_calculations"] if item["metric"] == "ps")
+            ps["input_refs"].remove("fact:revenue")
+            mutations["missing calculation ancestry"] = missing_ref
+
+            dropped_calculation = json.loads(json.dumps(packet))
+            dropped_calculation["deterministic_calculations"] = [
+                item for item in dropped_calculation["deterministic_calculations"] if item["metric"] != "ps"
+            ]
+            dropped_calculation["market_implied_bridge"]["bridge_lines"] = [
+                item for item in dropped_calculation["market_implied_bridge"]["bridge_lines"] if item["type"] != "sales_anchor"
+            ]
+            mutations["dropped calculation"] = dropped_calculation
+
+            missing_score = json.loads(json.dumps(packet))
+            missing_score["internal_frame_scores"] = [
+                item for item in missing_score["internal_frame_scores"] if item["id"] != "sotp_asset_value"
+            ]
+            mutations["missing core score"] = missing_score
+
+            inconsistent_selected = json.loads(json.dumps(packet))
+            inconsistent_selected["selected_frames"] = [
+                inconsistent_selected["market_implied_bridge"]["frame_fit_ranking"][-1]
+            ]
+            mutations["inconsistent selected frame"] = inconsistent_selected
+
+            four_selected = json.loads(json.dumps(packet))
+            four_selected["selected_frames"] = four_selected["market_implied_bridge"]["frame_fit_ranking"][:4]
+            mutations["four selected frames"] = four_selected
+
+            for label, mutation in mutations.items():
+                with self.subTest(label=label):
+                    latest.write_text(json.dumps(mutation), encoding="utf-8")
+                    self.assertIsNone(load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir))
+
+    def test_public_projection_uses_canonical_identity_and_static_safety(self) -> None:
+        packet = self._build()
+        packet["stock"]["symbol"] = "EVIL"
+        packet["stock"]["market"] = "HK"
+        packet["target_resolution"].update({
+            "normalized_symbol": "000660",
+            "normalized_market": "KR",
+            "normalized_target": "KR.000660",
+            "input_target": "KR.000660",
+        })
+        packet["safety"] = {
+            "direct_investment_advice": True,
+            "writes_formal_user_insight": True,
+            "research_aid_only": False,
+        }
+
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        self.assertEqual(evidence["stock"]["symbol"], "ACME")
+        self.assertEqual(evidence["stock"]["market"], "US")
+        self.assertEqual(evidence["target"]["normalized_target"], "US.ACME")
+        self.assertEqual(evidence["target"]["normalized_symbol"], "ACME")
+        self.assertEqual(evidence["target"]["normalized_market"], "US")
+        self.assertEqual(evidence["safety"], {
+            "direct_investment_advice": False,
+            "writes_formal_user_insight": False,
+            "research_aid_only": True,
+            "omits_local_path": True,
+            "provider_error_detail_omitted": True,
+        })
+        self.assertIn("US.ACME", card)
+        for hostile in ("EVIL", "HK.EVIL", "KR.000660"):
+            self.assertNotIn(hostile, json.dumps(evidence) + card)
+
+    def test_public_projection_drops_records_with_incomplete_required_refs(self) -> None:
+        packet = json.loads(json.dumps(self._build()))
+        ps = next(item for item in packet["deterministic_calculations"] if item["metric"] == "ps")
+        ps["input_refs"].remove("fact:revenue")
+        fcf = next(item for item in packet["selected_frames"] if item["id"] == "fcf")
+        fcf["input_refs"].remove("fact:capex")
+        sales = next(item for item in packet["market_implied_bridge"]["bridge_lines"] if item["type"] == "sales_anchor")
+        sales["input_refs"].remove("fact:revenue")
+
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        self.assertNotIn("ps", {item["metric"] for item in evidence["deterministic_calculations"]})
+        self.assertNotIn("fcf", {item["id"] for item in evidence["selected_frames"]})
+        self.assertNotIn("sales_anchor", {item["type"] for item in evidence["market_implied_bridge"]["bridge_lines"]})
+        self.assertNotIn("P/S:", card)
+        self._assert_public_refs_resolve(evidence)
+
+    def test_sparse_single_facts_do_not_create_supported_frame_fit(self) -> None:
+        context = {"stock": {"symbol": "ACME", "market": "US"}}
+        sparse_cases = {
+            "capex": ("fcf", 0.15),
+            "revenue": ("comparable_multiples", 0.2),
+        }
+        for metric, (frame_id, expected_score) in sparse_cases.items():
+            snapshot = {
+                "facts": [{
+                    "metric": metric,
+                    "value": 100.0,
+                    "source_id": f"raw:{metric}",
+                    "source_type": "sec_companyfacts",
+                    "currency": "USD",
+                }],
+                "target_resolution": {"normalized_target": "US.ACME", "currency": "USD"},
+            }
+            with self.subTest(metric=metric), tempfile.TemporaryDirectory() as temporary:
+                packet, _ = build_valuation_artifact(
+                    context, symbol="ACME", market="US", output_dir=Path(temporary),
+                    command="valuation US.ACME", provider_snapshot=snapshot,
+                    now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+                )
+                score = next(item for item in packet["internal_frame_scores"] if item["id"] == frame_id)
+                fit = next(item for item in packet["market_implied_bridge"]["frame_fit_ranking"] if item["id"] == frame_id)
+                self.assertEqual(score["score"], expected_score)
+                self.assertEqual(fit["fit_to_current_market_value"], "insufficient_data")
+                self.assertEqual(fit["confidence"], "low")
+
+    def test_huge_integer_is_omitted_without_overflow(self) -> None:
+        snapshot = {
+            "facts": [{
+                "metric": "revenue",
+                "value": 10 ** 10000,
+                "source_id": "raw:revenue",
+                "source_type": "sec_companyfacts",
+                "currency": "USD",
+            }],
+            "target_resolution": {"normalized_target": "US.ACME", "currency": "USD"},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                {"stock": {"symbol": "ACME", "market": "US"}},
+                symbol="ACME", market="US", output_dir=Path(temporary),
+                command="valuation US.ACME", provider_snapshot=snapshot,
+                now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+            )
+        self.assertNotIn("revenue", {fact["metric"] for fact in packet["facts"]})
+        self.assertIn("missing_revenue", packet["degraded_state"]["reason_codes"])
 
 
 if __name__ == "__main__":

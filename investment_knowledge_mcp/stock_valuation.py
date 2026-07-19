@@ -26,11 +26,8 @@ SPECIALIST_FRAMES: tuple[dict[str, Any], ...] = (
 
 _PACKET_KEYS = frozenset({"schema", "input", "stock", "target_resolution", "facts", "assumptions", "deterministic_calculations", "internal_frame_scores", "selected_frames", "market_implied_bridge", "interpretation", "watch_items", "source_coverage", "degraded_state", "safety"})
 _SAFE_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
-_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 _SAFE_SOURCE_ID = re.compile(r"^source:[0-9a-f]{16}$")
 _SAFE_PERIOD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_UNSAFE_PROFILE = re.compile(r"(?:https?://|file:|\\|(?:\.\.?/)|(?:^|\s)(?:/\S|[A-Za-z0-9_.-]+/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+(?:\s|$))|authorization|bearer|private[_ -]?key|api[_ -]?key|password|credential|secret|token|traceback|exception)", re.I)
-_UNSAFE_GAP = re.compile(r"(?:https?://|file:|\\|(?:\.\.?/)|(?:^|\s)(?:/\S|[A-Za-z0-9_.-]+/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+(?:\s|$))|authorization|bearer|private[_ -]?key|api[_ -]?key|password|credential|secret|token|traceback|exception)", re.I)
 _FACT_METRICS = frozenset({"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capex", "free_cash_flow", "cash", "debt", "net_debt", "shares_outstanding", "price", "market_cap", "enterprise_value", "ebitda", "book_value"})
 _MONEY_METRICS = _FACT_METRICS - {"shares_outstanding", "price"}
 _SOURCE_FAMILIES = frozenset({"company_ir", "market_snapshot", "official_financial", "regulator_filing", "unknown", "vendor_financial"})
@@ -44,6 +41,34 @@ _FRAME_WORDS = {
     "sotp_asset_value": ("asset", "segment", "holding", "资产", "分部"),
     "cyclical": ("cycle", "cyclical", "semiconductor", "memory", "周期", "半导体"),
     "growth_scenario": ("growth", "tam", "scenario", "ai", "增长", "市场空间"),
+}
+_SOURCE_TYPE_MAP: dict[str, tuple[str, str]] = {
+    "sec_companyfacts": ("sec_companyfacts", "official_financial"),
+    "sec_filing": ("sec_filing", "regulator_filing"),
+    "hkexnews": ("hkexnews", "regulator_filing"),
+    "hkex_filing": ("hkex_filing", "regulator_filing"),
+    "dart_filing": ("dart_filing", "regulator_filing"),
+    "fss_filing": ("fss_filing", "regulator_filing"),
+    "company_ir": ("company_ir", "company_ir"),
+    "company_report": ("company_report", "official_financial"),
+    "market_snapshot": ("market_snapshot", "market_snapshot"),
+    "vendor_financial": ("vendor_financial", "vendor_financial"),
+}
+_GAP_COPY = {
+    "missing_market_data": "latest market price or market cap is missing",
+    "missing_enterprise_value": "enterprise value cannot be derived without market cap and net debt",
+    "missing_revenue": "revenue is missing",
+    "missing_fcf": "free cash flow is missing",
+    "missing_net_income": "net income is missing",
+    "missing_source_metadata": "source metadata is missing",
+    "missing_confirmed_case": "no user-confirmed valuation case",
+}
+_REASON_COPY = {
+    **_GAP_COPY,
+    "context_identity_mismatch": "context stock identity mismatched the explicit target and was omitted",
+    "snapshot_identity_mismatch": "provider snapshot identity mismatched the explicit target and was omitted",
+    "missing_official_source": "official financial source coverage is missing",
+    "minimal_stock_profile": "stock profile appears minimal and needs research import",
 }
 _CALC_SPECS: dict[str, tuple[str, tuple[str, ...], str, str | None]] = {
     "free_cash_flow": ("operating_cash_flow - abs(capex)", ("operating_cash_flow", "capex"), "currency", None),
@@ -90,35 +115,31 @@ def build_valuation_artifact(
     facts, registry = _normalize_facts(safe_context, safe_snapshot)
     currency = _infer_currency(facts, market)
     facts = [_decorate_fact(fact, currency) for fact in facts]
-    values = {str(fact["metric"]): float(fact["value"]) for fact in facts}
-    fact_refs = {str(fact["metric"]): str(fact["id"]) for fact in facts}
-    calculations = _calculate(values, fact_refs, currency)
-    gaps = _data_gaps(values, calculations, registry, safe_context)
-    identity_reasons = []
+    domain = _canonical_domain(stock, facts, registry, _confirmed_case(safe_context), market)
+    calculations, gap_codes = domain["calculations"], domain["gap_codes"]
+    identity_codes = []
     if context_mismatch:
-        identity_reasons.append("context stock identity mismatched the explicit target and was omitted")
+        identity_codes.append("context_identity_mismatch")
     if snapshot_mismatch:
-        identity_reasons.append("provider snapshot identity mismatched the explicit target and was omitted")
-    scores = _score_frames(stock, values, calculations, gaps, fact_refs)
-    bridge = _build_bridge(values, calculations, scores, gaps, currency, fact_refs)
-    selected = _select_frames(bridge["frame_fit_ranking"])
+        identity_codes.append("snapshot_identity_mismatch")
+    scores, bridge, selected = domain["scores"], domain["bridge"], domain["selected"]
     coverage = _coverage(facts, registry, safe_snapshot)
-    reasons = sorted(set([*gaps, *identity_reasons, *( [] if coverage["official_source_count"] else ["official financial source coverage is missing"]), *( [] if stock.get("name") else ["stock profile appears minimal and needs research import"])]))
+    reason_codes = _reason_codes(gap_codes, coverage, stock, identity_codes)
     packet: dict[str, object] = {
         "schema": "stock_valuation_packet.v1",
         "input": {"symbol": symbol, "market": market, "command": f"valuation {market}.{symbol}", "created_at": instant.isoformat()},
         "stock": stock,
-        "target_resolution": _target_resolution(safe_snapshot, symbol, market, currency),
+        "target_resolution": _target_resolution(symbol, market, currency),
         "facts": facts,
         "assumptions": {"user_confirmed_valuation_case": _confirmed_case(safe_context), "items": list(_ASSUMPTIONS)},
         "deterministic_calculations": calculations,
         "internal_frame_scores": scores,
         "selected_frames": selected,
         "market_implied_bridge": bridge,
-        "interpretation": _interpretation(selected, gaps),
+        "interpretation": _interpretation(selected, gap_codes),
         "watch_items": _watch_items(selected),
         "source_coverage": coverage,
-        "degraded_state": {"degraded": bool(reasons), "reasons": reasons, "data_gaps": gaps},
+        "degraded_state": {"degraded": bool(reason_codes), "reason_codes": reason_codes, "gap_codes": gap_codes},
         "safety": {"direct_investment_advice": False, "writes_formal_user_insight": False, "research_aid_only": True},
     }
     if not _valid_packet(packet, symbol, market):
@@ -190,11 +211,6 @@ def _optional_target(value: object) -> str | None:
     return normalized if _SAFE_TARGET.fullmatch(normalized) else None
 
 
-def _profile_text(value: object, limit: int) -> str | None:
-    text = " ".join(value.split()) if isinstance(value, str) else ""
-    return text if text and len(text) <= limit and not _UNSAFE_PROFILE.search(text) else None
-
-
 def _normalize_stock(context: dict[str, object], symbol: str, market: str) -> tuple[dict[str, object], bool]:
     raw = context.get("stock") if isinstance(context.get("stock"), dict) else {}
     mismatch = bool(
@@ -206,9 +222,13 @@ def _normalize_stock(context: dict[str, object], symbol: str, market: str) -> tu
         return stock, True
     if isinstance(raw.get("id"), int) and not isinstance(raw["id"], bool) and raw["id"] >= 0:
         stock["id"] = raw["id"]
-    for key, limit in (("name", 120), ("core_business", 240), ("stock_character", 160)):
-        if text := _profile_text(raw.get(key), limit):
-            stock[key] = text
+    signals: dict[str, list[str]] = {}
+    for field in ("core_business", "stock_character"):
+        text = raw.get(field)
+        if not isinstance(text, str): continue
+        matches = sorted(frame_id for frame_id, words in _FRAME_WORDS.items() if any(word in text.lower() for word in words))
+        if matches: signals[field] = matches
+    if signals: stock["scoring_signals"] = signals
     return stock, False
 
 
@@ -226,25 +246,10 @@ def _snapshot_mismatch(snapshot: dict[str, object], symbol: str, market: str) ->
     return bool((candidate_symbol not in (None, symbol)) or (candidate_market not in (None, market)))
 
 
-def _source_token(value: object) -> str | None:
-    token = value.strip().lower() if isinstance(value, str) else ""
-    blocked = ("secret", "token", "password", "credential", "authorization", "bearer")
-    return token if _SAFE_TOKEN.fullmatch(token) and not any(part in token for part in blocked) else None
-
-
-def _source_family(source_type: str) -> str:
-    if any(part in source_type for part in ("market", "quote", "price")): return "market_snapshot"
-    if any(part in source_type for part in ("sec", "hkex", "dart", "fss", "filing", "official")): return "official_financial"
-    if "company_ir" in source_type or source_type == "ir": return "company_ir"
-    if any(part in source_type for part in ("vendor", "yahoo", "fallback")): return "vendor_financial"
-    return "unknown"
-
-
 def _source_descriptor(raw: dict[str, object]) -> dict[str, object]:
-    source_type, provider = _source_token(raw.get("source_type")) or "unknown", _source_token(raw.get("provider"))
-    descriptor: dict[str, object] = {"family": _source_family(source_type), "source_type": source_type}
-    if provider: descriptor["provider"] = provider
-    return descriptor
+    raw_type = raw.get("source_type")
+    source_type, family = _SOURCE_TYPE_MAP.get(raw_type.strip().lower(), ("unknown", "unknown")) if isinstance(raw_type, str) else ("unknown", "unknown")
+    return {"family": family, "source_type": source_type}
 
 
 def _source_id(descriptor: dict[str, object]) -> str:
@@ -274,7 +279,8 @@ def _timestamp(value: object) -> str | None:
 
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)): return None
-    number = float(value)
+    try: number = float(value)
+    except (OverflowError, TypeError, ValueError): return None
     return number if math.isfinite(number) else None
 
 
@@ -289,7 +295,6 @@ def _normalize_facts(context: dict[str, object], snapshot: dict[str, object]) ->
             metric, descriptor = str(raw["metric"]), _source_descriptor(raw)
             source_id = _source_id(descriptor); registry[source_id] = {"id": source_id, **descriptor}
             fact: dict[str, object] = {"id": f"fact:{metric}", "metric": metric, "value": number, "source_id": source_id, "source_type": descriptor["source_type"], "source_family": descriptor["family"]}
-            if descriptor.get("provider"): fact["provider"] = descriptor["provider"]
             if normalized := _currency(raw.get("currency")): fact["currency"] = normalized
             if normalized := _period(raw.get("period_end")): fact["period_end"] = normalized
             if normalized := _timestamp(raw.get("timestamp")): fact["timestamp"] = normalized
@@ -375,31 +380,41 @@ def _calculate(values: dict[str, float], facts: dict[str, str], currency: str | 
     return result
 
 
-def _data_gaps(values: dict[str, float], calculations: list[dict[str, object]], registry: list[dict[str, object]], context: dict[str, object]) -> list[str]:
+def _data_gap_codes(values: dict[str, float], calculations: list[dict[str, object]], registry: list[dict[str, object]], confirmed_case: bool) -> list[str]:
     derived, gaps = {str(item["metric"]) for item in calculations}, []
-    if "price" not in values and "market_cap" not in values: gaps.append("latest market price or market cap is missing")
-    if "enterprise_value" not in values and "enterprise_value" not in derived: gaps.append("enterprise value cannot be derived without market cap and net debt")
-    for metric, label in (("revenue", "revenue"), ("free_cash_flow", "free cash flow"), ("net_income", "net income")):
-        if metric not in values and metric not in derived: gaps.append(f"{label} is missing")
-    if not any(item.get("source_type") != "unknown" for item in registry): gaps.append("source metadata is missing")
-    if not _confirmed_case(context): gaps.append("no user-confirmed valuation case")
+    if "price" not in values and "market_cap" not in values: gaps.append("missing_market_data")
+    if "enterprise_value" not in values and "enterprise_value" not in derived: gaps.append("missing_enterprise_value")
+    for metric in ("revenue", "free_cash_flow", "net_income"):
+        if metric not in values and metric not in derived: gaps.append(f"missing_{metric.replace('free_cash_flow', 'fcf')}")
+    if not any(item.get("source_type") != "unknown" for item in registry): gaps.append("missing_source_metadata")
+    if not confirmed_case: gaps.append("missing_confirmed_case")
     return gaps
+
+
+def _frame_supported(frame_id: str, values: dict[str, float], calculations: list[dict[str, object]]) -> bool:
+    calculated = {str(item["metric"]): item for item in calculations}
+    if frame_id == "fcf": return "free_cash_flow" in values or {"operating_cash_flow", "capex"} <= values.keys()
+    if frame_id == "comparable_multiples":
+        market_value = values.get("market_cap") if "market_cap" in values else _calculated_value(calculated.get("market_cap"))
+        return market_value is not None and any(values.get(metric) not in (None, 0) for metric in ("revenue", "net_income", "ebitda"))
+    return True
 
 
 def _score_frames(stock: dict[str, object], values: dict[str, float], calculations: list[dict[str, object]], gaps: list[str], facts: dict[str, str]) -> list[dict[str, object]]:
     score = {"fcf": .15, "comparable_multiples": .2, "sotp_asset_value": .05, "cyclical": .05, "growth_scenario": .1}
-    if {"free_cash_flow", "operating_cash_flow", "capex"} & values.keys(): score["fcf"] += .55
-    if {"market_cap", "revenue", "net_income", "ebitda"} & values.keys(): score["comparable_multiples"] += .45
+    if _frame_supported("fcf", values, calculations): score["fcf"] += .55
+    if _frame_supported("comparable_multiples", values, calculations): score["comparable_multiples"] += .45
     matched = {key: [] for key in score}
-    for frame_id, words in _FRAME_WORDS.items():
+    signals = stock.get("scoring_signals") if isinstance(stock.get("scoring_signals"), dict) else {}
+    for frame_id in _FRAME_WORDS:
         for field in ("core_business", "stock_character"):
-            if isinstance(stock.get(field), str) and any(word in str(stock[field]).lower() for word in words): matched[frame_id].append(field)
+            if isinstance(signals.get(field), list) and frame_id in signals[field]: matched[frame_id].append(field)
         if matched[frame_id]: score[frame_id] += .65 if frame_id == "cyclical" else .55
     derived = {str(item["metric"]): item for item in calculations}
     fact_inputs = {"fcf": ("free_cash_flow", "operating_cash_flow", "capex"), "comparable_multiples": ("market_cap", "revenue", "net_income", "ebitda"), "sotp_asset_value": (), "cyclical": (), "growth_scenario": ()}
     result = []
     for frame_id, value in sorted(score.items(), key=lambda item: (-item[1], item[0])):
-        refs = [f"packet:method_library:{frame_id}", *_flatten_refs(fact_inputs[frame_id], facts, derived), *(f"packet:stock:{field}" for field in matched[frame_id])]
+        refs = [f"packet:method_library:{frame_id}", *_flatten_refs(fact_inputs[frame_id], facts, derived), *(f"packet:stock:scoring_signals:{field}:{frame_id}" for field in matched[frame_id])]
         result.append({"id": frame_id, "name": _CORE_BY_ID[frame_id]["name"], "score": round(min(value, 1), 3), "reason": "ranked from normalized facts and declared stock fields", "input_refs": tuple(dict.fromkeys(refs)), "degraded_by": [gap for gap in gaps if frame_id.split("_")[0] in gap]})
     return result
 
@@ -419,7 +434,11 @@ def _build_bridge(values: dict[str, float], calculations: list[dict[str, object]
     if market_cap is not None and revenue not in (None, 0): add("sales_anchor", f"P/S: {_format(market_cap / revenue, 'multiple', currency)} anchors current market value.", ("market_cap", "revenue"))
     if enterprise_value is not None and revenue not in (None, 0): add("ev_sales_anchor", f"EV/Sales: {_format(enterprise_value / revenue, 'multiple', currency)}.", ("enterprise_value", "revenue"))
     if fcf is not None and market_cap not in (None, 0): add("fcf_yield", "FCF yield is not meaningful with negative FCF." if fcf < 0 else f"FCF yield: {_format(fcf / market_cap, 'percent', currency)}.", ("free_cash_flow", "market_cap"))
-    ranking = [{**item, "fit_to_current_market_value": "fits" if item["score"] >= .6 else "partial_fit" if item["score"] >= .2 else "insufficient_data", "why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": list(gaps), "confidence": "low" if gaps else "medium"} for item in scores]
+    ranking = []
+    for item in scores:
+        supported = _frame_supported(str(item["id"]), values, calculations)
+        fit = "insufficient_data" if not supported else "fits" if item["score"] >= .6 else "partial_fit" if item["score"] >= .2 else "insufficient_data"
+        ranking.append({**item, "fit_to_current_market_value": fit, "why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": list(gaps), "confidence": "low" if gaps or not supported else "medium"})
     return {"bridge_lines": lines, "frame_fit_ranking": ranking}
 
 
@@ -454,14 +473,9 @@ def _watch_items(selected: list[dict[str, object]]) -> list[str]:
     return [f"{_CORE_BY_ID[str(item['id'])]['name']} triggers: {', '.join(_CORE_BY_ID[str(item['id'])]['triggers'])}." for item in selected if str(item.get("id")) in _CORE_BY_ID]
 
 
-def _target_resolution(snapshot: dict[str, object], symbol: str, market: str, fallback_currency: str | None) -> dict[str, object]:
-    raw = snapshot.get("target_resolution") if isinstance(snapshot.get("target_resolution"), dict) else {}
+def _target_resolution(symbol: str, market: str, fallback_currency: str | None) -> dict[str, object]:
     result: dict[str, object] = {"input_target": f"{market}.{symbol}", "normalized_target": f"{market}.{symbol}", "normalized_symbol": symbol, "normalized_market": market}
-    if value := _optional_target(raw.get("provider_market_ticker")): result["provider_market_ticker"] = value
-    if value := _profile_text(raw.get("company_name"), 120): result["company_name"] = value
-    if value := _source_token(raw.get("mapping_source")): result["mapping_source"] = value
-    if raw.get("mapping_confidence") in _CONFIDENCE: result["mapping_confidence"] = raw["mapping_confidence"]
-    if value := _currency(raw.get("currency")) or fallback_currency: result["currency"] = value
+    if fallback_currency: result["currency"] = fallback_currency
     return result
 
 
@@ -471,6 +485,21 @@ def _infer_currency(facts: list[dict[str, object]], market: str) -> str | None:
 
 def _confirmed_case(context: dict[str, object]) -> bool:
     return any(isinstance(item, dict) and item.get("confirmed_by_user") is True for group in ("stock_insights", "stock_knowledge") for item in (context.get(group) if isinstance(context.get(group), list) else []))
+
+
+def _canonical_domain(stock: dict[str, object], facts: list[dict[str, object]], registry: list[dict[str, object]], confirmed_case: bool, market: str) -> dict[str, object]:
+    values = {str(fact["metric"]): float(fact["value"]) for fact in facts}
+    fact_refs = {str(fact["metric"]): str(fact["id"]) for fact in facts}
+    currency = _infer_currency(facts, market)
+    calculations = _calculate(values, fact_refs, currency)
+    gaps = _data_gap_codes(values, calculations, registry, confirmed_case)
+    scores = _score_frames(stock, values, calculations, gaps, fact_refs)
+    bridge = _build_bridge(values, calculations, scores, gaps, currency, fact_refs)
+    return {"values": values, "currency": currency, "calculations": calculations, "gap_codes": gaps, "scores": scores, "bridge": bridge, "selected": _select_frames(bridge["frame_fit_ranking"])}
+
+
+def _reason_codes(gaps: list[str], coverage: dict[str, object], stock: dict[str, object], identity_codes: list[str] | tuple[str, ...] = ()) -> list[str]:
+    return sorted(set([*gaps, *identity_codes, *( [] if coverage.get("official_source_count") else ["missing_official_source"]), *( [] if stock.get("scoring_signals") else ["minimal_stock_profile"])]))
 
 
 def _write_packet(packet: dict[str, object], output_dir: Path, symbol: str, market: str, instant: datetime) -> Path:
@@ -485,16 +514,28 @@ def _write_packet(packet: dict[str, object], output_dir: Path, symbol: str, mark
 # Shared typed public projection ------------------------------------------
 
 def _public_projection(packet: dict[str, object]) -> dict[str, object]:
+    input_data = _project_input(packet.get("input")); symbol, market = str(input_data.get("symbol") or ""), str(input_data.get("market") or "")
     registry = _project_registry(packet.get("source_coverage")); registry_by_id = {str(item["id"]): item for item in registry}
-    facts = _project_facts(packet.get("facts"), registry_by_id); fact_ids = {str(item["id"]) for item in facts}
-    internal_stock = _project_stock(packet.get("stock"), include_scoring_fields=True)
-    stock = _project_stock(packet.get("stock"), include_scoring_fields=False)
-    allowed = _allowed_refs(fact_ids, internal_stock)
-    calculations = _project_calculations(packet.get("deterministic_calculations"), allowed)
-    scores = _project_frames(packet.get("internal_frame_scores"), allowed, include_fit=False)
-    selected = _project_frames(packet.get("selected_frames"), allowed, include_fit=True)[:3]
-    degraded = _project_degraded(packet.get("degraded_state"))
-    return {"schema": "stock_valuation_evidence.v1", "input": _project_input(packet.get("input")), "stock": stock, "target": _project_target(packet.get("target_resolution")), "facts": facts, "assumptions": _project_assumptions(packet.get("assumptions")), "deterministic_calculations": calculations, "internal_frame_scores": scores, "selected_frames": selected, "market_implied_bridge": _project_bridge(packet.get("market_implied_bridge"), facts, calculations, allowed), "interpretation": _interpretation(selected, list(degraded.get("data_gaps", []))), "watch_items": _watch_items(selected), "source_coverage": _project_coverage(packet.get("source_coverage"), facts, registry), "degraded_state": degraded, "safety": _project_safety(packet.get("safety"))}
+    facts = _project_facts(packet.get("facts"), registry_by_id)
+    internal_stock = _project_stock(packet.get("stock"), symbol, market) if symbol and market else {}
+    assumptions = _project_assumptions(packet.get("assumptions")); confirmed = assumptions.get("user_confirmed_valuation_case") is True
+    domain = _canonical_domain(internal_stock, facts, registry, confirmed, market)
+    allowed = _allowed_refs({str(item["id"]) for item in facts}, internal_stock)
+    calculations = _matching_records(packet.get("deterministic_calculations"), domain["calculations"], "metric", ("value", "raw_value", "meaningful", "meaningfulness_reason", "formula", "inputs", "input_refs", "currency"), allowed)
+    scores = _matching_records(packet.get("internal_frame_scores"), domain["scores"], "id", ("score", "input_refs"), allowed)
+    selected = _matching_records(packet.get("selected_frames"), domain["selected"], "id", ("score", "input_refs", "fit_to_current_market_value", "confidence"), allowed)[:3]
+    raw_bridge = packet.get("market_implied_bridge") if isinstance(packet.get("market_implied_bridge"), dict) else {}
+    bridge_lines = _matching_records(raw_bridge.get("bridge_lines"), domain["bridge"]["bridge_lines"], "type", ("input_refs",), allowed)
+    ranking = _matching_records(raw_bridge.get("frame_fit_ranking"), domain["bridge"]["frame_fit_ranking"], "id", ("score", "input_refs", "fit_to_current_market_value", "confidence"), allowed)
+    coverage = _project_coverage(packet.get("source_coverage"), facts, registry)
+    identity_codes = _codes((packet.get("degraded_state") or {}).get("reason_codes") if isinstance(packet.get("degraded_state"), dict) else None, {"context_identity_mismatch", "snapshot_identity_mismatch"})
+    reasons = _reason_codes(domain["gap_codes"], coverage, internal_stock, identity_codes)
+    degraded = {"degraded": bool(reasons), "reason_codes": reasons, "gap_codes": list(domain["gap_codes"]), "reasons": [_REASON_COPY[code] for code in reasons], "data_gaps": [_GAP_COPY[code] for code in domain["gap_codes"]]}
+    public_selected = [_public_frame(item) for item in selected]
+    currency = domain["currency"]
+    target = _target_resolution(symbol, market, currency) if symbol and market else ({"currency": currency} if currency else {})
+    public_stock = {key: internal_stock[key] for key in ("symbol", "market", "scoring_signals") if key in internal_stock}
+    return {"schema": "stock_valuation_evidence.v1", "input": input_data, "stock": public_stock, "target": target, "facts": facts, "assumptions": assumptions, "deterministic_calculations": calculations, "internal_frame_scores": [_public_frame(item) for item in scores], "selected_frames": public_selected, "market_implied_bridge": {"bridge_lines": bridge_lines, "frame_fit_ranking": [_public_frame(item) for item in ranking]}, "interpretation": _interpretation(public_selected, list(domain["gap_codes"])), "watch_items": _watch_items(public_selected), "source_coverage": coverage, "degraded_state": degraded, "safety": _project_safety()}
 
 
 def _project_input(value: object) -> dict[str, object]:
@@ -505,25 +546,15 @@ def _project_input(value: object) -> dict[str, object]:
     return result
 
 
-def _project_stock(value: object, *, include_scoring_fields: bool) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; result: dict[str, object] = {}
-    if normalized := _optional_target(raw.get("symbol")): result["symbol"] = normalized
-    if normalized := _optional_target(raw.get("market")): result["market"] = normalized
+def _project_stock(value: object, symbol: str, market: str) -> dict[str, object]:
+    raw = value if isinstance(value, dict) else {}; result: dict[str, object] = {"symbol": symbol, "market": market}
     if isinstance(raw.get("id"), int) and not isinstance(raw["id"], bool) and raw["id"] >= 0: result["id"] = raw["id"]
-    fields = (("name", 120), ("core_business", 240), ("stock_character", 160)) if include_scoring_fields else (("name", 120),)
-    for key, limit in fields:
-        if text := _profile_text(raw.get(key), limit): result[key] = text
-    return result
-
-
-def _project_target(value: object) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; symbol, market = _optional_target(raw.get("normalized_symbol")), _optional_target(raw.get("normalized_market")); result: dict[str, object] = {}
-    if symbol and market: result.update({"input_target": f"{market}.{symbol}", "normalized_target": f"{market}.{symbol}", "normalized_symbol": symbol, "normalized_market": market})
-    if normalized := _optional_target(raw.get("provider_market_ticker")): result["provider_market_ticker"] = normalized
-    if text := _profile_text(raw.get("company_name"), 120): result["company_name"] = text
-    if token := _source_token(raw.get("mapping_source")): result["mapping_source"] = token
-    if raw.get("mapping_confidence") in _CONFIDENCE: result["mapping_confidence"] = raw["mapping_confidence"]
-    if normalized := _currency(raw.get("currency")): result["currency"] = normalized
+    raw_signals = raw.get("scoring_signals"); signals: dict[str, list[str]] = {}
+    if isinstance(raw_signals, dict):
+        for field in ("core_business", "stock_character"):
+            candidates = raw_signals.get(field)
+            if isinstance(candidates, list) and (normalized := sorted(set(item for item in candidates if item in _FRAME_WORDS))): signals[field] = normalized
+    if signals: result["scoring_signals"] = signals
     return result
 
 
@@ -531,11 +562,13 @@ def _project_registry(value: object) -> list[dict[str, object]]:
     coverage = value if isinstance(value, dict) else {}; records = coverage.get("source_registry")
     if not isinstance(records, (list, tuple)): return []
     result: dict[str, dict[str, object]] = {}
+    canonical_pairs = set(_SOURCE_TYPE_MAP.values()) | {("unknown", "unknown")}
     for raw in records:
-        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _SAFE_SOURCE_ID.fullmatch(raw["id"]) or raw.get("family") not in _SOURCE_FAMILIES or not (source_type := _source_token(raw.get("source_type"))): continue
-        item: dict[str, object] = {"id": raw["id"], "family": raw["family"], "source_type": source_type}
-        if provider := _source_token(raw.get("provider")): item["provider"] = provider
-        result[raw["id"]] = item
+        pair = (raw.get("source_type"), raw.get("family")) if isinstance(raw, dict) else (None, None)
+        if pair not in canonical_pairs: continue
+        descriptor = {"family": pair[1], "source_type": pair[0]}; expected_id = _source_id(descriptor)
+        if raw.get("id") != expected_id: continue
+        result[expected_id] = {"id": expected_id, **descriptor}
     return [result[key] for key in sorted(result)]
 
 
@@ -546,7 +579,6 @@ def _project_facts(value: object, registry: dict[str, dict[str, object]]) -> lis
         if not isinstance(raw, dict) or raw.get("metric") not in _FACT_METRICS or (number := _finite(raw.get("value"))) is None or raw.get("source_id") not in registry: continue
         metric, source, kind = str(raw["metric"]), registry[str(raw["source_id"])], _fact_kind(str(raw["metric"])); normalized_currency = _currency(raw.get("currency"))
         item: dict[str, object] = {"id": f"fact:{metric}", "metric": metric, "value": number, "source_id": source["id"], "source_type": source["source_type"], "source_family": source["family"], "display_kind": kind, "display_value": _format(number, kind, normalized_currency)}
-        if source.get("provider"): item["provider"] = source["provider"]
         if kind.startswith("currency") and normalized_currency: item["currency"] = normalized_currency
         if normalized := _period(raw.get("period_end")): item["period_end"] = normalized
         if normalized := _timestamp(raw.get("timestamp")): item["timestamp"] = normalized
@@ -556,76 +588,27 @@ def _project_facts(value: object, registry: dict[str, dict[str, object]]) -> lis
 
 def _allowed_refs(fact_ids: set[str], stock: dict[str, object]) -> set[str]:
     refs = {*fact_ids, *(f"packet:method_library:{frame_id}" for frame_id in _CORE_BY_ID)}
-    refs.update(f"packet:stock:{field}" for field in ("core_business", "stock_character") if stock.get(field))
+    signals = stock.get("scoring_signals") if isinstance(stock.get("scoring_signals"), dict) else {}
+    refs.update(f"packet:stock:scoring_signals:{field}:{frame_id}" for field, frame_ids in signals.items() if isinstance(frame_ids, list) for frame_id in frame_ids)
     return refs
 
 
-def _project_refs(value: object, allowed: set[str]) -> list[str]:
-    return list(dict.fromkeys(item for item in value if isinstance(item, str) and item in allowed)) if isinstance(value, (list, tuple)) else []
+def _matching_records(value: object, expected: object, key: str, fields: tuple[str, ...], allowed_refs: set[str]) -> list[dict[str, object]]:
+    raw_records = value if isinstance(value, (list, tuple)) else []; expected_records = expected if isinstance(expected, (list, tuple)) else []
+    raw_by_key = {item[key]: item for item in raw_records if isinstance(item, dict) and isinstance(item.get(key), str)}
+    return [_plain(item) for item in expected_records if isinstance(item, dict) and isinstance(item.get("input_refs"), (list, tuple)) and bool(item["input_refs"]) and set(item["input_refs"]) <= allowed_refs and isinstance((raw := raw_by_key.get(item.get(key))), dict) and all(_plain(raw.get(field)) == _plain(item.get(field)) for field in fields)]
 
 
-def _project_calculations(value: object, allowed: set[str]) -> list[dict[str, object]]:
-    if not isinstance(value, (list, tuple)): return []
-    result: dict[str, dict[str, object]] = {}
-    reported = {"reported free_cash_flow", "reported net_debt", "reported market_cap", "reported enterprise_value"}
-    for raw in value:
-        if not isinstance(raw, dict) or raw.get("metric") not in _CALC_SPECS or not isinstance(raw.get("meaningful"), bool): continue
-        metric = str(raw["metric"]); formula, inputs, kind, configured_reason = _CALC_SPECS[metric]
-        if isinstance(raw.get("formula"), str) and raw["formula"] in reported: formula, inputs = str(raw["formula"]), (metric,)
-        item: dict[str, object] = {"metric": metric, "formula": formula, "inputs": list(inputs), "input_refs": _project_refs(raw.get("input_refs"), allowed), "display_kind": kind, "meaningful": raw["meaningful"]}
-        normalized_currency = _currency(raw.get("currency"))
-        if normalized_currency and kind == "currency": item["currency"] = normalized_currency
-        if raw["meaningful"]:
-            if (number := _finite(raw.get("value"))) is None: continue
-            item.update({"value": number, "display_value": _format(number, kind, normalized_currency)})
-        else:
-            number, reason = _finite(raw.get("raw_value")), raw.get("meaningfulness_reason")
-            if number is None or not configured_reason or reason != configured_reason: continue
-            item.update({"value": None, "raw_value": number, "meaningfulness_reason": configured_reason, "display_value": f"not meaningful ({configured_reason})"})
-        result[metric] = item
-    return [result[key] for key in _CALC_SPECS if key in result]
-
-
-def _gap_items(value: object) -> list[str]:
-    return [item for item in value[:20] if isinstance(item, str) and item and len(item) <= 240 and not _UNSAFE_GAP.search(item)] if isinstance(value, (list, tuple)) else []
-
-
-def _project_frames(value: object, allowed: set[str], *, include_fit: bool) -> list[dict[str, object]]:
-    if not isinstance(value, (list, tuple)): return []
-    result, seen = [], set()
-    for raw in value:
-        if not isinstance(raw, dict) or raw.get("id") not in _CORE_BY_ID or raw["id"] in seen or (score := _finite(raw.get("score"))) is None: continue
-        frame_id = str(raw["id"]); item: dict[str, object] = {"id": frame_id, "name": _CORE_BY_ID[frame_id]["name"], "score": max(0., min(score, 1.)), "reason": "ranked from normalized facts and declared stock fields", "input_refs": _project_refs(raw.get("input_refs"), allowed), "degraded_by": _gap_items(raw.get("degraded_by"))}
-        if include_fit:
-            if raw.get("fit_to_current_market_value") in _FRAME_FITS: item["fit_to_current_market_value"] = raw["fit_to_current_market_value"]
-            if raw.get("confidence") in _CONFIDENCE: item["confidence"] = raw["confidence"]
-            item.update({"why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": _gap_items(raw.get("main_data_gaps"))})
-        result.append(item); seen.add(frame_id)
+def _public_frame(item: dict[str, object]) -> dict[str, object]:
+    result = dict(item)
+    result["degraded_by"] = [_GAP_COPY[code] for code in _codes(item.get("degraded_by"), set(_GAP_COPY))]
+    if "main_data_gaps" in item: result["main_data_gaps"] = [_GAP_COPY[code] for code in _codes(item.get("main_data_gaps"), set(_GAP_COPY))]
     return result
-
-
-def _project_bridge_display(kind: str, facts: dict[str, float], calculations: dict[str, dict[str, object]]) -> str | None:
-    if kind == "sales_anchor": return f"P/S: {calculations['ps']['display_value']} anchors current market value." if "ps" in calculations else None
-    if kind == "ev_sales_anchor":
-        ev, revenue = _calculated_value(calculations.get("enterprise_value")), facts.get("revenue")
-        return f"EV/Sales: {_format(ev / revenue, 'multiple', None)}." if ev is not None and revenue not in (None, 0) else None
-    fcf_yield = calculations.get("fcf_yield")
-    if not fcf_yield: return None
-    return "FCF yield is not meaningful with negative FCF." if fcf_yield.get("meaningful") is False else f"FCF yield: {fcf_yield['display_value']}."
-
-
-def _project_bridge(value: object, facts: list[dict[str, object]], calculations: list[dict[str, object]], allowed: set[str]) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; fact_values = {str(item["metric"]): float(item["value"]) for item in facts}; calc_by_metric = {str(item["metric"]): item for item in calculations}; lines, seen = [], set()
-    for record in raw.get("bridge_lines", []) if isinstance(raw.get("bridge_lines"), (list, tuple)) else []:
-        if not isinstance(record, dict) or not isinstance(record.get("type"), str) or record["type"] not in _BRIDGE_TYPES or record["type"] in seen or not (display := _project_bridge_display(record["type"], fact_values, calc_by_metric)): continue
-        lines.append({"type": record["type"], "display": display, "input_refs": _project_refs(record.get("input_refs"), allowed)}); seen.add(record["type"])
-    return {"bridge_lines": lines, "frame_fit_ranking": _project_frames(raw.get("frame_fit_ranking"), allowed, include_fit=True)}
 
 
 def _project_assumptions(value: object) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; result: dict[str, object] = {"items": list(_ASSUMPTIONS)}
-    if isinstance(raw.get("user_confirmed_valuation_case"), bool): result["user_confirmed_valuation_case"] = raw["user_confirmed_valuation_case"]
-    return result
+    raw = value if isinstance(value, dict) else {}
+    return {"user_confirmed_valuation_case": raw.get("user_confirmed_valuation_case") is True, "items": list(_ASSUMPTIONS)}
 
 
 def _project_coverage(value: object, facts: list[dict[str, object]], registry: list[dict[str, object]]) -> dict[str, object]:
@@ -641,19 +624,12 @@ def _project_coverage(value: object, facts: list[dict[str, object]], registry: l
     return result
 
 
-def _project_degraded(value: object) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; result: dict[str, object] = {}
-    if isinstance(raw.get("degraded"), bool): result["degraded"] = raw["degraded"]
-    for key in ("reasons", "data_gaps"):
-        if isinstance(raw.get(key), (list, tuple)): result[key] = _gap_items(raw[key])
-    return result
+def _codes(value: object, allowed: set[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in value if isinstance(item, str) and item in allowed)) if isinstance(value, (list, tuple)) else []
 
 
-def _project_safety(value: object) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; result: dict[str, object] = {"omits_local_path": True, "provider_error_detail_omitted": True}
-    for key in ("direct_investment_advice", "writes_formal_user_insight", "research_aid_only"):
-        if isinstance(raw.get(key), bool): result[key] = raw[key]
-    return result
+def _project_safety() -> dict[str, object]:
+    return {"direct_investment_advice": False, "writes_formal_user_insight": False, "research_aid_only": True, "omits_local_path": True, "provider_error_detail_omitted": True}
 
 
 # Strict internal packet validation ---------------------------------------
@@ -667,26 +643,26 @@ def _valid_packet(packet: dict[str, object], symbol: str, market: str) -> bool:
     try: plain = _plain(packet)
     except (TypeError, ValueError, json.JSONDecodeError): return False
     assert isinstance(plain, dict)
-    input_data, stock, target = plain.get("input"), plain.get("stock"), plain.get("target_resolution")
+    input_data, stock = plain.get("input"), plain.get("stock")
     if not isinstance(input_data, dict) or set(input_data) != {"symbol", "market", "command", "created_at"}: return False
     if input_data != {"symbol": symbol, "market": market, "command": f"valuation {market}.{symbol}", "created_at": _timestamp(input_data.get("created_at"))}: return False
-    if not isinstance(stock, dict) or _project_stock(stock, include_scoring_fields=True) != stock: return False
-    if stock.get("symbol") != symbol or stock.get("market") != market or not isinstance(target, dict) or _project_target(target) != target: return False
-    if target.get("normalized_target") != f"{market}.{symbol}" or target.get("normalized_symbol") != symbol or target.get("normalized_market") != market: return False
+    if not isinstance(stock, dict) or _project_stock(stock, symbol, market) != stock: return False
     coverage = plain.get("source_coverage"); registry = _project_registry(coverage)
     if not isinstance(coverage, dict) or registry != coverage.get("source_registry"): return False
     registry_by_id = {str(item["id"]): item for item in registry}; facts = _project_facts(plain.get("facts"), registry_by_id)
     if facts != plain.get("facts"): return False
-    fact_ids = {str(item["id"]) for item in facts}; allowed = _allowed_refs(fact_ids, stock)
-    calculations = _project_calculations(plain.get("deterministic_calculations"), allowed)
-    if calculations != plain.get("deterministic_calculations") or any(not item["input_refs"] for item in calculations): return False
-    scores = _project_frames(plain.get("internal_frame_scores"), allowed, include_fit=False)
-    selected = _project_frames(plain.get("selected_frames"), allowed, include_fit=True)
-    if scores != plain.get("internal_frame_scores") or selected != plain.get("selected_frames"): return False
-    bridge = _project_bridge(plain.get("market_implied_bridge"), facts, calculations, allowed)
-    if bridge != plain.get("market_implied_bridge") or any(not item["input_refs"] for item in bridge["bridge_lines"]): return False
-    degraded = _project_degraded(plain.get("degraded_state"))
-    if degraded != plain.get("degraded_state") or _project_assumptions(plain.get("assumptions")) != plain.get("assumptions"): return False
-    if _project_coverage(coverage, facts, registry) != coverage: return False
-    if plain.get("interpretation") != _interpretation(selected, degraded.get("data_gaps", [])) or plain.get("watch_items") != _watch_items(selected): return False
+    assumptions = _project_assumptions(plain.get("assumptions"))
+    if assumptions != plain.get("assumptions"): return False
+    domain = _canonical_domain(stock, facts, registry, assumptions["user_confirmed_valuation_case"] is True, market)
+    if plain.get("target_resolution") != _target_resolution(symbol, market, domain["currency"]): return False
+    for key, expected in (("deterministic_calculations", domain["calculations"]), ("internal_frame_scores", domain["scores"]), ("market_implied_bridge", domain["bridge"]), ("selected_frames", domain["selected"])):
+        if plain.get(key) != _plain(expected): return False
+    selected = plain["selected_frames"]
+    if not isinstance(selected, list) or not 1 <= len(selected) <= 3 or len(plain["internal_frame_scores"]) != 5: return False
+    expected_coverage = _coverage(facts, registry, coverage)
+    if coverage != _plain(expected_coverage): return False
+    degraded = plain.get("degraded_state"); identity_codes = _codes(degraded.get("reason_codes") if isinstance(degraded, dict) else None, {"context_identity_mismatch", "snapshot_identity_mismatch"})
+    reasons = _reason_codes(domain["gap_codes"], expected_coverage, stock, identity_codes)
+    if degraded != {"degraded": bool(reasons), "reason_codes": reasons, "gap_codes": domain["gap_codes"]}: return False
+    if plain.get("interpretation") != _interpretation(selected, domain["gap_codes"]) or plain.get("watch_items") != _watch_items(selected): return False
     return plain.get("safety") == {"direct_investment_advice": False, "writes_formal_user_insight": False, "research_aid_only": True}
