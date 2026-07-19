@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import errno
 import inspect
 import json
 import math
@@ -1051,6 +1052,17 @@ class StockValuationTests(unittest.TestCase):
         self.assertIn("Recovery: current market data is missing", card)
         self.assertNotIn("P/S:", card)
 
+    def test_unavailable_market_status_suppresses_contradictory_market_bridge_facts(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["market_snapshot_status"] = "unavailable"
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+
+        self.assertEqual(packet["source_coverage"]["market_snapshot_status"], "unavailable")
+        self.assertEqual(packet["market_implied_bridge"]["bridge_lines"], [])
+        self.assertEqual(evidence["market_implied_bridge"]["bridge_lines"], [])
+
     def test_both_missing_state_is_recovery_oriented_without_fabricated_semantics(self) -> None:
         snapshot = {
             "facts": [],
@@ -1499,6 +1511,41 @@ class StockValuationTests(unittest.TestCase):
             latest = Path(temporary) / "valuation" / "ACME_US_valuation_latest.json"
             self.assertEqual(json.loads(latest.read_text(encoding="utf-8")), expected)
             self.assertEqual(list(latest.parent.glob("*.tmp")), [])
+
+    def test_keyboard_interrupt_after_temp_creation_cleans_hidden_temp(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            interrupted_descriptor: int | None = None
+
+            def interrupt_fdopen(descriptor: int, *args: object, **kwargs: object) -> object:
+                nonlocal interrupted_descriptor
+                del args, kwargs
+                interrupted_descriptor = descriptor
+                raise KeyboardInterrupt("simulated write interruption")
+
+            with patch(
+                "investment_knowledge_mcp.stock_valuation.os.fdopen",
+                side_effect=interrupt_fdopen,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    build_valuation_artifact(
+                        self._context(),
+                        symbol="ACME",
+                        market="US",
+                        output_dir=output_dir,
+                        command="valuation US.ACME",
+                        provider_snapshot=self._snapshot(),
+                        now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
+                    )
+
+            artifact_dir = output_dir / "valuation"
+            self.assertEqual(list(artifact_dir.glob("*.tmp")), [])
+            self.assertFalse((artifact_dir / "ACME_US_valuation_latest.json").exists())
+            self.assertIsNotNone(interrupted_descriptor)
+            assert interrupted_descriptor is not None
+            with self.assertRaises(OSError) as raised:
+                os.fstat(interrupted_descriptor)
+            self.assertEqual(raised.exception.errno, errno.EBADF)
 
     def test_same_stock_same_second_collision_has_one_winner_and_one_explicit_collision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

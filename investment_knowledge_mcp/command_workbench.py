@@ -1599,7 +1599,12 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
     valuation_target = _match_first(
         text,
-        [r"^valuation\s+(.+)$", r"^value\s+(.+)$", r"^估值\s*(.+)$"],
+        [
+            r"^valuation\s+(.+)$",
+            r"^value\s+(.+)$",
+            r"^how is\s+(.+?)\s+valued$",
+            r"^估值\s*(.+)$",
+        ],
         flags=re.IGNORECASE,
     )
     if valuation_target:

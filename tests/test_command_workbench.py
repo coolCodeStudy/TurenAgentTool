@@ -145,6 +145,20 @@ class StockValuationWorkbenchTests(unittest.TestCase):
                     self.assertFalse(preview["confirmation_required"])
                     self.assertIsNone(execution_blocker(preview, confirmed=False))
 
+    def test_prd_natural_valuation_phrase_normalizes_supported_name_alias(self) -> None:
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[],
+        ):
+            preview = parse_workbench_command("how is SK Hynix valued", allow_llm=False)
+
+        self.assertEqual("parsed", preview["status"])
+        self.assertEqual("stock_valuation", preview["action_id"])
+        self.assertEqual("stock valuation KR.000660", preview["exact_command"])
+        self.assertEqual("KR.000660", preview["target"]["canonical"])
+        self.assertFalse(preview["confirmation_required"])
+        self.assertIsNone(execution_blocker(preview, confirmed=False))
+
     def test_market_qualified_unknown_symbol_keeps_current_bootstrap_recovery(self) -> None:
         with mock.patch(
             "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",

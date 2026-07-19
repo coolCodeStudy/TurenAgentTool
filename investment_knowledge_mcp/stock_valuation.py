@@ -652,9 +652,10 @@ def _build_bridge(
     enterprise_value = values.get("enterprise_value") if values.get("enterprise_value") is not None else _calculated_value(derived.get("enterprise_value"))
     revenue, lines = values.get("revenue"), []
     def add(kind: str, display: str, refs: tuple[str, ...] | list[str]) -> None: lines.append({"type": kind, "display": display, "input_refs": tuple(refs)})
-    if (ps := derived.get("ps")) and isinstance(ps.get("display_value"), str): add("sales_anchor", f"P/S: {ps['display_value']} anchors current market value.", ps["input_refs"])
-    if (ev_sales := _safe_divide(enterprise_value, revenue)) is not None and (display := _format(ev_sales, "multiple", currency)) is not None: add("ev_sales_anchor", f"EV/Sales: {display}.", _flatten_refs(("enterprise_value", "revenue"), facts, derived))
-    if (fcf_yield := derived.get("fcf_yield")) and isinstance(fcf_yield.get("display_value"), str): add("fcf_yield", "FCF yield is not meaningful with negative FCF." if fcf_yield.get("meaningful") is False else f"FCF yield: {fcf_yield['display_value']}.", fcf_yield["input_refs"])
+    if _market_fit_state(market_status) != "unsupported":
+        if (ps := derived.get("ps")) and isinstance(ps.get("display_value"), str): add("sales_anchor", f"P/S: {ps['display_value']} anchors current market value.", ps["input_refs"])
+        if (ev_sales := _safe_divide(enterprise_value, revenue)) is not None and (display := _format(ev_sales, "multiple", currency)) is not None: add("ev_sales_anchor", f"EV/Sales: {display}.", _flatten_refs(("enterprise_value", "revenue"), facts, derived))
+        if (fcf_yield := derived.get("fcf_yield")) and isinstance(fcf_yield.get("display_value"), str): add("fcf_yield", "FCF yield is not meaningful with negative FCF." if fcf_yield.get("meaningful") is False else f"FCF yield: {fcf_yield['display_value']}.", fcf_yield["input_refs"])
     ranking = []
     for item in scores:
         frame_gaps = list(gaps) if item["id"] == "comparable_multiples" else [
@@ -1014,8 +1015,11 @@ def _validated_packet_temp(
         text=True,
     )
     temp_path = Path(raw_path)
+    owns_descriptor = True
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+        owns_descriptor = False
+        with handle:
             handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
@@ -1027,7 +1031,12 @@ def _validated_packet_temp(
         if not isinstance(candidate, dict) or not _valid_packet(candidate, symbol, market):
             raise ValueError("temporary valuation packet failed validation")
         return temp_path
-    except Exception:
+    except BaseException:
+        if owns_descriptor:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         temp_path.unlink(missing_ok=True)
         raise
 
