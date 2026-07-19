@@ -1225,7 +1225,10 @@ class DeploymentEngineTests(TestCase):
 
         self.assertTrue(outcome.ok)
         self.assertEqual(f"investment-knowledge-app:{OLD_SHA}", load_state(self.state_path).current_image)
-        self.assertEqual(f"APP_IMAGE_TAG={OLD_SHA}\n", (self.app_root / ".env").read_text())
+        self.assertEqual(
+            f"APP_IMAGE_TAG={OLD_SHA}\nAPP_RELEASE_SHA={OLD_SHA}\n",
+            (self.app_root / ".env").read_text(),
+        )
 
     def test_targeted_rejects_env_selector_mismatch_before_staging(self) -> None:
         self.engine.env_file.write_text(f"APP_IMAGE_TAG={OLDER_SHA}\n", encoding="utf-8")
@@ -1385,7 +1388,10 @@ class DeploymentEngineTests(TestCase):
         self.assertTrue(outcome.ok)
         self.assertFalse(archive.exists())
         self.assertEqual(f"investment-knowledge-app:{TARGET_SHA}", load_state(self.state_path).current_image)
-        self.assertEqual(f"APP_IMAGE_TAG={TARGET_SHA}\n", (self.app_root / ".env").read_text())
+        self.assertEqual(
+            f"APP_IMAGE_TAG={TARGET_SHA}\nAPP_RELEASE_SHA={TARGET_SHA}\n",
+            (self.app_root / ".env").read_text(),
+        )
         self.assertEqual([60], self.clock.sleeps)
         self.assertIn(("docker", "load", "--input", str(archive)), self.runner.commands)
         self.assertIn(

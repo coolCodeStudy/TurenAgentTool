@@ -2112,15 +2112,21 @@ class DeploymentEngine:
         tag = image.rsplit(":", 1)[-1]
         lines = self.env_file.read_text(encoding="utf-8").splitlines() if self.env_file.exists() else []
         updated: list[str] = []
-        replaced = False
+        image_replaced = False
+        release_replaced = False
         for line in lines:
             if line.startswith("APP_IMAGE_TAG="):
                 updated.append(f"APP_IMAGE_TAG={tag}")
-                replaced = True
+                image_replaced = True
+            elif line.startswith("APP_RELEASE_SHA="):
+                updated.append(f"APP_RELEASE_SHA={tag}")
+                release_replaced = True
             else:
                 updated.append(line)
-        if not replaced:
+        if not image_replaced:
             updated.append(f"APP_IMAGE_TAG={tag}")
+        if not release_replaced:
+            updated.append(f"APP_RELEASE_SHA={tag}")
         self._atomic_write(self.env_file, ("\n".join(updated) + "\n").encode())
 
     def _restore_env(self, contents: bytes | None) -> None:
