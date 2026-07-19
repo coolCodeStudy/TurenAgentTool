@@ -285,6 +285,22 @@ def render_access_session_script() -> str:
 </script>"""
 
 
+def render_access_recovery_panel(*, prefix: str) -> str:
+    """Render an initially hidden, credential-only recovery panel for protected actions."""
+    safe_prefix = escape(prefix)
+    return f"""<section id="{safe_prefix}-access-panel" aria-labelledby="{safe_prefix}-access-title" hidden>
+  <h2 id="{safe_prefix}-access-title">Private access</h2>
+  <p id="{safe_prefix}-access-message" role="alert">Private access is required for generation.</p>
+  <label for="{safe_prefix}-access-token">Access credential
+    <input id="{safe_prefix}-access-token" type="password" autocomplete="current-password">
+  </label>
+  <div class="access-actions">
+    <button id="{safe_prefix}-access-continue" class="primary" type="button">Continue</button>
+    <button id="{safe_prefix}-access-forget" type="button">Forget access</button>
+  </div>
+</section>"""
+
+
 def access_error_payload(code: str) -> dict[str, object]:
     details = _ACCESS_ERRORS.get(code, _ACCESS_ERRORS["request_failed"])
     error_code = code if code in _ACCESS_ERRORS else "request_failed"

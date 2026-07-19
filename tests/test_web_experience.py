@@ -374,6 +374,18 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertEqual(1, html.count("<main"))
         self.assertEqual(1, html.count("<h1"))
 
+    def test_weekly_missing_state_has_protected_recovery_not_blank_sections(self) -> None:
+        from investment_knowledge_mcp.weekly_review_web import (
+            render_weekly_review_script,
+            render_weekly_review_workbench_html,
+        )
+
+        html = render_weekly_review_workbench_html()
+        self.assertIn('id="weekly-recovery"', html)
+        self.assertIn('id="weekly-generate"', html)
+        self.assertIn('id="weekly-access-panel"', html)
+        self.assertIn("access.authorizationHeaders()", render_weekly_review_script())
+
     def test_command_installs_handlers_when_browser_storage_is_denied(self) -> None:
         _run_command_script(
             r"""

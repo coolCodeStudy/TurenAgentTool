@@ -221,7 +221,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
                     self.assertEqual(HTTPStatus.OK, status)
                     self.assertTrue(json.loads(body)["ok"])
 
-    def test_public_weekly_review_page_is_read_only_and_has_no_secret_token_ux(self) -> None:
+    def test_public_weekly_review_page_keeps_reads_public_and_has_protected_recovery(self) -> None:
         status, headers, body = self.request("GET", "/weekly-review")
 
         html = body.decode("utf-8")
@@ -232,11 +232,9 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         script = web.render_weekly_review_script()
         self.assertIn("/api/weekly-review", script)
         self.assertNotIn("api-token", html)
-        self.assertNotIn("weekly_review_web_token", html)
-        self.assertNotIn("localStorage", html)
-        self.assertNotIn("/api/weekly-review/generate", html)
-        self.assertNotIn("/api/weekly-review/refresh", html)
-        self.assertNotIn("/api/weekly-review/save", html)
+        self.assertIn('id="weekly-recovery"', html)
+        self.assertIn('id="weekly-generate"', html)
+        self.assertIn('id="weekly-access-panel"', html)
         self.assertNotIn("/api/candidate-insights", html)
         self.assertIn("loadGeneration: 0", script)
         self.assertIn("const controller = new AbortController();", script)
@@ -244,7 +242,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn("function cancelReviewLoad()", script)
         self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
 
-    def test_public_weekly_page_uses_shared_shell_without_token_control(self) -> None:
+    def test_public_weekly_page_uses_shared_shell_with_recovery_only_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()
 
         self.assertEqual(1, html.count('aria-label="主导航"'))
@@ -268,13 +266,8 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn('href="#source-status"', local_nav)
 
         self.assertNotIn('id="api-token"', html)
-        self.assertNotIn("investment_knowledge_access_token", html)
-        self.assertNotIn("command_workbench_token", html)
-        self.assertNotIn("weekly_review_web_token", html)
-        self.assertNotIn("Authorization", html)
-        self.assertNotIn("InvestmentKnowledgeAccess", html)
-        self.assertNotIn("authorizationHeaders", html)
-        self.assertNotIn("localStorage", html)
+        self.assertIn('id="weekly-access-token"', html)
+        self.assertNotIn("configured-access-token", html)
         self.assertIn("公开只读", html)
         self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
         self.assertIn('<header class="page-header">', html)
@@ -296,7 +289,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         compact_css = html.split("@media (max-width: 760px)", 1)[1].split("</style>", 1)[0]
         self.assertIn("input, select, button { min-height: 44px; }", compact_css)
 
-    def test_public_weekly_script_asset_is_tokenless_and_executable(self) -> None:
+    def test_public_weekly_script_asset_uses_access_only_for_generation(self) -> None:
         status, headers, body = self.request("GET", "/assets/weekly-review.js")
 
         script = body.decode("utf-8")
@@ -305,8 +298,8 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
         self.assertIn("/api/weekly-review", script)
         self.assertNotIn("api-token", script)
-        self.assertNotIn("weekly_review_web_token", script)
-        self.assertNotIn("Authorization", script)
+        self.assertIn("access.authorizationHeaders()", script)
+        self.assertIn('fetch("/api/weekly-review/generate"', script)
 
     def test_daily_market_brief_read_remains_public_when_tokens_are_configured(self) -> None:
         status, _, body = self.request("GET", "/api/daily-market-brief?market=HK&date=2026-06-22")
@@ -348,6 +341,13 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertTrue(json.loads(weekly_body)["ok"])
         self.assertEqual(HTTPStatus.SERVICE_UNAVAILABLE, candidate_status)
         self.assertEqual("access_not_configured", json.loads(candidate_body)["error"])
+
+
+class WeeklyReviewPublicReadContractTests(unittest.TestCase):
+    def test_weekly_public_read_contract_stays_tokenless(self) -> None:
+        script = web.render_weekly_review_script()
+        public_read = script.split("function loadReview", 1)[1].split("function generateReview", 1)[0]
+        self.assertNotIn("Authorization", public_read)
 
 
 if __name__ == "__main__":
