@@ -90,6 +90,29 @@ class DeployWorkflowContractTests(TestCase):
         self.assertIn("/deploy/status", authoritative_block)
         self.assertIn("--base-sha \"$base_sha\"", authoritative_block)
 
+    def test_control_plane_version_gate_precedes_image_build(self) -> None:
+        authoritative = self.workflow.index("Build server-authoritative deployment plan")
+        full_image = self.workflow.index("  full_image:")
+        planning_block = self.workflow[authoritative:full_image]
+
+        self.assertIn('control_plane_ref = data.get("control_plane_ref")', planning_block)
+        self.assertIn('control_plane_update_required', planning_block)
+        self.assertIn('if [ "$control_plane_update_required" = "true" ]', planning_block)
+        self.assertIn('Ops control plane update required', planning_block)
+        self.assertIn('.github/workflows/ops-api.yml', planning_block)
+        self.assertIn('mode=install', planning_block)
+        self.assertIn('$target_sha', planning_block)
+
+    def test_legacy_status_without_control_plane_ref_requires_install(self) -> None:
+        authoritative = self.workflow.index("Build server-authoritative deployment plan")
+        full_image = self.workflow.index("  full_image:")
+        planning_block = self.workflow[authoritative:full_image]
+
+        self.assertIn('control_plane_ref = "unknown"', planning_block)
+        self.assertIn('if [ "$control_plane_ref" = "unknown" ]', planning_block)
+        self.assertIn('Ops control plane identity is unavailable', planning_block)
+        self.assertIn('.github/workflows/ops-api.yml', planning_block)
+
     def test_operator_docs_match_exact_tip_policy_and_independent_ops_port(self) -> None:
         deployment = Path("DEPLOYMENT.md").read_text(encoding="utf-8")
         classification = Path("docs/project-management/Deploy-Classification.md").read_text(

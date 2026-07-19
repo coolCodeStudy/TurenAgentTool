@@ -18,6 +18,18 @@ class OpsApiWorkflowContractTests(TestCase):
         self.assertIn('BOOTSTRAP_REF="${{ github.sha }}"', self.workflow)
         self.assertIn("/opt/investment-ops", self.workflow)
 
+    def test_bootstrap_persists_exact_control_plane_ref(self) -> None:
+        bootstrap = Path("scripts/bootstrap_ops_api_v2_on_ecs.sh").read_text(
+            encoding="utf-8"
+        )
+        installer = Path("scripts/install_ops_api_on_ecs.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('OPS_CONTROL_PLANE_REF="$resolved_commit"', bootstrap)
+        self.assertIn("OPS_CONTROL_PLANE_REF must be a lowercase 40-character SHA", installer)
+        self.assertIn("OPS_CONTROL_PLANE_REF=$OPS_CONTROL_PLANE_REF", installer)
+
     def test_control_plane_install_is_explicit_to_avoid_business_deploy_races(self) -> None:
         self.assertNotIn("push:", self.workflow)
         self.assertIn("workflow_dispatch:", self.workflow)

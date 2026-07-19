@@ -37,6 +37,21 @@ OBSOLETE_APPLICATION_SERVICES = (
     *OBSOLETE_GATEWAY_SERVICES,
 )
 
+OPS_CONTROL_PLANE_FILES = frozenset(
+    {
+        "scripts/bootstrap_deploy_baseline.py",
+        "scripts/bootstrap_ops_api_v2_on_ecs.sh",
+        "scripts/deploy_contract.py",
+        "scripts/deploy_preflight.py",
+        "scripts/deploy_release.py",
+        "scripts/deploy_retention.py",
+        "scripts/deploy_state.py",
+        "scripts/deploy_support.py",
+        "scripts/ecs_ops_api.py",
+        "scripts/install_ops_api_on_ecs.sh",
+    }
+)
+
 
 class DeployMode(str, Enum):
     NO_DEPLOY = "no_deploy"
@@ -338,11 +353,30 @@ def serialize_plan(plan: DeploymentPlan) -> dict[str, object]:
         "changed_files": list(plan.changed_files),
         "image_input_files": list(plan.image_input_files),
         "reasons": list(plan.reasons),
+        "control_plane_update_required": requires_control_plane_update(
+            plan.changed_files
+        ),
     }
 
 
+def requires_control_plane_update(paths: Iterable[str]) -> bool:
+    return any(path in OPS_CONTROL_PLANE_FILES for path in paths)
+
+
 def _read_changed_files(repo: Path, base_sha: str, target_sha: str, runner: CommandRunner) -> tuple[str, ...]:
-    result = runner.run(("git", "-C", str(repo), "diff", "--name-only", "-z", base_sha, target_sha))
+    result = runner.run(
+        (
+            "git",
+            "-C",
+            str(repo),
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            base_sha,
+            target_sha,
+        )
+    )
     if result.returncode != 0:
         raise RuntimeError(f"git diff failed: {result.stderr.strip()}")
     return tuple(path for path in result.stdout.split("\0") if path)
