@@ -13,24 +13,24 @@ Use this packet when creating, resuming, or taking over a Feature Coordinator fl
 - Operating model source: `docs/product/Agent-Operating-Model.md`
 - Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
 - Product doc / PRD: `docs/product/PRD-Stock-Valuation-Research.md`
-- Technical plan: Missing on authoritative `origin/main@20baa69`; unreconciled historical plan exists on `origin/codex/release-kline-stock-valuation-p03@acd9856`.
+- Technical plan: Missing on authoritative `origin/main@957220a`; unreconciled historical plan exists on `origin/codex/release-kline-stock-valuation-p03@acd9856` and must be rewritten for current main before implementation.
 - Feature Registry row: `Stock valuation research`
 - Acceptance Queue row: Missing on authoritative state; historical rows `AT-2026-07-01-001`, `AT-2026-07-04-002`, and `AT-2026-07-05-003` require evidence review before reconciliation.
-- Delivery Queue rows: `DQ-2026-07-19-002` is the active Product/recovery gate; older stock-valuation rows exist only on historical coordinator/release refs.
-- Current authoritative branch/ref: `origin/main@20baa6903389fec0e97ccbd4cd443af6d840eeb1`
+- Delivery Queue rows: Product recovery `DQ-2026-07-19-002` is closed by the Coordinator Return Gate; technical-planning dispatch `DQ-2026-07-19-003` is active. Older stock-valuation rows exist only on historical coordinator/release refs.
+- Current authoritative branch/ref: `origin/main@957220a8a7d430225679c74b4ed8231027a90209`
 - Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
 - Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
 - User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
-- Current state: Product decisions are being resolved while the coordinator audits a stale-state contradiction: historical branches contain implementation and acceptance evidence that authoritative `main` does not contain.
-- Known blockers: No irreducible product blocker. Historical implementation must be reconciled onto current `main` without reverting frontend, Kline, access, scheduler, or deployment changes.
-- Active child threads or role sessions: Product Agent dispatch will review PRD readiness and the recovered P0 boundary.
+- Current state: Product-ready PRD commit `91b741b` is accepted. Technical planning is rewriting the historical P0 contract for current main before selective Development recovery.
+- Known blockers: No product blocker. Historical implementation must be reconciled onto current `main` without reverting frontend, Kline, access, scheduler, deployment-control-plane, or shared-data-source changes.
+- Active child threads or role sessions: Technical Planning / Development Agent owns `DQ-2026-07-19-003`; this Feature Coordinator remains the active watcher.
 - Watch contract:
   - Watched item: Product readiness return, followed by Development integration/review and independent Acceptance Testing returns.
   - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
   - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
   - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
-- Next owner: Product Agent for a bounded PRD readiness/recovery review; Development Agent follows only after PRD and technical-plan gates are ready.
-- Next handoff: Confirm the artifact-backed P0, provider/source policy, manual-first peer policy, and acceptance boundary; remove unresolved blocking questions.
+- Next owner: Technical Planning / Development Agent for a current-main implementation plan; implementation follows only after the coordinator accepts the plan as ready.
+- Next handoff: Map all 17 PRD acceptance criteria to exact current-main files, tests, artifact contracts, verification, deploy impact, and independent cloud acceptance without wholesale stale-branch merging.
 - Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
 - Deploy decision: `blocked` until a current-main-compatible implementation ref passes Development and review gates; then `self_deploy` through the shared workflow if no serialized deploy conflict exists.
 - Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
