@@ -271,13 +271,12 @@ class StockValuationTests(unittest.TestCase):
             )
         hostile = json.loads(json.dumps(packet))
         hostile["target_resolution"].update({
-            "input_target": {"endpoint": "https://evil.example/target"},
-            "normalized_target": "https://evil.example/target",
             "company_name": "Bearer evidence-secret",
+            "endpoint": "https://evil.example/target",
         })
         hostile["stock"].update({
-            "symbol": {"path": "/private/stock"},
             "name": "Authorization: evidence-secret",
+            "path": "/private/stock",
         })
         hostile["facts"].append({
             "id": {"headers": "evidence-secret"}, "metric": "revenue", "value": {"raw": 1},
@@ -311,7 +310,10 @@ class StockValuationTests(unittest.TestCase):
             "direct_investment_advice": "yes", "writes_formal_user_insight": {"raw": True},
             "research_aid_only": True,
         }
-        hostile["input"] = {"symbol": "https://evil.example/input", "market": {"raw": "US"}, "created_at": ["evidence-secret"]}
+        hostile["input"] = {
+            "symbol": "ACME", "market": "US", "created_at": ["evidence-secret"],
+            "endpoint": "https://evil.example/input",
+        }
 
         evidence = build_valuation_artifact_evidence(hostile)
         serialized = json.dumps(evidence).lower()
@@ -437,6 +439,25 @@ class StockValuationTests(unittest.TestCase):
         self.assertNotIn("core_business", invalid["stock"])
         self.assertIn("context_identity_mismatch", invalid["degraded_state"]["reason_codes"])
         self.assertIn("snapshot_identity_mismatch", invalid["degraded_state"]["reason_codes"])
+
+    def test_every_supplied_snapshot_identity_field_must_be_valid_and_consistent(self) -> None:
+        identity_cases = (
+            ("ACME", "US", "HK.EVIL"), ("EVIL", "US", "US.ACME"), ("ACME", "HK", "US.ACME"),
+            (["ACME"], "US", "US.ACME"), ("ACME", ["US"], "US.ACME"), ("ACME", "US", ["US.ACME"]),
+        )
+        for normalized_symbol, normalized_market, normalized_target in identity_cases:
+            snapshot = self._snapshot()
+            snapshot["target_resolution"] = {"normalized_symbol": normalized_symbol, "normalized_market": normalized_market, "normalized_target": normalized_target}
+            with self.subTest(identity=snapshot["target_resolution"]):
+                packet = self._build(snapshot=snapshot)
+                self.assertEqual(packet["facts"], [])
+                self.assertIn("snapshot_identity_mismatch", packet["degraded_state"]["reason_codes"])
+
+        matching = self._snapshot()
+        matching["target_resolution"] = {
+            "normalized_symbol": "ACME", "normalized_market": "US", "normalized_target": "US.ACME",
+        }
+        self.assertGreater(len(self._build(snapshot=matching)["facts"]), 0)
 
     def test_untrusted_ingress_is_normalized_before_packet_persistence(self) -> None:
         context = self._context()
@@ -763,6 +784,36 @@ class StockValuationTests(unittest.TestCase):
         for hostile in ("EVIL", "HK.EVIL", "KR.000660"):
             self.assertNotIn(hostile, json.dumps(evidence) + card)
 
+    def test_public_projection_drops_foreign_branches_instead_of_relabeling_them(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["facts"][0]["provider"] = "OfficialResearchProvider"
+        snapshot["target_resolution"]["mapping_source"] = "provider"
+        packet = json.loads(json.dumps(self._build(snapshot=snapshot)))
+        packet["stock"].update({
+            "symbol": "EVIL", "market": "HK", "profile_present": True,
+            "scoring_signals": {"core_business": ["growth_scenario"]},
+        })
+        packet["target_resolution"].update({
+            "input_target": "HK.EVIL", "normalized_target": "HK.EVIL",
+            "normalized_symbol": "EVIL", "normalized_market": "HK",
+        })
+
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+        serialized = json.dumps(evidence) + card
+
+        self.assertEqual(evidence["stock"], {"symbol": "ACME", "market": "US"})
+        self.assertEqual(evidence["target"]["normalized_target"], "US.ACME")
+        self.assertNotIn("mapping_category", evidence["target"])
+        self.assertEqual(evidence["facts"], [])
+        self.assertEqual(evidence["source_coverage"]["source_registry"], [])
+        self.assertEqual(evidence["source_coverage"]["provider_statuses"], {})
+        self.assertEqual(evidence["source_coverage"]["source_attempts"], [])
+        self.assertIn("context_identity_mismatch", evidence["degraded_state"]["reason_codes"])
+        self.assertIn("snapshot_identity_mismatch", evidence["degraded_state"]["reason_codes"])
+        for foreign in ("HK.EVIL", "EVIL", "official_research", "generic_provider"):
+            self.assertNotIn(foreign, serialized)
+
     def test_public_projection_drops_records_with_incomplete_required_refs(self) -> None:
         packet = json.loads(json.dumps(self._build()))
         ps = next(item for item in packet["deterministic_calculations"] if item["metric"] == "ps")
@@ -1030,11 +1081,41 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(fit["fit_to_current_market_value"], "partial_fit")
         self.assertEqual(fit["confidence"], "low")
 
+    def test_comparable_market_status_policy_fails_closed(self) -> None:
+        omitted = object()
+        base_snapshot = {
+            "facts": [
+                {"metric": "market_cap", "value": 100.0, "source_type": "market_snapshot", "currency": "USD"},
+                {"metric": "revenue", "value": 50.0, "source_type": "sec_companyfacts", "currency": "USD"},
+            ],
+            "target_resolution": {"normalized_target": "US.ACME"},
+        }
+        cases = (
+            (("present", "available", "success"), 0.65, "fits"),
+            (("stale", "partial"), 0.65, "partial_fit"),
+            (("attempted", "unknown", "missing", "unavailable", "failed", "omitted", "absent", None, [], omitted), 0.2, "insufficient_data"),
+        )
+        for statuses, expected_score, expected_fit in cases:
+            for status in statuses:
+                snapshot = dict(base_snapshot)
+                if status is not omitted:
+                    snapshot["market_snapshot_status"] = status
+                with self.subTest(status="omitted" if status is omitted else status):
+                    packet = self._build(context={"stock": {"symbol": "ACME", "market": "US"}}, snapshot=snapshot)
+                    evidence = build_valuation_artifact_evidence(packet)
+                    for artifact in (packet, evidence):
+                        score = next(item for item in artifact["internal_frame_scores"] if item["id"] == "comparable_multiples")
+                        fit = next(item for item in artifact["market_implied_bridge"]["frame_fit_ranking"] if item["id"] == "comparable_multiples")
+                        self.assertEqual(score["score"], expected_score)
+                        self.assertEqual(fit["fit_to_current_market_value"], expected_fit)
+                        if expected_fit != "fits":
+                            self.assertEqual(fit["confidence"], "low")
+
     def test_profile_presence_is_distinct_from_canonical_scoring_signal(self) -> None:
         detailed = self._context()
-        detailed["stock"]["name"] = "Acme Precision Systems"
-        detailed["stock"]["core_business"] = "Precision industrial systems for specialist customers."
-        detailed["stock"]["stock_character"] = "Mature operator with extensive disclosures."
+        detailed["stock"]["name"] = "Acme Retail"
+        detailed["stock"]["core_business"] = "Detailed retail operations for specialist customers."
+        detailed["stock"]["stock_character"] = "Established retail operator with extensive disclosures."
         packet = self._build(context=detailed)
 
         self.assertTrue(packet["stock"]["profile_present"])
@@ -1050,6 +1131,16 @@ class StockValuationTests(unittest.TestCase):
 
         empty = self._build(context={"stock": {"symbol": "ACME", "market": "US"}})
         self.assertIn("missing_stock_profile", empty["degraded_state"]["reason_codes"])
+
+        standalone_ai = self._build(context={"stock": {
+            "symbol": "ACME", "market": "US", "core_business": "AI platform for enterprise customers.",
+        }})
+        self.assertEqual(standalone_ai["stock"]["scoring_signals"], {"core_business": ["growth_scenario"]})
+
+        cjk_substring = self._build(context={"stock": {
+            "symbol": "ACME", "market": "US", "core_business": "服务细分市场空间需求。",
+        }})
+        self.assertEqual(cjk_substring["stock"]["scoring_signals"], {"core_business": ["growth_scenario"]})
 
 
 if __name__ == "__main__":

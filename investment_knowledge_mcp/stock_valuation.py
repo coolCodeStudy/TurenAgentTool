@@ -31,6 +31,8 @@ _FACT_METRICS = frozenset({"revenue", "gross_profit", "operating_income", "net_i
 _MONEY_METRICS = _FACT_METRICS - {"shares_outstanding", "price"}
 _SOURCE_FAMILIES = frozenset({"company_ir", "market_snapshot", "official_financial", "regulator_filing", "unknown", "vendor_financial"})
 _SOURCE_STATUSES = frozenset({"available", "attempted", "complete_missing", "failed", "failure", "missing", "not_attempted", "partial", "present", "stale", "success", "unavailable", "unknown"})
+_CURRENT_MARKET_STATUSES = frozenset({"available", "present", "success"})
+_LIMITED_MARKET_STATUSES = frozenset({"partial", "stale"})
 _CORE_BY_ID = {str(item["id"]): item for item in CORE_FRAMES}
 _ASSUMPTIONS = ("This artifact is deterministic research scaffolding, not a target price.", "Peer sets and analyst estimates require separately sourced evidence.")
 _FRAME_WORDS = {
@@ -227,6 +229,14 @@ def _optional_target(value: object) -> str | None:
     return normalized if _SAFE_TARGET.fullmatch(normalized) else None
 
 
+def _qualified_target(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, str) or "." not in value:
+        return None
+    market, symbol = value.split(".", 1)
+    normalized_market, normalized_symbol = _optional_target(market), _optional_target(symbol)
+    return (normalized_market, normalized_symbol) if normalized_market and normalized_symbol else None
+
+
 def _enum(value: object, allowed: set[str] | frozenset[str]) -> str | None:
     return value if isinstance(value, str) and value in allowed else None
 
@@ -248,24 +258,24 @@ def _normalize_stock(context: dict[str, object], symbol: str, market: str) -> tu
     for field in ("core_business", "stock_character"):
         text = raw.get(field)
         if not isinstance(text, str): continue
-        matches = sorted(frame_id for frame_id, words in _FRAME_WORDS.items() if any(word in text.lower() for word in words))
+        matches = sorted(frame_id for frame_id, words in _FRAME_WORDS.items() if any(_keyword_match(text, word) for word in words))
         if matches: signals[field] = matches
     if signals: stock["scoring_signals"] = signals
     return stock, False
 
 
+def _keyword_match(text: str, keyword: str) -> bool:
+    if keyword.isascii():
+        return re.search(rf"(?<![A-Za-z0-9_]){re.escape(keyword)}(?![A-Za-z0-9_])", text, re.IGNORECASE) is not None
+    return keyword in text
+
+
 def _snapshot_mismatch(snapshot: dict[str, object], symbol: str, market: str) -> bool:
     target = snapshot.get("target_resolution") if isinstance(snapshot.get("target_resolution"), dict) else {}
-    if target.get("normalized_symbol") is not None and _optional_target(target.get("normalized_symbol")) != symbol: return True
-    if target.get("normalized_market") is not None and _optional_target(target.get("normalized_market")) != market: return True
-    candidate_symbol, candidate_market = _optional_target(target.get("normalized_symbol")), _optional_target(target.get("normalized_market"))
-    normalized = target.get("normalized_target")
-    if normalized is not None and (not isinstance(normalized, str) or "." not in normalized): return True
-    if isinstance(normalized, str):
-        market_part, symbol_part = normalized.split(".", 1)
-        candidate_symbol, candidate_market = candidate_symbol or _optional_target(symbol_part), candidate_market or _optional_target(market_part)
-        if candidate_symbol is None or candidate_market is None: return True
-    return bool((candidate_symbol not in (None, symbol)) or (candidate_market not in (None, market)))
+    if "normalized_symbol" in target and _optional_target(target.get("normalized_symbol")) != symbol: return True
+    if "normalized_market" in target and _optional_target(target.get("normalized_market")) != market: return True
+    if "normalized_target" in target and _qualified_target(target.get("normalized_target")) != (market, symbol): return True
+    return False
 
 
 def _source_descriptor(raw: dict[str, object]) -> dict[str, object]:
@@ -441,9 +451,15 @@ def _frame_supported(frame_id: str, values: dict[str, float], calculations: list
     if frame_id == "fcf": return "free_cash_flow" in values or {"operating_cash_flow", "capex"} <= values.keys()
     if frame_id == "comparable_multiples":
         market_value = values.get("market_cap") if "market_cap" in values else _calculated_value(calculated.get("market_cap"))
-        if market_status in {"complete_missing", "failed", "failure", "missing", "not_attempted", "unavailable"}: return False
+        if _market_fit_state(market_status) == "unsupported": return False
         return market_value is not None and market_value > 0 and any((values.get(metric) or 0) > 0 for metric in ("revenue", "net_income", "ebitda"))
     return True
+
+
+def _market_fit_state(status: str | None) -> str:
+    if status in _CURRENT_MARKET_STATUSES: return "current"
+    if status in _LIMITED_MARKET_STATUSES: return "limited"
+    return "unsupported"
 
 
 def _score_frames(stock: dict[str, object], values: dict[str, float], calculations: list[dict[str, object]], gaps: list[str], facts: dict[str, str], market_status: str | None = None) -> list[dict[str, object]]:
@@ -481,9 +497,9 @@ def _build_bridge(values: dict[str, float], calculations: list[dict[str, object]
     ranking = []
     for item in scores:
         supported = _frame_supported(str(item["id"]), values, calculations, market_status)
-        stale = item["id"] == "comparable_multiples" and market_status == "stale"
-        fit = "insufficient_data" if not supported else "partial_fit" if stale else "fits" if item["score"] >= .6 else "partial_fit" if item["score"] >= .2 else "insufficient_data"
-        ranking.append({**item, "fit_to_current_market_value": fit, "why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": list(gaps), "confidence": "low" if gaps or not supported or stale else "medium"})
+        limited = item["id"] == "comparable_multiples" and _market_fit_state(market_status) == "limited"
+        fit = "insufficient_data" if not supported else "partial_fit" if limited else "fits" if item["score"] >= .6 else "partial_fit" if item["score"] >= .2 else "insufficient_data"
+        ranking.append({**item, "fit_to_current_market_value": fit, "why_it_fits_or_not": "ranked using deterministic normalized inputs", "main_data_gaps": list(gaps), "confidence": "low" if gaps or not supported or limited else "medium"})
     return {"bridge_lines": lines, "frame_fit_ranking": ranking}
 
 
@@ -505,7 +521,7 @@ def _attempts(value: object) -> list[dict[str, str]]:
 def _coverage(facts: list[dict[str, object]], registry: list[dict[str, object]], snapshot: dict[str, object]) -> dict[str, object]:
     market_present = any(_enum(item.get("metric"), {"price", "market_cap"}) for item in facts)
     financial_present = any(_enum(item.get("metric"), _MONEY_METRICS - {"market_cap", "enterprise_value"}) for item in facts)
-    return {"fact_count": len(facts), "fact_source_id_count": len({item["source_id"] for item in facts}), "source_count": len(registry), "official_source_count": sum(item.get("family") == "official_financial" for item in registry), "market_snapshot_status": _status(snapshot.get("market_snapshot_status")) or ("present" if market_present else "missing"), "financial_fact_status": _status(snapshot.get("financial_fact_status")) or ("present" if financial_present else "missing"), "provider_statuses": {"market_snapshot": {"status": "available" if market_present else "complete_missing"}, "financial_facts": {"status": "available" if financial_present else "complete_missing"}}, "source_attempts": _attempts(snapshot.get("source_attempts")), "source_registry": registry}
+    return {"fact_count": len(facts), "fact_source_id_count": len({item["source_id"] for item in facts}), "source_count": len(registry), "official_source_count": sum(item.get("family") == "official_financial" for item in registry), "market_snapshot_status": _status(snapshot.get("market_snapshot_status")) or "unknown", "financial_fact_status": _status(snapshot.get("financial_fact_status")) or ("present" if financial_present else "missing"), "provider_statuses": {"market_snapshot": {"status": "available" if market_present else "complete_missing"}, "financial_facts": {"status": "available" if financial_present else "complete_missing"}}, "source_attempts": _attempts(snapshot.get("source_attempts")), "source_registry": registry}
 
 
 def _interpretation(selected: list[dict[str, object]], gaps: list[str]) -> list[str]:
@@ -569,11 +585,16 @@ def _checked_public_projection(packet: dict[str, object]) -> dict[str, object]:
 
 def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     input_data = _project_input(packet.get("input")); symbol, market = str(input_data.get("symbol") or ""), str(input_data.get("market") or "")
-    registry = _project_registry(packet.get("source_coverage")); registry_by_id = {str(item["id"]): item for item in registry}
+    has_input_identity = bool(symbol and market)
+    stock_mismatch = has_input_identity and _public_stock_mismatch(packet.get("stock"), symbol, market)
+    target_mismatch = has_input_identity and _public_target_mismatch(packet.get("target_resolution"), symbol, market)
+    identity_mismatch = not has_input_identity or stock_mismatch or target_mismatch
+    raw_coverage = {} if identity_mismatch else packet.get("source_coverage")
+    registry = _project_registry(raw_coverage); registry_by_id = {str(item["id"]): item for item in registry}
     facts = _project_facts(packet.get("facts"), registry_by_id)
-    internal_stock = _project_stock(packet.get("stock"), symbol, market) if symbol and market else {}
+    internal_stock = _project_stock(packet.get("stock"), symbol, market) if has_input_identity and not stock_mismatch else ({"symbol": symbol, "market": market} if has_input_identity else {})
     assumptions = _project_assumptions(packet.get("assumptions")); confirmed = assumptions.get("user_confirmed_valuation_case") is True
-    coverage = _project_coverage(packet.get("source_coverage"), facts, registry)
+    coverage = _project_coverage(raw_coverage, facts, registry)
     domain = _canonical_domain(internal_stock, facts, registry, confirmed, market, _status(coverage.get("market_snapshot_status")))
     allowed = _allowed_refs({str(item["id"]) for item in facts}, internal_stock)
     calculations = _matching_records(packet.get("deterministic_calculations"), domain["calculations"], "metric", ("value", "raw_value", "meaningful", "meaningfulness_reason", "formula", "inputs", "input_refs", "currency"), allowed)
@@ -583,15 +604,32 @@ def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     bridge_lines = _matching_records(raw_bridge.get("bridge_lines"), domain["bridge"]["bridge_lines"], "type", ("input_refs",), allowed)
     ranking = _matching_records(raw_bridge.get("frame_fit_ranking"), domain["bridge"]["frame_fit_ranking"], "id", ("score", "input_refs", "fit_to_current_market_value", "confidence"), allowed)
     identity_codes = _codes((packet.get("degraded_state") or {}).get("reason_codes") if isinstance(packet.get("degraded_state"), dict) else None, {"context_identity_mismatch", "snapshot_identity_mismatch"})
+    if stock_mismatch: identity_codes.append("context_identity_mismatch")
+    if target_mismatch: identity_codes.append("snapshot_identity_mismatch")
     reasons = _reason_codes(domain["gap_codes"], coverage, internal_stock, identity_codes)
     degraded = {"degraded": bool(reasons), "reason_codes": reasons, "gap_codes": list(domain["gap_codes"]), "reasons": [_REASON_COPY[code] for code in reasons], "data_gaps": [_GAP_COPY[code] for code in domain["gap_codes"]]}
     public_selected = [_public_frame(item) for item in selected]
     currency = domain["currency"]
     raw_target = packet.get("target_resolution") if isinstance(packet.get("target_resolution"), dict) else {}
-    mapping = _enum(raw_target.get("mapping_category"), frozenset(_MAPPING_MAP.values()))
+    mapping = None if identity_mismatch else _enum(raw_target.get("mapping_category"), frozenset(_MAPPING_MAP.values()))
     target = _target_resolution(symbol, market, currency, mapping) if symbol and market else ({"currency": currency} if currency else {})
     public_stock = {key: internal_stock[key] for key in ("symbol", "market", "profile_present", "scoring_signals") if key in internal_stock}
     return {"schema": "stock_valuation_evidence.v1", "input": input_data, "stock": public_stock, "target": target, "facts": facts, "assumptions": assumptions, "deterministic_calculations": calculations, "internal_frame_scores": [_public_frame(item) for item in scores], "selected_frames": public_selected, "market_implied_bridge": {"bridge_lines": bridge_lines, "frame_fit_ranking": [_public_frame(item) for item in ranking]}, "interpretation": _interpretation(public_selected, list(domain["gap_codes"])), "watch_items": _watch_items(public_selected), "source_coverage": coverage, "degraded_state": degraded, "safety": _project_safety()}
+
+
+def _public_stock_mismatch(value: object, symbol: str, market: str) -> bool:
+    raw = value if isinstance(value, dict) else {}
+    return _optional_target(raw.get("symbol")) != symbol or _optional_target(raw.get("market")) != market
+
+
+def _public_target_mismatch(value: object, symbol: str, market: str) -> bool:
+    raw = value if isinstance(value, dict) else {}
+    return bool(
+        _optional_target(raw.get("normalized_symbol")) != symbol
+        or _optional_target(raw.get("normalized_market")) != market
+        or _qualified_target(raw.get("normalized_target")) != (market, symbol)
+        or _qualified_target(raw.get("input_target")) != (market, symbol)
+    )
 
 
 def _project_input(value: object) -> dict[str, object]:
