@@ -80,6 +80,7 @@ _MAX_ACTIVE_WEB_HISTORY_JOBS = 3
 
 class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     server_version = "InvestmentKnowledgeWeeklyReviewWeb/0.1"
+    protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
         from investment_knowledge_mcp.app_gateway import dispatch_get
@@ -97,8 +98,14 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     def _render_weekly_review_page(self) -> str:
         return render_weekly_review_workbench_html()
 
+    def _render_weekly_review_script(self) -> str:
+        return render_weekly_review_script()
+
     def _render_daily_market_brief_page(self) -> str:
         return render_daily_market_brief_html()
+
+    def _render_daily_market_brief_script(self) -> str:
+        return render_daily_market_brief_script()
 
     def _handle_workbench_parse(self, payload: dict[str, Any]) -> None:
         response = execute_workbench_request(
@@ -460,12 +467,22 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
         body = content.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
+        self.close_connection = True
+
+    def _write_javascript(self, status: HTTPStatus, content: str) -> None:
+        body = content.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
 
 
-def render_weekly_review_workbench_html() -> str:
+def _render_weekly_review_workbench_html_with_inline_script() -> str:
     start, end = _default_week_range()
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -1132,7 +1149,26 @@ def render_weekly_review_workbench_html() -> str:
 </html>"""
 
 
-def render_daily_market_brief_html() -> str:
+def _split_inline_script(html: str) -> tuple[str, str, str]:
+    opening = "<script>"
+    closing = "</script>"
+    start = html.index(opening)
+    content_start = start + len(opening)
+    end = html.index(closing, content_start)
+    return html[:start], html[content_start:end], html[end + len(closing) :]
+
+
+def render_weekly_review_workbench_html() -> str:
+    before, _, after = _split_inline_script(_render_weekly_review_workbench_html_with_inline_script())
+    return f'{before}<script src="/assets/weekly-review.js"></script>{after}'
+
+
+def render_weekly_review_script() -> str:
+    _, script, _ = _split_inline_script(_render_weekly_review_workbench_html_with_inline_script())
+    return script
+
+
+def _render_daily_market_brief_html_with_inline_script() -> str:
     today = ""
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -1784,6 +1820,16 @@ def render_daily_market_brief_html() -> str:
   </script>
 </body>
 </html>"""
+
+
+def render_daily_market_brief_html() -> str:
+    before, _, after = _split_inline_script(_render_daily_market_brief_html_with_inline_script())
+    return f'{before}<script src="/assets/daily-market-brief.js"></script>{after}'
+
+
+def render_daily_market_brief_script() -> str:
+    _, script, _ = _split_inline_script(_render_daily_market_brief_html_with_inline_script())
+    return script
 
 
 def _resolve_week_request(payload: dict[str, Any]) -> tuple[date, date]:

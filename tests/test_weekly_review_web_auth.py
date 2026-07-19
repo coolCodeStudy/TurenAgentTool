@@ -228,8 +228,9 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertEqual(HTTPStatus.OK, status)
         self.assertIn("text/html", headers["Content-Type"])
         self.assertIn('data-slot="attribution"', html)
-        self.assertIn("function attributionCards", html)
-        self.assertIn("/api/weekly-review", html)
+        self.assertIn('<script src="/assets/weekly-review.js"></script>', html)
+        script = web.render_weekly_review_script()
+        self.assertIn("/api/weekly-review", script)
         self.assertNotIn("api-token", html)
         self.assertNotIn("weekly_review_web_token", html)
         self.assertNotIn("localStorage", html)
@@ -237,11 +238,11 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertNotIn("/api/weekly-review/refresh", html)
         self.assertNotIn("/api/weekly-review/save", html)
         self.assertNotIn("/api/candidate-insights", html)
-        self.assertIn("loadGeneration: 0", html)
-        self.assertIn("const controller = new AbortController();", html)
-        self.assertIn("读取超时，请重试。", html)
-        self.assertIn("function cancelReviewLoad()", html)
-        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
+        self.assertIn("loadGeneration: 0", script)
+        self.assertIn("const controller = new AbortController();", script)
+        self.assertIn("读取超时，请重试。", script)
+        self.assertIn("function cancelReviewLoad()", script)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
 
     def test_public_weekly_page_uses_shared_shell_without_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()
@@ -285,14 +286,27 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn('<label for="status-filter">持仓状态筛选', html)
         self.assertIn('id="message" class="notice" role="status"', html)
         self.assertIn('id="error-message" class="notice error" role="alert"', html)
-        self.assertIn("message.hidden = false;", html)
-        self.assertIn("message.hidden = true;", html)
-        self.assertIn('role="region" aria-label="', html)
-        self.assertIn('tabindex="0"', html)
-        self.assertIn('class="table-scroll"', html)
+        script = web.render_weekly_review_script()
+        self.assertIn("message.hidden = false;", script)
+        self.assertIn("message.hidden = true;", script)
+        self.assertIn('role="region" aria-label="', script)
+        self.assertIn('tabindex="0"', script)
+        self.assertIn('class="table-scroll"', script)
         self.assertRegex(html, r"input, select, button\s*\{[^}]*min-height:\s*40px")
         compact_css = html.split("@media (max-width: 760px)", 1)[1].split("</style>", 1)[0]
         self.assertIn("input, select, button { min-height: 44px; }", compact_css)
+
+    def test_public_weekly_script_asset_is_tokenless_and_executable(self) -> None:
+        status, headers, body = self.request("GET", "/assets/weekly-review.js")
+
+        script = body.decode("utf-8")
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertIn("application/javascript", headers["Content-Type"])
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
+        self.assertIn("/api/weekly-review", script)
+        self.assertNotIn("api-token", script)
+        self.assertNotIn("weekly_review_web_token", script)
+        self.assertNotIn("Authorization", script)
 
     def test_daily_market_brief_read_remains_public_when_tokens_are_configured(self) -> None:
         status, _, body = self.request("GET", "/api/daily-market-brief?market=HK&date=2026-06-22")
@@ -301,6 +315,18 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertEqual(HTTPStatus.OK, status)
         self.assertTrue(payload["ok"])
         self.assertEqual("missing", payload["status"])
+
+    def test_public_daily_script_asset_remains_tokenless(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web as web
+
+        html = web.render_daily_market_brief_html()
+        script = web.render_daily_market_brief_script()
+
+        self.assertIn('<script src="/assets/daily-market-brief.js"></script>', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
+        self.assertIn("/api/daily-market-brief", script)
+        self.assertNotIn("api-token", html)
+        self.assertNotIn("api-token", script)
 
     def test_candidate_read_fails_closed_without_configured_tokens_while_weekly_read_stays_public(self) -> None:
         config = SimpleNamespace(

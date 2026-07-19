@@ -32,6 +32,7 @@ from scripts.deploy_support import CommandResult
 OLD_SHA = "a" * 40
 TARGET_SHA = "b" * 40
 OLDER_SHA = "0" * 40
+CONTROL_PLANE_SHA = "c" * 40
 
 
 def _without_compose_file(command: tuple[str, ...]) -> tuple[str, ...]:
@@ -1142,6 +1143,38 @@ class DeploymentEngineTests(TestCase):
         self.assertIn("Ops control plane update required", outcome.message)
         self.assertIn(TARGET_SHA, outcome.message)
 
+    def test_installed_control_plane_covers_later_docs_only_target(self) -> None:
+        cumulative_plan = replace(
+            self.plan,
+            changed_files=(
+                "scripts/deploy_contract.py",
+                "investment_knowledge_mcp/weekly_review_web.py",
+                "docs/project-management/Delivery-Queue.md",
+            ),
+        )
+        lineage_plan = DeploymentPlan(
+            mode=DeployMode.NO_DEPLOY,
+            targets=(),
+            changed_files=("docs/project-management/Delivery-Queue.md",),
+            image_input_files=(),
+            reasons=("documentation",),
+        )
+        bases: list[str] = []
+
+        def classify_by_base(repo, base_sha, target_sha, runner):
+            del repo, target_sha, runner
+            bases.append(base_sha)
+            return lineage_plan if base_sha == CONTROL_PLANE_SHA else cumulative_plan
+
+        self.engine.plan_builder = classify_by_base
+        self.engine.control_plane_ref = CONTROL_PLANE_SHA
+
+        outcome = self.engine.deploy(self.targeted_request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual([OLD_SHA, CONTROL_PLANE_SHA], bases)
+        self.assertEqual([TARGET_SHA], self.stage_calls)
+
     def test_manual_quick_cannot_bypass_control_plane_only_ref_mismatch(self) -> None:
         self.plan = DeploymentPlan(
             mode=DeployMode.NO_DEPLOY,
@@ -1192,7 +1225,10 @@ class DeploymentEngineTests(TestCase):
 
         self.assertTrue(outcome.ok)
         self.assertEqual(f"investment-knowledge-app:{OLD_SHA}", load_state(self.state_path).current_image)
-        self.assertEqual(f"APP_IMAGE_TAG={OLD_SHA}\n", (self.app_root / ".env").read_text())
+        self.assertEqual(
+            f"APP_IMAGE_TAG={OLD_SHA}\nAPP_RELEASE_SHA={OLD_SHA}\n",
+            (self.app_root / ".env").read_text(),
+        )
 
     def test_targeted_rejects_env_selector_mismatch_before_staging(self) -> None:
         self.engine.env_file.write_text(f"APP_IMAGE_TAG={OLDER_SHA}\n", encoding="utf-8")
@@ -1352,7 +1388,10 @@ class DeploymentEngineTests(TestCase):
         self.assertTrue(outcome.ok)
         self.assertFalse(archive.exists())
         self.assertEqual(f"investment-knowledge-app:{TARGET_SHA}", load_state(self.state_path).current_image)
-        self.assertEqual(f"APP_IMAGE_TAG={TARGET_SHA}\n", (self.app_root / ".env").read_text())
+        self.assertEqual(
+            f"APP_IMAGE_TAG={TARGET_SHA}\nAPP_RELEASE_SHA={TARGET_SHA}\n",
+            (self.app_root / ".env").read_text(),
+        )
         self.assertEqual([60], self.clock.sleeps)
         self.assertIn(("docker", "load", "--input", str(archive)), self.runner.commands)
         self.assertIn(
@@ -1611,6 +1650,29 @@ class DeploymentEngineTests(TestCase):
         self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
         self.assertIn("dingtalk-api", outcome.activated_services)
+
+    def test_emergency_full_recovery_accepts_no_deploy_baseline_with_complete_targets(self) -> None:
+        archive = self._managed_archive()
+        self.plan = DeploymentPlan(
+            mode=DeployMode.NO_DEPLOY,
+            targets=(),
+            changed_files=("docs/project-management/Delivery-Queue.md",),
+            image_input_files=(),
+            reasons=("release recovery record",),
+        )
+        request = self._full_request(
+            "main",
+            DeployMode.FULL_IMAGE,
+            APPLICATION_SERVICES,
+            archive,
+            "Restore the accepted application after an active release overwrite.",
+        )
+
+        outcome = self.engine.deploy(request)
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(DeployMode.FULL_IMAGE, outcome.mode)
+        self.assertEqual(APPLICATION_SERVICES, outcome.activated_services)
 
     def test_feature_ref_is_rejected_even_with_valid_emergency_reason(self) -> None:
         request = replace(

@@ -656,10 +656,23 @@ class DeploymentEngine:
             and requires_control_plane_update(context.computed_plan.changed_files)
             and self.control_plane_ref != context.target_sha
         ):
-            raise DeploymentError(
-                "Ops control plane update required: installed control-plane ref "
-                f"does not match target {context.target_sha}"
-            )
+            try:
+                control_plane_delta = self.plan_builder(
+                    self.repo,
+                    self.control_plane_ref,
+                    context.target_sha,
+                    self.runner,
+                )
+            except ValueError as error:
+                raise DeploymentError(
+                    "Ops control plane update required: installed control-plane ref "
+                    f"cannot classify target {context.target_sha}: {error}"
+                ) from error
+            if requires_control_plane_update(control_plane_delta.changed_files):
+                raise DeploymentError(
+                    "Ops control plane update required: installed control-plane ref "
+                    f"does not cover target {context.target_sha}"
+                )
         context.plan = self._validate_request(request, context.computed_plan)
         if context.plan.mode is DeployMode.NO_DEPLOY:
             return DeployOutcome(
@@ -1390,7 +1403,12 @@ class DeploymentEngine:
             )
         ):
             if request.emergency_reason is not None:
-                if requested_targets != plan.targets:
+                full_recovery_from_no_deploy = (
+                    request.requested_mode is DeployMode.FULL_IMAGE
+                    and plan.mode is DeployMode.NO_DEPLOY
+                    and requested_targets == tuple(sorted(APPLICATION_SERVICES))
+                )
+                if requested_targets != plan.targets and not full_recovery_from_no_deploy:
                     raise DeploymentError(
                         "emergency override cannot change server-computed deployment targets"
                     )
@@ -2094,15 +2112,21 @@ class DeploymentEngine:
         tag = image.rsplit(":", 1)[-1]
         lines = self.env_file.read_text(encoding="utf-8").splitlines() if self.env_file.exists() else []
         updated: list[str] = []
-        replaced = False
+        image_replaced = False
+        release_replaced = False
         for line in lines:
             if line.startswith("APP_IMAGE_TAG="):
                 updated.append(f"APP_IMAGE_TAG={tag}")
-                replaced = True
+                image_replaced = True
+            elif line.startswith("APP_RELEASE_SHA="):
+                updated.append(f"APP_RELEASE_SHA={tag}")
+                release_replaced = True
             else:
                 updated.append(line)
-        if not replaced:
+        if not image_replaced:
             updated.append(f"APP_IMAGE_TAG={tag}")
+        if not release_replaced:
+            updated.append(f"APP_RELEASE_SHA={tag}")
         self._atomic_write(self.env_file, ("\n".join(updated) + "\n").encode())
 
     def _restore_env(self, contents: bytes | None) -> None:

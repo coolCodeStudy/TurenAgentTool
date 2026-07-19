@@ -26,7 +26,9 @@ class AppGatewayRouteTableTests(unittest.TestCase):
         expected = {
             ("GET", "/"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/weekly-review"): ("weekly_review", AccessClass.PUBLIC_READ),
+            ("GET", "/assets/weekly-review.js"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/daily-market-brief"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/assets/daily-market-brief.js"): ("daily_market_brief", AccessClass.PUBLIC_READ),
             ("GET", "/health"): ("gateway", AccessClass.PUBLIC_READ),
             ("GET", "/command"): ("command", AccessClass.PUBLIC_READ),
             ("GET", "/api/command-workbench/actions"): ("command", AccessClass.PUBLIC_READ),
@@ -84,6 +86,9 @@ class _FakeHandler:
     def _write_html(self, status: HTTPStatus, content: str) -> None:
         self.calls.append(("html", status, content))
 
+    def _write_javascript(self, status: HTTPStatus, content: str) -> None:
+        self.calls.append(("javascript", status, content))
+
     def _read_json_body(self) -> dict[str, object] | None:
         self.calls.append(("read",))
         return self.payload
@@ -108,6 +113,44 @@ class _FakeHandler:
 
 
 class AppGatewayDispatchTests(unittest.TestCase):
+    def test_html_responses_use_explicit_http11_close_framing(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web as web
+
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler.wfile = BytesIO()
+        handler.close_connection = False
+        headers: list[tuple[str, str]] = []
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock(side_effect=lambda name, value: headers.append((name, value)))
+        handler.end_headers = mock.Mock()
+
+        handler._write_html(HTTPStatus.OK, "每日简报")
+
+        self.assertEqual("HTTP/1.1", web.WeeklyReviewWebHandler.protocol_version)
+        self.assertIn(("Content-Type", "text/html; charset=utf-8"), headers)
+        self.assertNotIn("Content-Length", {name for name, _ in headers})
+        self.assertIn(("Connection", "close"), headers)
+        self.assertTrue(handler.close_connection)
+        self.assertEqual("每日简报".encode("utf-8"), handler.wfile.getvalue())
+
+    def test_javascript_responses_use_close_framing_without_length(self) -> None:
+        from investment_knowledge_mcp import weekly_review_web as web
+
+        handler = object.__new__(web.WeeklyReviewWebHandler)
+        handler.wfile = BytesIO()
+        handler.close_connection = False
+        headers: list[tuple[str, str]] = []
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock(side_effect=lambda name, value: headers.append((name, value)))
+        handler.end_headers = mock.Mock()
+
+        handler._write_javascript(HTTPStatus.OK, "window.ready = true;")
+
+        self.assertIn(("Content-Type", "application/javascript; charset=utf-8"), headers)
+        self.assertNotIn("Content-Length", {name for name, _ in headers})
+        self.assertIn(("Connection", "close"), headers)
+        self.assertTrue(handler.close_connection)
+
     def test_mixed_access_post_is_decided_by_shared_policy_before_body_read(self) -> None:
         from investment_knowledge_mcp import app_gateway
         from investment_knowledge_mcp.web_access import AccessClass

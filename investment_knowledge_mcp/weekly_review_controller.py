@@ -10,6 +10,9 @@ def dispatch_weekly_review_get(handler: Any, parsed: ParseResult) -> bool:
     if parsed.path in {"/", "/weekly-review"}:
         handler._write_html(HTTPStatus.OK, handler._render_weekly_review_page())
         return True
+    if parsed.path == "/assets/weekly-review.js":
+        handler._write_javascript(HTTPStatus.OK, handler._render_weekly_review_script())
+        return True
     if parsed.path == "/api/weekly-review":
         handler._handle_weekly_review_read(parse_qs(parsed.query))
         return True

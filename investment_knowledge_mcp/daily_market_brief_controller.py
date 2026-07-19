@@ -9,6 +9,9 @@ def dispatch_daily_market_brief_get(handler: Any, parsed: ParseResult) -> bool:
     if parsed.path == "/daily-market-brief":
         handler._write_html(HTTPStatus.OK, handler._render_daily_market_brief_page())
         return True
+    if parsed.path == "/assets/daily-market-brief.js":
+        handler._write_javascript(HTTPStatus.OK, handler._render_daily_market_brief_script())
+        return True
     routes = {
         "/api/daily-market-brief": "_handle_daily_market_brief_read",
         "/api/daily-market-brief/dates": "_handle_daily_market_brief_dates",

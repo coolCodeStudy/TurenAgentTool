@@ -287,8 +287,26 @@ jobs:
           PY
           )"
           if [ "$control_plane_update_required" = "true" ] && [ "$control_plane_ref" != "$target_sha" ]; then
-            echo "::error::Ops control plane update required for $target_sha. Run .github/workflows/ops-api.yml with mode=install from that exact SHA, wait for health, then rerun this deployment."
-            exit 1
+            control_plane_delta_json="$(mktemp)"
+            python3 scripts/classify_deploy_change.py \
+              --repo . \
+              --base-sha "$control_plane_ref" \
+              --target-sha "$target_sha" \
+              --format json > "$control_plane_delta_json"
+            control_plane_update_required="$(
+              python3 - "$control_plane_delta_json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              plan = json.load(handle)
+          print("true" if plan.get("control_plane_update_required") is True else "false")
+          PY
+            )"
+            if [ "$control_plane_update_required" = "true" ]; then
+              echo "::error::Ops control plane update required for $target_sha. Run .github/workflows/ops-api.yml with mode=install from that exact SHA, wait for health, then rerun this deployment."
+              exit 1
+            fi
           fi
 
           python3 - "$plan_json" "$target_sha" "$base_sha" "$EMERGENCY_REASON" >> "$GITHUB_OUTPUT" <<'PY'

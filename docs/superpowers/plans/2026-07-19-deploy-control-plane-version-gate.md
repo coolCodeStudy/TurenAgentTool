@@ -104,7 +104,7 @@ Expected: fail because the workflow does not compare control-plane identity.
 
 - [ ] **Step 3: Implement the planning gate**
 
-Extend the status parser to require both 40-character SHAs. After creating `plan_json`, fail with a GitHub error when the plan requires a control-plane update and the installed SHA differs. Name `.github/workflows/ops-api.yml`, `mode=install`, and the exact target SHA in the message.
+Extend the status parser to require both 40-character SHAs. After creating `plan_json`, classify the narrower installed-control-plane-ref-to-target lineage when the cumulative plan includes control-plane files. Fail with a GitHub error only when that lineage still requires a control-plane update. Name `.github/workflows/ops-api.yml`, `mode=install`, and the target SHA in the message. Add regression coverage proving a documentation-only descendant does not force a redundant install.
 
 - [ ] **Step 4: Run `tests.test_deploy_workflow_contract` and confirm GREEN**
 

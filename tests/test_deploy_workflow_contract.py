@@ -97,6 +97,7 @@ class DeployWorkflowContractTests(TestCase):
 
         self.assertIn('control_plane_ref = data.get("control_plane_ref")', planning_block)
         self.assertIn('control_plane_update_required', planning_block)
+        self.assertIn('--base-sha "$control_plane_ref"', planning_block)
         self.assertIn('if [ "$control_plane_update_required" = "true" ]', planning_block)
         self.assertIn('Ops control plane update required', planning_block)
         self.assertIn('.github/workflows/ops-api.yml', planning_block)
