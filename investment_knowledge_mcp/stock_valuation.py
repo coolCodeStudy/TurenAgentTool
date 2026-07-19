@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import tempfile
+import threading
 from typing import Any
 
 
 CORE_FRAMES: tuple[dict[str, Any], ...] = (
-    {"id": "fcf", "name": "Free Cash Flow", "core_question": "What durable free cash flow can the business produce?", "triggers": ("FCF turns positive", "cash conversion improves"), "failure_conditions": ("one-time cash release", "higher reinvestment")},
-    {"id": "comparable_multiples", "name": "Comparable Multiples", "core_question": "Which multiple can comparable businesses support?", "triggers": ("quality improves", "peer multiple expands"), "failure_conditions": ("wrong peer group", "unsupported multiple expansion")},
-    {"id": "sotp_asset_value", "name": "SOTP / Asset Value", "core_question": "Are parts or assets worth more than the consolidated value?", "triggers": ("asset sale", "better segment disclosure"), "failure_conditions": ("assets cannot be monetized", "holding discount persists")},
-    {"id": "cyclical", "name": "Cyclical", "core_question": "Are earnings at a cycle peak, trough, or mid-cycle?", "triggers": ("pricing inflects", "inventory clears"), "failure_conditions": ("peak earnings treated as durable", "supply response")},
-    {"id": "growth_scenario", "name": "Growth / Scenario", "core_question": "What is the value under explicit growth and milestone scenarios?", "triggers": ("TAM rises", "milestone validates demand"), "failure_conditions": ("TAM overstated", "milestone delayed")},
+    {"id": "fcf", "name": "Free Cash Flow", "core_question": "What durable free cash flow can the business produce?", "assumptions": ("Free cash flow reflects durable cash conversion", "reinvestment requirements remain observable"), "triggers": ("FCF turns positive", "cash conversion improves"), "failure_conditions": ("one-time cash release", "higher reinvestment")},
+    {"id": "comparable_multiples", "name": "Comparable Multiples", "core_question": "Which multiple can comparable businesses support?", "assumptions": ("available market value and operating denominators are comparable", "peer evidence remains candidate until explicitly confirmed"), "triggers": ("quality improves", "peer multiple expands"), "failure_conditions": ("wrong peer group", "unsupported multiple expansion")},
+    {"id": "sotp_asset_value", "name": "SOTP / Asset Value", "core_question": "Are parts or assets worth more than the consolidated value?", "assumptions": ("segment or asset values can be observed separately", "net debt and ownership claims remain visible"), "triggers": ("asset sale", "better segment disclosure"), "failure_conditions": ("assets cannot be monetized", "holding discount persists")},
+    {"id": "cyclical", "name": "Cyclical", "core_question": "Are earnings at a cycle peak, trough, or mid-cycle?", "assumptions": ("cycle position can be distinguished from durable earnings", "supply and demand signals remain observable"), "triggers": ("pricing inflects", "inventory clears"), "failure_conditions": ("peak earnings treated as durable", "supply response")},
+    {"id": "growth_scenario", "name": "Growth / Scenario", "core_question": "What is the value under explicit growth and milestone scenarios?", "assumptions": ("growth scenarios depend on observable milestones", "future scale is not treated as a confirmed fact"), "triggers": ("TAM rises", "milestone validates demand"), "failure_conditions": ("TAM overstated", "milestone delayed")},
 )
 SPECIALIST_FRAMES: tuple[dict[str, Any], ...] = (
     {"id": "dividend", "name": "Dividend", "core_question": "Can distributable cash flows sustain dividends?", "specialist_only": True},
-    {"id": "residual_income", "name": "Residual Income", "core_question": "Does return on equity exceed the cost of equity?", "specialist_only": True},
+    {"id": "residual_income", "name": "Residual Income / ROE-PB", "core_question": "Does return on equity exceed the cost of equity?", "specialist_only": True},
     {"id": "event_driven", "name": "Event-Driven", "core_question": "Does a defined corporate event change value realization?", "specialist_only": True},
 )
 
@@ -31,6 +34,13 @@ _FACT_METRICS = frozenset({"revenue", "gross_profit", "operating_income", "net_i
 _MONEY_METRICS = _FACT_METRICS - {"shares_outstanding", "price"}
 _SOURCE_FAMILIES = frozenset({"company_ir", "market_snapshot", "official_financial", "regulator_filing", "unknown", "vendor_financial"})
 _SOURCE_STATUSES = frozenset({"available", "attempted", "complete_missing", "failed", "failure", "missing", "not_attempted", "partial", "present", "stale", "success", "unavailable", "unknown"})
+_FRESHNESS_LABELS = frozenset({"latest_filing", "latest_market_session", "fresh", "stale"})
+_MISSING_CATEGORIES = frozenset({"market_data", "official_financial_facts"})
+_SOURCE_STATES = frozenset({"complete", "stale", "financial_missing", "market_missing", "both_missing"})
+_MARKET_FACT_METRICS = frozenset({"price", "market_cap", "enterprise_value", "shares_outstanding"})
+_OFFICIAL_FAMILIES = frozenset({"official_financial", "regulator_filing", "company_ir"})
+_MARKET_STALE_AFTER = timedelta(days=7)
+_STOCK_WRITE_LOCKS = tuple(threading.Lock() for _ in range(64))
 _CURRENT_MARKET_STATUSES = frozenset({"available", "present", "success"})
 _LIMITED_MARKET_STATUSES = frozenset({"partial", "stale"})
 _CORE_BY_ID = {str(item["id"]): item for item in CORE_FRAMES}
@@ -84,6 +94,7 @@ _REASON_COPY = {
     "missing_official_source": "official financial source coverage is missing",
     "missing_stock_profile": "stock profile is missing",
     "no_canonical_scoring_signal": "no canonical valuation scoring signal was derived from the stock profile",
+    "stale_market_data": "one or more market fields are stale",
 }
 _CALC_SPECS: dict[str, tuple[str, tuple[str, ...], str, str | None]] = {
     "free_cash_flow": ("operating_cash_flow - abs(capex)", ("operating_cash_flow", "capex"), "currency", None),
@@ -130,8 +141,9 @@ def build_valuation_artifact(
     facts, registry = _normalize_facts(safe_context, safe_snapshot)
     currency = _infer_currency(facts, market)
     facts = [_decorate_fact(fact, currency) for fact in facts]
-    coverage = _coverage(facts, registry, safe_snapshot)
-    domain = _canonical_domain(stock, facts, registry, _confirmed_case(safe_context), market, str(coverage["market_snapshot_status"]))
+    coverage = _coverage(facts, registry, safe_snapshot, instant)
+    confirmed_case = _confirmed_case(safe_context, symbol, market)
+    domain = _canonical_domain(stock, facts, registry, confirmed_case, market, str(coverage["market_snapshot_status"]))
     calculations, gap_codes = domain["calculations"], domain["gap_codes"]
     identity_codes = []
     if context_mismatch:
@@ -146,7 +158,7 @@ def build_valuation_artifact(
         "stock": stock,
         "target_resolution": _target_resolution(symbol, market, currency, _mapping_category(safe_snapshot)),
         "facts": facts,
-        "assumptions": {"user_confirmed_valuation_case": _confirmed_case(safe_context), "items": list(_ASSUMPTIONS)},
+        "assumptions": _assumptions(confirmed_case, selected),
         "deterministic_calculations": calculations,
         "internal_frame_scores": scores,
         "selected_frames": selected,
@@ -154,7 +166,7 @@ def build_valuation_artifact(
         "interpretation": _interpretation(selected, gap_codes),
         "watch_items": _watch_items(selected),
         "source_coverage": coverage,
-        "degraded_state": {"degraded": bool(reason_codes), "reason_codes": reason_codes, "gap_codes": gap_codes},
+        "degraded_state": _degraded_state(reason_codes, gap_codes, coverage),
         "safety": {"direct_investment_advice": False, "writes_formal_user_insight": False, "research_aid_only": True},
     }
     if not _valid_packet(packet, symbol, market):
@@ -190,6 +202,7 @@ def render_valuation_card(packet: dict[str, object]) -> str:
         raise TypeError("packet must be a mapping")
     public = _checked_public_projection(packet)
     stock, degraded = public["stock"], public["degraded_state"]
+    coverage = public["source_coverage"]
     calculations = {str(item["metric"]): item for item in public["deterministic_calculations"]}
     target = ".".join(str(stock[key]) for key in ("market", "symbol") if stock.get(key))
     lines = [f"Valuation research card: {target}{' ' + str(stock['name']) if stock.get('name') else ''}".rstrip(), f"Status: {'degraded' if degraded.get('degraded') else 'ok'}", "Data gaps:"]
@@ -200,10 +213,44 @@ def render_valuation_card(packet: dict[str, object]) -> str:
     for label, metric in (("Market cap", "market_cap"), ("Enterprise value", "enterprise_value"), ("FCF margin", "fcf_margin"), ("PE", "pe"), ("P/S", "ps"), ("EV/EBITDA", "ev_ebitda"), ("EV/FCF", "ev_fcf")):
         if metric in calculations:
             lines.append(f"- {label}: {calculations[metric]['display_value']}")
+    lines.append("Data freshness:")
+    lines.append(f"- Financials as of: {coverage.get('financials_as_of', 'unavailable')}")
+    lines.append(f"- Market data as of: {coverage.get('market_data_as_of', 'unavailable')}")
+    lines.append(f"- Stale fields: {', '.join(coverage.get('stale_fields', [])) or 'none'}")
+    lines.append("Source coverage:")
+    lines.append(f"- Attempted source families: {', '.join(coverage.get('attempted_source_families', [])) or 'none'}")
+    lines.append(f"- Missing categories: {', '.join(coverage.get('missing_categories', [])) or 'none'}")
+    recovery = {
+        "financial_missing": "official financial facts are missing",
+        "market_missing": "current market data is missing",
+        "both_missing": "official financial facts and current market data are missing",
+        "stale": "stale fields require refresh before current-market interpretation",
+    }.get(str(degraded.get("source_state")))
+    if recovery:
+        lines.append(f"Recovery: {recovery}; rerun after the named source categories refresh.")
+    lines.append("Market-implied bridge:")
+    bridge_lines = public["market_implied_bridge"].get("bridge_lines", [])
+    lines.extend(f"- {item['display']}" for item in bridge_lines)
+    if not bridge_lines:
+        lines.append("- unavailable because the required market inputs are missing")
     lines.append("Relevant frames:")
-    lines.extend(f"- {frame['name']} (fit={frame.get('fit_to_current_market_value', 'unknown')})" for frame in public["selected_frames"])
-    for heading, values in (("Assumptions:", public["assumptions"].get("items", [])), ("Interpretation:", public["interpretation"]), ("Watch items:", public["watch_items"])):
-        lines.append(heading); lines.extend(f"- {item}" for item in values)
+    for frame in public["selected_frames"]:
+        lines.append(f"- {frame['name']} (fit={frame.get('fit_to_current_market_value', 'unknown')}, confidence={frame.get('confidence', 'low')})")
+        lines.append(f"  Assumptions: {', '.join(frame.get('assumptions', []))}")
+        lines.append(f"  Rerating triggers: {', '.join(frame.get('rerating_triggers', []))}")
+        lines.append(f"  Failure conditions: {', '.join(frame.get('failure_conditions', []))}")
+        provenance = frame.get("provenance") if isinstance(frame.get("provenance"), dict) else {}
+        lines.append(f"  Rule provenance: {provenance.get('rule_id', 'unavailable')}")
+    lines.append("Assumptions:")
+    lines.extend(f"- {item}" for item in public["assumptions"].get("items", []))
+    interpretation = public["interpretation"]
+    lines.append("Interpretation:")
+    lines.extend(f"- {item}" for item in interpretation.get("summary", []))
+    optional = interpretation.get("optional_narrative", {})
+    if isinstance(optional, dict):
+        lines.append(f"- Optional narrative: {optional.get('status', 'unavailable')} ({str(optional.get('provenance', 'model_unavailable')).replace('_', ' ')})")
+    lines.append("Watch items:")
+    lines.extend(f"- {item}" for item in public["watch_items"])
     lines.append("Safety: research aid only; no buy/sell recommendation and no formal user insight was written.")
     return "\n".join(lines)
 
@@ -321,6 +368,11 @@ def _timestamp(value: object) -> str | None:
     return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _datetime_from_timestamp(value: object) -> datetime | None:
+    normalized = _timestamp(value)
+    return datetime.fromisoformat(normalized) if normalized is not None else None
+
+
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)): return None
     try: number = float(value)
@@ -343,6 +395,8 @@ def _normalize_facts(context: dict[str, object], snapshot: dict[str, object]) ->
             if normalized := _currency(raw.get("currency")): fact["currency"] = normalized
             if normalized := _period(raw.get("period_end")): fact["period_end"] = normalized
             if normalized := _timestamp(raw.get("timestamp")): fact["timestamp"] = normalized
+            if normalized := _timestamp(raw.get("fetched_at")): fact["fetched_at"] = normalized
+            if normalized := _enum(raw.get("freshness"), _FRESHNESS_LABELS): fact["freshness"] = normalized
             latest[metric] = fact
     for owner in (context, snapshot):
         records = owner.get("sources")
@@ -436,13 +490,13 @@ def _calculate(values: dict[str, float], facts: dict[str, str], currency: str | 
 
 
 def _data_gap_codes(values: dict[str, float], calculations: list[dict[str, object]], registry: list[dict[str, object]], confirmed_case: bool) -> list[str]:
+    del confirmed_case
     derived, gaps = {str(item["metric"]) for item in calculations}, []
     if "price" not in values and "market_cap" not in values: gaps.append("missing_market_data")
     if "enterprise_value" not in values and "enterprise_value" not in derived: gaps.append("missing_enterprise_value")
     for metric in ("revenue", "free_cash_flow", "net_income"):
         if metric not in values and metric not in derived: gaps.append(f"missing_{metric.replace('free_cash_flow', 'fcf')}")
     if not any(item.get("source_type") != "unknown" for item in registry): gaps.append("missing_source_metadata")
-    if not confirmed_case: gaps.append("missing_confirmed_case")
     return gaps
 
 
@@ -477,7 +531,24 @@ def _score_frames(stock: dict[str, object], values: dict[str, float], calculatio
     result = []
     for frame_id, value in sorted(score.items(), key=lambda item: (-item[1], item[0])):
         refs = [f"packet:method_library:{frame_id}", *_flatten_refs(fact_inputs[frame_id], facts, derived), *(f"packet:stock:scoring_signals:{field}:{frame_id}" for field in matched[frame_id])]
-        result.append({"id": frame_id, "name": _CORE_BY_ID[frame_id]["name"], "score": round(min(value, 1), 3), "reason": "ranked from normalized facts and declared stock fields", "input_refs": tuple(dict.fromkeys(refs)), "degraded_by": [gap for gap in gaps if frame_id.split("_")[0] in gap]})
+        frame = _CORE_BY_ID[frame_id]
+        input_refs = tuple(dict.fromkeys(refs))
+        result.append({
+            "id": frame_id,
+            "name": frame["name"],
+            "score": round(min(value, 1), 3),
+            "reason": "ranked from normalized facts and declared stock fields",
+            "input_refs": input_refs,
+            "degraded_by": [gap for gap in gaps if frame_id.split("_")[0] in gap],
+            "assumptions": list(frame["assumptions"]),
+            "rerating_triggers": list(frame["triggers"]),
+            "failure_conditions": list(frame["failure_conditions"]),
+            "provenance": {
+                "type": "deterministic_rule",
+                "rule_id": "stock_valuation_frame_score.v1",
+                "input_refs": input_refs,
+            },
+        })
     return result
 
 
@@ -518,20 +589,95 @@ def _attempts(value: object) -> list[dict[str, str]]:
     return [{"family": family, "status": status} for item in candidates if isinstance(item, dict) and (family := _enum(item.get("family"), _SOURCE_FAMILIES)) and (status := _status(item.get("status")))]
 
 
-def _coverage(facts: list[dict[str, object]], registry: list[dict[str, object]], snapshot: dict[str, object]) -> dict[str, object]:
-    market_present = any(_enum(item.get("metric"), {"price", "market_cap"}) for item in facts)
-    financial_present = any(_enum(item.get("metric"), _MONEY_METRICS - {"market_cap", "enterprise_value"}) for item in facts)
-    return {"fact_count": len(facts), "fact_source_id_count": len({item["source_id"] for item in facts}), "source_count": len(registry), "official_source_count": sum(item.get("family") == "official_financial" for item in registry), "market_snapshot_status": _status(snapshot.get("market_snapshot_status")) or "unknown", "financial_fact_status": _status(snapshot.get("financial_fact_status")) or ("present" if financial_present else "missing"), "provider_statuses": {"market_snapshot": {"status": "available" if market_present else "complete_missing"}, "financial_facts": {"status": "available" if financial_present else "complete_missing"}}, "source_attempts": _attempts(snapshot.get("source_attempts")), "source_registry": registry}
+def _coverage(
+    facts: list[dict[str, object]],
+    registry: list[dict[str, object]],
+    snapshot: dict[str, object],
+    created_at: datetime,
+) -> dict[str, object]:
+    market_facts = [item for item in facts if item.get("source_family") == "market_snapshot" and item.get("metric") in _MARKET_FACT_METRICS]
+    official_facts = [item for item in facts if item.get("source_family") in _OFFICIAL_FAMILIES and item.get("metric") not in _MARKET_FACT_METRICS]
+    financial_periods = sorted({str(item["period_end"]) for item in official_facts if isinstance(item.get("period_end"), str)})
+    market_observations = sorted({str(item["timestamp"]) for item in market_facts if isinstance(item.get("timestamp"), str)})
+    stale_fields = sorted({str(item["metric"]) for item in facts if _fact_is_stale(item, created_at)})
+    missing_categories = sorted(
+        (["market_data"] if not market_facts else [])
+        + (["official_financial_facts"] if not official_facts else [])
+    )
+    attempts = _attempts(snapshot.get("source_attempts"))
+    attempted_families = sorted({item["family"] for item in attempts if item["status"] != "not_attempted"})
+    market_status = _status(snapshot.get("market_snapshot_status")) or "unknown"
+    if any(item.get("metric") in stale_fields for item in market_facts):
+        market_status = "stale"
+    financial_status = _status(snapshot.get("financial_fact_status")) or ("present" if official_facts else "missing")
+    result: dict[str, object] = {
+        "fact_count": len(facts),
+        "fact_source_id_count": len({item["source_id"] for item in facts}),
+        "source_count": len(registry),
+        "official_source_count": sum(item.get("family") in _OFFICIAL_FAMILIES for item in registry),
+        "market_snapshot_status": market_status,
+        "financial_fact_status": financial_status,
+        "provider_statuses": {
+            "market_snapshot": {"status": "available" if market_facts else "complete_missing"},
+            "financial_facts": {"status": "available" if official_facts else "complete_missing"},
+        },
+        "source_attempts": attempts,
+        "attempted_source_families": attempted_families,
+        "missing_categories": missing_categories,
+        "stale_fields": stale_fields,
+        "source_registry": registry,
+    }
+    if financial_periods:
+        result["financials_as_of"] = financial_periods[-1]
+    if market_observations:
+        result["market_data_as_of"] = market_observations[-1]
+    return result
 
 
-def _interpretation(selected: list[dict[str, object]], gaps: list[str]) -> list[str]:
+def _fact_is_stale(fact: dict[str, object], created_at: datetime) -> bool:
+    if fact.get("freshness") == "stale":
+        return True
+    if fact.get("source_family") != "market_snapshot":
+        return False
+    timestamp = _timestamp(fact.get("timestamp"))
+    if timestamp is None:
+        return False
+    observed_at = datetime.fromisoformat(timestamp)
+    return created_at - observed_at > _MARKET_STALE_AFTER
+
+
+def _interpretation(selected: list[dict[str, object]], gaps: list[str]) -> dict[str, object]:
     items = [f"{_CORE_BY_ID[str(item['id'])]['name']} is a selected research frame." for item in selected if str(item.get("id")) in _CORE_BY_ID]
-    if gaps: items.append("Data gaps mean this is research scaffolding rather than a target price.")
-    return items
+    if gaps:
+        items.append("Data gaps mean this is research scaffolding rather than a target price.")
+    return {
+        "summary": items,
+        "provenance": {"type": "deterministic_rule", "rule_id": "stock_valuation_frame_selection.v1"},
+        "optional_narrative": {"status": "unavailable", "provenance": "model_unavailable"},
+    }
 
 
 def _watch_items(selected: list[dict[str, object]]) -> list[str]:
-    return [f"{_CORE_BY_ID[str(item['id'])]['name']} triggers: {', '.join(_CORE_BY_ID[str(item['id'])]['triggers'])}." for item in selected if str(item.get("id")) in _CORE_BY_ID]
+    result: list[str] = []
+    for item in selected:
+        frame = _CORE_BY_ID.get(str(item.get("id")))
+        if frame is None:
+            continue
+        result.append(f"{frame['name']} rerating triggers: {', '.join(frame['triggers'])}.")
+        result.append(f"{frame['name']} failure conditions: {', '.join(frame['failure_conditions'])}.")
+    return result
+
+
+def _assumptions(confirmed_case: bool, selected: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "user_confirmed_valuation_case": confirmed_case,
+        "items": list(_ASSUMPTIONS),
+        "by_frame": [
+            {"frame_id": str(item["id"]), "items": list(_CORE_BY_ID[str(item["id"])]["assumptions"])}
+            for item in selected
+            if str(item.get("id")) in _CORE_BY_ID
+        ],
+    }
 
 
 def _target_resolution(symbol: str, market: str, fallback_currency: str | None, mapping_category: str | None = None) -> dict[str, object]:
@@ -545,8 +691,21 @@ def _infer_currency(facts: list[dict[str, object]], market: str) -> str | None:
     return next((_currency(fact.get("currency")) for fact in facts if _currency(fact.get("currency"))), None) or {"US": "USD", "HK": "HKD", "KR": "KRW"}.get(market)
 
 
-def _confirmed_case(context: dict[str, object]) -> bool:
-    return any(isinstance(item, dict) and item.get("confirmed_by_user") is True for group in ("stock_insights", "stock_knowledge") for item in (context.get(group) if isinstance(context.get(group), list) else []))
+def _confirmed_case(context: dict[str, object], symbol: str, market: str) -> bool:
+    cases = context.get("valuation_cases")
+    if not isinstance(cases, list):
+        return False
+    for item in cases:
+        if not isinstance(item, dict):
+            continue
+        if (
+            item.get("schema") == "stock_valuation_case.v1"
+            and item.get("confirmed_by_user") is True
+            and _optional_target(item.get("symbol")) == symbol
+            and _optional_target(item.get("market")) == market
+        ):
+            return True
+    return False
 
 
 def _canonical_domain(stock: dict[str, object], facts: list[dict[str, object]], registry: list[dict[str, object]], confirmed_case: bool, market: str, market_status: str | None = None) -> dict[str, object]:
@@ -562,16 +721,111 @@ def _canonical_domain(stock: dict[str, object], facts: list[dict[str, object]], 
 
 def _reason_codes(gaps: list[str], coverage: dict[str, object], stock: dict[str, object], identity_codes: list[str] | tuple[str, ...] = ()) -> list[str]:
     profile_code = "no_canonical_scoring_signal" if stock.get("profile_present") else "missing_stock_profile"
-    return sorted(set([*gaps, *identity_codes, *( [] if coverage.get("official_source_count") else ["missing_official_source"]), *( [] if stock.get("scoring_signals") else [profile_code])]))
+    return sorted(set([
+        *gaps,
+        *identity_codes,
+        *( [] if coverage.get("official_source_count") else ["missing_official_source"]),
+        *( [] if stock.get("scoring_signals") else [profile_code]),
+        *( ["stale_market_data"] if coverage.get("stale_fields") else []),
+    ]))
+
+
+def _source_state(coverage: dict[str, object]) -> str:
+    missing = set(_codes(coverage.get("missing_categories"), set(_MISSING_CATEGORIES)))
+    if missing == {"market_data", "official_financial_facts"}:
+        return "both_missing"
+    if "official_financial_facts" in missing:
+        return "financial_missing"
+    if "market_data" in missing:
+        return "market_missing"
+    if coverage.get("stale_fields"):
+        return "stale"
+    return "complete"
+
+
+def _degraded_state(reason_codes: list[str], gap_codes: list[str], coverage: dict[str, object]) -> dict[str, object]:
+    return {
+        "degraded": bool(reason_codes),
+        "reason_codes": reason_codes,
+        "gap_codes": gap_codes,
+        "source_state": _source_state(coverage),
+        "missing_categories": list(coverage.get("missing_categories", [])),
+        "attempted_source_families": list(coverage.get("attempted_source_families", [])),
+        "stale_fields": list(coverage.get("stale_fields", [])),
+    }
 
 
 def _write_packet(packet: dict[str, object], output_dir: Path, symbol: str, market: str, instant: datetime) -> Path:
     directory = output_dir / "valuation"; directory.mkdir(parents=True, exist_ok=True)
     timestamped = directory / f"{symbol}_{market}_valuation_{instant.strftime('%Y%m%dT%H%M%SZ')}.json"
     latest = directory / f"{symbol}_{market}_valuation_latest.json"
-    serialized = json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
-    timestamped.write_text(serialized + "\n", encoding="utf-8"); latest.write_text(serialized + "\n", encoding="utf-8")
+    serialized = json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    lock = _stock_write_lock(directory, symbol, market)
+    with lock:
+        if timestamped.is_file():
+            try:
+                existing = timestamped.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise FileExistsError("valuation artifact timestamp collision") from exc
+            if existing != serialized:
+                raise FileExistsError("valuation artifact timestamp collision")
+
+        timestamp_temp: Path | None = None
+        latest_temp: Path | None = None
+        try:
+            timestamp_temp = _validated_packet_temp(
+                directory, timestamped.name, serialized, symbol=symbol, market=market,
+            )
+            latest_temp = _validated_packet_temp(
+                directory, latest.name, serialized, symbol=symbol, market=market,
+            )
+            os.replace(timestamp_temp, timestamped)
+            os.replace(latest_temp, latest)
+        finally:
+            if timestamp_temp is not None:
+                timestamp_temp.unlink(missing_ok=True)
+            if latest_temp is not None:
+                latest_temp.unlink(missing_ok=True)
     return timestamped
+
+
+def _stock_write_lock(directory: Path, symbol: str, market: str) -> threading.Lock:
+    key = f"{directory.resolve()}\0{market}\0{symbol}".encode("utf-8")
+    index = int.from_bytes(hashlib.sha256(key).digest()[:2], "big") % len(_STOCK_WRITE_LOCKS)
+    return _STOCK_WRITE_LOCKS[index]
+
+
+def _validated_packet_temp(
+    directory: Path,
+    destination_name: str,
+    serialized: str,
+    *,
+    symbol: str,
+    market: str,
+) -> Path:
+    descriptor, raw_path = tempfile.mkstemp(
+        dir=directory,
+        prefix=f".{destination_name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temp_path = Path(raw_path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        with temp_path.open("r", encoding="utf-8") as handle:
+            candidate = json.load(
+                handle,
+                parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+            )
+        if not isinstance(candidate, dict) or not _valid_packet(candidate, symbol, market):
+            raise ValueError("temporary valuation packet failed validation")
+        return temp_path
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 # Shared typed public projection ------------------------------------------
@@ -593,9 +847,10 @@ def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     registry = _project_registry(raw_coverage); registry_by_id = {str(item["id"]): item for item in registry}
     facts = _project_facts(packet.get("facts"), registry_by_id)
     internal_stock = _project_stock(packet.get("stock"), symbol, market) if has_input_identity and not stock_mismatch else ({"symbol": symbol, "market": market} if has_input_identity else {})
-    assumptions = _project_assumptions(packet.get("assumptions")); confirmed = assumptions.get("user_confirmed_valuation_case") is True and has_input_identity and not stock_mismatch
-    assumptions["user_confirmed_valuation_case"] = confirmed
-    coverage = _project_coverage(raw_coverage, facts, registry)
+    raw_assumptions = packet.get("assumptions") if isinstance(packet.get("assumptions"), dict) else {}
+    confirmed = raw_assumptions.get("user_confirmed_valuation_case") is True and has_input_identity and not stock_mismatch
+    created_at = _datetime_from_timestamp(input_data.get("created_at")) or datetime.fromtimestamp(0, timezone.utc)
+    coverage = _project_coverage(raw_coverage, facts, registry, created_at)
     domain = _canonical_domain(internal_stock, facts, registry, confirmed, market, _status(coverage.get("market_snapshot_status")))
     allowed = _allowed_refs({str(item["id"]) for item in facts}, internal_stock)
     calculations = _matching_records(packet.get("deterministic_calculations"), domain["calculations"], "metric", ("value", "raw_value", "meaningful", "meaningfulness_reason", "formula", "inputs", "input_refs", "currency"), allowed)
@@ -608,8 +863,13 @@ def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     if stock_mismatch: identity_codes.append("context_identity_mismatch")
     if target_mismatch: identity_codes.append("snapshot_identity_mismatch")
     reasons = _reason_codes(domain["gap_codes"], coverage, internal_stock, identity_codes)
-    degraded = {"degraded": bool(reasons), "reason_codes": reasons, "gap_codes": list(domain["gap_codes"]), "reasons": [_REASON_COPY[code] for code in reasons], "data_gaps": [_GAP_COPY[code] for code in domain["gap_codes"]]}
     public_selected = [_public_frame(item) for item in selected]
+    assumptions = _assumptions(confirmed, public_selected)
+    degraded = {
+        **_degraded_state(reasons, list(domain["gap_codes"]), coverage),
+        "reasons": [_REASON_COPY[code] for code in reasons],
+        "data_gaps": [_GAP_COPY[code] for code in domain["gap_codes"]],
+    }
     currency = domain["currency"]
     raw_target = packet.get("target_resolution") if isinstance(packet.get("target_resolution"), dict) else {}
     mapping = None if identity_mismatch else _enum(raw_target.get("mapping_category"), frozenset(_MAPPING_MAP.values()))
@@ -680,6 +940,8 @@ def _project_facts(value: object, registry: dict[str, dict[str, object]]) -> lis
         if kind.startswith("currency") and normalized_currency: item["currency"] = normalized_currency
         if normalized := _period(raw.get("period_end")): item["period_end"] = normalized
         if normalized := _timestamp(raw.get("timestamp")): item["timestamp"] = normalized
+        if normalized := _timestamp(raw.get("fetched_at")): item["fetched_at"] = normalized
+        if normalized := _enum(raw.get("freshness"), _FRESHNESS_LABELS): item["freshness"] = normalized
         result[metric] = item
     return [result[key] for key in sorted(result)]
 
@@ -704,21 +966,28 @@ def _public_frame(item: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def _project_assumptions(value: object) -> dict[str, object]:
+def _project_coverage(
+    value: object,
+    facts: list[dict[str, object]],
+    registry: list[dict[str, object]],
+    created_at: datetime,
+) -> dict[str, object]:
     raw = value if isinstance(value, dict) else {}
-    return {"user_confirmed_valuation_case": raw.get("user_confirmed_valuation_case") is True, "items": list(_ASSUMPTIONS)}
-
-
-def _project_coverage(value: object, facts: list[dict[str, object]], registry: list[dict[str, object]]) -> dict[str, object]:
-    raw = value if isinstance(value, dict) else {}; result: dict[str, object] = {"fact_count": len(facts), "fact_source_id_count": len({item["source_id"] for item in facts}), "source_count": len(registry), "official_source_count": sum(item.get("family") == "official_financial" for item in registry), "source_registry": registry}
-    for key in ("market_snapshot_status", "financial_fact_status"):
-        if normalized := _status(raw.get(key)): result[key] = normalized
-    statuses = raw.get("provider_statuses"); projected_statuses = {}
-    if isinstance(statuses, dict):
+    projected_input = {
+        "market_snapshot_status": _status(raw.get("market_snapshot_status")) or "unknown",
+        "financial_fact_status": _status(raw.get("financial_fact_status")) or "unknown",
+        "source_attempts": _attempts(raw.get("source_attempts")),
+    }
+    result = _coverage(facts, registry, projected_input, created_at)
+    raw_statuses = raw.get("provider_statuses")
+    projected_statuses: dict[str, dict[str, str]] = {}
+    if isinstance(raw_statuses, dict):
         for name in ("market_snapshot", "financial_facts"):
-            record = statuses.get(name); normalized = _status(record.get("status")) if isinstance(record, dict) else None
-            if normalized: projected_statuses[name] = {"status": normalized}
-    result.update({"provider_statuses": projected_statuses, "source_attempts": _attempts(raw.get("source_attempts"))})
+            record = raw_statuses.get(name)
+            normalized = _status(record.get("status")) if isinstance(record, dict) else None
+            if normalized:
+                projected_statuses[name] = {"status": normalized}
+    result["provider_statuses"] = projected_statuses
     return result
 
 
@@ -749,11 +1018,15 @@ def _valid_packet(packet: dict[str, object], symbol: str, market: str) -> bool:
     if not isinstance(coverage, dict) or registry != coverage.get("source_registry"): return False
     registry_by_id = {str(item["id"]): item for item in registry}; facts = _project_facts(plain.get("facts"), registry_by_id)
     if facts != plain.get("facts"): return False
-    assumptions = _project_assumptions(plain.get("assumptions"))
-    if assumptions != plain.get("assumptions"): return False
-    expected_coverage = _coverage(facts, registry, coverage)
+    raw_assumptions = plain.get("assumptions")
+    if not isinstance(raw_assumptions, dict) or not isinstance(raw_assumptions.get("user_confirmed_valuation_case"), bool): return False
+    created_at = _datetime_from_timestamp(input_data.get("created_at"))
+    if created_at is None: return False
+    expected_coverage = _coverage(facts, registry, coverage, created_at)
     if coverage != _plain(expected_coverage): return False
-    domain = _canonical_domain(stock, facts, registry, assumptions["user_confirmed_valuation_case"] is True, market, _status(coverage.get("market_snapshot_status")))
+    domain = _canonical_domain(stock, facts, registry, raw_assumptions["user_confirmed_valuation_case"] is True, market, _status(coverage.get("market_snapshot_status")))
+    assumptions = _assumptions(raw_assumptions["user_confirmed_valuation_case"] is True, domain["selected"])
+    if assumptions != plain.get("assumptions"): return False
     raw_target = plain.get("target_resolution"); mapping = _enum(raw_target.get("mapping_category"), frozenset(_MAPPING_MAP.values())) if isinstance(raw_target, dict) else None
     if raw_target != _target_resolution(symbol, market, domain["currency"], mapping): return False
     for key, expected in (("deterministic_calculations", domain["calculations"]), ("internal_frame_scores", domain["scores"]), ("market_implied_bridge", domain["bridge"]), ("selected_frames", domain["selected"])):
@@ -762,6 +1035,6 @@ def _valid_packet(packet: dict[str, object], symbol: str, market: str) -> bool:
     if not isinstance(selected, list) or not 1 <= len(selected) <= 3 or len(plain["internal_frame_scores"]) != 5: return False
     degraded = plain.get("degraded_state"); identity_codes = _codes(degraded.get("reason_codes") if isinstance(degraded, dict) else None, {"context_identity_mismatch", "snapshot_identity_mismatch"})
     reasons = _reason_codes(domain["gap_codes"], expected_coverage, stock, identity_codes)
-    if degraded != {"degraded": bool(reasons), "reason_codes": reasons, "gap_codes": domain["gap_codes"]}: return False
+    if degraded != _degraded_state(reasons, domain["gap_codes"], expected_coverage): return False
     if plain.get("interpretation") != _interpretation(selected, domain["gap_codes"]) or plain.get("watch_items") != _watch_items(selected): return False
     return plain.get("safety") == {"direct_investment_advice": False, "writes_formal_user_insight": False, "research_aid_only": True}

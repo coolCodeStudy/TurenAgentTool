@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import math
 import re
-from typing import Any
+import threading
+from typing import Any, Callable
 
 from investment_knowledge_mcp.data_sources.contracts import (
     DataRequest,
@@ -31,11 +33,15 @@ from investment_knowledge_mcp.research.official_sources import (
     _http_client,
     _lookup_sec_cik,
 )
-from investment_knowledge_mcp.research.models import SourceDocument
+from investment_knowledge_mcp.research.models import ResearchBundle, SourceDocument
 
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,31}$")
 _SAFE_COMPANY_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,120}$")
+VALUATION_OFFICIAL_PROVIDER_TOTAL_BUDGET_SECONDS = 6.0
+_VALUATION_OFFICIAL_REQUEST_TIMEOUT_SECONDS = 2.0
+_OFFICIAL_COLLECT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="valuation-official")
+_OFFICIAL_COLLECT_SLOTS = threading.BoundedSemaphore(2)
 _MARKET_CURRENCY = {"US": "USD", "HK": "HKD", "KR": "KRW"}
 _SK_HYNIX_IR_URL = "https://www.skhynix.com/ir/"
 _DART_SEARCH_URL = "https://dart.fss.or.kr/dsab002/main.do"
@@ -136,15 +142,29 @@ def default_valuation_pool(
     *,
     cache: ResultCache | None = None,
     official_provider: OfficialResearchProvider | None = None,
+    official_budget_seconds: float = VALUATION_OFFICIAL_PROVIDER_TOTAL_BUDGET_SECONDS,
     http_client_factory=_http_client,
     market_loader=None,
 ) -> ValuationDataSourcePool:
     """Build the lazy valuation source registry without performing any fetch."""
+    if (
+        isinstance(official_budget_seconds, bool)
+        or not isinstance(official_budget_seconds, (int, float))
+        or not math.isfinite(float(official_budget_seconds))
+        or not 0 < float(official_budget_seconds) <= VALUATION_OFFICIAL_PROVIDER_TOTAL_BUDGET_SECONDS
+    ):
+        raise ValueError("official provider budget must be positive and bounded")
     pool = ValuationDataSourcePool(cache=cache)
-    official_provider = official_provider or OfficialResearchProvider()
+    official_provider = official_provider or OfficialResearchProvider(
+        timeout_seconds=_VALUATION_OFFICIAL_REQUEST_TIMEOUT_SECONDS,
+    )
     market = str(target["normalized_market"])
     symbol = str(target["normalized_symbol"])
     company_name = target.get("company_name") if isinstance(target.get("company_name"), str) else None
+    bundle_budget = float(official_budget_seconds)
+    if market == "US":
+        bundle_budget = max(0.001, bundle_budget - _VALUATION_OFFICIAL_REQUEST_TIMEOUT_SECONDS)
+    bundle_memo = _OfficialBundleMemo(official_provider, company_name, bundle_budget)
     sources: list[ValuationFactsSource] = []
     if market == "US":
         sources.extend((
@@ -155,7 +175,12 @@ def default_valuation_pool(
             ),
             _financial_source(
                 "sec_filing",
-                _official_attempt_loader(official_provider, "sec_filing", company_name=company_name),
+                _official_attempt_loader(
+                    official_provider,
+                    "sec_filing",
+                    company_name=company_name,
+                    bundle_loader=bundle_memo.load,
+                ),
                 markets=("US",),
             ),
         ))
@@ -163,7 +188,12 @@ def default_valuation_pool(
         for source_id in ("hkexnews", "hkex_filing", "company_report"):
             sources.append(_financial_source(
                 source_id,
-                _official_attempt_loader(official_provider, source_id, company_name=company_name),
+                _official_attempt_loader(
+                    official_provider,
+                    source_id,
+                    company_name=company_name,
+                    bundle_loader=bundle_memo.load,
+                ),
                 markets=("HK",),
             ))
     elif market == "KR":
@@ -229,7 +259,11 @@ def _fetch_valuation_snapshot(
         market_request,
         valuation_market_plan(available_sources=available_sources),
     )
-    facts = [dict(record) for result in (financial, market_snapshot) for record in result.records]
+    facts = []
+    for result in (financial, market_snapshot):
+        fetched_at = result.fetched_at.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        for record in result.records:
+            facts.append({**dict(record), "fetched_at": fetched_at})
     sources = _sources_from_facts(facts)
     return {
         "target_resolution": dict(target),
@@ -350,7 +384,7 @@ def _load_sec_companyfacts(
 ) -> dict[str, object]:
     if market != "US":
         return _empty_payload(attempt_status="complete_missing")
-    with http_client_factory(8.0) as client:
+    with http_client_factory(_VALUATION_OFFICIAL_REQUEST_TIMEOUT_SECONDS) as client:
         cik = _lookup_sec_cik(client, symbol)
         if cik is None:
             return _empty_payload(attempt_status="complete_missing")
@@ -411,14 +445,79 @@ def _latest_sec_entry(payload: object, *, shares: bool) -> dict[str, Any] | None
     return max(annual or valid, key=lambda item: (str(item.get("filed") or ""), str(item.get("end") or "")), default=None)
 
 
+class _OfficialBundleMemo:
+    """Collect one target bundle once, including bounded complete-missing results."""
+
+    def __init__(self, provider: object, company_name: str | None, budget_seconds: float) -> None:
+        self._provider = provider
+        self._company_name = company_name
+        self._budget_seconds = budget_seconds
+        self._lock = threading.Lock()
+        self._resolved = False
+        self._bundle: ResearchBundle | None = None
+
+    def load(self, symbol: str, market: str) -> ResearchBundle:
+        with self._lock:
+            if not self._resolved:
+                self._bundle = _collect_official_bundle_with_budget(
+                    self._provider,
+                    symbol,
+                    market,
+                    self._company_name,
+                    self._budget_seconds,
+                )
+                self._resolved = True
+            if self._bundle is not None:
+                return self._bundle
+            return ResearchBundle(symbol=symbol, market=market, company_name=self._company_name)
+
+
+def _collect_official_bundle_with_budget(
+    provider: object,
+    symbol: str,
+    market: str,
+    company_name: str | None,
+    budget_seconds: float,
+) -> ResearchBundle:
+    if not _OFFICIAL_COLLECT_SLOTS.acquire(blocking=False):
+        return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+
+    def collect_and_release() -> object:
+        try:
+            collector = getattr(provider, "collect")
+            return collector(symbol=symbol, market=market, company_name=company_name)
+        finally:
+            _OFFICIAL_COLLECT_SLOTS.release()
+
+    try:
+        future = _OFFICIAL_COLLECT_EXECUTOR.submit(collect_and_release)
+    except Exception:
+        _OFFICIAL_COLLECT_SLOTS.release()
+        return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+    try:
+        bundle = future.result(timeout=budget_seconds)
+    except Exception:
+        return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+    return bundle if isinstance(bundle, ResearchBundle) else ResearchBundle(
+        symbol=symbol,
+        market=market,
+        company_name=company_name,
+    )
+
+
 def _official_attempt_loader(
     provider: OfficialResearchProvider,
     source_id: str,
     *,
     company_name: str | None = None,
+    bundle_loader: Callable[[str, str], ResearchBundle] | None = None,
 ):
     def load(symbol: str, market: str) -> dict[str, object]:
-        bundle = provider.collect(symbol=symbol, market=market, company_name=company_name)
+        bundle = (
+            bundle_loader(symbol, market)
+            if bundle_loader is not None
+            else provider.collect(symbol=symbol, market=market, company_name=company_name)
+        )
         matching = [
             source
             for source in bundle.sources
@@ -470,7 +569,7 @@ def _kr_regulator_probe_loader(source_id: str, target: dict[str, object], http_c
 
     def load(symbol: str, market: str) -> dict[str, object]:
         del symbol, market
-        with http_client_factory(8.0) as client:
+        with http_client_factory(_VALUATION_OFFICIAL_REQUEST_TIMEOUT_SECONDS) as client:
             response = client.get(endpoint, params={"textCrpNm": query})
             response.raise_for_status()
             _ = response.text
@@ -481,7 +580,7 @@ def _kr_regulator_probe_loader(source_id: str, target: dict[str, object], http_c
 def _company_ir_probe_loader(url: str, http_client_factory):
     def load(symbol: str, market: str) -> dict[str, object]:
         del symbol, market
-        with http_client_factory(8.0) as client:
+        with http_client_factory(_VALUATION_OFFICIAL_REQUEST_TIMEOUT_SECONDS) as client:
             response = client.get(url)
             response.raise_for_status()
             _ = response.text

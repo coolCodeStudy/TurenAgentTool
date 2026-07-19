@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import inspect
 import json
 import math
+import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -336,6 +340,44 @@ class StockValuationTests(unittest.TestCase):
         for unsafe in ("authorization", "bearer", "secret", "private.example", "http://", "https://"):
             self.assertNotIn(unsafe, serialized)
 
+    def test_dart_hkex_and_company_ir_facts_count_as_official_in_stored_and_public_coverage(self) -> None:
+        cases = (
+            ("KR", "000660", "dart_filing", "KRW"),
+            ("HK", "01888", "hkexnews", "HKD"),
+            ("HK", "01888", "company_ir", "HKD"),
+        )
+        for market, symbol, source_type, currency in cases:
+            snapshot = {
+                "facts": [
+                    {
+                        "metric": "revenue", "value": 100.0, "source_type": source_type,
+                        "currency": currency, "period_end": "2025-12-31",
+                        "freshness": "latest_filing",
+                    },
+                    {
+                        "metric": "price", "value": 10.0, "source_type": "market_snapshot",
+                        "currency": currency, "timestamp": "2026-07-19T00:00:00+00:00",
+                        "freshness": "latest_market_session",
+                    },
+                ],
+                "target_resolution": {"normalized_target": f"{market}.{symbol}", "currency": currency},
+                "financial_fact_status": "present",
+                "market_snapshot_status": "present",
+            }
+            with self.subTest(source_type=source_type), tempfile.TemporaryDirectory() as temporary:
+                packet, _ = build_valuation_artifact(
+                    {"stock": {"symbol": symbol, "market": market, "core_business": "Cyclical business."}},
+                    symbol=symbol, market=market, output_dir=Path(temporary),
+                    command=f"valuation {market}.{symbol}", provider_snapshot=snapshot,
+                    now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
+                )
+                evidence = build_valuation_artifact_evidence(packet)
+                for artifact in (packet, evidence):
+                    coverage = artifact["source_coverage"]
+                    self.assertEqual(coverage.get("official_source_count"), 1)
+                    self.assertNotIn("official_financial_facts", coverage.get("missing_categories", []))
+                    self.assertNotIn("missing_official_source", artifact["degraded_state"]["reason_codes"])
+
     def test_us_snapshot_uses_sec_facts_and_shared_yahoo_market_source(self) -> None:
         calls: list[tuple[str, str]] = []
 
@@ -367,6 +409,12 @@ class StockValuationTests(unittest.TestCase):
             {(fact["metric"], fact["source_type"], fact["provider"]) for fact in snapshot["facts"]},
             {("revenue", "sec_companyfacts", "sec"), ("price", "market_snapshot", "yahoo")},
         )
+        self.assertEqual(
+            {fact.get("freshness") for fact in snapshot["facts"]},
+            {"latest_filing", "latest_market_session"},
+        )
+        fetched_times = [datetime.fromisoformat(str(fact.get("fetched_at"))) for fact in snapshot["facts"]]
+        self.assertTrue(all(value.tzinfo is not None and value.utcoffset() is not None for value in fetched_times))
         self.assertNotIn("errors", snapshot)
 
     def test_kr_snapshot_attempts_dart_fss_company_ir_then_distinct_vendor(self) -> None:
@@ -447,6 +495,104 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(snapshot["target_resolution"]["normalized_target"], "HK.01888")
         revenue = next(fact for fact in snapshot["facts"] if fact["metric"] == "revenue")
         self.assertEqual((revenue["source_type"], revenue["provider"]), ("company_report", "official_research"))
+
+    def test_one_hk_snapshot_collects_one_official_bundle_for_all_categories(self) -> None:
+        calls = 0
+
+        class Provider:
+            def collect(self, symbol: str, market: str, company_name: str | None = None) -> ResearchBundle:
+                nonlocal calls
+                calls += 1
+                return ResearchBundle(
+                    symbol=symbol,
+                    market=market,
+                    company_name=company_name,
+                    sources=[
+                        SourceDocument(
+                            key="hkex_annual_results_2025", source_type="annual_results",
+                            title="Annual Results", publisher="HKEXnews",
+                        ),
+                        SourceDocument(
+                            key="issuer_ir_annual_report_2025", source_type="annual_report",
+                            title="Annual Report", publisher="Kingboard Laminates",
+                        ),
+                    ],
+                )
+
+        target = normalize_valuation_target("01888", "HK")
+        pool = default_valuation_pool(
+            target,
+            official_provider=Provider(),
+            market_loader=lambda symbol, market: [],
+        )
+
+        snapshot = _fetch_valuation_snapshot(target, pool)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            [item["source_type"] for item in snapshot["source_attempts"][:3]],
+            ["hkexnews", "hkex_filing", "company_report"],
+        )
+
+    def test_empty_hk_official_discovery_is_cached_across_pool_fetches(self) -> None:
+        calls = 0
+
+        class Provider:
+            def collect(self, symbol: str, market: str, company_name: str | None = None) -> ResearchBundle:
+                nonlocal calls
+                calls += 1
+                return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+
+        target = normalize_valuation_target("01888", "HK")
+        pool = default_valuation_pool(
+            target,
+            official_provider=Provider(),
+            market_loader=lambda symbol, market: [],
+        )
+
+        first = _fetch_valuation_snapshot(target, pool)
+        second = _fetch_valuation_snapshot(target, pool)
+
+        self.assertEqual(first["facts"], [])
+        self.assertEqual(second["facts"], [])
+        self.assertEqual(calls, 1)
+
+    def test_slow_hk_official_provider_returns_safe_degradation_within_total_budget(self) -> None:
+        from investment_knowledge_mcp import valuation_data_provider
+
+        self.assertIn("official_budget_seconds", inspect.signature(default_valuation_pool).parameters)
+        declared_budget = getattr(valuation_data_provider, "VALUATION_OFFICIAL_PROVIDER_TOTAL_BUDGET_SECONDS", None)
+        self.assertIsInstance(declared_budget, float)
+
+        calls = 0
+
+        class SlowProvider:
+            def collect(self, symbol: str, market: str, company_name: str | None = None) -> ResearchBundle:
+                nonlocal calls
+                calls += 1
+                time.sleep(0.25)
+                return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+
+        target = normalize_valuation_target("01888", "HK")
+        pool = default_valuation_pool(
+            target,
+            official_provider=SlowProvider(),
+            official_budget_seconds=0.02,
+            market_loader=lambda symbol, market: [],
+        )
+
+        started = time.monotonic()
+        snapshot = _fetch_valuation_snapshot(target, pool)
+        elapsed = time.monotonic() - started
+
+        self.assertLess(declared_budget, 15.0)
+        self.assertLess(elapsed, 0.15)
+        self.assertEqual(calls, 1)
+        self.assertEqual(snapshot["financial_fact_status"], "unavailable")
+        self.assertTrue(all(item["status"] == "complete_missing" for item in snapshot["source_attempts"][:3]))
+        serialized = json.dumps(snapshot).lower()
+        for unsafe in ("timeout", "exception", "traceback", "thread", "http://", "https://"):
+            self.assertNotIn(unsafe, serialized)
 
     def test_cache_miss_attempts_every_source_before_safe_degradation(self) -> None:
         calls: list[str] = []
@@ -529,8 +675,183 @@ class StockValuationTests(unittest.TestCase):
             self.assertTrue(callable(function))
         self.assertEqual(len(CORE_FRAMES), 5)
         self.assertEqual(len(SPECIALIST_FRAMES), 3)
-        self.assertEqual(len(valuation_method_library()), 8)
+        methods = valuation_method_library()
+        self.assertEqual(len(methods), 8)
+        self.assertEqual(
+            [item["name"] for item in methods],
+            [
+                "Free Cash Flow", "Comparable Multiples", "SOTP / Asset Value", "Cyclical",
+                "Growth / Scenario", "Dividend", "Residual Income / ROE-PB", "Event-Driven",
+            ],
+        )
         self.assertEqual(list(inspect.signature(load_latest_valuation_artifact).parameters), ["symbol", "market", "output_dir"])
+
+    def test_complete_packet_preserves_freshness_and_renders_frame_semantics(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["source_attempts"] = [
+            {"family": "official_financial", "status": "available"},
+            {"family": "market_snapshot", "status": "available"},
+        ]
+        for fact in snapshot["facts"]:
+            if fact["source_type"] == "market_snapshot":
+                fact.update({
+                    "freshness": "latest_market_session",
+                    "fetched_at": "2026-07-19T00:05:00+00:00",
+                })
+            else:
+                fact.update({
+                    "period_end": "2025-12-31",
+                    "freshness": "latest_filing",
+                    "fetched_at": "2026-07-18T00:05:00+00:00",
+                })
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        price = next(item for item in evidence["facts"] if item["metric"] == "price")
+        self.assertEqual(price["timestamp"], "2026-07-19T00:00:00+00:00")
+        self.assertEqual(price.get("fetched_at"), "2026-07-19T00:05:00+00:00")
+        self.assertEqual(price.get("freshness"), "latest_market_session")
+        coverage = evidence["source_coverage"]
+        self.assertEqual(coverage.get("financials_as_of"), "2025-12-31")
+        self.assertEqual(coverage.get("market_data_as_of"), "2026-07-19T00:00:00+00:00")
+        self.assertEqual(coverage.get("stale_fields"), [])
+        self.assertEqual(coverage.get("attempted_source_families"), ["market_snapshot", "official_financial"])
+        self.assertEqual(coverage.get("missing_categories"), [])
+        self.assertEqual(evidence["degraded_state"].get("source_state"), "complete")
+
+        for frame in evidence["selected_frames"]:
+            self.assertGreater(len(frame["assumptions"]), 0)
+            self.assertGreater(len(frame["rerating_triggers"]), 0)
+            self.assertGreater(len(frame["failure_conditions"]), 0)
+            self.assertIn(frame["confidence"], {"low", "medium"})
+            self.assertEqual(frame["provenance"]["type"], "deterministic_rule")
+            self.assertEqual(frame["provenance"]["rule_id"], "stock_valuation_frame_score.v1")
+        self.assertEqual(
+            evidence["interpretation"]["provenance"],
+            {"type": "deterministic_rule", "rule_id": "stock_valuation_frame_selection.v1"},
+        )
+        self.assertEqual(
+            evidence["interpretation"]["optional_narrative"],
+            {"status": "unavailable", "provenance": "model_unavailable"},
+        )
+        self.assertGreater(len(evidence["market_implied_bridge"]["bridge_lines"]), 0)
+        for expected in (
+            "Market-implied bridge:", "P/S: 1.0x anchors current market value.",
+            "Financials as of: 2025-12-31", "Market data as of: 2026-07-19T00:00:00+00:00",
+            "Rerating triggers:", "Failure conditions:", "Rule provenance: stock_valuation_frame_score.v1",
+            "Optional narrative: unavailable (model unavailable)",
+        ):
+            self.assertIn(expected, card)
+
+    def test_year_2000_market_observation_is_derived_as_stale_and_visible(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["source_attempts"] = [
+            {"family": "official_financial", "status": "available"},
+            {"family": "market_snapshot", "status": "available"},
+        ]
+        for fact in snapshot["facts"]:
+            if fact["source_type"] == "market_snapshot":
+                fact.update({
+                    "timestamp": "2000-01-03T00:00:00+00:00",
+                    "freshness": "latest_market_session",
+                    "fetched_at": "2026-07-19T00:05:00+00:00",
+                })
+            else:
+                fact["period_end"] = "2025-12-31"
+
+        packet = self._build(snapshot=snapshot)
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        self.assertEqual(evidence["source_coverage"].get("market_data_as_of"), "2000-01-03T00:00:00+00:00")
+        self.assertEqual(evidence["source_coverage"].get("stale_fields"), ["price", "shares_outstanding"])
+        self.assertEqual(evidence["source_coverage"]["market_snapshot_status"], "stale")
+        self.assertEqual(evidence["degraded_state"].get("source_state"), "stale")
+        self.assertIn("Stale fields: price, shares_outstanding", card)
+        comparable = next(
+            item for item in evidence["market_implied_bridge"]["frame_fit_ranking"]
+            if item["id"] == "comparable_multiples"
+        )
+        self.assertEqual(comparable["confidence"], "low")
+
+    def test_financial_missing_state_names_attempted_families_and_recovery(self) -> None:
+        snapshot = {
+            "facts": [{
+                "metric": "price", "value": 10.0, "source_type": "market_snapshot",
+                "currency": "USD", "timestamp": "2026-07-19T00:00:00+00:00",
+                "freshness": "latest_market_session", "fetched_at": "2026-07-19T00:05:00+00:00",
+            }],
+            "target_resolution": {"normalized_target": "US.ACME", "currency": "USD"},
+            "market_snapshot_status": "present",
+            "financial_fact_status": "unavailable",
+            "source_attempts": [
+                {"family": "regulator_filing", "status": "complete_missing"},
+                {"family": "company_ir", "status": "complete_missing"},
+                {"family": "market_snapshot", "status": "available"},
+            ],
+        }
+
+        evidence = build_valuation_artifact_evidence(self._build(snapshot=snapshot))
+        card = render_valuation_card(self._build(snapshot=snapshot))
+
+        self.assertEqual(evidence["degraded_state"].get("source_state"), "financial_missing")
+        self.assertEqual(evidence["source_coverage"].get("missing_categories"), ["official_financial_facts"])
+        self.assertEqual(
+            evidence["source_coverage"]["attempted_source_families"],
+            ["company_ir", "market_snapshot", "regulator_filing"],
+        )
+        self.assertIn("Recovery: official financial facts are missing", card)
+        self.assertIn("Attempted source families: company_ir, market_snapshot, regulator_filing", card)
+
+    def test_market_missing_state_suppresses_bridge_and_names_recovery(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["facts"] = [fact for fact in snapshot["facts"] if fact["source_type"] != "market_snapshot"]
+        for fact in snapshot["facts"]:
+            fact.update({"period_end": "2025-12-31", "freshness": "latest_filing"})
+        snapshot.update({
+            "market_snapshot_status": "unavailable",
+            "financial_fact_status": "present",
+            "source_attempts": [
+                {"family": "official_financial", "status": "available"},
+                {"family": "market_snapshot", "status": "complete_missing"},
+            ],
+        })
+
+        evidence = build_valuation_artifact_evidence(self._build(snapshot=snapshot))
+        card = render_valuation_card(self._build(snapshot=snapshot))
+
+        self.assertEqual(evidence["degraded_state"].get("source_state"), "market_missing")
+        self.assertEqual(evidence["source_coverage"].get("missing_categories"), ["market_data"])
+        self.assertEqual(evidence["market_implied_bridge"]["bridge_lines"], [])
+        self.assertIn("Recovery: current market data is missing", card)
+        self.assertNotIn("P/S:", card)
+
+    def test_both_missing_state_is_recovery_oriented_without_fabricated_semantics(self) -> None:
+        snapshot = {
+            "facts": [],
+            "target_resolution": {"normalized_target": "US.ACME", "currency": "USD"},
+            "market_snapshot_status": "unavailable",
+            "financial_fact_status": "unavailable",
+            "source_attempts": [
+                {"family": "official_financial", "status": "complete_missing"},
+                {"family": "company_ir", "status": "complete_missing"},
+                {"family": "market_snapshot", "status": "complete_missing"},
+            ],
+        }
+
+        evidence = build_valuation_artifact_evidence(self._build(snapshot=snapshot))
+        card = render_valuation_card(self._build(snapshot=snapshot))
+
+        self.assertEqual(evidence["degraded_state"].get("source_state"), "both_missing")
+        self.assertEqual(
+            evidence["source_coverage"]["missing_categories"],
+            ["market_data", "official_financial_facts"],
+        )
+        self.assertEqual(evidence["market_implied_bridge"]["bridge_lines"], [])
+        self.assertIn("Recovery: official financial facts and current market data are missing", card)
+        self.assertIn("Missing categories: market_data, official_financial_facts", card)
 
     def test_builds_deterministic_packet_with_all_metrics_and_fact_refs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -937,6 +1258,87 @@ class StockValuationTests(unittest.TestCase):
             )
             self.assertEqual(packet["input"]["created_at"], "2026-07-19T01:02:03+00:00")
             self.assertEqual(path.name, "ACME_US_valuation_20260719T010203Z.json")
+
+    def test_persistence_uses_validated_atomic_writes_instead_of_path_write_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(Path, "write_text", side_effect=AssertionError("direct write_text is forbidden")):
+                try:
+                    packet, path = build_valuation_artifact(
+                        self._context(), symbol="ACME", market="US", output_dir=Path(temporary),
+                        command="valuation US.ACME", provider_snapshot=self._snapshot(),
+                        now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
+                    )
+                except AssertionError as exc:
+                    self.fail(str(exc))
+
+            expected = json.loads(json.dumps(packet))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), expected)
+            latest = Path(temporary) / "valuation" / "ACME_US_valuation_latest.json"
+            self.assertEqual(json.loads(latest.read_text(encoding="utf-8")), expected)
+            self.assertEqual(list(latest.parent.glob("*.tmp")), [])
+
+    def test_same_stock_same_second_collision_has_one_winner_and_one_explicit_collision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            barrier = threading.Barrier(2)
+            instant = datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc)
+
+            def build(core_business: str) -> tuple[str, dict[str, object] | None]:
+                context = self._context()
+                context["stock"]["core_business"] = core_business
+                barrier.wait()
+                try:
+                    packet, _ = build_valuation_artifact(
+                        context, symbol="ACME", market="US", output_dir=output_dir,
+                        command="valuation US.ACME", provider_snapshot=self._snapshot(), now=instant,
+                    )
+                except FileExistsError:
+                    return "collision", None
+                return "ok", packet
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(build, ("Cyclical semiconductor business.", "AI growth platform.")))
+
+            self.assertEqual(sorted(status for status, _ in results), ["collision", "ok"])
+            winner = next(packet for status, packet in results if status == "ok")
+            self.assertIsNotNone(winner)
+            latest = load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir)
+            self.assertEqual(latest, json.loads(json.dumps(winner)))
+            self.assertEqual(list((output_dir / "valuation").glob("*.tmp")), [])
+
+    def test_interrupted_latest_replace_keeps_previous_latest_valid_and_cleans_temps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            previous, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=output_dir,
+                command="valuation US.ACME", provider_snapshot=self._snapshot(),
+                now=datetime(2026, 7, 19, 1, 2, 2, tzinfo=timezone.utc),
+            )
+            real_replace = os.replace
+            replace_count = 0
+
+            def interrupt_second_replace(source: object, destination: object) -> None:
+                nonlocal replace_count
+                replace_count += 1
+                if replace_count == 2:
+                    raise OSError("simulated replace interruption")
+                real_replace(source, destination)
+
+            with patch("os.replace", side_effect=interrupt_second_replace):
+                with self.assertRaises(OSError):
+                    build_valuation_artifact(
+                        self._context(), symbol="ACME", market="US", output_dir=output_dir,
+                        command="valuation US.ACME", provider_snapshot=self._snapshot(),
+                        now=datetime(2026, 7, 19, 1, 2, 3, tzinfo=timezone.utc),
+                    )
+
+            self.assertEqual(
+                load_latest_valuation_artifact(symbol="ACME", market="US", output_dir=output_dir),
+                json.loads(json.dumps(previous)),
+            )
+            interrupted_timestamp = output_dir / "valuation" / "ACME_US_valuation_20260719T010203Z.json"
+            self.assertEqual(json.loads(interrupted_timestamp.read_text(encoding="utf-8"))["schema"], "stock_valuation_packet.v1")
+            self.assertEqual(list((output_dir / "valuation").glob("*.tmp")), [])
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(ValueError):
                 build_valuation_artifact(
@@ -1017,7 +1419,14 @@ class StockValuationTests(unittest.TestCase):
         self.assertNotIn("Cyclical semiconductor business with growth optionality", card)
 
     def test_public_projection_preserves_assumptions_interpretation_watch_and_degraded_sections(self) -> None:
-        packet = self._build()
+        context = self._context()
+        context["valuation_cases"] = [{
+            "schema": "stock_valuation_case.v1",
+            "symbol": "ACME",
+            "market": "US",
+            "confirmed_by_user": True,
+        }]
+        packet = self._build(context=context)
 
         evidence = build_valuation_artifact_evidence(packet)
         card = render_valuation_card(packet)
@@ -1218,15 +1627,52 @@ class StockValuationTests(unittest.TestCase):
             self.assertNotIn(foreign, serialized)
 
     def test_public_projection_drops_foreign_confirmation_on_stock_mismatch(self) -> None:
-        packet = json.loads(json.dumps(self._build()))
+        context = self._context()
+        context["valuation_cases"] = [{
+            "schema": "stock_valuation_case.v1",
+            "symbol": "ACME",
+            "market": "US",
+            "confirmed_by_user": True,
+        }]
+        packet = json.loads(json.dumps(self._build(context=context)))
+        self.assertTrue(packet["assumptions"]["user_confirmed_valuation_case"])
         packet["stock"].update({"symbol": "EVIL", "market": "HK"})
 
         evidence = build_valuation_artifact_evidence(packet)
-        card = render_valuation_card(packet)
 
         self.assertFalse(evidence["assumptions"]["user_confirmed_valuation_case"])
-        self.assertIn("missing_confirmed_case", evidence["degraded_state"]["reason_codes"])
-        self.assertIn("no user-confirmed valuation case", card)
+        self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["reason_codes"])
+
+    def test_unrelated_confirmed_stock_records_do_not_confirm_a_valuation_case(self) -> None:
+        context = self._context()
+        context["stock_insights"] = [{"confirmed_by_user": True, "content": "Unrelated confirmed note."}]
+        context["stock_knowledge"] = [{"confirmed_by_user": True, "content": "Unrelated confirmed fact."}]
+
+        evidence = build_valuation_artifact_evidence(self._build(context=context))
+
+        self.assertFalse(evidence["assumptions"]["user_confirmed_valuation_case"])
+        self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["reason_codes"])
+        self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["gap_codes"])
+
+    def test_only_exact_typed_target_matched_valuation_case_can_be_confirmed(self) -> None:
+        cases = (
+            ({"schema": "stock_valuation_case.v1", "symbol": "ACME", "market": "US", "confirmed_by_user": True}, True),
+            ({"schema": "stock_valuation_case.v0", "symbol": "ACME", "market": "US", "confirmed_by_user": True}, False),
+            ({"schema": "stock_valuation_case.v1", "symbol": "OTHER", "market": "US", "confirmed_by_user": True}, False),
+            ({"schema": "stock_valuation_case.v1", "symbol": "ACME", "market": "HK", "confirmed_by_user": True}, False),
+            ({"schema": "stock_valuation_case.v1", "symbol": "ACME", "market": "US", "confirmed_by_user": False}, False),
+        )
+        for valuation_case, expected in cases:
+            context = {
+                "stock": {"symbol": "ACME", "market": "US"},
+                "valuation_cases": [valuation_case],
+                "stock_insights": [],
+                "stock_knowledge": [],
+            }
+            with self.subTest(valuation_case=valuation_case):
+                evidence = build_valuation_artifact_evidence(self._build(context=context))
+                self.assertEqual(evidence["assumptions"]["user_confirmed_valuation_case"], expected)
+                self.assertNotIn("missing_confirmed_case", evidence["degraded_state"]["gap_codes"])
 
     def test_public_projection_drops_records_with_incomplete_required_refs(self) -> None:
         packet = json.loads(json.dumps(self._build()))
