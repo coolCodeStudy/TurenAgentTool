@@ -17,6 +17,7 @@ from .contracts import (
     SourceCapability,
     SourcePlan,
 )
+from .pool import DataSourcePool, ExternalDataSource, ResultCache
 
 
 VALUATION_FACT_METRICS = (
@@ -55,6 +56,27 @@ _FINANCIAL_ORDER = {
     "KR": ("dart_filing", "fss_filing", "company_ir", "vendor_financial"),
 }
 _MARKET_ORDER = ("shared_market", "yahoo")
+
+
+class ValuationDataSourcePool(DataSourcePool):
+    """A shared pool that exposes only valuation-owned registration metadata."""
+
+    def __init__(
+        self,
+        *,
+        cache: ResultCache | None = None,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        super().__init__(cache=cache, now=now)
+        self._valuation_source_ids: list[str] = []
+
+    def register(self, provider: ExternalDataSource) -> None:
+        super().register(provider)
+        self._valuation_source_ids.append(provider.descriptor.source_id)
+
+    @property
+    def registered_source_ids(self) -> tuple[str, ...]:
+        return tuple(self._valuation_source_ids)
 
 
 class ValuationFactsSource:
@@ -131,7 +153,8 @@ class ValuationFactsSource:
         except (OverflowError, TypeError, ValueError):
             return self._unavailable("provider_contract_error", fetched_at=fetched_at)
         if not records:
-            return self._unavailable("empty_result", fetched_at=fetched_at)
+            code = "complete_missing" if _payload_attempt_status(payload) == "complete_missing" else "empty_result"
+            return self._unavailable(code, fetched_at=fetched_at)
 
         coverage = _coverage(records, request.required_fields)
         status = DataStatus.OK if coverage == 1.0 else DataStatus.PARTIAL
@@ -215,6 +238,18 @@ def valuation_source_descriptor(source_id: str) -> dict[str, str]:
     }
 
 
+def valuation_financial_source_order(market: str) -> tuple[str, ...]:
+    normalized_market = str(market).strip().upper()
+    try:
+        return _FINANCIAL_ORDER[normalized_market]
+    except KeyError as exc:
+        raise ValueError("unsupported valuation market") from exc
+
+
+def valuation_market_source_order() -> tuple[str, ...]:
+    return _MARKET_ORDER
+
+
 def _source_order(
     plans: dict[str, tuple[str, ...]],
     market: str,
@@ -253,6 +288,13 @@ def _payload_fetched_at(payload: object) -> datetime | None:
         return value if isinstance(value, datetime) else None
     value = getattr(payload, "fetched_at", None)
     return value if isinstance(value, datetime) else None
+
+
+def _payload_attempt_status(payload: object) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    value = payload.get("attempt_status")
+    return value if value == "complete_missing" else None
 
 
 def _payload_facts(payload: object) -> Sequence[object]:

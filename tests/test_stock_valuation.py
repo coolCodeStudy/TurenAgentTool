@@ -11,7 +11,11 @@ from unittest.mock import patch
 
 from investment_knowledge_mcp.data_sources.contracts import SourceCapability
 from investment_knowledge_mcp.data_sources.pool import DataSourcePool, MemoryResultCache
-from investment_knowledge_mcp.data_sources.valuation import ValuationFactsSource
+from investment_knowledge_mcp.data_sources.valuation import (
+    ValuationDataSourcePool,
+    ValuationFactsSource,
+)
+from investment_knowledge_mcp.research.models import ResearchBundle, SourceDocument
 
 from investment_knowledge_mcp.stock_valuation import (
     CORE_FRAMES,
@@ -24,6 +28,10 @@ from investment_knowledge_mcp.stock_valuation import (
     valuation_method_library,
 )
 from investment_knowledge_mcp.valuation_data_provider import (
+    _fetch_valuation_snapshot,
+    _official_attempt_loader,
+    _official_document_matches,
+    default_valuation_pool,
     fetch_valuation_snapshot,
     normalize_valuation_target,
 )
@@ -86,8 +94,8 @@ class StockValuationTests(unittest.TestCase):
         loaders: dict[str, tuple[SourceCapability, str, str, object]],
         *,
         cache: MemoryResultCache | None = None,
-    ) -> DataSourcePool:
-        pool = DataSourcePool(cache=cache, now=lambda: datetime(2026, 7, 19, tzinfo=timezone.utc))
+    ) -> ValuationDataSourcePool:
+        pool = ValuationDataSourcePool(cache=cache, now=lambda: datetime(2026, 7, 19, tzinfo=timezone.utc))
         for source_id, (capability, source_type, provider, loader) in loaders.items():
             pool.register(ValuationFactsSource(
                 source_id,
@@ -123,6 +131,208 @@ class StockValuationTests(unittest.TestCase):
                 self.assertEqual(target["normalized_target"], expected[0])
                 self.assertEqual(target["provider_market_ticker"], expected[1])
                 self.assertEqual(target["currency"], expected[2])
+        known = normalize_valuation_target("INTC", "US", "Spoofed name")
+        generic = normalize_valuation_target("AAPL", "US", "  Apple   Inc.  ")
+        self.assertEqual(known["company_name"], "Intel Corporation")
+        self.assertEqual(generic["company_name"], "Apple Inc.")
+
+    def test_default_kr_pool_runs_distinct_regulator_and_configured_company_ir_probes(self) -> None:
+        calls: list[str] = []
+
+        class Response:
+            text = "no structured financial facts"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        class Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def get(self, url: str, **kwargs):
+                del kwargs
+                calls.append(url)
+                return Response()
+
+        target = normalize_valuation_target("KR.000660", "KR")
+        pool = default_valuation_pool(
+            target,
+            http_client_factory=lambda timeout: Client(),
+            market_loader=lambda symbol, market: [{
+                "metric": "price", "value": 250_000.0, "currency": "KRW",
+                "timestamp": "2026-07-19T00:00:00Z",
+            }],
+        )
+
+        snapshot = _fetch_valuation_snapshot(target, pool)
+
+        self.assertEqual(len([url for url in calls if url.startswith("https://dart.fss.or.kr/")]), 1)
+        self.assertEqual(len([url for url in calls if url.startswith("https://englishdart.fss.or.kr/")]), 1)
+        self.assertEqual(len([url for url in calls if "skhynix.com" in url]), 1)
+        self.assertEqual(
+            [attempt["status"] for attempt in snapshot["source_attempts"][:4]],
+            ["complete_missing", "complete_missing", "complete_missing", "not_attempted"],
+        )
+        self.assertNotIn("http", json.dumps(snapshot).lower())
+
+    def test_generic_kr_target_does_not_call_unconfigured_company_or_vendor_source(self) -> None:
+        calls: list[str] = []
+
+        class Response:
+            text = "empty search"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        class Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def get(self, url: str, **kwargs):
+                del kwargs
+                calls.append(url)
+                return Response()
+
+        target = normalize_valuation_target("005930", "KR", "Samsung Electronics")
+        pool = default_valuation_pool(
+            target,
+            http_client_factory=lambda timeout: Client(),
+            market_loader=lambda symbol, market: [],
+        )
+
+        snapshot = _fetch_valuation_snapshot(target, pool)
+
+        self.assertFalse(any("skhynix.com" in url for url in calls))
+        statuses = {attempt["source_type"]: attempt["status"] for attempt in snapshot["source_attempts"]}
+        self.assertEqual(statuses["company_ir"], "not_attempted")
+        self.assertEqual(statuses["vendor_financial"], "not_attempted")
+
+    def test_official_document_categories_cannot_be_cross_labeled(self) -> None:
+        hkex_report = SourceDocument(
+            key="hkex_annual_report_2025",
+            source_type="annual_report",
+            title="Annual Report 2025",
+            publisher="HKEXnews",
+        )
+        hkex_result = SourceDocument(
+            key="hkex_annual_results_2025",
+            source_type="annual_results",
+            title="Annual Results 2025",
+            publisher="HKEXnews",
+        )
+        company_report = SourceDocument(
+            key="issuer_ir_annual_report_2025",
+            source_type="annual_report",
+            title="Annual Report 2025",
+            publisher="Kingboard Laminates",
+        )
+        company_ir = SourceDocument(
+            key="company_ir_homepage",
+            source_type="company_ir",
+            title="Investor Relations",
+            publisher="Kingboard Laminates",
+        )
+        sec_report = SourceDocument(
+            key="sec_10k_2025",
+            source_type="annual_report",
+            title="Form 10-K",
+            publisher="SEC",
+        )
+
+        self.assertTrue(_official_document_matches("hkex_filing", hkex_report))
+        self.assertFalse(_official_document_matches("hkexnews", hkex_report))
+        self.assertFalse(_official_document_matches("company_report", hkex_report))
+        self.assertTrue(_official_document_matches("hkexnews", hkex_result))
+        self.assertFalse(_official_document_matches("hkex_filing", hkex_result))
+        self.assertTrue(_official_document_matches("company_report", company_report))
+        self.assertFalse(_official_document_matches("company_ir", company_report))
+        self.assertTrue(_official_document_matches("company_ir", company_ir))
+        self.assertFalse(_official_document_matches("company_report", company_ir))
+        self.assertTrue(_official_document_matches("sec_filing", sec_report))
+        self.assertFalse(_official_document_matches("company_report", sec_report))
+
+    def test_bounded_caller_and_known_company_name_reach_official_collector(self) -> None:
+        calls: list[tuple[str, str, str | None]] = []
+
+        class Provider:
+            def collect(self, symbol: str, market: str, company_name: str | None = None) -> ResearchBundle:
+                calls.append((symbol, market, company_name))
+                return ResearchBundle(symbol=symbol, market=market, company_name=company_name)
+
+        for target in (
+            normalize_valuation_target("AAPL", "US", "  Apple   Inc.  "),
+            normalize_valuation_target("INTC", "US", "Spoofed name"),
+        ):
+            loader = _official_attempt_loader(
+                Provider(),
+                "sec_filing",
+                company_name=str(target["company_name"]),
+            )
+            loader(str(target["normalized_symbol"]), str(target["normalized_market"]))
+
+        self.assertEqual(calls, [
+            ("AAPL", "US", "Apple Inc."),
+            ("INTC", "US", "Intel Corporation"),
+        ])
+
+    def test_attempt_statuses_and_task1_projection_are_truthful_and_sanitized(self) -> None:
+        pool = ValuationDataSourcePool(now=lambda: datetime(2026, 7, 19, tzinfo=timezone.utc))
+        pool.register(ValuationFactsSource(
+            "dart_filing", SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "dart_filing", "dart",
+            lambda symbol, market: {"facts": [], "attempt_status": "complete_missing"},
+        ))
+
+        def failed(symbol: str, market: str) -> object:
+            raise RuntimeError("Authorization: Bearer secret https://private.example/raw")
+
+        pool.register(ValuationFactsSource(
+            "fss_filing", SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "fss_filing", "fss", failed,
+        ))
+        pool.register(ValuationFactsSource(
+            "yahoo", SourceCapability.MARKET_SNAPSHOT,
+            "market_snapshot", "yahoo",
+            lambda symbol, market: [{
+                "metric": "price", "value": 250_000.0, "currency": "KRW",
+                "timestamp": "2026-07-19T00:00:00Z",
+            }],
+        ))
+        target = normalize_valuation_target("005930", "KR", "Samsung Electronics")
+
+        snapshot = _fetch_valuation_snapshot(target, pool)
+
+        self.assertEqual(
+            [(attempt["source_type"], attempt["status"]) for attempt in snapshot["source_attempts"][:4]],
+            [
+                ("dart_filing", "complete_missing"),
+                ("fss_filing", "failed"),
+                ("company_ir", "not_attempted"),
+                ("vendor_financial", "not_attempted"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                {"stock": {"symbol": "005930", "market": "KR"}},
+                symbol="005930", market="KR", output_dir=Path(temporary),
+                command="valuation KR.005930", provider_snapshot=snapshot,
+                now=datetime(2026, 7, 19, tzinfo=timezone.utc),
+            )
+        evidence = build_valuation_artifact_evidence(packet)
+        attempts = evidence["source_coverage"]["source_attempts"]
+        self.assertEqual(
+            [attempt["status"] for attempt in attempts[:4]],
+            ["complete_missing", "failed", "not_attempted", "not_attempted"],
+        )
+        serialized = json.dumps({"snapshot": snapshot, "evidence": evidence}).lower()
+        for unsafe in ("authorization", "bearer", "secret", "private.example", "http://", "https://"):
+            self.assertNotIn(unsafe, serialized)
 
     def test_us_snapshot_uses_sec_facts_and_shared_yahoo_market_source(self) -> None:
         calls: list[tuple[str, str]] = []

@@ -13,13 +13,16 @@ from investment_knowledge_mcp.data_sources.contracts import (
     DataStatus,
     SourceCapability,
 )
-from investment_knowledge_mcp.data_sources.pool import DataSourcePool, ResultCache
+from investment_knowledge_mcp.data_sources.pool import ResultCache
 from investment_knowledge_mcp.data_sources.valuation import (
     MARKET_SNAPSHOT_METRICS,
     VALUATION_FACT_METRICS,
+    ValuationDataSourcePool,
     ValuationFactsSource,
     valuation_financial_plan,
+    valuation_financial_source_order,
     valuation_market_plan,
+    valuation_market_source_order,
     valuation_source_descriptor,
 )
 from investment_knowledge_mcp.market_data_provider import _fetch_yahoo_symbol
@@ -28,10 +31,15 @@ from investment_knowledge_mcp.research.official_sources import (
     _http_client,
     _lookup_sec_cik,
 )
+from investment_knowledge_mcp.research.models import SourceDocument
 
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,31}$")
+_SAFE_COMPANY_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,120}$")
 _MARKET_CURRENCY = {"US": "USD", "HK": "HKD", "KR": "KRW"}
+_SK_HYNIX_IR_URL = "https://www.skhynix.com/ir/"
+_DART_SEARCH_URL = "https://dart.fss.or.kr/dsab002/main.do"
+_FSS_SEARCH_URL = "https://englishdart.fss.or.kr/dsbc001/main.do"
 _KNOWN_TARGETS: dict[tuple[str, str], dict[str, str]] = {
     ("US", "INTC"): {"company_name": "Intel Corporation"},
     ("KR", "000660"): {"company_name": "SK hynix Inc."},
@@ -67,7 +75,6 @@ def normalize_valuation_target(
     company_name: str | None = None,
 ) -> dict[str, object]:
     """Resolve supported aliases into one canonical market-qualified target."""
-    del company_name
     raw_symbol = _required_text(symbol, "symbol")
     normalized_market = str(market).strip().upper()
     raw_symbol, qualified_market = _split_qualified_symbol(raw_symbol)
@@ -105,8 +112,11 @@ def normalize_valuation_target(
         "currency": _MARKET_CURRENCY[normalized_market],
         "mapping_source": {"US": "sec", "HK": "hkex", "KR": "dart"}[normalized_market],
     }
-    if known := _KNOWN_TARGETS.get((normalized_market, normalized_symbol)):
+    known = _KNOWN_TARGETS.get((normalized_market, normalized_symbol))
+    if known:
         target.update(known)
+    elif normalized_name := _bounded_company_name(company_name):
+        target["company_name"] = normalized_name
     return target
 
 
@@ -117,97 +127,86 @@ def fetch_valuation_snapshot(
 ) -> dict[str, object]:
     """Fetch a bounded snapshot through the shared pool and canonical adapters."""
     target = normalize_valuation_target(symbol, market, company_name)
-    pool = default_valuation_pool()
+    pool = default_valuation_pool(target)
     return _fetch_valuation_snapshot(target, pool)
 
 
-def default_valuation_pool(*, cache: ResultCache | None = None) -> DataSourcePool:
+def default_valuation_pool(
+    target: dict[str, object],
+    *,
+    cache: ResultCache | None = None,
+    official_provider: OfficialResearchProvider | None = None,
+    http_client_factory=_http_client,
+    market_loader=None,
+) -> ValuationDataSourcePool:
     """Build the lazy valuation source registry without performing any fetch."""
-    pool = DataSourcePool(cache=cache)
-    official_provider = OfficialResearchProvider()
-    sources = (
-        ValuationFactsSource(
-            "sec_companyfacts",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "sec_companyfacts",
-            "sec",
-            _load_sec_companyfacts,
-        ),
-        ValuationFactsSource(
-            "sec_filing",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "sec_filing",
-            "sec",
-            _official_attempt_loader(official_provider, "sec_filing"),
-        ),
-        ValuationFactsSource(
-            "hkexnews",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "hkexnews",
-            "hkex",
-            _official_attempt_loader(official_provider, "hkexnews"),
-        ),
-        ValuationFactsSource(
-            "hkex_filing",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "hkex_filing",
-            "hkex",
-            _official_attempt_loader(official_provider, "hkex_filing"),
-        ),
-        ValuationFactsSource(
-            "dart_filing",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "dart_filing",
-            "dart",
-            _empty_official_attempt,
-        ),
-        ValuationFactsSource(
-            "fss_filing",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "fss_filing",
-            "fss",
-            _empty_official_attempt,
-        ),
-        ValuationFactsSource(
-            "company_ir",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "company_ir",
-            "company_ir",
-            _official_attempt_loader(official_provider, "company_ir"),
-        ),
-        ValuationFactsSource(
-            "company_report",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "company_report",
-            "official_research",
-            _official_attempt_loader(official_provider, "company_report"),
-        ),
-        ValuationFactsSource(
-            "vendor_financial",
-            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
-            "vendor_financial",
-            "vendor",
-            _empty_official_attempt,
-        ),
-        ValuationFactsSource(
-            "yahoo",
-            SourceCapability.MARKET_SNAPSHOT,
-            "market_snapshot",
-            "yahoo",
-            _load_shared_yahoo_snapshot,
-            default_ttl_seconds=60,
-        ),
-    )
+    pool = ValuationDataSourcePool(cache=cache)
+    official_provider = official_provider or OfficialResearchProvider()
+    market = str(target["normalized_market"])
+    symbol = str(target["normalized_symbol"])
+    company_name = target.get("company_name") if isinstance(target.get("company_name"), str) else None
+    sources: list[ValuationFactsSource] = []
+    if market == "US":
+        sources.extend((
+            _financial_source(
+                "sec_companyfacts",
+                _sec_companyfacts_loader(http_client_factory),
+                markets=("US",),
+            ),
+            _financial_source(
+                "sec_filing",
+                _official_attempt_loader(official_provider, "sec_filing", company_name=company_name),
+                markets=("US",),
+            ),
+        ))
+    elif market == "HK":
+        for source_id in ("hkexnews", "hkex_filing", "company_report"):
+            sources.append(_financial_source(
+                source_id,
+                _official_attempt_loader(official_provider, source_id, company_name=company_name),
+                markets=("HK",),
+            ))
+    elif market == "KR":
+        sources.extend((
+            _financial_source(
+                "dart_filing",
+                _kr_regulator_probe_loader("dart_filing", target, http_client_factory),
+                markets=("KR",),
+            ),
+            _financial_source(
+                "fss_filing",
+                _kr_regulator_probe_loader("fss_filing", target, http_client_factory),
+                markets=("KR",),
+            ),
+        ))
+        if symbol == "000660":
+            sources.append(_financial_source(
+                "company_ir",
+                _company_ir_probe_loader(_SK_HYNIX_IR_URL, http_client_factory),
+                markets=("KR",),
+            ))
+    sources.append(ValuationFactsSource(
+        "yahoo",
+        SourceCapability.MARKET_SNAPSHOT,
+        "market_snapshot",
+        "yahoo",
+        market_loader or _load_shared_yahoo_snapshot,
+        markets=(market,),
+        default_ttl_seconds=60,
+    ))
     for source in sources:
         pool.register(source)
     return pool
 
 
-def _fetch_valuation_snapshot(target: dict[str, object], pool: DataSourcePool) -> dict[str, object]:
+def _fetch_valuation_snapshot(
+    target: dict[str, object],
+    pool: ValuationDataSourcePool,
+) -> dict[str, object]:
     market = str(target["normalized_market"])
     symbol = str(target["normalized_symbol"])
     provider_ticker = str(target["provider_market_ticker"])
-    available_sources = tuple(pool._providers)
+    available_sources = pool.registered_source_ids
     financial_request = DataRequest(
         SourceCapability.OFFICIAL_FINANCIAL_FACTS,
         market,
@@ -239,17 +238,25 @@ def _fetch_valuation_snapshot(target: dict[str, object], pool: DataSourcePool) -
         "financial_fact_status": _result_status(financial),
         "market_snapshot_status": _result_status(market_snapshot),
         "source_attempts": [
-            *_safe_attempts(financial),
-            *_safe_attempts(market_snapshot),
+            *_safe_attempts(financial, valuation_financial_source_order(market)),
+            *_safe_attempts(market_snapshot, valuation_market_source_order()),
         ],
     }
 
 
-def _safe_attempts(result: DataResult) -> list[dict[str, str]]:
-    attempts = []
-    for source_id in result.attempted_sources:
+def _safe_attempts(result: DataResult, source_order: tuple[str, ...]) -> list[dict[str, str]]:
+    attempts: list[dict[str, str]] = []
+    failures = {failure.source_id: failure.code for failure in result.failures}
+    for source_id in source_order:
         descriptor = valuation_source_descriptor(source_id)
-        status = _result_status(result) if source_id == result.selected_source else "unavailable"
+        if source_id == result.selected_source:
+            status = _result_status(result)
+        elif source_id not in result.attempted_sources:
+            status = "not_attempted"
+        elif failures.get(source_id) in {"complete_missing", "empty_result"}:
+            status = "complete_missing"
+        else:
+            status = "failed"
         attempts.append({
             "family": descriptor["family"],
             "status": status,
@@ -297,22 +304,63 @@ def _required_text(value: object, field: str) -> str:
     return normalized
 
 
+def _bounded_company_name(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = re.sub(r"\s+", " ", value).strip()
+    if not _SAFE_COMPANY_NAME.fullmatch(normalized):
+        return None
+    if re.search(r"(?i)\b(token|api[_ -]?key|password|secret|authorization)\b|https?://", normalized):
+        return None
+    return normalized
+
+
 def _alias_key(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip()).casefold()
 
 
-def _load_sec_companyfacts(symbol: str, market: str) -> dict[str, object]:
+def _financial_source(
+    source_id: str,
+    loader,
+    *,
+    markets: tuple[str, ...],
+) -> ValuationFactsSource:
+    descriptor = valuation_source_descriptor(source_id)
+    return ValuationFactsSource(
+        source_id,
+        SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+        descriptor["source_type"],
+        descriptor["provider"],
+        loader,
+        markets=markets,
+    )
+
+
+def _sec_companyfacts_loader(http_client_factory):
+    def load(symbol: str, market: str) -> dict[str, object]:
+        return _load_sec_companyfacts(symbol, market, http_client_factory=http_client_factory)
+    return load
+
+
+def _load_sec_companyfacts(
+    symbol: str,
+    market: str,
+    *,
+    http_client_factory=_http_client,
+) -> dict[str, object]:
     if market != "US":
-        return _empty_payload()
-    with _http_client(8.0) as client:
+        return _empty_payload(attempt_status="complete_missing")
+    with http_client_factory(8.0) as client:
         cik = _lookup_sec_cik(client, symbol)
         if cik is None:
-            return _empty_payload()
+            return _empty_payload(attempt_status="complete_missing")
         response = client.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json")
         response.raise_for_status()
         payload = response.json()
+    facts = _extract_sec_companyfacts(payload)
     return {
-        "facts": _extract_sec_companyfacts(payload),
+        "facts": facts,
+        "attempt_status": "complete_missing" if not facts else "available",
         "fetched_at": datetime.now(timezone.utc),
     }
 
@@ -363,36 +411,89 @@ def _latest_sec_entry(payload: object, *, shares: bool) -> dict[str, Any] | None
     return max(annual or valid, key=lambda item: (str(item.get("filed") or ""), str(item.get("end") or "")), default=None)
 
 
-def _official_attempt_loader(provider: OfficialResearchProvider, source_id: str):
+def _official_attempt_loader(
+    provider: OfficialResearchProvider,
+    source_id: str,
+    *,
+    company_name: str | None = None,
+):
     def load(symbol: str, market: str) -> dict[str, object]:
-        bundle = provider.collect(symbol=symbol, market=market)
+        bundle = provider.collect(symbol=symbol, market=market, company_name=company_name)
         matching = [
             source
             for source in bundle.sources
-            if _official_document_matches(source_id, source.source_type, source.publisher)
+            if _official_document_matches(source_id, source)
         ]
-        return {"facts": [], "fetched_at": datetime.now(timezone.utc), "source_count": len(matching)}
+        return {
+            "facts": [],
+            "attempt_status": "complete_missing",
+            "fetched_at": datetime.now(timezone.utc),
+            "source_count": len(matching),
+        }
     return load
 
 
-def _official_document_matches(source_id: str, source_type: str, publisher: str | None) -> bool:
-    publisher_key = str(publisher or "").casefold()
-    if source_id in {"hkexnews", "hkex_filing"}:
-        return "hkex" in publisher_key
+def _official_document_matches(source_id: str, source: SourceDocument) -> bool:
+    publisher_key = str(source.publisher or "").casefold()
+    source_type = source.source_type.strip().casefold()
+    key = source.key.strip().casefold()
+    is_hkex = "hkex" in publisher_key or key.startswith("hkex_")
+    is_sec = publisher_key == "sec" or key.startswith("sec_")
+    hkex_news_types = {
+        "announcement",
+        "annual_results",
+        "interim_results",
+        "quarterly_results",
+        "profit_warning",
+        "transaction_announcement",
+    }
+    hkex_filing_types = {"annual_report", "prospectus"}
+    company_report_types = {"annual_report", "annual_results", "interim_results", "quarterly_results"}
+    if source_id == "hkexnews":
+        return is_hkex and source_type in hkex_news_types
+    if source_id == "hkex_filing":
+        return is_hkex and source_type in hkex_filing_types
     if source_id == "company_ir":
-        return "hkex" not in publisher_key
+        return not is_hkex and not is_sec and source_type == "company_ir" and "ir" in key
     if source_id == "company_report":
-        return source_type in {"annual_report", "annual_results", "interim_results", "quarterly_results"}
-    return source_id == "sec_filing" and "sec" in publisher_key
+        return not is_hkex and not is_sec and source_type in company_report_types and (
+            key.startswith("issuer_ir_") or key.startswith("company_")
+        )
+    return source_id == "sec_filing" and is_sec and source_type in {
+        "annual_report", "quarterly_results", "announcement",
+    }
 
 
-def _empty_official_attempt(symbol: str, market: str) -> dict[str, object]:
-    del symbol, market
-    return _empty_payload()
+def _kr_regulator_probe_loader(source_id: str, target: dict[str, object], http_client_factory):
+    endpoint = {"dart_filing": _DART_SEARCH_URL, "fss_filing": _FSS_SEARCH_URL}[source_id]
+    query = str(target.get("company_name") or target["normalized_symbol"])
+
+    def load(symbol: str, market: str) -> dict[str, object]:
+        del symbol, market
+        with http_client_factory(8.0) as client:
+            response = client.get(endpoint, params={"textCrpNm": query})
+            response.raise_for_status()
+            _ = response.text
+        return _empty_payload(attempt_status="complete_missing")
+    return load
 
 
-def _empty_payload() -> dict[str, object]:
-    return {"facts": [], "fetched_at": datetime.now(timezone.utc)}
+def _company_ir_probe_loader(url: str, http_client_factory):
+    def load(symbol: str, market: str) -> dict[str, object]:
+        del symbol, market
+        with http_client_factory(8.0) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            _ = response.text
+        return _empty_payload(attempt_status="complete_missing")
+    return load
+
+
+def _empty_payload(*, attempt_status: str | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {"facts": [], "fetched_at": datetime.now(timezone.utc)}
+    if attempt_status:
+        payload["attempt_status"] = attempt_status
+    return payload
 
 
 def _load_shared_yahoo_snapshot(symbol: str, market: str) -> dict[str, object]:

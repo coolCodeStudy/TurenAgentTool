@@ -178,6 +178,29 @@ class DataSourceContractTests(TestCase):
         self.assertEqual([record["metric"] for record in financial.records], ["revenue"])
         self.assertEqual([record["metric"] for record in market.records], ["price"])
 
+    def test_empty_completed_probe_has_distinct_failure_code(self) -> None:
+        source = ValuationFactsSource(
+            "dart_filing",
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "dart_filing",
+            "dart",
+            lambda symbol, market: {
+                "facts": [],
+                "attempt_status": "complete_missing",
+                "fetched_at": datetime(2026, 7, 19, tzinfo=timezone.utc),
+            },
+        )
+
+        result = source.fetch(DataRequest(
+            SourceCapability.OFFICIAL_FINANCIAL_FACTS,
+            "KR",
+            ("000660",),
+            freshness="latest_filing",
+        ))
+
+        self.assertIs(result.status, DataStatus.UNAVAILABLE)
+        self.assertEqual(result.failures[0].code, "complete_missing")
+
     def test_provider_failure_is_immutable_and_redacts_sensitive_detail(self) -> None:
         failure = ProviderFailure(
             code="timeout",
