@@ -2,7 +2,44 @@
 
 Use this packet when creating, resuming, or taking over a Feature Coordinator flow. It is the minimum context package a coordinator needs before dispatching role agents or reporting status.
 
-## Packet
+## Active Packet: Stock valuation research
+
+```markdown
+# Coordinator Context Packet
+
+- Feature: Stock valuation research
+- Coordinator thread/session: Codex feature-coordinator task delegated from `019f3821-3e6c-79b3-96b3-a5e91aaaa184`
+- Owner intent: Completely close the feature; make ordinary product and technical choices autonomously and escalate only irreducible decisions or cross-feature conflicts.
+- Operating model source: `docs/product/Agent-Operating-Model.md`
+- Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
+- Product doc / PRD: `docs/product/PRD-Stock-Valuation-Research.md`
+- Technical plan: Missing on authoritative `origin/main@20baa69`; unreconciled historical plan exists on `origin/codex/release-kline-stock-valuation-p03@acd9856`.
+- Feature Registry row: `Stock valuation research`
+- Acceptance Queue row: Missing on authoritative state; historical rows `AT-2026-07-01-001`, `AT-2026-07-04-002`, and `AT-2026-07-05-003` require evidence review before reconciliation.
+- Delivery Queue rows: `DQ-2026-07-19-002` is the active Product/recovery gate; older stock-valuation rows exist only on historical coordinator/release refs.
+- Current authoritative branch/ref: `origin/main@20baa6903389fec0e97ccbd4cd443af6d840eeb1`
+- Related coordinator branch/ref: `codex/stock-valuation-research`; historical recovery source `origin/codex/release-kline-stock-valuation-p03@acd9856`
+- Current deployed ref or deploy event: Latest repo-native production evidence is architecture deploy `main@86652e4`; current cloud valuation action availability must be rechecked after integration.
+- User-facing surface: Cloud Command Workbench at `http://47.84.190.191:8010/command`
+- Current state: Product decisions are being resolved while the coordinator audits a stale-state contradiction: historical branches contain implementation and acceptance evidence that authoritative `main` does not contain.
+- Known blockers: No irreducible product blocker. Historical implementation must be reconciled onto current `main` without reverting frontend, Kline, access, scheduler, or deployment changes.
+- Active child threads or role sessions: Product Agent dispatch will review PRD readiness and the recovered P0 boundary.
+- Watch contract:
+  - Watched item: Product readiness return, followed by Development integration/review and independent Acceptance Testing returns.
+  - Wake event or cadence: This coordinator polls each child role until return; no Global PM heartbeat is the normal watcher.
+  - Expected return artifact: Exact decisions or commit, verification evidence, remaining gaps, deploy decision, and role-learning statement.
+  - Coordinator action on wake: Apply the Coordinator Return Gate, update registry/queues, then accept-and-route, reject-and-return, block with a named owner, or declare ready for user acceptance.
+- Next owner: Product Agent for a bounded PRD readiness/recovery review; Development Agent follows only after PRD and technical-plan gates are ready.
+- Next handoff: Confirm the artifact-backed P0, provider/source policy, manual-first peer policy, and acceptance boundary; remove unresolved blocking questions.
+- Deploy needed: Yes after current-main integration because the accepted surface is cloud Command Workbench.
+- Deploy decision: `blocked` until a current-main-compatible implementation ref passes Development and review gates; then `self_deploy` through the shared workflow if no serialized deploy conflict exists.
+- Escalation target: Global Project Manager only if current-main integration exposes a real cross-feature release conflict; Owner only for final user acceptance or an irreducible decision.
+- User decision needed: None for Product/technical delivery; final user acceptance remains explicit and cannot be inferred.
+- Completion gate: Independent cloud acceptance must pass before `ready_for_user_acceptance`; `product_done` additionally requires explicit Owner acceptance.
+- Role learning check: Pending completion evidence; record only reusable lessons that pass `docs/lesson-capture-protocol.md`.
+```
+
+## Reusable Packet Template
 
 ```markdown
 # Coordinator Context Packet
