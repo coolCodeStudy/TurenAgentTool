@@ -814,6 +814,17 @@ class StockValuationTests(unittest.TestCase):
         for foreign in ("HK.EVIL", "EVIL", "official_research", "generic_provider"):
             self.assertNotIn(foreign, serialized)
 
+    def test_public_projection_drops_foreign_confirmation_on_stock_mismatch(self) -> None:
+        packet = json.loads(json.dumps(self._build()))
+        packet["stock"].update({"symbol": "EVIL", "market": "HK"})
+
+        evidence = build_valuation_artifact_evidence(packet)
+        card = render_valuation_card(packet)
+
+        self.assertFalse(evidence["assumptions"]["user_confirmed_valuation_case"])
+        self.assertIn("missing_confirmed_case", evidence["degraded_state"]["reason_codes"])
+        self.assertIn("no user-confirmed valuation case", card)
+
     def test_public_projection_drops_records_with_incomplete_required_refs(self) -> None:
         packet = json.loads(json.dumps(self._build()))
         ps = next(item for item in packet["deterministic_calculations"] if item["metric"] == "ps")

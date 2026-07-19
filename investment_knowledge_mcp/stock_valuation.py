@@ -593,7 +593,8 @@ def _public_projection(packet: dict[str, object]) -> dict[str, object]:
     registry = _project_registry(raw_coverage); registry_by_id = {str(item["id"]): item for item in registry}
     facts = _project_facts(packet.get("facts"), registry_by_id)
     internal_stock = _project_stock(packet.get("stock"), symbol, market) if has_input_identity and not stock_mismatch else ({"symbol": symbol, "market": market} if has_input_identity else {})
-    assumptions = _project_assumptions(packet.get("assumptions")); confirmed = assumptions.get("user_confirmed_valuation_case") is True
+    assumptions = _project_assumptions(packet.get("assumptions")); confirmed = assumptions.get("user_confirmed_valuation_case") is True and has_input_identity and not stock_mismatch
+    assumptions["user_confirmed_valuation_case"] = confirmed
     coverage = _project_coverage(raw_coverage, facts, registry)
     domain = _canonical_domain(internal_stock, facts, registry, confirmed, market, _status(coverage.get("market_snapshot_status")))
     allowed = _allowed_refs({str(item["id"]) for item in facts}, internal_stock)
