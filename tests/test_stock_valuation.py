@@ -124,6 +124,76 @@ class StockValuationTests(unittest.TestCase):
         self.assertIn("no formal user insight was written", card)
         self.assertNotIn("provider.example", card)
 
+    def test_evidence_recursively_projects_hostile_provider_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=Path(temporary), command="valuation US.ACME", provider_snapshot=self._snapshot(),
+            )
+        coverage = packet["source_coverage"]
+        assert isinstance(coverage, dict)
+        coverage["provider_statuses"] = {
+            "market_snapshot": {
+                "status": "available",
+                "headers": {"Authorization": "Bearer provider-secret"},
+                "exception": "provider exception detail",
+                "endpoint": "https://provider.example/diagnostic",
+                "configuration": {"api_key": "configuration-secret"},
+                "diagnostics": {"nested": {"raw": "nested-provider-diagnostic"}},
+            },
+        }
+        coverage["source_attempts"] = {
+            "official_financial": {
+                "family": "official_financial",
+                "status": "unavailable",
+                "headers": {"X-Api-Key": "attempt-secret"},
+                "exception_text": "attempt exception detail",
+                "endpoint_url": "https://attempt.example/raw",
+                "configuration": {"token": "attempt-configuration"},
+                "diagnostics": {"raw": "attempt-diagnostic"},
+            },
+        }
+
+        evidence = build_valuation_artifact_evidence(packet)
+        serialized = json.dumps(evidence).lower()
+
+        self.assertEqual(
+            evidence["source_coverage"]["provider_statuses"],
+            {"market_snapshot": {"status": "available"}},
+        )
+        self.assertEqual(
+            evidence["source_coverage"]["source_attempts"],
+            [{"family": "official_financial", "status": "unavailable"}],
+        )
+        for unsafe in (
+            "authorization", "provider-secret", "exception detail", "provider.example",
+            "configuration-secret", "nested-provider-diagnostic", "attempt-secret",
+            "attempt.example", "attempt-configuration", "attempt-diagnostic",
+        ):
+            self.assertNotIn(unsafe, serialized)
+
+    def test_derived_calculations_flatten_all_upstream_fact_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            packet, _ = build_valuation_artifact(
+                self._context(), symbol="ACME", market="US", output_dir=Path(temporary), command="valuation US.ACME", provider_snapshot=self._snapshot(),
+            )
+        calculations = {item["metric"]: item for item in packet["deterministic_calculations"]}
+        self.assertEqual(
+            calculations["free_cash_flow"]["input_refs"],
+            ("fact:operating_cash_flow:sec:ocf", "fact:capex:sec:capex"),
+        )
+        self.assertEqual(
+            calculations["fcf_margin"]["input_refs"],
+            ("fact:operating_cash_flow:sec:ocf", "fact:capex:sec:capex", "fact:revenue:sec:revenue"),
+        )
+        self.assertEqual(
+            calculations["ev_fcf"]["input_refs"],
+            (
+                "fact:price:quote:price", "fact:shares_outstanding:quote:shares",
+                "fact:debt:sec:debt", "fact:cash:sec:cash",
+                "fact:operating_cash_flow:sec:ocf", "fact:capex:sec:capex",
+            ),
+        )
+
     def test_negative_fcf_multiples_are_explicitly_not_meaningful(self) -> None:
         snapshot = self._snapshot()
         facts = snapshot["facts"]

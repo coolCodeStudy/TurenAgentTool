@@ -45,6 +45,15 @@ _FACT_PATTERNS: dict[str, tuple[str, ...]] = {
     "ebitda": (r"\bebitda\b",),
 }
 _MONEY_METRICS = frozenset({"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capex", "free_cash_flow", "cash", "debt", "net_debt", "market_cap", "enterprise_value", "ebitda", "book_value"})
+_EVIDENCE_PROVIDER_STATUS_NAMES = ("market_snapshot", "financial_facts")
+_EVIDENCE_STATUS_VALUES = frozenset({
+    "available", "attempted", "complete_missing", "failed", "failure", "missing",
+    "not_attempted", "partial", "success", "unavailable", "unknown",
+})
+_EVIDENCE_ATTEMPT_FAMILIES = frozenset({
+    "company_ir", "market_snapshot", "official_financial", "regulator_filing",
+    "unknown", "vendor_financial",
+})
 
 
 def valuation_method_library() -> list[dict[str, Any]]:
@@ -143,7 +152,11 @@ def build_valuation_artifact_evidence(packet: dict[str, object]) -> dict[str, ob
         "facts": [_allow_dict(item, ("id", "metric", "value", "display_value", "display_kind", "currency", "source_id", "source_type", "period_end", "timestamp", "provider")) for item in packet.get("facts", []) if isinstance(item, dict)],
         "deterministic_calculations": [_allow_dict(item, ("metric", "value", "raw_value", "display_value", "display_kind", "currency", "meaningful", "meaningfulness_reason", "formula", "inputs", "input_refs")) for item in packet.get("deterministic_calculations", []) if isinstance(item, dict)],
         "market_implied_bridge": {"bridge_lines": [_allow_dict(item, ("type", "display")) for item in bridge.get("bridge_lines", []) if isinstance(item, dict)], "frame_fit_ranking": [_allow_dict(item, ("id", "name", "score", "fit_to_current_market_value", "why_it_fits_or_not", "main_data_gaps", "confidence")) for item in bridge.get("frame_fit_ranking", []) if isinstance(item, dict)]},
-        "source_coverage": _allow_dict(coverage, ("fact_count", "fact_source_id_count", "source_count", "official_source_count", "market_snapshot_status", "financial_fact_status", "provider_statuses", "source_attempts")),
+        "source_coverage": {
+            **_allow_dict(coverage, ("fact_count", "fact_source_id_count", "source_count", "official_source_count", "market_snapshot_status", "financial_fact_status")),
+            "provider_statuses": _evidence_provider_statuses(coverage.get("provider_statuses")),
+            "source_attempts": _evidence_source_attempts(coverage.get("source_attempts")),
+        },
         "degraded_state": _allow_dict(packet.get("degraded_state"), ("degraded", "reasons", "data_gaps")),
         "safety": {"direct_investment_advice": bool(safety.get("direct_investment_advice")), "writes_formal_user_insight": bool(safety.get("writes_formal_user_insight")), "research_aid_only": bool(safety.get("research_aid_only")), "omits_local_path": True, "provider_error_detail_omitted": True},
         "input": _allow_dict(input_data, ("symbol", "market", "created_at")),
@@ -226,7 +239,7 @@ def _calculate_metrics(values: dict[str, float], refs: dict[str, str], currency:
     calculations: list[dict[str, object]] = []
     by_metric: dict[str, dict[str, object]] = {}
     def add(metric: str, value: float, formula: str, inputs: tuple[str, ...], kind: str, negative_reason: str | None = None) -> None:
-        input_refs = tuple(refs.get(item) or str(by_metric.get(item, {}).get("input_refs", ("derived",))[0]) for item in inputs)
+        input_refs = _flatten_input_refs(inputs, refs, by_metric)
         raw = round(value, 6)
         item: dict[str, object] = {"metric": metric, "value": raw, "formula": formula, "inputs": list(inputs), "input_refs": input_refs, "display_kind": kind, "meaningful": True}
         if currency and kind == "currency":
@@ -381,9 +394,54 @@ def _allow_dict(value: object, keys: tuple[str, ...]) -> dict[str, object]:
     return {key: value[key] for key in keys if isinstance(value, dict) and value.get(key) is not None}
 
 
+def _evidence_provider_statuses(value: object) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        name: {"status": _evidence_status(item.get("status"))}
+        for name in _EVIDENCE_PROVIDER_STATUS_NAMES
+        if isinstance((item := value.get(name)), dict)
+    }
+
+
+def _evidence_source_attempts(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, dict):
+        return []
+    attempts: list[dict[str, str]] = []
+    for _, item in sorted(value.items(), key=lambda entry: str(entry[0])):
+        if not isinstance(item, dict):
+            continue
+        family = str(item.get("family") or "unknown").lower()
+        attempts.append({
+            "family": family if family in _EVIDENCE_ATTEMPT_FAMILIES else "unknown",
+            "status": _evidence_status(item.get("status")),
+        })
+    return attempts
+
+
+def _evidence_status(value: object) -> str:
+    status = str(value or "unknown").lower()
+    return status if status in _EVIDENCE_STATUS_VALUES else "unknown"
+
+
 def _safe_attempts(value: object) -> dict[str, object]:
     if not isinstance(value, dict): return {}
     return {str(key): _allow_dict(item, ("family", "status")) for key, item in value.items() if isinstance(item, dict)}
+
+
+def _flatten_input_refs(
+    inputs: tuple[str, ...], refs: dict[str, str], by_metric: dict[str, dict[str, object]],
+) -> tuple[str, ...]:
+    flattened: list[str] = []
+    for input_metric in inputs:
+        fact_ref = refs.get(input_metric)
+        if fact_ref:
+            flattened.append(fact_ref)
+            continue
+        derived_refs = by_metric.get(input_metric, {}).get("input_refs")
+        if isinstance(derived_refs, (list, tuple)):
+            flattened.extend(str(ref) for ref in derived_refs)
+    return tuple(dict.fromkeys(flattened))
 
 
 def _numeric(item: dict[str, object] | None) -> float | None:
