@@ -11,15 +11,34 @@ from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.daily_market_history import (
+    HISTORICAL_MARKET_ACTIVITY_SOURCE,
     HistoricalActivityCancelled,
     HistoricalActivityProvider,
     HistoricalActivityResult,
+    historical_market_activity_source,
     load_historical_market_activity,
+)
+from investment_knowledge_mcp.data_sources import (
+    DataRequest,
+    DataResult,
+    DataSourcePool,
+    DataStatus,
+    SourceCapability,
+    SourcePlan,
+    default_market_bar_pool,
+    market_bar_records_by_symbol,
+)
+from investment_knowledge_mcp.data_sources.market_activity import (
+    ActivityFallbackRows,
+    MarketActivitySource,
+    default_market_activity_pool,
+    load_activity_section,
+    market_activity_plan,
+    market_activity_sections,
 )
 from investment_knowledge_mcp.market_data_provider import (
     MarketBarSnapshot,
     MarketDataProviderError,
-    get_yahoo_market_bars,
 )
 
 
@@ -95,6 +114,7 @@ AKSHARE_PROVIDER = "akshare_eastmoney"
 EASTMONEY_HTTP_PROVIDER = "eastmoney_http"
 PUBLIC_HTTP_FALLBACK_PROVIDER = "public_http_fallback"
 SINA_FINANCE_PROVIDER = "sina_finance"
+LIVE_MARKET_ACTIVITY_SOURCE = "daily_market_activity"
 CN_MIN_TURNOVER = 50_000_000
 HK_MIN_TURNOVER = 20_000_000
 US_MIN_TURNOVER = 10_000_000
@@ -117,6 +137,8 @@ def build_daily_market_brief(
     save: bool = True,
     now: datetime | None = None,
     market_bar_loader: MarketBarLoader | None = None,
+    market_bar_pool: DataSourcePool | None = None,
+    market_activity_pool: DataSourcePool | None = None,
     activity_provider: ActivityProvider | None = None,
     historical_activity_provider: HistoricalActivityProvider | None = None,
     use_fixture: bool = False,
@@ -126,6 +148,8 @@ def build_daily_market_brief(
         market_date=market_date,
         now=now,
         market_bar_loader=market_bar_loader,
+        market_bar_pool=market_bar_pool,
+        market_activity_pool=market_activity_pool,
         activity_provider=activity_provider,
         historical_activity_provider=historical_activity_provider,
         use_fixture=use_fixture,
@@ -150,6 +174,8 @@ def build_daily_market_brief_context(
     *,
     now: datetime | None = None,
     market_bar_loader: MarketBarLoader | None = None,
+    market_bar_pool: DataSourcePool | None = None,
+    market_activity_pool: DataSourcePool | None = None,
     activity_provider: ActivityProvider | None = None,
     historical_activity_provider: HistoricalActivityProvider | None = None,
     use_fixture: bool = False,
@@ -199,13 +225,18 @@ def build_daily_market_brief_context(
         indexes: list[dict[str, Any]] = []
         activity = _empty_activity(config.code)
     else:
-        index_loader = market_bar_loader or (_fixture_market_bar_loader if use_fixture else get_yahoo_market_bars)
+        index_loader = market_bar_loader or (_fixture_market_bar_loader if use_fixture else None)
         indexes = _load_index_rows(
             config=config,
             market_date=resolved_date,
             source_status=source_status,
             warnings=warnings,
             market_bar_loader=index_loader,
+            market_bar_pool=(
+                None
+                if index_loader is not None
+                else (market_bar_pool if market_bar_pool is not None else default_market_bar_pool())
+            ),
             require_exact_date=generation_kind == "historical_reconstruction",
         )
         has_requested_session = any(row.get("date") == resolved_date.isoformat() for row in indexes)
@@ -232,12 +263,56 @@ def build_daily_market_brief_context(
             provider = historical_activity_provider or (
                 _fixture_historical_activity_provider if use_fixture else load_historical_market_activity
             )
-            activity = _historical_activity(config.code, resolved_date, provider=provider)
+            pool = (
+                default_market_activity_pool(
+                    MarketActivitySource(
+                        HISTORICAL_MARKET_ACTIVITY_SOURCE,
+                        lambda market, market_date: _historical_activity(
+                            market,
+                            market_date,
+                            provider=provider,
+                        ),
+                        cancellation_exceptions=(HistoricalActivityCancelled,),
+                    )
+                )
+                if historical_activity_provider is not None or use_fixture
+                else (
+                    market_activity_pool
+                    if market_activity_pool is not None
+                    else default_market_activity_pool(historical_market_activity_source())
+                )
+            )
+            activity = _activity_from_pool(
+                config.code,
+                resolved_date,
+                pool=pool,
+                source_id=HISTORICAL_MARKET_ACTIVITY_SOURCE,
+                freshness="historical_exact_date",
+            )
             _merge_activity_status(source_status, activity)
             _attach_historical_session_provenance(source_status, resolved_date)
         else:
             provider = activity_provider or (_fixture_activity_provider if use_fixture else _akshare_activity_provider)
-            activity = provider(config.code, resolved_date)
+            pool = (
+                default_market_activity_pool(
+                    MarketActivitySource(LIVE_MARKET_ACTIVITY_SOURCE, provider)
+                )
+                if activity_provider is not None or use_fixture
+                else (
+                    market_activity_pool
+                    if market_activity_pool is not None
+                    else default_market_activity_pool(
+                        MarketActivitySource(LIVE_MARKET_ACTIVITY_SOURCE, provider)
+                    )
+                )
+            )
+            activity = _activity_from_pool(
+                config.code,
+                resolved_date,
+                pool=pool,
+                source_id=LIVE_MARKET_ACTIVITY_SOURCE,
+                freshness="session_close",
+            )
             _merge_activity_status(source_status, activity)
 
     narrative = _build_narrative(
@@ -434,12 +509,25 @@ def _load_index_rows(
     market_date: date,
     source_status: dict[str, Any],
     warnings: list[str],
-    market_bar_loader: MarketBarLoader,
+    market_bar_loader: MarketBarLoader | None = None,
+    market_bar_pool: DataSourcePool | None = None,
     require_exact_date: bool = False,
 ) -> list[dict[str, Any]]:
+    if (market_bar_loader is None) == (market_bar_pool is None):
+        raise ValueError("exactly one market bar source path must be selected")
     codes = [item["code"] for item in config.index_configs]
     start = (market_date - timedelta(days=45)).isoformat()
     end = market_date.isoformat()
+    if market_bar_loader is None:
+        return _load_index_rows_from_pool(
+            config=config,
+            market_date=market_date,
+            source_status=source_status,
+            warnings=warnings,
+            market_bar_pool=market_bar_pool,
+            codes=codes,
+            require_exact_date=require_exact_date,
+        )
     try:
         snapshot = market_bar_loader(codes, start, end)
     except MarketDataProviderError as exc:
@@ -481,6 +569,162 @@ def _load_index_rows(
         "prior_session_count": sum(row.get("date") != market_date.isoformat() for row in candidate_rows),
     }
     return rows
+
+
+def _load_index_rows_from_pool(
+    *,
+    config: MarketConfig,
+    market_date: date,
+    source_status: dict[str, Any],
+    warnings: list[str],
+    market_bar_pool: DataSourcePool,
+    codes: list[str],
+    require_exact_date: bool,
+) -> list[dict[str, Any]]:
+    request = DataRequest(
+        capability=SourceCapability.MARKET_BARS,
+        market=config.code,
+        symbols=tuple(codes),
+        start=market_date - timedelta(days=45),
+        end=market_date,
+        freshness="daily_market_brief",
+    )
+    plan = SourcePlan(
+        capability=SourceCapability.MARKET_BARS,
+        preferred_sources=("yahoo_chart",),
+        allowed_sources=("yahoo_chart",),
+        fallback_sources=(),
+        required=True,
+        partial_allowed=True,
+    )
+    result = market_bar_pool.fetch(request, plan)
+
+    if not isinstance(result, DataResult):
+        return _set_pool_index_unavailable(
+            source_status=source_status,
+            warnings=warnings,
+            attempted_sources=[],
+            selected_source=None,
+            coverage=0.0,
+            from_cache=False,
+            failures=[_typed_failure("provider_contract_error", "yahoo_chart", retryable=False, fallback_allowed=False)],
+        )
+
+    failures = [_typed_failure_from_result(failure) for failure in result.failures]
+    if result.status is DataStatus.UNAVAILABLE:
+        return _set_pool_index_unavailable(
+            source_status=source_status,
+            warnings=warnings,
+            attempted_sources=list(result.attempted_sources),
+            selected_source=result.selected_source,
+            coverage=result.coverage,
+            from_cache=result.from_cache,
+            failures=failures,
+        )
+
+    try:
+        bars_by_code = market_bar_records_by_symbol(result)
+    except ValueError:
+        source_id = result.selected_source or (result.attempted_sources[-1] if result.attempted_sources else "yahoo_chart")
+        failures.append(_typed_failure("provider_contract_error", source_id, retryable=False, fallback_allowed=False))
+        return _set_pool_index_unavailable(
+            source_status=source_status,
+            warnings=warnings,
+            attempted_sources=list(result.attempted_sources),
+            selected_source=result.selected_source,
+            coverage=0.0,
+            from_cache=False,
+            failures=failures,
+        )
+
+    try:
+        candidate_rows: list[dict[str, Any]] = []
+        for index_config in config.index_configs:
+            bars = sorted(
+                bars_by_code.get(index_config["code"], []),
+                key=lambda item: str(item.get("date") or ""),
+            )
+            row = _index_row(
+                index_config=index_config,
+                bars=bars,
+                market_date=market_date,
+                metric_label=config.index_metric_label,
+            )
+            if row is not None:
+                candidate_rows.append(row)
+    except (AttributeError, TypeError, ValueError):
+        source_id = result.selected_source or (result.attempted_sources[-1] if result.attempted_sources else "yahoo_chart")
+        failures.append(_typed_failure("provider_contract_error", source_id, retryable=False, fallback_allowed=False))
+        return _set_pool_index_unavailable(
+            source_status=source_status,
+            warnings=warnings,
+            attempted_sources=list(result.attempted_sources),
+            selected_source=result.selected_source,
+            coverage=0.0,
+            from_cache=False,
+            failures=failures,
+        )
+    rows = [
+        row for row in candidate_rows if not require_exact_date or row.get("date") == market_date.isoformat()
+    ]
+    source_status["indexes"] = {
+        "status": "ok" if len(rows) == len(config.index_configs) else ("partial" if rows else "missing"),
+        "provider": result.selected_source,
+        "count": len(rows),
+        "fetched_at": result.fetched_at.isoformat(),
+        "missing": [item["code"] for item in config.index_configs if item["code"] not in {row["code"] for row in rows}],
+        "prior_session_count": sum(row.get("date") != market_date.isoformat() for row in candidate_rows),
+        "attempted_sources": list(result.attempted_sources),
+        "selected_source": result.selected_source,
+        "coverage": result.coverage,
+        "from_cache": result.from_cache,
+        "failures": failures,
+    }
+    return rows
+
+
+def _set_pool_index_unavailable(
+    *,
+    source_status: dict[str, Any],
+    warnings: list[str],
+    attempted_sources: list[str],
+    selected_source: str | None,
+    coverage: float,
+    from_cache: bool,
+    failures: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    source_status["indexes"] = {
+        "status": "provider_unavailable",
+        "provider": selected_source or "yahoo_chart",
+        "count": 0,
+        "message": INDEX_DEGRADED_COPY,
+        "detail_code": "provider_unavailable",
+        "attempted_sources": attempted_sources,
+        "selected_source": selected_source,
+        "coverage": coverage,
+        "from_cache": from_cache,
+        "failures": failures,
+    }
+    warnings.append(INDEX_DEGRADED_COPY)
+    return []
+
+
+def _typed_failure_from_result(failure: Any) -> dict[str, Any]:
+    return _typed_failure(
+        failure.code,
+        failure.source_id,
+        retryable=failure.retryable,
+        fallback_allowed=failure.fallback_allowed,
+    )
+
+
+def _typed_failure(code: str, source: str, *, retryable: bool, fallback_allowed: bool) -> dict[str, Any]:
+    return {
+        "code": code,
+        "source": source,
+        "retryable": retryable,
+        "fallback_allowed": fallback_allowed,
+    }
 
 
 def _index_row(index_config: dict[str, str], bars: list[dict[str, Any]], market_date: date, metric_label: str) -> dict[str, Any] | None:
@@ -609,6 +853,46 @@ def _historical_activity(
         }
 
 
+def _activity_from_pool(
+    market: str,
+    market_date: date,
+    *,
+    pool: DataSourcePool,
+    source_id: str,
+    freshness: str,
+) -> dict[str, Any]:
+    result = pool.fetch(
+        DataRequest(
+            capability=SourceCapability.MARKET_ACTIVITY,
+            market=market,
+            start=market_date,
+            end=market_date,
+            freshness=freshness,
+        ),
+        market_activity_plan(source_id),
+    )
+    if any(failure.code == "cancelled" for failure in result.failures):
+        raise HistoricalActivityCancelled()
+    decoded = market_activity_sections(result)
+    if not decoded:
+        provider = ",".join(result.attempted_sources) or source_id
+        return _empty_activity(
+            market,
+            provider=provider,
+            status="provider_unavailable",
+            message="Configured market activity providers did not return usable data.",
+        )
+    return {
+        section: decoded[section]["rows"]
+        for section in ("sectors", "gainers", "capital_flow")
+    } | {
+        "source_status": {
+            section: decoded[section]["source_status"]
+            for section in ("sectors", "gainers", "capital_flow")
+        }
+    }
+
+
 def _fixture_historical_activity_provider(market: str, market_date: date) -> HistoricalActivityResult:
     activity = _fixture_activity_provider(market, market_date)
     session_date = market_date.isoformat()
@@ -703,25 +987,25 @@ def _akshare_activity_provider(market: str, market_date: date) -> dict[str, Any]
 
 
 def _akshare_cn_activity(ak: Any, market_date: date) -> dict[str, Any]:
-    sectors, sector_status = _akshare_call(
+    sectors, sector_status = load_activity_section(
         provider=AKSHARE_PROVIDER,
-        status_key="sectors",
+        section="sectors",
         fallback_message="AKShare 未返回可用的 A 股行业板块涨幅榜。",
         loader=lambda: _akshare_cn_sectors(ak.stock_board_industry_name_em()),
         fallback_provider=EASTMONEY_HTTP_PROVIDER,
         fallback_loader=_eastmoney_cn_sectors,
     )
-    gainers, gainer_status = _akshare_call(
+    gainers, gainer_status = load_activity_section(
         provider=AKSHARE_PROVIDER,
-        status_key="gainers",
+        section="gainers",
         fallback_message="AKShare 未返回可用的 A 股个股涨幅榜。",
         loader=lambda: _akshare_stock_gainers(ak.stock_zh_a_spot_em(), market="CN", min_turnover=CN_MIN_TURNOVER),
         fallback_provider=PUBLIC_HTTP_FALLBACK_PROVIDER,
         fallback_loader=_cn_gainers_http_fallback,
     )
-    flow, flow_status = _akshare_call(
+    flow, flow_status = load_activity_section(
         provider=AKSHARE_PROVIDER,
-        status_key="capital_flow",
+        section="capital_flow",
         fallback_message=CAPITAL_FLOW_DEGRADED_COPY,
         loader=lambda: _akshare_cn_capital_flow(ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")),
         fallback_provider=EASTMONEY_HTTP_PROVIDER,
@@ -740,9 +1024,9 @@ def _akshare_cn_activity(ak: Any, market_date: date) -> dict[str, Any]:
 
 
 def _akshare_hk_activity(ak: Any, market_date: date) -> dict[str, Any]:
-    gainers, gainer_status = _akshare_call(
+    gainers, gainer_status = load_activity_section(
         provider=AKSHARE_PROVIDER,
-        status_key="gainers",
+        section="gainers",
         fallback_message="AKShare 未返回可用的港股主板涨幅榜。",
         loader=lambda: _akshare_stock_gainers(ak.stock_hk_main_board_spot_em(), market="HK", min_turnover=HK_MIN_TURNOVER),
         fallback_provider=PUBLIC_HTTP_FALLBACK_PROVIDER,
@@ -768,9 +1052,9 @@ def _akshare_hk_activity(ak: Any, market_date: date) -> dict[str, Any]:
 
 
 def _akshare_us_activity(ak: Any, market_date: date) -> dict[str, Any]:
-    gainers, gainer_status = _akshare_call(
+    gainers, gainer_status = load_activity_section(
         provider=AKSHARE_PROVIDER,
-        status_key="gainers",
+        section="gainers",
         fallback_message="AKShare 未返回可用的美股涨幅榜。",
         loader=lambda: _akshare_stock_gainers(ak.stock_us_spot_em(), market="US", min_turnover=US_MIN_TURNOVER),
         fallback_provider=PUBLIC_HTTP_FALLBACK_PROVIDER,
@@ -795,63 +1079,22 @@ def _akshare_us_activity(ak: Any, market_date: date) -> dict[str, Any]:
     return activity
 
 
-def _akshare_call(
-    *,
-    provider: str,
-    status_key: str,
-    fallback_message: str,
-    loader: Callable[[], list[dict[str, Any]]],
-    fallback_provider: str | None = None,
-    fallback_loader: Callable[[], list[dict[str, Any]]] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    detail_code = ""
-    try:
-        rows = loader()
-    except Exception as exc:
-        rows = []
-        detail_code = type(exc).__name__
-    if not rows and fallback_loader and fallback_provider:
-        try:
-            rows = fallback_loader()
-        except Exception as exc:
-            return [], {
-                "status": "provider_unavailable",
-                "provider": f"{provider},{fallback_provider}",
-                "count": 0,
-                "message": fallback_message,
-                "detail_code": ",".join(part for part in (detail_code, type(exc).__name__) if part),
-            }
-        if rows:
-            provider = fallback_provider
-    status = "ok" if rows else "missing"
-    message = None if rows else fallback_message
-    result: dict[str, Any] = {"status": status, "provider": provider, "count": len(rows)}
-    if status_key == "sectors":
-        result["taxonomy"] = "provider_native"
-    if detail_code and provider != AKSHARE_PROVIDER:
-        result["fallback_from"] = AKSHARE_PROVIDER
-        result["fallback_reason"] = detail_code
-    if message:
-        result["message"] = message
-    return rows, result
-
-
 def _eastmoney_cn_activity(market_date: date) -> dict[str, Any]:
-    sectors, sector_status = _akshare_call(
+    sectors, sector_status = load_activity_section(
         provider=EASTMONEY_HTTP_PROVIDER,
-        status_key="sectors",
+        section="sectors",
         fallback_message="Eastmoney 未返回可用的 A 股行业板块涨幅榜。",
         loader=_eastmoney_cn_sectors,
     )
-    gainers, gainer_status = _akshare_call(
+    gainers, gainer_status = load_activity_section(
         provider=EASTMONEY_HTTP_PROVIDER,
-        status_key="gainers",
+        section="gainers",
         fallback_message="Eastmoney 未返回可用的 A 股个股涨幅榜。",
         loader=_eastmoney_cn_gainers,
     )
-    flow, flow_status = _akshare_call(
+    flow, flow_status = load_activity_section(
         provider=EASTMONEY_HTTP_PROVIDER,
-        status_key="capital_flow",
+        section="capital_flow",
         fallback_message=CAPITAL_FLOW_DEGRADED_COPY,
         loader=_eastmoney_cn_capital_flow,
     )
@@ -942,19 +1185,17 @@ def _eastmoney_us_gainers() -> list[dict[str, Any]]:
 
 
 def _hk_gainers_http_fallback() -> list[dict[str, Any]]:
-    try:
-        rows = _eastmoney_hk_gainers()
-    except Exception:
-        rows = []
-    return rows or _sina_hk_gainers()
+    return _public_http_gainers_with_sina_fallback(
+        eastmoney_loader=_eastmoney_hk_gainers,
+        sina_loader=_sina_hk_gainers,
+    )
 
 
 def _us_gainers_http_fallback() -> list[dict[str, Any]]:
-    try:
-        rows = _eastmoney_us_gainers()
-    except Exception:
-        rows = []
-    return rows or _sina_us_gainers()
+    return _public_http_gainers_with_sina_fallback(
+        eastmoney_loader=_eastmoney_us_gainers,
+        sina_loader=_sina_us_gainers,
+    )
 
 
 def _sina_hk_gainers() -> list[dict[str, Any]]:
@@ -1104,11 +1345,34 @@ def _eastmoney_market_gainers(
 
 
 def _cn_gainers_http_fallback() -> list[dict[str, Any]]:
+    return _public_http_gainers_with_sina_fallback(
+        eastmoney_loader=_eastmoney_cn_gainers,
+        sina_loader=_sina_cn_gainers,
+    )
+
+
+def _public_http_gainers_with_sina_fallback(
+    *,
+    eastmoney_loader: Callable[[], list[dict[str, Any]]],
+    sina_loader: Callable[[], list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
     try:
-        rows = _eastmoney_cn_gainers()
-    except Exception:
+        rows = eastmoney_loader()
+        nested_reason = "empty_result"
+    except Exception as exc:
         rows = []
-    return rows or _sina_cn_gainers()
+        nested_reason = type(exc).__name__
+    if rows:
+        return rows
+    sina_rows = sina_loader()
+    if not sina_rows:
+        return []
+    return ActivityFallbackRows(
+        sina_rows,
+        selected_provider=SINA_FINANCE_PROVIDER,
+        fallback_chain=(EASTMONEY_HTTP_PROVIDER, SINA_FINANCE_PROVIDER),
+        fallback_reasons=(nested_reason,),
+    )
 
 
 def _sina_cn_gainers() -> list[dict[str, Any]]:

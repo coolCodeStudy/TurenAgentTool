@@ -26,6 +26,7 @@ from investment_knowledge_mcp.daily_market_history import (
     load_historical_market_activity,
 )
 from investment_knowledge_mcp.daily_market_jobs import (
+    HISTORY_STALE_AFTER_SECONDS,
     PUBLIC_ERROR_SUMMARIES,
     claim_next_history_item,
     finalize_history_item_report,
@@ -37,8 +38,9 @@ from investment_knowledge_mcp.daily_market_jobs import (
 
 LOGGER = logging.getLogger("daily_market_brief_history_worker")
 HEARTBEAT_INTERVAL_SECONDS = 10.0
-STALE_AFTER_SECONDS = 900.0
+STALE_AFTER_SECONDS = float(HISTORY_STALE_AFTER_SECONDS)
 RECOVERY_INTERVAL_SECONDS = 60.0
+DRAIN_ERROR_EXIT_CODE = 1
 
 
 class ItemDeadlineExceeded(BaseException):
@@ -206,6 +208,30 @@ def run_worker_forever(*, poll_seconds: float = 5.0, stop_event: Event | None = 
             )
 
 
+def drain_worker_until_idle() -> int:
+    """Process the current queue with one worker identity, then return its item count."""
+
+    worker_name = _default_worker_name()
+    recovered = requeue_stale_history_items(
+        _utcnow() - timedelta(seconds=STALE_AFTER_SECONDS)
+    )
+    if recovered:
+        LOGGER.info("requeued stale history items: count=%s", recovered)
+
+    processed = 0
+    while True:
+        outcome = run_worker_once(worker_name=worker_name)
+        if outcome is None:
+            return processed
+        processed += 1
+        LOGGER.info(
+            "history item checkpointed: item_id=%s status=%s report_id=%s",
+            outcome.get("item_id"),
+            outcome.get("status"),
+            outcome.get("report_id"),
+        )
+
+
 @contextmanager
 def _heartbeat_loop(
     item_id: int,
@@ -357,17 +383,26 @@ def _item_deadline(timeout_seconds: float) -> Iterator[None]:
             )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Process queued historical daily market brief jobs.")
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     parser.add_argument("--log-level", default="INFO")
-    args = parser.parse_args()
+    parser.add_argument("--drain-until-idle", action="store_true")
+    args = parser.parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    if args.drain_until_idle:
+        try:
+            drain_worker_until_idle()
+        except Exception as exc:
+            LOGGER.error("history drain failed: exception_type=%s", type(exc).__name__)
+            return DRAIN_ERROR_EXIT_CODE
+        return 0
     run_worker_forever(poll_seconds=args.poll_seconds)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -291,14 +291,14 @@ class DeployRequestContractTests(unittest.TestCase):
     def test_supported_fields_are_canonicalized_and_forwarded(self) -> None:
         client = mock.Mock()
         client.post.return_value = _terminal_deploy_data(
-            requested_services=["command-api", "weekly-review-web"],
-            affected_services=["command-api", "weekly-review-web"],
+            requested_services=["weekly-review-web"],
+            affected_services=["weekly-review-web"],
         )
         with mock.patch.object(ops_client, "get_ops_deploy_client", return_value=client):
             result = ops_client.deploy_cloud_ref(
                 SHA.upper(),
                 mode="quick",
-                targets=["weekly-review-web", "command-api", "weekly-review-web"],
+                targets=["weekly-review-web", "weekly-review-web"],
                 feature_routes=["/weekly-review", "/health", "/weekly-review"],
                 source="mcp",
                 requested_by="weekly-review-coordinator",
@@ -310,7 +310,7 @@ class DeployRequestContractTests(unittest.TestCase):
             {
                 "ref": SHA,
                 "mode": "targeted_quick",
-                "targets": ["command-api", "weekly-review-web"],
+                "targets": ["weekly-review-web"],
                 "feature_routes": ["/weekly-review", "/health"],
                 "source": "mcp",
                 "requested_by": "weekly-review-coordinator",
@@ -418,6 +418,21 @@ class McpDeployContractTests(unittest.TestCase):
 
 
 class OpsContainerConfigurationContractTests(unittest.TestCase):
+    def test_production_env_example_uses_unified_gateway_access_contract(self) -> None:
+        entries = dict(
+            line.split("=", 1)
+            for line in Path(".env.prod.example").read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        )
+
+        self.assertNotIn("COMMAND_API_HOST", entries)
+        self.assertNotIn("COMMAND_API_PORT", entries)
+        self.assertIn("COMMAND_API_HOST_PORT", entries)
+        self.assertIn("APP_ACCESS_TOKEN", entries)
+        self.assertIn("COMMAND_API_TOKEN", entries)
+        self.assertEqual(entries.get("COMMAND_API_TOKEN"), entries.get("APP_ACCESS_TOKEN"))
+        self.assertEqual("stream,http", entries.get("COMPOSE_PROFILES"))
+
     def test_host_and_container_ops_urls_are_separate(self) -> None:
         env_example = Path(".env.example").read_text(encoding="utf-8")
         compose = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
@@ -472,6 +487,8 @@ class OpsContainerConfigurationContractTests(unittest.TestCase):
             openai_model="gpt-5.2",
             pip_index_url="https://pypi.org/simple",
         )
+        self.assertIn("COMPOSE_PROFILES=stream,http", rendered)
+        self.assertIn("APP_ACCESS_TOKEN=command-secret", rendered)
         self.assertIn("COMMAND_API_TOKEN=command-secret", rendered)
         self.assertIn("OPS_API_TOKEN=ops-secret", rendered)
 

@@ -42,25 +42,23 @@ def render_primary_navigation(active_page: PageIdentity) -> str:
     for page, href, label in PRIMARY_DESTINATIONS:
         current = ' aria-current="page"' if page == active_page else ""
         links.append(f'<a href="{escape(href)}"{current}>{escape(label)}</a>')
-    return '<nav class="experience-nav" aria-label="主导航">' + "".join(links) + "</nav>"
+    return '<nav class="experience-nav" aria-label="主导航"><span class="experience-brand">InvestmentKnowledge</span>' + "".join(links) + "</nav>"
 
 
 def render_experience_css() -> str:
     return """
 :root {
-  --experience-background: #f4f6f8;
+  --experience-background: #f5f7fa;
   --experience-surface: #ffffff;
-  --experience-border: #cbd5e1;
+  --experience-border: #d9e1ea;
   --experience-text: #172033;
-  --experience-muted: #526077;
-  --experience-accent: #145cc5;
+  --experience-muted: #5c6b7d;
+  --experience-accent: #0f5fb8;
   --experience-danger: #b42318;
-  --experience-radius: 10px;
+  --experience-radius: 12px;
 }
 
 .experience-shell {
-  display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
   min-height: 100vh;
   background: var(--experience-background);
   color: var(--experience-text);
@@ -68,7 +66,9 @@ def render_experience_css() -> str:
 
 .experience-main {
   min-width: 0;
-  padding: 24px;
+  width: min(100%, 1560px);
+  margin: 0 auto;
+  padding: 30px 32px 44px;
 }
 
 .experience-skip-link {
@@ -103,11 +103,26 @@ def render_experience_css() -> str:
 
 .experience-nav {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 24px 12px;
-  background: var(--experience-surface);
-  border-right: 1px solid var(--experience-border);
+  align-items: center;
+  gap: 6px;
+  min-height: 64px;
+  padding: 10px max(24px, calc((100vw - 1496px) / 2));
+  background: color-mix(in srgb, var(--experience-surface) 96%, transparent);
+  border-bottom: 1px solid var(--experience-border);
+  box-shadow: 0 1px 0 rgba(18, 35, 58, 0.03);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(10px);
+}
+
+.experience-brand {
+  margin-right: 18px;
+  color: var(--experience-text);
+  font-size: 15px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
 }
 
 .experience-nav a {
@@ -132,20 +147,18 @@ def render_experience_css() -> str:
 }
 
 @media (max-width: 760px) {
-  .experience-shell {
-    display: block;
-  }
-
   .experience-main {
     padding: 16px;
   }
 
   .experience-nav {
-    flex-direction: row;
     overflow-x: auto;
     padding: 8px 16px;
-    border-right: 0;
-    border-bottom: 1px solid var(--experience-border);
+    gap: 4px;
+  }
+
+  .experience-brand {
+    margin-right: 10px;
   }
 
   .experience-nav a {

@@ -168,16 +168,16 @@ python -m investment_knowledge_mcp.server
 MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m investment_knowledge_mcp.server
 ```
 
-启动 Command API：
+Start the unified application gateway for Command Workbench and command HTTP requests:
 
 ```bash
-COMMAND_API_TOKEN=dev-token python -m investment_knowledge_mcp.command_api
+APP_ACCESS_TOKEN=dev-token python -m investment_knowledge_mcp.weekly_review_web
 ```
 
 调用示例：
 
 ```bash
-curl -s http://localhost:8001/command \
+curl -s http://localhost:8010/command \
   -H "Authorization: Bearer dev-token" \
   -H "Content-Type: application/json" \
   -d '{"text":"查看候选心得","sender":"local","source":"curl"}'

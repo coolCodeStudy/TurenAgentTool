@@ -81,7 +81,7 @@ SERVICE_FIELD = (
         "id": "service",
         "label": "Service",
         "type": "select",
-        "options": ["mcp", "command-api", "codex-worker", "research-agent-worker", "dingtalk-stream-bot"],
+        "options": ["mcp", "weekly-review-web", "codex-worker", "research-agent-worker", "dingtalk-stream-bot"],
     },
 )
 DAILY_MARKET_HISTORY_COMMAND_FIELD = (
@@ -449,8 +449,8 @@ ALIAS_STOCKS: dict[str, list[dict[str, Any]]] = {
 
 SERVICE_ALIASES = {
     "mcp": "mcp",
-    "command": "command-api",
-    "command-api": "command-api",
+    "command": "weekly-review-web",
+    "command-api": "weekly-review-web",
     "codex": "codex-worker",
     "codex-worker": "codex-worker",
     "worker": "codex-worker",
@@ -918,13 +918,37 @@ def render_command_workbench_html() -> str:
 
     loadActions();
     renderHistory();
+    if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
 
     async function loadActions() {
-      const response = await fetch("/api/command-workbench/actions");
-      const data = await response.json();
-      state.actions = data.actions || [];
-      renderCatalog();
-      renderHistory();
+      try {
+        const data = await getJson("/api/command-workbench/actions");
+        state.actions = data.actions || [];
+        renderCatalog();
+        renderHistory();
+      } catch (error) {
+        state.actions = [];
+        $("#catalog").innerHTML = `<div class="notice">Action catalog is temporarily unavailable. <button id="catalog-retry" type="button">Retry</button></div>`;
+        $("#catalog-retry").addEventListener("click", () => loadActions());
+      }
+    }
+
+    async function getJson(url) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        let data;
+        try {
+          data = await response.json();
+        } catch (_error) {
+          throw new Error("invalid_response");
+        }
+        if (!response.ok || !data.ok) throw new Error("request_failed");
+        return data;
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
     async function parseSmartInput(extra = {}) {

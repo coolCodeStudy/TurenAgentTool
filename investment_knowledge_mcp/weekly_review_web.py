@@ -3,24 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import hmac
 import json
-import logging
-import os
 import re
 from threading import Lock
 import time
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp import daily_market_jobs, repository
-from investment_knowledge_mcp.command_router import handle_command, safe_public_command_message
-from investment_knowledge_mcp.command_workbench import (
-    execution_blocker,
-    list_workbench_actions,
-    parse_workbench_command,
-    render_command_workbench_html,
+from investment_knowledge_mcp.command_http import (
+    PUBLIC_WORKBENCH_FAILURE_MESSAGE,
+    CommandHttpRequest,
+    execute_workbench_request,
 )
 from investment_knowledge_mcp.config import get_config
 from investment_knowledge_mcp.daily_market_brief import (
@@ -35,10 +29,8 @@ from investment_knowledge_mcp.daily_market_jobs import (
     list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
-from investment_knowledge_mcp.repository import record_command_event
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 from investment_knowledge_mcp.web_experience import (
-    access_error_payload,
     render_experience_css,
     render_primary_navigation,
 )
@@ -46,8 +38,6 @@ from investment_knowledge_mcp.web_experience import (
 
 MAX_BODY_BYTES = 64 * 1024
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-logger = logging.getLogger(__name__)
-PUBLIC_WORKBENCH_FAILURE_MESSAGE = "Command execution failed. Please retry later."
 
 
 class _DailyBriefGenerationLease:
@@ -92,192 +82,45 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
     server_version = "InvestmentKnowledgeWeeklyReviewWeb/0.1"
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path in {"/", "/weekly-review"}:
-            self._write_html(HTTPStatus.OK, render_weekly_review_workbench_html())
-            return
-        if parsed.path == "/daily-market-brief":
-            self._write_html(HTTPStatus.OK, render_daily_market_brief_html())
-            return
-        if parsed.path == "/health":
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "app_release_sha": os.getenv("APP_RELEASE_SHA") or "",
-                    "daily_market_brief_route": True,
-                },
-            )
-            return
-        if parsed.path == "/command":
-            self._write_html(HTTPStatus.OK, render_command_workbench_html())
-            return
-        if parsed.path == "/api/command-workbench/actions":
-            self._write_json(HTTPStatus.OK, {"ok": True, "actions": list_workbench_actions()})
-            return
-        if parsed.path == "/api/weekly-review":
-            self._handle_weekly_review_read(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/daily-market-brief":
-            self._handle_daily_market_brief_read(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/daily-market-brief/dates":
-            self._handle_daily_market_brief_dates(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/daily-market-brief/history-jobs":
-            self._handle_daily_market_brief_history_jobs_read(parse_qs(parsed.query))
-            return
-        if parsed.path == "/api/candidate-insights":
-            if not self._authorized(require_configured=True):
-                return
-            self._handle_candidate_insights(parse_qs(parsed.query))
-            return
-        self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        from investment_knowledge_mcp.app_gateway import dispatch_get
+
+        dispatch_get(self)
 
     def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path in {"/api/command-workbench/parse", "/api/command-workbench/execute"}:
-            if not self._authorized_for_command_workbench():
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            if parsed.path == "/api/command-workbench/parse":
-                self._handle_workbench_parse(payload)
-            else:
-                self._handle_workbench_execute(payload)
-            return
+        from investment_knowledge_mcp.app_gateway import dispatch_post
 
-        if parsed.path == "/api/weekly-review/generate":
-            if not self._authorized(require_configured=True):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_weekly_review_generate(payload, force=False)
-            return
-        if parsed.path == "/api/weekly-review/refresh":
-            if not self._authorized(require_configured=True):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_weekly_review_generate(payload, force=True)
-            return
-        if parsed.path == "/api/weekly-review/save":
-            if not self._authorized(require_configured=True):
-                return
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_weekly_review_save(payload)
-            return
-        if parsed.path == "/api/daily-market-brief/generate":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_daily_market_brief_generate(payload)
-            return
-        if parsed.path == "/api/daily-market-brief/history-jobs":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-            self._handle_daily_market_brief_history_job_create(payload)
-            return
-
-        candidate_match = re.fullmatch(r"/api/candidate-insights/(\d+)/(confirm|reject)", parsed.path)
-        if candidate_match:
-            if not self._authorized(require_configured=True):
-                return
-            self._handle_candidate_decision(candidate_id=int(candidate_match.group(1)), action=candidate_match.group(2))
-            return
-
-        self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+        dispatch_post(self)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def _render_weekly_review_page(self) -> str:
+        return render_weekly_review_workbench_html()
+
+    def _render_daily_market_brief_page(self) -> str:
+        return render_daily_market_brief_html()
+
     def _handle_workbench_parse(self, payload: dict[str, Any]) -> None:
-        raw_input = str(payload.get("text") or "").strip()
-        action_id = _clean_optional_text(payload.get("action_id"))
-        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-        selected_target = payload.get("selected_target") if isinstance(payload.get("selected_target"), dict) else None
-        preview = parse_workbench_command(
-            raw_input,
-            action_id=action_id,
-            fields=fields,
-            selected_target=selected_target,
+        response = execute_workbench_request(
+            CommandHttpRequest(
+                body=payload,
+                source="weekly-review-web.command-workbench.parse",
+                sender=payload.get("sender"),
+            ),
+            execute=False,
         )
-        event = _record_workbench_event(
-            command=raw_input or f"[action] {action_id or 'unknown'}",
-            ok=preview.get("status") == "parsed",
-            message=f"parse status={preview.get('status')} action={preview.get('action_id')}",
-            source="weekly-review-web.command-workbench.parse",
-        )
-        self._write_json(HTTPStatus.OK, {"ok": True, "preview": preview, "event_id": event.get("id") if event else None})
+        self._write_json(response.status, response.payload)
 
     def _handle_workbench_execute(self, payload: dict[str, Any]) -> None:
-        raw_input = str(payload.get("text") or "").strip()
-        action_id = _clean_optional_text(payload.get("action_id"))
-        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-        selected_target = payload.get("selected_target") if isinstance(payload.get("selected_target"), dict) else None
-        confirmed = bool(payload.get("confirmed"))
-        preview = parse_workbench_command(
-            raw_input,
-            action_id=action_id,
-            fields=fields,
-            selected_target=selected_target,
-        )
-        blocker = execution_blocker(preview, confirmed=confirmed)
-        if blocker:
-            self._write_json(HTTPStatus.CONFLICT, {"ok": False, "error": blocker, "preview": preview})
-            return
-
-        exact_command = str(preview.get("exact_command") or "").strip()
-        try:
-            run_schema()
-            result = handle_command(exact_command)
-            response_message = safe_public_command_message(result, PUBLIC_WORKBENCH_FAILURE_MESSAGE)
-            event = record_command_event(
-                command=exact_command,
-                ok=result.ok,
-                message=response_message,
-                sender=_clean_optional_text(payload.get("sender")),
+        response = execute_workbench_request(
+            CommandHttpRequest(
+                body=payload,
                 source="weekly-review-web.command-workbench.execute",
-            )
-        except Exception:
-            logger.exception("Command Workbench execution failed")
-            event = _record_workbench_event(
-                command=exact_command,
-                ok=False,
-                message=PUBLIC_WORKBENCH_FAILURE_MESSAGE,
-                source="weekly-review-web.command-workbench.execute",
-            )
-            self._write_json(
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-                {
-                    "ok": False,
-                    "error": PUBLIC_WORKBENCH_FAILURE_MESSAGE,
-                    "preview": preview,
-                    "event_id": event.get("id") if event else None,
-                    "executed_command": exact_command,
-                    "raw_input": raw_input,
-                },
-            )
-            return
-
-        status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
-        self._write_json(
-            status,
-            {
-                "ok": result.ok,
-                "message": response_message,
-                "preview": preview,
-                "event_id": event.get("id"),
-                "executed_command": exact_command,
-                "raw_input": raw_input,
-            },
+                sender=payload.get("sender"),
+            ),
+            execute=True,
         )
+        self._write_json(response.status, response.payload)
 
     def _handle_weekly_review_read(self, payload: dict[str, Any]) -> None:
         try:
@@ -576,69 +419,6 @@ class WeeklyReviewWebHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
             return
         self._write_json(HTTPStatus.OK, {"ok": True, "result": result})
-
-    def _authorized_for_command_workbench(self) -> bool:
-        config = get_config()
-        supplied = _authorization_token(self.headers.get("Authorization"))
-        command_token = self.headers.get("X-Command-Token")
-        weekly_token = self.headers.get("X-Weekly-Review-Token")
-        configured_tokens = [
-            token for token in (config.command_api_token, config.weekly_review_web_token) if token
-        ]
-        supplied_tokens = [
-            token for token in (supplied, command_token, weekly_token) if token
-        ]
-        if not configured_tokens:
-            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, access_error_payload("access_not_configured"))
-            return False
-        if not supplied_tokens:
-            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
-            return False
-        candidates = [
-            (supplied, config.command_api_token),
-            (command_token, config.command_api_token),
-            (supplied, config.weekly_review_web_token),
-            (weekly_token, config.weekly_review_web_token),
-        ]
-        if any(
-            expected and supplied_token and hmac.compare_digest(supplied_token.strip(), expected)
-            for supplied_token, expected in candidates
-        ):
-            return True
-        self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
-        return False
-
-    def _authorized(self, *, require_configured: bool = False) -> bool:
-        config = get_config()
-        tokens = [token for token in (config.weekly_review_web_token, config.command_api_token) if token]
-        if not tokens:
-            if require_configured:
-                self._write_json(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    access_error_payload("access_not_configured"),
-                )
-                return False
-            return True
-        supplied_tokens = [
-            token
-            for token in (
-                _authorization_token(self.headers.get("Authorization")),
-                self.headers.get("X-Weekly-Review-Token"),
-                self.headers.get("X-Command-Token"),
-            )
-            if token and token.strip()
-        ]
-        if not supplied_tokens:
-            self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_required"))
-            return False
-        if any(
-            hmac.compare_digest(supplied.strip(), configured)
-            for supplied in supplied_tokens
-            for configured in tokens
-        ):
-            return True
-        self._write_json(HTTPStatus.UNAUTHORIZED, access_error_payload("access_rejected"))
-        return False
 
     def _read_json_body(self) -> dict[str, Any] | None:
         content_length = self.headers.get("Content-Length")
@@ -960,12 +740,7 @@ def render_weekly_review_workbench_html() -> str:
       font-size: 12px;
     }}
     .aside {{
-      border-left: 1px solid var(--line);
-      background: #ffffff;
-      padding: 22px 16px;
-      position: sticky;
-      top: 0;
-      height: 100vh;
+      display: none;
     }}
     .aside a {{
       display: block;
@@ -1062,7 +837,15 @@ def render_weekly_review_workbench_html() -> str:
     </div>
   </div>
   <script>
-    const state = {{ context: null, markdown: "", holdings: [], week: null, reportStatus: "loading" }};
+    const state = {{
+      context: null,
+      markdown: "",
+      holdings: [],
+      week: null,
+      reportStatus: "loading",
+      loadController: null,
+      loadGeneration: 0
+    }};
     const $ = (selector) => document.querySelector(selector);
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
     const message = $("#message");
@@ -1074,14 +857,26 @@ def render_weekly_review_workbench_html() -> str:
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
     loadReview();
+    if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
 
     async function loadReview() {{
+      cancelReviewLoad();
+      const generation = state.loadGeneration;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15_000);
+      state.loadController = controller;
       showStatus("正在读取复盘状态...");
       try {{
         const weekStart = $("#week-date").value;
-        const response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(weekStart)}}`);
-        const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "处理失败");
+        const response = await fetch(`/api/weekly-review?week_start=${{encodeURIComponent(weekStart)}}`, {{ signal: controller.signal }});
+        let data;
+        try {{
+          data = await response.json();
+        }} catch (_error) {{
+          throw new Error("服务器返回无效响应，请重试。");
+        }}
+        if (generation !== state.loadGeneration || controller.signal.aborted) return;
+        if (!response.ok || !data.ok) throw new Error(data.error || "处理失败");
         state.week = data.week || state.week;
         if (state.week && state.week.start) $("#week-date").value = state.week.start;
         state.reportStatus = data.status || "existing";
@@ -1091,8 +886,22 @@ def render_weekly_review_workbench_html() -> str:
         renderAll();
         showStatus(statusMessage(data));
       }} catch (error) {{
+        if (generation !== state.loadGeneration) return;
+        if (controller.signal.aborted) {{
+          showError("读取超时，请重试。");
+          return;
+        }}
         showError(`处理失败：${{error.message}}`);
+      }} finally {{
+        window.clearTimeout(timeout);
+        if (generation === state.loadGeneration && state.loadController === controller) state.loadController = null;
       }}
+    }}
+
+    function cancelReviewLoad() {{
+      state.loadGeneration += 1;
+      if (state.loadController) state.loadController.abort();
+      state.loadController = null;
     }}
 
     function showStatus(text) {{
@@ -1616,6 +1425,7 @@ def render_daily_market_brief_html() -> str:
     const $ = (selector) => document.querySelector(selector);
     const message = $("#message");
     const errorMessage = $("#error-message");
+    const REQUEST_TIMEOUT_MS = 15_000;
 
     document.querySelectorAll("[data-market]").forEach((button) => {{
       button.addEventListener("click", () => {{
@@ -1623,15 +1433,14 @@ def render_daily_market_brief_html() -> str:
         state.market = button.dataset.market;
         $("#market-date").value = "";
         document.querySelectorAll("[data-market]").forEach((item) => item.classList.toggle("active", item === button));
-        loadSavedDates();
-        loadBrief("read");
+        void refreshSelectedMarket();
       }});
     }});
     $("#read").addEventListener("click", () => loadBrief("read"));
     $("#generate").addEventListener("click", () => loadBrief("generate"));
     $("#market-date").addEventListener("change", () => {{
       stopHistoryJobPolling();
-      loadBrief("read");
+      showStatus("日期已更新，点击读取查看简报。");
     }});
     $("#saved-date").addEventListener("change", (event) => {{
       stopHistoryJobPolling();
@@ -1639,17 +1448,53 @@ def render_daily_market_brief_html() -> str:
       $("#market-date").value = event.target.value;
       loadBrief("read");
     }});
-    loadSavedDates();
-    loadRecentHistoryJobs();
-    loadBrief("read");
+    void initializePage();
+    if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
+
+    async function initializePage() {{
+      await loadBrief("read");
+      void loadSavedDates();
+      void loadRecentHistoryJobs();
+    }}
+
+    async function refreshSelectedMarket() {{
+      await loadBrief("read");
+      void loadSavedDates();
+    }}
+
+    async function fetchJson(url, options = {{}}) {{
+      const controller = new AbortController();
+      const parentSignal = options.signal;
+      const cancelFromParent = () => controller.abort();
+      const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      if (parentSignal) parentSignal.addEventListener("abort", cancelFromParent, {{ once: true }});
+      try {{
+        const {{ signal: _unusedSignal, ...requestOptions }} = options;
+        const response = await fetch(url, {{ ...requestOptions, signal: controller.signal }});
+        let data;
+        try {{
+          data = await response.json();
+        }} catch (_error) {{
+          throw new Error("服务器返回无效响应，请重试。");
+        }}
+        if (!response.ok || !data.ok) throw new Error(data.error || `请求失败（${{response.status}}）`);
+        return data;
+      }} catch (error) {{
+        if (error.name === "AbortError" && !parentSignal?.aborted) {{
+          throw new Error("请求超时，请重试。");
+        }}
+        throw error;
+      }} finally {{
+        window.clearTimeout(timeout);
+        if (parentSignal) parentSignal.removeEventListener("abort", cancelFromParent);
+      }}
+    }}
 
     async function loadSavedDates() {{
       const savedDate = $("#saved-date");
       savedDate.innerHTML = '<option value="">已保存日期</option>';
       try {{
-        const response = await fetch(`/api/daily-market-brief/dates?market=${{encodeURIComponent(state.market)}}`);
-        const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "读取已保存日期失败");
+        const data = await fetchJson(`/api/daily-market-brief/dates?market=${{encodeURIComponent(state.market)}}`);
         (data.dates || []).forEach((value) => {{
           const option = document.createElement("option");
           option.value = value;
@@ -1671,21 +1516,20 @@ def render_daily_market_brief_html() -> str:
       const date = $("#market-date").value;
       showStatus(action === "read" ? "正在读取简报..." : "正在生成并保存简报...");
       try {{
-        let response;
+        let data;
         if (action === "read") {{
           const query = new URLSearchParams({{ market: state.market, date }});
-          response = await fetch(`/api/daily-market-brief?${{query.toString()}}`, {{
+          data = await fetchJson(`/api/daily-market-brief?${{query.toString()}}`, {{
             signal: controller.signal
           }});
         }} else {{
-          response = await fetch("/api/daily-market-brief/generate", {{
+          data = await fetchJson("/api/daily-market-brief/generate", {{
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
             body: JSON.stringify({{ market: state.market, date }}),
             signal: controller.signal
           }});
         }}
-        const data = await response.json();
         if (generation !== state.loadGeneration || controller.signal.aborted) return;
         if (!data.ok) throw new Error(data.error || "处理失败");
         if (data.market_date) $("#market-date").value = data.market_date;
@@ -1724,9 +1568,7 @@ def render_daily_market_brief_html() -> str:
 
     async function loadRecentHistoryJobs() {{
       try {{
-        const response = await fetch("/api/daily-market-brief/history-jobs?limit=10");
-        const data = await response.json();
-        if (!data.ok) throw new Error(data.error || "读取任务失败");
+        const data = await fetchJson("/api/daily-market-brief/history-jobs?limit=10");
         renderRecentHistoryJobs(data.jobs || []);
       }} catch (error) {{
         $("#history-jobs").textContent = "历史生成任务暂时无法读取。";
@@ -1742,10 +1584,8 @@ def render_daily_market_brief_html() -> str:
 
     async function pollHistoryJob(jobId, marketDate, generation) {{
       try {{
-        const response = await fetch(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
-        const data = await response.json();
+        const data = await fetchJson(`/api/daily-market-brief/history-jobs?id=${{encodeURIComponent(jobId)}}`);
         if (generation !== state.pollGeneration || state.jobId !== jobId) return;
-        if (!data.ok) throw new Error(data.error || "读取任务失败");
         const job = data.job;
         renderHistoryJob(job);
         if (["completed", "partial", "failed", "cancelled"].includes(job.status)) {{
@@ -2223,35 +2063,14 @@ def _first_query_value(payload: dict[str, Any], key: str) -> str | None:
     return cleaned or None
 
 
-def _authorization_token(authorization: str | None) -> str | None:
-    if authorization and authorization.startswith("Bearer "):
-        return authorization.removeprefix("Bearer ").strip()
-    return None
-
-
-def _clean_optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    cleaned = str(value).strip()
-    return cleaned or None
-
-
-def _record_workbench_event(command: str, ok: bool, message: str, source: str) -> dict[str, Any] | None:
-    try:
-        return record_command_event(
-            command=command,
-            ok=ok,
-            message=message,
-            source=source,
-            sender=None,
-        )
-    except Exception:
-        return None
 
 
 def main() -> None:
     config = get_config()
-    server = ThreadingHTTPServer((config.weekly_review_web_host, config.weekly_review_web_port), WeeklyReviewWebHandler)
+    server = ThreadingHTTPServer(
+        (config.weekly_review_web_host, config.weekly_review_web_port),
+        WeeklyReviewWebHandler,
+    )
     print(
         f"Weekly Review Web listening on {config.weekly_review_web_host}:{config.weekly_review_web_port}",
         flush=True,

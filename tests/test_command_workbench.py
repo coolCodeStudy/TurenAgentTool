@@ -5,6 +5,7 @@ import json
 import unittest
 from unittest import mock
 
+from investment_knowledge_mcp import command_http
 from investment_knowledge_mcp import weekly_review_web as web
 from investment_knowledge_mcp.command_router import CommandResult
 from investment_knowledge_mcp.command_workbench import execution_blocker, parse_workbench_command
@@ -50,11 +51,10 @@ class DailyMarketBriefWorkbenchTests(unittest.TestCase):
         handler = object.__new__(web.WeeklyReviewWebHandler)
         handler._write_json = mock.Mock()
         with (
-            mock.patch.object(web, "parse_workbench_command", return_value=preview),
-            mock.patch.object(web, "execution_blocker", return_value=None),
-            mock.patch.object(web, "run_schema", side_effect=RuntimeError(raw_error)),
-            mock.patch.object(web, "_record_workbench_event", return_value={"id": 77}) as record,
-            mock.patch.object(web.logger, "exception") as log_exception,
+            mock.patch.object(command_http, "parse_workbench_command", return_value=preview),
+            mock.patch.object(command_http, "execution_blocker", return_value=None),
+            mock.patch.object(command_http, "run_schema", side_effect=RuntimeError(raw_error)),
+            mock.patch.object(command_http, "record_command_event", return_value={"id": 77}) as record,
         ):
             handler._handle_workbench_execute({"text": "每日市场简报任务 123"})
 
@@ -66,7 +66,6 @@ class DailyMarketBriefWorkbenchTests(unittest.TestCase):
         for secret in ("fake-password", "postgresql://", "SELECT *", "private_table"):
             self.assertNotIn(secret, public_text)
             self.assertNotIn(secret, audit_message)
-        log_exception.assert_called_once()
 
     def test_execute_boundary_sanitizes_failed_command_result_response_and_audit(self) -> None:
         raw_error = "读取失败 postgresql://admin:fake-password@db SELECT * FROM private_table"
@@ -79,11 +78,11 @@ class DailyMarketBriefWorkbenchTests(unittest.TestCase):
         handler = object.__new__(web.WeeklyReviewWebHandler)
         handler._write_json = mock.Mock()
         with (
-            mock.patch.object(web, "parse_workbench_command", return_value=preview),
-            mock.patch.object(web, "execution_blocker", return_value=None),
-            mock.patch.object(web, "run_schema"),
-            mock.patch.object(web, "handle_command", return_value=CommandResult(ok=False, message=raw_error)),
-            mock.patch.object(web, "record_command_event", return_value={"id": 88}) as record,
+            mock.patch.object(command_http, "parse_workbench_command", return_value=preview),
+            mock.patch.object(command_http, "execution_blocker", return_value=None),
+            mock.patch.object(command_http, "run_schema"),
+            mock.patch.object(command_http, "handle_command", return_value=CommandResult(ok=False, message=raw_error)),
+            mock.patch.object(command_http, "record_command_event", return_value={"id": 88}) as record,
         ):
             handler._handle_workbench_execute({"text": "每日市场简报任务 123"})
 

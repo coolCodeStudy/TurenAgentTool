@@ -1,3 +1,5 @@
+x-app-access-token: &app-access-token ${APP_ACCESS_TOKEN:-${COMMAND_API_TOKEN:-${WEEKLY_REVIEW_WEB_TOKEN:-}}}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -36,8 +38,8 @@ services:
         condition: service_healthy
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
@@ -70,58 +72,6 @@ services:
       - "${MCP_BIND_HOST:-127.0.0.1}:${MCP_HOST_PORT:-8000}:${MCP_PORT:-8000}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.server"]
 
-  command-api:
-    profiles: ["http"]
-    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
-    build:
-      context: .
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./db:/app/db:ro
-      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
-      - ./scripts:/app/scripts:ro
-      - ./drafts:/opt/investment-knowledge/drafts
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
-      COMMAND_API_HOST: ${COMMAND_API_HOST:-0.0.0.0}
-      COMMAND_API_PORT: ${COMMAND_API_PORT:-8001}
-      COMMAND_API_TOKEN: ${COMMAND_API_TOKEN:?COMMAND_API_TOKEN is required}
-      FUTU_OPEND_HOST: ${FUTU_OPEND_HOST:-host.docker.internal}
-      FUTU_OPEND_PORT: ${FUTU_OPEND_PORT:-11112}
-      FUTU_OPEND_TELNET_HOST: ${FUTU_OPEND_TELNET_HOST:-host.docker.internal}
-      FUTU_OPEND_TELNET_PORT: ${FUTU_OPEND_TELNET_PORT:-22222}
-      FUTU_SECURITY_FIRM: ${FUTU_SECURITY_FIRM:-FUTUSECURITIES}
-      FUTU_TRADE_MARKET: ${FUTU_TRADE_MARKET:-HK}
-      FUTU_TRADE_ENV: ${FUTU_TRADE_ENV:-REAL}
-      FUTU_ACCOUNT_ID: ${FUTU_ACCOUNT_ID:-0}
-      FUTU_ACCOUNT_INDEX: ${FUTU_ACCOUNT_INDEX:-0}
-      FUTU_POSITION_CACHE_SECONDS: ${FUTU_POSITION_CACHE_SECONDS:-20}
-      FUTU_POSITION_REFRESH_CACHE: ${FUTU_POSITION_REFRESH_CACHE:-true}
-      DINGTALK_SEND_WEBHOOK: ${DINGTALK_SEND_WEBHOOK:-}
-      DINGTALK_SEND_SECRET: ${DINGTALK_SEND_SECRET:-}
-      DINGTALK_IPO_REMINDERS_ENABLED: ${DINGTALK_IPO_REMINDERS_ENABLED:-true}
-      DINGTALK_IPO_REMINDER_INTERVAL_SECONDS: ${DINGTALK_IPO_REMINDER_INTERVAL_SECONDS:-300}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
-      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
-      OPS_API_URL: ${MCP_OPS_API_URL:-http://host.docker.internal:8767}
-      OPS_API_TOKEN: ${OPS_API_TOKEN:-}
-      OPS_API_DEPLOY_TIMEOUT_SECONDS: ${OPS_API_DEPLOY_TIMEOUT_SECONDS:-600}
-    ports:
-      - "${COMMAND_API_HOST_PORT:-8001}:${COMMAND_API_PORT:-8001}"
-    command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.command_api"]
-
   weekly-review-web:
     profiles: ["http"]
     image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
@@ -142,15 +92,16 @@ services:
         condition: service_healthy
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
       WEEKLY_REVIEW_WEB_HOST: ${WEEKLY_REVIEW_WEB_HOST:-0.0.0.0}
       WEEKLY_REVIEW_WEB_PORT: ${WEEKLY_REVIEW_WEB_PORT:-8010}
-      COMMAND_API_TOKEN: ${COMMAND_API_TOKEN:-}
-      WEEKLY_REVIEW_WEB_TOKEN: ${WEEKLY_REVIEW_WEB_TOKEN:-}
+      APP_ACCESS_TOKEN: *app-access-token
+      COMMAND_API_TOKEN: *app-access-token
+      WEEKLY_REVIEW_WEB_TOKEN: *app-access-token
       FUTU_OPEND_HOST: ${FUTU_OPEND_HOST:-host.docker.internal}
       FUTU_OPEND_PORT: ${FUTU_OPEND_PORT:-11112}
       FUTU_OPEND_TELNET_HOST: ${FUTU_OPEND_TELNET_HOST:-host.docker.internal}
@@ -171,6 +122,7 @@ services:
       APP_RELEASE_SHA: ${APP_RELEASE_SHA:-}
     ports:
       - "${WEEKLY_REVIEW_WEB_HOST_PORT:-8010}:${WEEKLY_REVIEW_WEB_PORT:-8010}"
+      - "${COMMAND_API_HOST_PORT:-8001}:${WEEKLY_REVIEW_WEB_PORT:-8010}"
     command: ["sh", "-c", "python scripts/init_db.py && python -m investment_knowledge_mcp.weekly_review_web"]
 
   dingtalk-api:
@@ -191,8 +143,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
@@ -228,8 +180,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
@@ -270,7 +222,7 @@ services:
           python scripts/dingtalk_stream_bot.py;
         fi
 
-  ipo-reminder-scheduler:
+  scheduler-host:
     image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
     build:
       context: .
@@ -288,8 +240,8 @@ services:
         condition: service_healthy
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
@@ -297,42 +249,6 @@ services:
       DINGTALK_SEND_SECRET: ${DINGTALK_SEND_SECRET:-}
       DINGTALK_IPO_REMINDERS_ENABLED: ${DINGTALK_IPO_REMINDERS_ENABLED:-true}
       DINGTALK_IPO_REMINDER_INTERVAL_SECONDS: ${DINGTALK_IPO_REMINDER_INTERVAL_SECONDS:-300}
-      FUTU_OPEND_HOST: ${FUTU_OPEND_HOST:-host.docker.internal}
-      FUTU_OPEND_PORT: ${FUTU_OPEND_PORT:-11112}
-      FUTU_OPEND_TELNET_HOST: ${FUTU_OPEND_TELNET_HOST:-host.docker.internal}
-      FUTU_OPEND_TELNET_PORT: ${FUTU_OPEND_TELNET_PORT:-22222}
-      FUTU_SECURITY_FIRM: ${FUTU_SECURITY_FIRM:-FUTUSECURITIES}
-      FUTU_TRADE_MARKET: ${FUTU_TRADE_MARKET:-HK}
-      FUTU_TRADE_ENV: ${FUTU_TRADE_ENV:-REAL}
-      FUTU_ACCOUNT_ID: ${FUTU_ACCOUNT_ID:-0}
-      FUTU_ACCOUNT_INDEX: ${FUTU_ACCOUNT_INDEX:-0}
-      FUTU_POSITION_CACHE_SECONDS: ${FUTU_POSITION_CACHE_SECONDS:-20}
-      FUTU_POSITION_REFRESH_CACHE: ${FUTU_POSITION_REFRESH_CACHE:-true}
-    command: ["python", "-m", "investment_knowledge_mcp.ipo_reminders"]
-
-  account-snapshot-scheduler:
-    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
-    build:
-      context: .
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./db:/app/db:ro
-      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
-      - ./scripts:/app/scripts:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
       ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED: ${ACCOUNT_SNAPSHOT_SCHEDULER_ENABLED:-true}
       ACCOUNT_SNAPSHOT_TIME: ${ACCOUNT_SNAPSHOT_TIME:-00:05}
       ACCOUNT_SNAPSHOT_INTERVAL_SECONDS: ${ACCOUNT_SNAPSHOT_INTERVAL_SECONDS:-300}
@@ -347,59 +263,19 @@ services:
       FUTU_ACCOUNT_INDEX: ${FUTU_ACCOUNT_INDEX:-0}
       FUTU_POSITION_CACHE_SECONDS: ${FUTU_POSITION_CACHE_SECONDS:-20}
       FUTU_POSITION_REFRESH_CACHE: ${FUTU_POSITION_REFRESH_CACHE:-true}
-    command: ["python", "-m", "investment_knowledge_mcp.account_snapshots"]
-
-  daily-market-brief-scheduler:
-    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
-    build:
-      context: .
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-    restart: unless-stopped
-    volumes:
-      - ./db:/app/db:ro
-      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
-      - ./scripts:/app/scripts:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
+      OPENAI_ANALYSIS_ENABLED: ${OPENAI_ANALYSIS_ENABLED:-true}
+    healthcheck:
+      test: ["CMD", "python", "-m", "investment_knowledge_mcp.scheduler_service", "--check-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     command:
       - sh
       - -c
-      - python scripts/init_db.py && python -m investment_knowledge_mcp.daily_market_brief --interval-seconds 300
-
-  daily-market-brief-history-worker:
-    image: investment-knowledge-app:${APP_IMAGE_TAG:-prod}
-    build:
-      context: .
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-    restart: unless-stopped
-    volumes:
-      - ./db:/app/db:ro
-      - ./investment_knowledge_mcp:/app/investment_knowledge_mcp:ro
-      - ./scripts:/app/scripts:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-investment_kg}
-    command:
-      - sh
-      - -c
-      - python scripts/init_db.py && python scripts/daily_market_brief_history_worker.py
+      - python scripts/init_db.py && python -m investment_knowledge_mcp.scheduler_service
 
 volumes:
   postgres_prod_data:

@@ -5,11 +5,14 @@ import json
 import threading
 import time
 import unittest
+from unittest import mock
 
 from investment_knowledge_mcp.daily_market_history import (
     HistoricalActivityCancelled,
+    historical_market_activity_source,
     load_historical_market_activity,
 )
+from investment_knowledge_mcp.data_sources import DataRequest, DataStatus, SourceCapability
 
 
 class FakeFrame:
@@ -110,6 +113,78 @@ class SequencedUniverseAkshare(FakeHistoricalAkshare):
 
 
 class HistoricalActivityProviderTests(unittest.TestCase):
+    def test_default_historical_adapter_preserves_timeout_section_shape(self) -> None:
+        session = date(2026, 7, 9)
+        with mock.patch(
+            "investment_knowledge_mcp.daily_market_history.load_historical_market_activity",
+            side_effect=TimeoutError("private timeout"),
+        ):
+            result = historical_market_activity_source().fetch(
+                DataRequest(
+                    capability=SourceCapability.MARKET_ACTIVITY,
+                    market="CN",
+                    start=session,
+                    end=session,
+                    freshness="historical_exact_date",
+                )
+            )
+
+        statuses = {
+            record["section"]: record["source_status"]["status"]
+            for record in result.records
+        }
+        self.assertIs(DataStatus.PARTIAL, result.status)
+        self.assertEqual("historical_not_supported", statuses["sectors"])
+        self.assertEqual("timed_out", statuses["gainers"])
+        self.assertEqual("historical_not_supported", statuses["capital_flow"])
+        self.assertNotIn("private", repr(result))
+
+    def test_default_historical_adapter_keeps_unexpected_exception_normalized(self) -> None:
+        session = date(2026, 7, 9)
+        with mock.patch(
+            "investment_knowledge_mcp.daily_market_history.load_historical_market_activity",
+            side_effect=RuntimeError("private failure"),
+        ):
+            result = historical_market_activity_source().fetch(
+                DataRequest(
+                    capability=SourceCapability.MARKET_ACTIVITY,
+                    market="CN",
+                    start=session,
+                    end=session,
+                    freshness="historical_exact_date",
+                )
+            )
+
+        self.assertIs(DataStatus.UNAVAILABLE, result.status)
+        self.assertEqual(["provider_unavailable"], [failure.code for failure in result.failures])
+        self.assertEqual("RuntimeError", result.failures[0].detail)
+
+    def test_historical_adapter_preserves_exact_date_transport_and_statuses(self) -> None:
+        fake = FakeHistoricalAkshare(
+            universe=[{"代码": "000001", "名称": "甲", "成交额": 100_000_000}],
+            histories={"000001": history_rows()},
+        )
+        session = date(2026, 7, 9)
+
+        result = historical_market_activity_source(
+            akshare_module=fake,
+            max_workers=1,
+        ).fetch(
+            DataRequest(
+                capability=SourceCapability.MARKET_ACTIVITY,
+                market="CN",
+                start=session,
+                end=session,
+                freshness="historical_exact_date",
+            )
+        )
+
+        self.assertIs(DataStatus.PARTIAL, result.status)
+        gainers = next(record for record in result.records if record["section"] == "gainers")
+        self.assertEqual("2026-07-09", gainers["rows"][0]["session_date"])
+        self.assertEqual("ok", gainers["source_status"]["status"])
+        self.assertEqual("20260709", fake.history_calls[0][1]["end_date"])
+
     def test_cn_historical_gainers_rank_exact_date_bars(self) -> None:
         fake = FakeHistoricalAkshare(
             universe=[

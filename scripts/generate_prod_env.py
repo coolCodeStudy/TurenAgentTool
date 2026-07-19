@@ -111,7 +111,7 @@ def _render_env(
     pip_index_url: str,
 ) -> str:
     return f"""COMPOSE_PROJECT_NAME=turenagenttool_prod
-COMPOSE_PROFILES=stream
+COMPOSE_PROFILES=stream,http
 APP_IMAGE_TAG=prod
 PIP_INDEX_URL={pip_index_url}
 
@@ -125,9 +125,8 @@ MCP_PORT=8000
 MCP_HOST_PORT=8000
 MCP_PATH=/mcp
 
-COMMAND_API_HOST=0.0.0.0
-COMMAND_API_PORT=8001
 COMMAND_API_HOST_PORT=8001
+APP_ACCESS_TOKEN={command_api_token}
 COMMAND_API_TOKEN={command_api_token}
 OPS_API_TOKEN={ops_api_token}
 

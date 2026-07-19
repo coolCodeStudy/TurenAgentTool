@@ -142,6 +142,7 @@ class DeployContractTests(TestCase):
 
     def test_classifies_known_paths_and_targets(self) -> None:
         cases = [
+            ((".github/workflows/cloud-e2e.yml",), DeployMode.NO_DEPLOY, ()),
             (("docs/README.md",), DeployMode.NO_DEPLOY, ()),
             (
                 ("investment_knowledge_mcp/weekly_review_web.py",),
@@ -151,42 +152,40 @@ class DeployContractTests(TestCase):
             (
                 ("investment_knowledge_mcp/command_workbench.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "weekly-review-web"),
+                ("weekly-review-web",),
             ),
             (
                 ("investment_knowledge_mcp/command_router.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
             (
                 ("investment_knowledge_mcp/daily_market_brief.py",),
                 DeployMode.TARGETED_QUICK,
                 (
-                    "command-api",
-                    "daily-market-brief-history-worker",
-                    "daily-market-brief-scheduler",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
+                    "scheduler-host",
                     "weekly-review-web",
                 ),
             ),
             (
                 ("investment_knowledge_mcp/weekly_review.py",),
                 DeployMode.TARGETED_QUICK,
-                ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+                ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
             ),
-            (("investment_knowledge_mcp/command_api.py",), DeployMode.TARGETED_QUICK, ("command-api",)),
+            (("investment_knowledge_mcp/command_api.py",), DeployMode.TARGETED_QUICK, ("weekly-review-web",)),
             (("investment_knowledge_mcp/server.py",), DeployMode.TARGETED_QUICK, ("mcp",)),
             (
                 ("investment_knowledge_mcp/account_snapshots.py",),
                 DeployMode.TARGETED_QUICK,
-                ("account-snapshot-scheduler",),
+                ("scheduler-host",),
             ),
             (
                 ("investment_knowledge_mcp/ipo_reminders.py",),
                 DeployMode.TARGETED_QUICK,
-                ("ipo-reminder-scheduler",),
+                ("scheduler-host",),
             ),
             (("investment_knowledge_mcp/new_runtime_module.py",), DeployMode.TARGETED_QUICK, APPLICATION_SERVICES),
             (("scripts/ecs_ops_api.py",), DeployMode.NO_DEPLOY, ()),
@@ -200,10 +199,43 @@ class DeployContractTests(TestCase):
                 self.assertEqual(mode, plan.mode)
                 self.assertEqual(targets, plan.targets)
 
+    def test_dingtalk_http_adapter_targets_only_dingtalk_api(self) -> None:
+        plan = classify_paths(
+            ("investment_knowledge_mcp/dingtalk_api.py",),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+        self.assertEqual(("dingtalk-api",), plan.targets)
+
+    def test_app_gateway_and_route_controllers_target_only_weekly_review_web(self) -> None:
+        for path in (
+            "investment_knowledge_mcp/app_gateway.py",
+            "investment_knowledge_mcp/weekly_review_controller.py",
+            "investment_knowledge_mcp/daily_market_brief_controller.py",
+        ):
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(("weekly-review-web",), plan.targets)
+
+    def test_shared_access_targets_only_the_gateway_after_command_retirement(self) -> None:
+        for path in (
+            "investment_knowledge_mcp/command_http.py",
+            "investment_knowledge_mcp/http_access.py",
+            "investment_knowledge_mcp/web_access.py",
+            "investment_knowledge_mcp/command_workbench.py",
+        ):
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(("weekly-review-web",), plan.targets)
+
     def test_full_and_config_targets_cover_every_managed_app_image_service(self) -> None:
         self.assertIn("dingtalk-api", APPLICATION_SERVICES)
-        self.assertIn("daily-market-brief-scheduler", APPLICATION_SERVICES)
-        self.assertIn("daily-market-brief-history-worker", APPLICATION_SERVICES)
+        self.assertIn("scheduler-host", APPLICATION_SERVICES)
+        self.assertNotIn("command-api", APPLICATION_SERVICES)
+        self.assertEqual(5, len(APPLICATION_SERVICES))
         for path, expected_mode in (
             ("requirements.txt", DeployMode.FULL_IMAGE),
             ("docker-compose.prod.yml", DeployMode.CONFIG_RESTART),
@@ -217,7 +249,7 @@ class DeployContractTests(TestCase):
         cases = (
             (
                 "scripts/daily_market_brief_history_worker.py",
-                ("daily-market-brief-history-worker",),
+                ("scheduler-host",),
             ),
             (
                 "scripts/dingtalk_stream_bot.py",
@@ -226,12 +258,10 @@ class DeployContractTests(TestCase):
             (
                 "scripts/init_db.py",
                 (
-                    "command-api",
-                    "daily-market-brief-history-worker",
-                    "daily-market-brief-scheduler",
                     "dingtalk-api",
                     "dingtalk-stream-bot",
                     "mcp",
+                    "scheduler-host",
                     "weekly-review-web",
                 ),
             ),
@@ -313,7 +343,7 @@ class DeployContractTests(TestCase):
         self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
         self.assertEqual(APPLICATION_SERVICES, plan.targets)
 
-    def test_service_removal_requires_full_image_even_when_recipe_is_duplicated(self) -> None:
+    def test_service_removal_is_config_restart_when_image_recipe_is_unchanged(self) -> None:
         shared = {"image": "app:stable", "build": {"context": "."}}
         runner = FakeRunner(
             ("docker-compose.prod.yml",),
@@ -325,9 +355,9 @@ class DeployContractTests(TestCase):
 
         plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
 
-        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+        self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
 
-    def test_service_rename_requires_full_image(self) -> None:
+    def test_service_rename_is_config_restart_when_image_recipe_is_unchanged(self) -> None:
         shared = {"image": "app:stable", "build": {"context": "."}}
         runner = FakeRunner(
             ("docker-compose.prod.yml",),
@@ -339,7 +369,7 @@ class DeployContractTests(TestCase):
 
         plan = classify_deployment(Path("/repo"), "a" * 40, "b" * 40, runner)
 
-        self.assertEqual(DeployMode.FULL_IMAGE, plan.mode)
+        self.assertEqual(DeployMode.CONFIG_RESTART, plan.mode)
 
     def test_cross_service_recipe_swap_requires_full_image(self) -> None:
         recipe_a = {"image": "app:a", "build": {"context": "./a"}}
@@ -443,7 +473,7 @@ class DeployContractTests(TestCase):
         self.assertEqual(
             {
                 "mode": "targeted_quick",
-                "targets": ["command-api", "weekly-review-web"],
+                "targets": ["weekly-review-web"],
                 "changed_files": ["investment_knowledge_mcp/command_workbench.py"],
                 "image_input_files": [],
                 "reasons": ["investment_knowledge_mcp/command_workbench.py: command workbench"],

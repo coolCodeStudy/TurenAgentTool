@@ -1,0 +1,10 @@
+{
+  "name": "turen-agent-tool-cloud-e2e",
+  "private": true,
+  "scripts": {
+    "test:e2e:cloud": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0"
+  }
+}

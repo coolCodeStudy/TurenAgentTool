@@ -14,10 +14,19 @@ from investment_knowledge_mcp.config import PROJECT_ROOT, get_config
 SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
 
 
-def connect() -> Connection:
+def connect(*, connect_timeout_seconds: int | None = None) -> Connection:
     config = get_config()
+    connection_options = (
+        {"connect_timeout": int(connect_timeout_seconds)}
+        if connect_timeout_seconds is not None
+        else {}
+    )
     if config.database_url:
-        return psycopg.connect(config.database_url, row_factory=dict_row)
+        return psycopg.connect(
+            config.database_url,
+            row_factory=dict_row,
+            **connection_options,
+        )
 
     return psycopg.connect(
         host=config.postgres_host,
@@ -26,12 +35,18 @@ def connect() -> Connection:
         user=config.postgres_user,
         password=config.postgres_password,
         row_factory=dict_row,
+        **connection_options,
     )
 
 
 @contextmanager
-def transaction() -> Iterator[Connection]:
-    with connect() as conn:
+def transaction(*, connect_timeout_seconds: int | None = None) -> Iterator[Connection]:
+    connection = (
+        connect()
+        if connect_timeout_seconds is None
+        else connect(connect_timeout_seconds=connect_timeout_seconds)
+    )
+    with connection as conn:
         with conn.transaction():
             yield conn
 

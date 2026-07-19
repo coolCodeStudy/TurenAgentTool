@@ -348,6 +348,15 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn("--experience-accent", css)
         self.assertIn(".experience-skip-link", css)
         self.assertIn(".table-scroll", css)
+        self.assertIn("position: sticky", css)
+        self.assertIn(".experience-brand", css)
+        self.assertNotIn("grid-template-columns: 216px", css)
+
+    def test_primary_navigation_is_a_single_product_header(self) -> None:
+        html = render_primary_navigation("daily_market_brief")
+
+        self.assertIn('<span class="experience-brand">InvestmentKnowledge</span>', html)
+        self.assertEqual(1, html.count('aria-label="主导航"'))
 
     def test_command_uses_shared_shell_and_canonical_access(self) -> None:
         from investment_knowledge_mcp.command_workbench import render_command_workbench_html
@@ -357,6 +366,7 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn("investment_knowledge_access_token", html)
         self.assertNotIn('id="api-token"', html)
         self.assertIn('id="access-panel"', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
         self.assertIn('role="alert"', html)
         self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
         self.assertIn('<header class="page-header">', html)
@@ -377,7 +387,8 @@ assert.equal(nodes.get("#access-panel").hidden, true);
         )
 
     def test_command_api_authorization_reports_distinct_access_errors(self) -> None:
-        from investment_knowledge_mcp import command_api
+        from investment_knowledge_mcp.http_access import authorize_http
+        from investment_knowledge_mcp.web_access import AccessClass
 
         cases = (
             ({}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_required"),
@@ -386,19 +397,25 @@ assert.equal(nodes.get("#access-panel").hidden, true);
         )
         for headers, configured_token, expected_status, expected_error in cases:
             with self.subTest(expected_error=expected_error):
-                handler = object.__new__(command_api.CommandRequestHandler)
+                handler = SimpleNamespace()
+                handler.command = "POST"
                 handler.headers = headers
                 handler._write_json = mock.Mock()
-                config = SimpleNamespace(command_api_token=configured_token)
-                with mock.patch.object(command_api, "get_config", return_value=config):
-                    self.assertFalse(handler._require_authorized())
+                config = SimpleNamespace(
+                    app_access_token=configured_token,
+                    command_api_token=None,
+                    weekly_review_web_token=None,
+                )
+                with mock.patch("investment_knowledge_mcp.http_access.get_config", return_value=config):
+                    self.assertFalse(authorize_http(handler, AccessClass.PROTECTED))
 
                 status, payload = handler._write_json.call_args.args
                 self.assertEqual(expected_status, status)
                 self.assertEqual(expected_error, payload["error"])
 
     def test_weekly_command_authorization_reports_distinct_access_errors(self) -> None:
-        from investment_knowledge_mcp import weekly_review_web
+        from investment_knowledge_mcp.http_access import authorize_http
+        from investment_knowledge_mcp.web_access import AccessClass
 
         cases = (
             ({}, "configured-token", HTTPStatus.UNAUTHORIZED, "access_required"),
@@ -407,15 +424,17 @@ assert.equal(nodes.get("#access-panel").hidden, true);
         )
         for headers, configured_token, expected_status, expected_error in cases:
             with self.subTest(expected_error=expected_error):
-                handler = object.__new__(weekly_review_web.WeeklyReviewWebHandler)
+                handler = SimpleNamespace()
+                handler.command = "POST"
                 handler.headers = headers
                 handler._write_json = mock.Mock()
                 config = SimpleNamespace(
-                    command_api_token=configured_token,
+                    app_access_token=configured_token,
+                    command_api_token=None,
                     weekly_review_web_token=None,
                 )
-                with mock.patch.object(weekly_review_web, "get_config", return_value=config):
-                    self.assertFalse(handler._authorized_for_command_workbench())
+                with mock.patch("investment_knowledge_mcp.http_access.get_config", return_value=config):
+                    self.assertFalse(authorize_http(handler, AccessClass.PROTECTED))
 
                 status, payload = handler._write_json.call_args.args
                 self.assertEqual(expected_status, status)
@@ -640,6 +659,8 @@ assert.equal(workbench.state.pendingRequest, null);
         self.assertIn("access_rejected", html)
         self.assertIn("access_not_configured", html)
         self.assertIn("request_failed", html)
+        self.assertIn('id="catalog-retry"', html)
+        self.assertIn("async function getJson(url)", html)
         self.assertRegex(html, r"input, select, button, textarea\s*\{[^}]*min-height:\s*44px")
 
     def test_command_candidate_groups_use_dividers_without_nested_cards(self) -> None:

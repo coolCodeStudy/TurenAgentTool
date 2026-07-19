@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
 from pathlib import Path
+from contextlib import ExitStack
 import inspect
 import socket
 import sys
@@ -17,6 +18,15 @@ from investment_knowledge_mcp import daily_market_brief as dmb
 from investment_knowledge_mcp import repository as real_repository
 from investment_knowledge_mcp import weekly_review_web as web
 from investment_knowledge_mcp.daily_market_history import HistoricalActivityResult
+from investment_knowledge_mcp.data_sources import (
+    DataRequest,
+    DataResult,
+    DataStatus,
+    ProviderFailure,
+    SourceCapability,
+    SourcePlan,
+)
+from investment_knowledge_mcp.data_sources.market_activity import MarketActivitySource
 from investment_knowledge_mcp.market_data_provider import MarketBarSnapshot, MarketDataProviderError
 from investment_knowledge_mcp.weekly_review_web import (
     _daily_market_brief_response,
@@ -96,6 +106,34 @@ def fake_market_bar_loader(codes: list[str], start: str, end: str) -> MarketBarS
         start=start,
         end=end,
         source="fixture_bars",
+    )
+
+
+def market_bar_result(
+    *,
+    market: str,
+    market_date: date,
+    included_codes: list[str] | None = None,
+    status: DataStatus = DataStatus.OK,
+    coverage: float = 1.0,
+    failures: tuple[ProviderFailure, ...] = (),
+) -> DataResult:
+    config = dmb.MARKET_CONFIGS[market]
+    codes = [item["code"] for item in config.index_configs]
+    snapshot = fake_market_bar_loader(codes, (market_date - timedelta(days=45)).isoformat(), market_date.isoformat())
+    records = tuple(
+        {"symbol": code, "bars": tuple(snapshot.bars_by_code[code])}
+        for code in (included_codes if included_codes is not None else codes)
+    )
+    return DataResult(
+        status=status,
+        records=records,
+        selected_source="yahoo_chart" if status is not DataStatus.UNAVAILABLE else None,
+        attempted_sources=("yahoo_chart",),
+        coverage=coverage,
+        fetched_at=snapshot.fetched_at,
+        from_cache=False,
+        failures=failures,
     )
 
 
@@ -318,6 +356,86 @@ class DailyMarketBriefTests(unittest.TestCase):
                 activity["source_status"]["gainers"]["fallback_from"],
             )
 
+    def test_nested_eastmoney_to_sina_fallback_keeps_actual_provider_and_filters(self) -> None:
+        class UnavailableAkshare:
+            def stock_zh_a_spot_em(self):
+                raise ConnectionError("AKShare CN unavailable")
+
+            def stock_board_industry_name_em(self):
+                return FakeFrame([])
+
+            def stock_sector_fund_flow_rank(self, *, indicator: str, sector_type: str):
+                return FakeFrame([])
+
+            def stock_hk_main_board_spot_em(self):
+                raise ConnectionError("AKShare HK unavailable")
+
+            def stock_us_spot_em(self):
+                raise ConnectionError("AKShare US unavailable")
+
+        def sina_rows(market: str) -> list[dict]:
+            if market == "CN":
+                normalized = [
+                    {"代码": f"00000{rank}", "名称": f"样本{rank}", "涨跌幅": 20 - rank, "成交额": 60_000_000}
+                    for rank in range(1, 7)
+                ] + [{"代码": "000099", "名称": "低流动性", "涨跌幅": 99, "成交额": 1_000}]
+                return dmb._with_gainer_provider(
+                    dmb._akshare_stock_gainers(normalized, market="CN", min_turnover=dmb.CN_MIN_TURNOVER),
+                    provider=dmb.SINA_FINANCE_PROVIDER,
+                    min_turnover=dmb.CN_MIN_TURNOVER,
+                )
+            if market == "HK":
+                return dmb._normalize_sina_hk_gainers(
+                    [
+                        {"symbol": f"00{rank:03d}", "name": f"港股样本{rank}", "changepercent": 20 - rank, "amount": 30_000_000}
+                        for rank in range(1, 7)
+                    ] + [{"symbol": "00999", "name": "低流动性", "changepercent": 99, "amount": 1_000}]
+                )
+            return dmb._normalize_sina_us_gainers(
+                [
+                    {"symbol": f"TEST{rank}", "name": f"US Sample {rank}", "chg": 20 - rank, "price": 10, "volume": 2_000_000}
+                    for rank in range(1, 7)
+                ] + [
+                    {"symbol": "TESTW", "name": "Example Warrant", "chg": 99, "price": 1, "volume": 50_000_000},
+                    {"symbol": "LOW", "name": "Low Turnover", "chg": 98, "price": 1, "volume": 1_000},
+                ]
+            )
+
+        cases = (
+            ("CN", dmb._akshare_cn_activity, "_eastmoney_cn_gainers", "_sina_cn_gainers", dmb.CN_MIN_TURNOVER),
+            ("HK", dmb._akshare_hk_activity, "_eastmoney_hk_gainers", "_sina_hk_gainers", dmb.HK_MIN_TURNOVER),
+            ("US", dmb._akshare_us_activity, "_eastmoney_us_gainers", "_sina_us_gainers", dmb.US_MIN_TURNOVER),
+        )
+        for market, activity_loader, eastmoney_name, sina_name, threshold in cases:
+            for eastmoney_outcome in (ConnectionError("Eastmoney unavailable"), []):
+                with self.subTest(market=market, eastmoney=type(eastmoney_outcome).__name__):
+                    with ExitStack() as stack:
+                        if isinstance(eastmoney_outcome, BaseException):
+                            stack.enter_context(mock.patch.object(dmb, eastmoney_name, side_effect=eastmoney_outcome))
+                            nested_reason = type(eastmoney_outcome).__name__
+                        else:
+                            stack.enter_context(mock.patch.object(dmb, eastmoney_name, return_value=eastmoney_outcome))
+                            nested_reason = "empty_result"
+                        stack.enter_context(mock.patch.object(dmb, sina_name, return_value=sina_rows(market)))
+                        if market == "CN":
+                            stack.enter_context(mock.patch.object(dmb, "_eastmoney_cn_sectors", return_value=[]))
+                            stack.enter_context(mock.patch.object(dmb, "_eastmoney_cn_capital_flow", return_value=[]))
+                        activity = activity_loader(UnavailableAkshare(), date(2026, 7, 10))
+
+                    status = activity["source_status"]["gainers"]
+                    self.assertEqual(5, len(activity["gainers"]))
+                    self.assertEqual(dmb.SINA_FINANCE_PROVIDER, status["provider"])
+                    self.assertEqual(dmb.AKSHARE_PROVIDER, status["fallback_from"])
+                    self.assertEqual(
+                        (dmb.AKSHARE_PROVIDER, dmb.EASTMONEY_HTTP_PROVIDER, dmb.SINA_FINANCE_PROVIDER),
+                        status["fallback_chain"],
+                    )
+                    self.assertEqual(nested_reason, status["fallback_reasons"][1])
+                    self.assertTrue(all(row["provider"] == dmb.SINA_FINANCE_PROVIDER for row in activity["gainers"]))
+                    self.assertTrue(all(str(int(threshold)) in row["metric"] for row in activity["gainers"]))
+                    self.assertNotIn("低流动性", {row["name"] for row in activity["gainers"]})
+                    self.assertNotIn("TESTW", {row["code"] for row in activity["gainers"]})
+
     def test_direct_eastmoney_hk_us_gainers_keep_liquid_common_equities(self) -> None:
         hk_rows = [
             {"f12": f"00{rank:03d}", "f14": f"港股样本{rank}", "f3": 12 - rank, "f6": 30_000_000}
@@ -456,6 +574,280 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertNotIn("CERTIFICATE_VERIFY_FAILED", result.markdown)
         self.assertIn("核心指数：数据源暂不可用", result.markdown)
 
+    def test_live_market_bar_pool_preserves_full_yahoo_rows_and_provenance(self) -> None:
+        market_date = date(2026, 6, 30)
+        pool = mock.Mock()
+        pool.fetch.return_value = market_bar_result(market="CN", market_date=market_date)
+
+        result = dmb.build_daily_market_brief(
+            market="CN",
+            market_date=market_date,
+            save=False,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        request, plan = pool.fetch.call_args.args
+        self.assertEqual(
+            DataRequest(
+                SourceCapability.MARKET_BARS,
+                "CN",
+                tuple(item["code"] for item in dmb.MARKET_CONFIGS["CN"].index_configs),
+                date(2026, 5, 16),
+                market_date,
+                "daily_market_brief",
+            ),
+            request,
+        )
+        self.assertEqual(
+            SourcePlan(
+                SourceCapability.MARKET_BARS,
+                ("yahoo_chart",),
+                ("yahoo_chart",),
+                (),
+                True,
+                True,
+            ),
+            plan,
+        )
+        self.assertEqual(5, len(result.context["indexes"]))
+        self.assertEqual("ok", result.context["source_status"]["indexes"]["status"])
+        self.assertEqual("yahoo_chart", result.context["source_status"]["indexes"]["provider"])
+        self.assertEqual(["yahoo_chart"], result.context["source_status"]["indexes"]["attempted_sources"])
+        self.assertEqual("yahoo_chart", result.context["source_status"]["indexes"]["selected_source"])
+        self.assertEqual(1.0, result.context["source_status"]["indexes"]["coverage"])
+        self.assertFalse(result.context["source_status"]["indexes"]["from_cache"])
+        self.assertEqual([], result.context["source_status"]["indexes"]["failures"])
+
+    def test_live_market_bar_pool_unavailable_uses_safe_degraded_status(self) -> None:
+        market_date = date(2026, 6, 30)
+        pool = mock.Mock()
+        pool.fetch.return_value = market_bar_result(
+            market="CN",
+            market_date=market_date,
+            included_codes=[],
+            status=DataStatus.UNAVAILABLE,
+            coverage=0.0,
+            failures=(ProviderFailure("provider_unavailable", "yahoo_chart", True, True, "token=hidden"),),
+        )
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=market_date,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        indexes = result["source_status"]["indexes"]
+        self.assertEqual([], result["indexes"])
+        self.assertEqual("provider_unavailable", indexes["status"])
+        self.assertEqual(dmb.INDEX_DEGRADED_COPY, indexes["message"])
+        self.assertEqual("yahoo_chart", indexes["provider"])
+        self.assertEqual(["yahoo_chart"], indexes["attempted_sources"])
+        self.assertIsNone(indexes["selected_source"])
+        self.assertEqual(0.0, indexes["coverage"])
+        self.assertFalse(indexes["from_cache"])
+        self.assertEqual(
+            [{"code": "provider_unavailable", "source": "yahoo_chart", "retryable": True, "fallback_allowed": True}],
+            indexes["failures"],
+        )
+        self.assertNotIn("detail", indexes["failures"][0])
+        self.assertIn(
+            "核心指数：数据源暂不可用，来源：yahoo_chart",
+            dmb.render_daily_market_brief_markdown(result),
+        )
+
+    def test_live_market_bar_pool_partial_coverage_keeps_missing_index_behavior(self) -> None:
+        market_date = date(2026, 6, 30)
+        first_code = dmb.MARKET_CONFIGS["CN"].index_configs[0]["code"]
+        pool = mock.Mock()
+        pool.fetch.return_value = market_bar_result(
+            market="CN",
+            market_date=market_date,
+            included_codes=[first_code],
+            status=DataStatus.PARTIAL,
+            coverage=0.2,
+            failures=(ProviderFailure("incomplete_coverage", "yahoo_chart", False, True),),
+        )
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=market_date,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        indexes = result["source_status"]["indexes"]
+        self.assertEqual([first_code], [row["code"] for row in result["indexes"]])
+        self.assertEqual("partial", indexes["status"])
+        self.assertEqual(4, len(indexes["missing"]))
+        self.assertEqual(0.2, indexes["coverage"])
+        self.assertEqual("incomplete_coverage", indexes["failures"][0]["code"])
+
+    def test_live_market_bar_pool_malformed_records_are_contained(self) -> None:
+        market_date = date(2026, 6, 30)
+        pool = mock.Mock()
+        pool.fetch.return_value = DataResult(
+            DataStatus.OK,
+            ({"symbol": "SH.000001", "bars": "not-a-tuple"},),
+            "yahoo_chart",
+            ("yahoo_chart",),
+            1.0,
+            datetime(2026, 6, 30, 8, 0, tzinfo=timezone.utc),
+            False,
+            (),
+        )
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=market_date,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        indexes = result["source_status"]["indexes"]
+        self.assertEqual([], result["indexes"])
+        self.assertEqual("provider_unavailable", indexes["status"])
+        self.assertEqual("provider_contract_error", indexes["failures"][-1]["code"])
+        self.assertNotIn("detail", indexes["failures"][-1])
+
+    def test_live_market_bar_pool_inner_malformed_bar_is_contained_without_retry(self) -> None:
+        market_date = date(2026, 6, 30)
+        pool = mock.Mock()
+        pool.fetch.return_value = DataResult(
+            DataStatus.OK,
+            (
+                {
+                    "symbol": "SH.000001",
+                    "bars": (
+                        {
+                            "date": market_date.isoformat(),
+                            "close": 100.0,
+                            "volume": 1_000_000,
+                            "raw": "not-a-mapping",
+                        },
+                    ),
+                },
+            ),
+            "yahoo_chart",
+            ("yahoo_chart",),
+            1.0,
+            datetime(2026, 6, 30, 8, 0, tzinfo=timezone.utc),
+            False,
+            (),
+        )
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=market_date,
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        indexes = result["source_status"]["indexes"]
+        self.assertEqual([], result["indexes"])
+        self.assertEqual("provider_unavailable", indexes["status"])
+        self.assertEqual("provider_contract_error", indexes["failures"][-1]["code"])
+        self.assertNotIn("detail", indexes["failures"][-1])
+        pool.fetch.assert_called_once()
+
+    def test_pool_programming_errors_are_not_converted_to_provider_failures(self) -> None:
+        pool = mock.Mock()
+        pool.fetch.side_effect = RuntimeError("pool programming defect")
+
+        with self.assertRaisesRegex(RuntimeError, "pool programming defect"):
+            dmb.build_daily_market_brief_context(
+                market="CN",
+                market_date=date(2026, 6, 30),
+                now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+                market_bar_pool=pool,
+                activity_provider=lambda market, session: dmb._empty_activity(market),
+            )
+        pool.fetch.assert_called_once()
+
+    def test_pool_historical_indexes_filter_prior_sessions_and_preserve_count(self) -> None:
+        market_date = date(2026, 7, 9)
+        config = dmb.MARKET_CONFIGS["CN"]
+        snapshot = fake_market_bar_loader(
+            [item["code"] for item in config.index_configs],
+            (market_date - timedelta(days=45)).isoformat(),
+            market_date.isoformat(),
+        )
+        records = []
+        for index, code in enumerate(item["code"] for item in config.index_configs):
+            bars = snapshot.bars_by_code[code]
+            if index:
+                bars = [bar for bar in bars if bar["date"] < market_date.isoformat()]
+            records.append({"symbol": code, "bars": tuple(bars)})
+        pool = mock.Mock()
+        pool.fetch.return_value = DataResult(
+            DataStatus.OK,
+            tuple(records),
+            "yahoo_chart",
+            ("yahoo_chart",),
+            1.0,
+            snapshot.fetched_at,
+            False,
+            (),
+        )
+        historical_activity = HistoricalActivityResult(
+            sectors=[],
+            gainers=[],
+            capital_flow=[],
+            source_status={
+                "sectors": {"status": "historical_not_supported", "count": 0},
+                "gainers": {"status": "historical_not_supported", "count": 0},
+                "capital_flow": {"status": "historical_not_supported", "count": 0},
+            },
+        )
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=market_date,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_pool=pool,
+            historical_activity_provider=lambda market, session: historical_activity,
+        )
+
+        self.assertEqual(["SH.000001"], [row["code"] for row in result["indexes"]])
+        self.assertTrue(all(row["date"] == market_date.isoformat() for row in result["indexes"]))
+        self.assertEqual(4, result["source_status"]["indexes"]["prior_session_count"])
+        self.assertEqual("partial", result["source_status"]["indexes"]["status"])
+
+    def test_injected_market_bar_loader_keeps_legacy_call_path_when_pool_is_supplied(self) -> None:
+        calls: list[tuple[list[str], str, str]] = []
+
+        def loader(codes: list[str], start: str, end: str) -> MarketBarSnapshot:
+            calls.append((codes, start, end))
+            return fake_market_bar_loader(codes, start, end)
+
+        pool = mock.Mock()
+        dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=date(2026, 6, 30),
+            now=datetime(2026, 6, 30, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            market_bar_loader=loader,
+            market_bar_pool=pool,
+            activity_provider=lambda market, session: dmb._empty_activity(market),
+        )
+
+        self.assertEqual(
+            [
+                (
+                    [item["code"] for item in dmb.MARKET_CONFIGS["CN"].index_configs],
+                    "2026-05-16",
+                    "2026-06-30",
+                )
+            ],
+            calls,
+        )
+        pool.fetch.assert_not_called()
+
     def test_scheduler_session_date_respects_market_close_timezone(self) -> None:
         before_us_close = datetime(2026, 6, 30, 12, 0, tzinfo=ZoneInfo("Asia/Singapore"))
         after_us_close = datetime(2026, 7, 1, 5, 0, tzinfo=ZoneInfo("Asia/Singapore"))
@@ -511,6 +903,7 @@ class DailyMarketBriefTests(unittest.TestCase):
             html,
         )
         self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
 
     def test_daily_brief_uses_shared_shell_and_remains_tokenless(self) -> None:
         html = render_daily_market_brief_html()
@@ -582,13 +975,18 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("loadGeneration", html)
         self.assertIn("new AbortController()", html)
         self.assertGreaterEqual(html.count("signal: controller.signal"), 2)
+        self.assertIn("const REQUEST_TIMEOUT_MS = 15_000;", html)
+        self.assertIn("async function fetchJson(url, options = {})", html)
+        self.assertIn("请求超时，请重试。", html)
+        self.assertIn("async function initializePage()", html)
+        self.assertLess(html.index('await loadBrief("read");'), html.index("void loadSavedDates();"))
         self.assertIn("generation !== state.loadGeneration || controller.signal.aborted", html)
         self.assertIn('error.name === "AbortError"', html)
         self.assertLess(
             html.index("generation !== state.loadGeneration || controller.signal.aborted"),
             html.index("startHistoryJobPolling(data.job.id, data.market_date)"),
         )
-        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();', html)
+        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();\n      showStatus("日期已更新，点击读取查看简报。");', html)
         self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', html)
         self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
 
@@ -1107,6 +1505,100 @@ class DailyMarketBriefTests(unittest.TestCase):
 
         spot_provider.assert_called_once_with("CN", date(2026, 7, 10))
         self.assertEqual("live_rerun", result.context["generation_kind"])
+
+    def test_current_session_activity_uses_injected_source_pool(self) -> None:
+        session = date(2026, 7, 10)
+        legacy_activity = dmb._fixture_activity_provider("CN", session)
+        normalized = MarketActivitySource(
+            "daily_market_activity",
+            lambda market, market_date: legacy_activity,
+        ).fetch(
+            DataRequest(
+                capability=SourceCapability.MARKET_ACTIVITY,
+                market="CN",
+                start=session,
+                end=session,
+                freshness="session_close",
+            )
+        )
+        pool = mock.Mock()
+        pool.fetch.return_value = normalized
+
+        result = dmb.build_daily_market_brief_context(
+            market="CN",
+            market_date=session,
+            now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+            market_bar_loader=fake_market_bar_loader,
+            market_activity_pool=pool,
+        )
+
+        request, plan = pool.fetch.call_args.args
+        self.assertIs(SourceCapability.MARKET_ACTIVITY, request.capability)
+        self.assertEqual(session, request.start)
+        self.assertEqual(session, request.end)
+        self.assertEqual(("daily_market_activity",), plan.preferred_sources)
+        self.assertEqual(legacy_activity["gainers"], result["gainers"])
+        self.assertEqual(legacy_activity["source_status"]["gainers"], result["source_status"]["gainers"])
+
+    def test_historical_pool_cancellation_is_propagated(self) -> None:
+        pool = mock.Mock()
+        pool.fetch.return_value = DataResult(
+            DataStatus.UNAVAILABLE,
+            (),
+            None,
+            ("historical_market_activity",),
+            0.0,
+            datetime(2026, 7, 9, tzinfo=timezone.utc),
+            False,
+            (
+                ProviderFailure(
+                    "cancelled",
+                    "historical_market_activity",
+                    False,
+                    False,
+                ),
+            ),
+        )
+
+        with self.assertRaises(dmb.HistoricalActivityCancelled):
+            dmb.build_daily_market_brief_context(
+                market="CN",
+                market_date=date(2026, 7, 9),
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+                market_activity_pool=pool,
+            )
+
+    def test_default_historical_timeout_preserves_legacy_section_statuses(self) -> None:
+        with mock.patch(
+            "investment_knowledge_mcp.daily_market_history.load_historical_market_activity",
+            side_effect=TimeoutError("private timeout"),
+        ):
+            result = dmb.build_daily_market_brief_context(
+                market="CN",
+                market_date=date(2026, 7, 9),
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+            )
+
+        self.assertEqual("historical_not_supported", result["source_status"]["sectors"]["status"])
+        self.assertEqual("timed_out", result["source_status"]["gainers"]["status"])
+        self.assertEqual("historical_not_supported", result["source_status"]["capital_flow"]["status"])
+
+    def test_default_historical_cancellation_is_propagated(self) -> None:
+        with (
+            mock.patch(
+                "investment_knowledge_mcp.daily_market_history.load_historical_market_activity",
+                side_effect=dmb.HistoricalActivityCancelled(),
+            ),
+            self.assertRaises(dmb.HistoricalActivityCancelled),
+        ):
+            dmb.build_daily_market_brief_context(
+                market="CN",
+                market_date=date(2026, 7, 9),
+                now=datetime(2026, 7, 11, 18, 0, tzinfo=dmb.SG_TZ),
+                market_bar_loader=fake_market_bar_loader,
+            )
 
     def test_future_generation_fails_before_save(self) -> None:
         with self.assertRaisesRegex(ValueError, "未来日期"):

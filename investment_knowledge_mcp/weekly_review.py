@@ -13,14 +13,18 @@ from investment_knowledge_mcp.event_data_provider import (
 )
 from investment_knowledge_mcp.futu_provider import (
     FutuProviderError,
-    get_futu_market_bars,
     get_futu_positions,
     get_futu_trade_history,
     get_hk_ipo_list,
 )
-from investment_knowledge_mcp.market_data_provider import (
-    MarketDataProviderError,
-    get_yahoo_market_bars,
+from investment_knowledge_mcp.data_sources import (
+    DataRequest,
+    DataSourcePool,
+    DataStatus,
+    SourceCapability,
+    SourcePlan,
+    default_market_bar_pool,
+    market_bar_records_by_symbol,
 )
 from investment_knowledge_mcp.research.official_sources import OfficialResearchProvider
 
@@ -449,47 +453,78 @@ def _load_index_summary(
     warnings: list[str],
     active_markets: set[str],
     detected_themes: list[str],
+    data_source_pool: DataSourcePool | None = None,
 ) -> list[dict[str, Any]]:
-    codes = [item["code"] for item in REQUIRED_INDEXES]
-    provider_errors: list[str] = []
+    request = DataRequest(
+        capability=SourceCapability.MARKET_BARS,
+        market="MULTI",
+        symbols=tuple(index["code"] for index in REQUIRED_INDEXES),
+        start=start,
+        end=end,
+        freshness="weekly_review",
+    )
+    plan = SourcePlan(
+        capability=SourceCapability.MARKET_BARS,
+        preferred_sources=("futu",),
+        allowed_sources=("futu", "yahoo_chart"),
+        fallback_sources=("yahoo_chart",),
+        required=True,
+        partial_allowed=True,
+    )
+    result = (data_source_pool or default_market_bar_pool()).fetch(request, plan)
+    provider_name = result.selected_source
+    provider_errors = [f"{failure.source_id}: {failure.code}" for failure in result.failures]
+    failures = [
+        {
+            "code": failure.code,
+            "source": failure.source_id,
+            "retryable": failure.retryable,
+            "fallback_allowed": failure.fallback_allowed,
+        }
+        for failure in result.failures
+    ]
+
+    def set_provider_unavailable_status(*, coverage: float, from_cache: bool) -> list[dict[str, Any]]:
+        missing = [index["name"] for index in REQUIRED_INDEXES]
+        reason = "指数行情数据源暂不可用。"
+        source_status["indexes"] = {
+            "status": "provider_unavailable",
+            "provider": None,
+            "providers": list(result.attempted_sources),
+            "count": 0,
+            "fetched_at": result.fetched_at.isoformat(),
+            "metric": "close_to_close",
+            "missing": missing,
+            "active_markets": sorted(active_markets),
+            "uncovered_active_markets": sorted(active_markets),
+            "provider_errors": provider_errors,
+            "reason": reason,
+            "attempted_sources": list(result.attempted_sources),
+            "selected_source": None,
+            "coverage": coverage,
+            "from_cache": from_cache,
+            "failures": failures,
+        }
+        warnings.append(f"指数行情读取失败：{reason}")
+        return []
+
+    if result.status is DataStatus.UNAVAILABLE:
+        return set_provider_unavailable_status(coverage=result.coverage, from_cache=result.from_cache)
+
     try:
-        snapshot = get_futu_market_bars(codes=codes, start=start.isoformat(), end=end.isoformat())
-    except FutuProviderError as exc:
-        reason = _friendly_provider_error(str(exc), family="指数")
-        provider_errors.append(f"futu: {reason}")
-    except Exception as exc:
-        reason = _friendly_provider_error(str(exc), family="指数")
-        provider_errors.append(f"futu: {reason}")
-
-    if provider_errors:
-        try:
-            snapshot = get_yahoo_market_bars(codes=codes, start=start.isoformat(), end=end.isoformat())
-        except MarketDataProviderError as exc:
-            reason = _friendly_provider_error(str(exc), family="指数")
-            provider_errors.append(f"yahoo_chart: {reason}")
-            source_status["indexes"] = {
-                "status": "provider_unavailable",
-                "providers": ["futu", "yahoo_chart"],
-                "count": 0,
-                "reason": "；".join(provider_errors[:3]),
+        bars_by_code = market_bar_records_by_symbol(result)
+    except ValueError:
+        source_id = provider_name or result.attempted_sources[-1]
+        provider_errors.append(f"{source_id}: provider_contract_error")
+        failures.append(
+            {
+                "code": "provider_contract_error",
+                "source": source_id,
+                "retryable": False,
+                "fallback_allowed": False,
             }
-            warnings.append(f"指数行情读取失败：{source_status['indexes']['reason']}")
-            return []
-        except Exception as exc:
-            reason = _friendly_provider_error(str(exc), family="指数")
-            provider_errors.append(f"yahoo_chart: {reason}")
-            source_status["indexes"] = {
-                "status": "provider_unavailable",
-                "providers": ["futu", "yahoo_chart"],
-                "count": 0,
-                "reason": "；".join(provider_errors[:3]),
-            }
-            warnings.append(f"指数行情读取失败：{source_status['indexes']['reason']}")
-            return []
-        warnings.append(f"富途指数行情不可用，已使用 Yahoo chart 作为云端备用指数源。")
-
-    provider_name = getattr(snapshot, "source", "unknown")
-    bars_by_code = getattr(snapshot, "bars_by_code", {})
+        )
+        return set_provider_unavailable_status(coverage=0.0, from_cache=False)
 
     rows: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -511,16 +546,23 @@ def _load_index_summary(
     source_status["indexes"] = {
         "status": status,
         "provider": provider_name,
-        "providers": ["futu", provider_name] if provider_errors and provider_name != "futu" else [provider_name],
+        "providers": list(result.attempted_sources),
         "count": len(rows),
-        "fetched_at": snapshot.fetched_at.isoformat(),
+        "fetched_at": result.fetched_at.isoformat(),
         "metric": "close_to_close",
         "missing": missing,
         "active_markets": sorted(active_markets),
         "uncovered_active_markets": uncovered_active,
         "provider_errors": provider_errors,
         "reason": _index_status_reason(status=status, missing=missing, uncovered_active=uncovered_active),
+        "attempted_sources": list(result.attempted_sources),
+        "selected_source": provider_name,
+        "coverage": result.coverage,
+        "from_cache": result.from_cache,
+        "failures": failures,
     }
+    if provider_name == "yahoo_chart" and "futu" in result.attempted_sources:
+        warnings.append("富途指数行情不可用，已使用 Yahoo chart 作为云端备用指数源。")
     if status == "source_blocked":
         warnings.append(source_status["indexes"]["reason"])
     return rows

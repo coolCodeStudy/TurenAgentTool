@@ -423,6 +423,37 @@ class ConflictTerminalPostgresConnection:
 
 
 class DailyMarketJobsTests(unittest.TestCase):
+    def test_pending_history_query_returns_only_a_boolean(self) -> None:
+        class Connection:
+            def __init__(self, row):
+                self.row = row
+                self.query = ""
+
+            def execute(self, query, params=()):
+                self.query = " ".join(query.split())
+                self.params = params
+                return self
+
+            def fetchone(self):
+                return self.row
+
+        for row, expected in (({"pending": True}, True), ({"pending": False}, False), (None, False)):
+            connection = Connection(row)
+            with self.subTest(row=row), mock.patch.object(
+                jobs, "transaction", return_value=fake_transaction(connection)
+            ) as transaction:
+                result = jobs.has_pending_history_items()
+
+            self.assertIs(type(result), bool)
+            self.assertEqual(expected, result)
+            self.assertIn("SELECT EXISTS", connection.query)
+            self.assertIn("item.status = 'queued'", connection.query)
+            self.assertIn("item.status = 'running'", connection.query)
+            self.assertIn("item.heartbeat_at < now()", connection.query)
+            self.assertIn("job.status IN ('queued', 'running')", connection.query)
+            self.assertNotIn("item.id", connection.query)
+            self.assertEqual((jobs.HISTORY_STALE_AFTER_SECONDS,), connection.params)
+            transaction.assert_called_once_with(connect_timeout_seconds=5)
     def setUp(self) -> None:
         self.connection = FakeConnection()
         self.transaction_patch = mock.patch.object(

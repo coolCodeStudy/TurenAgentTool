@@ -15,15 +15,26 @@ except ModuleNotFoundError:  # Direct execution through scripts/classify_deploy_
 
 
 APPLICATION_SERVICES = (
-    "account-snapshot-scheduler",
-    "command-api",
-    "daily-market-brief-history-worker",
-    "daily-market-brief-scheduler",
     "dingtalk-api",
     "dingtalk-stream-bot",
-    "ipo-reminder-scheduler",
     "mcp",
+    "scheduler-host",
     "weekly-review-web",
+)
+
+# Explicit one-time topology migrations. These names are intentionally not
+# inferred from Compose or removed with ``--remove-orphans``: deployment must
+# only retire application containers whose replacement contract is admitted.
+OBSOLETE_SCHEDULER_SERVICES = (
+    "ipo-reminder-scheduler",
+    "account-snapshot-scheduler",
+    "daily-market-brief-scheduler",
+    "daily-market-brief-history-worker",
+)
+OBSOLETE_GATEWAY_SERVICES = ("command-api",)
+OBSOLETE_APPLICATION_SERVICES = (
+    *OBSOLETE_SCHEDULER_SERVICES,
+    *OBSOLETE_GATEWAY_SERVICES,
 )
 
 
@@ -78,6 +89,7 @@ PATH_RULES = (
     PathRule("prompts/**", DeployMode.NO_DEPLOY, (), "repository prompt"),
     PathRule("tests/**", DeployMode.NO_DEPLOY, (), "tests"),
     PathRule(".github/workflows/codex-worker.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
+    PathRule(".github/workflows/cloud-e2e.yml", DeployMode.NO_DEPLOY, (), "browser acceptance workflow"),
     PathRule(".github/workflows/deploy.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule(".github/workflows/ops-api.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule("scripts/agent_preflight.py", DeployMode.NO_DEPLOY, (), "local audit"),
@@ -115,7 +127,7 @@ PATH_RULES = (
     PathRule(
         "scripts/daily_market_brief_history_worker.py",
         DeployMode.TARGETED_QUICK,
-        ("daily-market-brief-history-worker",),
+        ("scheduler-host",),
         "daily market brief history worker runtime",
     ),
     PathRule(
@@ -128,39 +140,77 @@ PATH_RULES = (
         "scripts/init_db.py",
         DeployMode.TARGETED_QUICK,
         (
-            "command-api",
-            "daily-market-brief-history-worker",
-            "daily-market-brief-scheduler",
             "dingtalk-api",
             "dingtalk-stream-bot",
             "mcp",
+            "scheduler-host",
             "weekly-review-web",
         ),
         "database initialization runtime",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/dingtalk_api.py",
+        DeployMode.TARGETED_QUICK,
+        ("dingtalk-api",),
+        "DingTalk HTTP adapter",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/app_gateway.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "application gateway",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/weekly_review_controller.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "weekly review gateway controller",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/daily_market_brief_controller.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "daily market brief gateway controller",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/command_http.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "shared command HTTP controller",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/http_access.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "shared HTTP access adapter",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/web_access.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "shared browser access contract",
     ),
     PathRule("investment_knowledge_mcp/weekly_review_web.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "weekly review web"),
     PathRule(
         "investment_knowledge_mcp/command_workbench.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "weekly-review-web"),
+        ("weekly-review-web",),
         "command workbench",
     ),
     PathRule(
         "investment_knowledge_mcp/command_router.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
         "shared command logic",
     ),
     PathRule(
         "investment_knowledge_mcp/daily_market_brief.py",
         DeployMode.TARGETED_QUICK,
         (
-            "command-api",
-            "daily-market-brief-history-worker",
-            "daily-market-brief-scheduler",
             "dingtalk-api",
             "dingtalk-stream-bot",
             "mcp",
+            "scheduler-host",
             "weekly-review-web",
         ),
         "shared command logic",
@@ -168,22 +218,46 @@ PATH_RULES = (
     PathRule(
         "investment_knowledge_mcp/weekly_review.py",
         DeployMode.TARGETED_QUICK,
-        ("command-api", "dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
+        ("dingtalk-api", "dingtalk-stream-bot", "mcp", "weekly-review-web"),
         "shared command logic",
     ),
-    PathRule("investment_knowledge_mcp/command_api.py", DeployMode.TARGETED_QUICK, ("command-api",), "command API"),
+    PathRule("investment_knowledge_mcp/command_api.py", DeployMode.TARGETED_QUICK, ("weekly-review-web",), "legacy command API adapter"),
     PathRule("investment_knowledge_mcp/server.py", DeployMode.TARGETED_QUICK, ("mcp",), "MCP server"),
     PathRule(
         "investment_knowledge_mcp/account_snapshots.py",
         DeployMode.TARGETED_QUICK,
-        ("account-snapshot-scheduler",),
+        ("scheduler-host",),
         "account snapshot scheduler",
     ),
     PathRule(
         "investment_knowledge_mcp/ipo_reminders.py",
         DeployMode.TARGETED_QUICK,
-        ("ipo-reminder-scheduler",),
+        ("scheduler-host",),
         "IPO reminder scheduler",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/scheduler_host.py",
+        DeployMode.TARGETED_QUICK,
+        ("scheduler-host",),
+        "scheduler host runtime",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/scheduler_jobs.py",
+        DeployMode.TARGETED_QUICK,
+        ("scheduler-host",),
+        "scheduler job composition",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/scheduler_service.py",
+        DeployMode.TARGETED_QUICK,
+        ("scheduler-host",),
+        "scheduler service runtime",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/daily_market_jobs.py",
+        DeployMode.TARGETED_QUICK,
+        ("dingtalk-api", "dingtalk-stream-bot", "mcp", "scheduler-host", "weekly-review-web"),
+        "shared daily market history queue",
     ),
     PathRule("investment_knowledge_mcp/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "unknown application runtime module"),
     PathRule("db/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "database runtime input"),
@@ -284,9 +358,14 @@ def _compose_image_inputs_changed(repo: Path, base_sha: str, target_sha: str, ru
         target_path.write_text(target_compose, encoding="utf-8")
         base_inputs = dict(_compose_image_inputs(_compose_config(base_path, runner)))
         target_inputs = dict(_compose_image_inputs(_compose_config(target_path, runner)))
-        if base_inputs == target_inputs:
-            return False
-        return not _is_allowed_history_worker_addition(base_inputs, target_inputs)
+        common_services = set(base_inputs) & set(target_inputs)
+        if any(base_inputs[name] != target_inputs[name] for name in common_services):
+            return True
+        known_recipes = set(base_inputs.values())
+        return any(
+            target_inputs[name] not in known_recipes
+            for name in set(target_inputs) - set(base_inputs)
+        )
 
 
 def _git_show(repo: Path, sha: str, runner: CommandRunner) -> str:
@@ -322,19 +401,6 @@ def _compose_image_inputs(compose_config: dict[str, object]) -> tuple[tuple[str,
         image_input = {key: service.get(key) for key in ("image", "build", "platform") if key in service}
         inputs.append((name, json.dumps(image_input, sort_keys=True, separators=(",", ":"))))
     return tuple(sorted(inputs))
-
-
-def _is_allowed_history_worker_addition(
-    base_inputs: dict[str, str], target_inputs: dict[str, str]
-) -> bool:
-    worker = "daily-market-brief-history-worker"
-    if set(target_inputs) - set(base_inputs) != {worker}:
-        return False
-    if set(base_inputs) - set(target_inputs):
-        return False
-    if any(target_inputs.get(service) != recipe for service, recipe in base_inputs.items()):
-        return False
-    return target_inputs[worker] in base_inputs.values()
 
 
 def _rule_for(path: str) -> PathRule | None:

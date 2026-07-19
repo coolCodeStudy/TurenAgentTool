@@ -6,6 +6,7 @@ import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
 import re
 from typing import Any
 from urllib.parse import unquote
@@ -18,6 +19,7 @@ from investment_knowledge_mcp.repository import record_command_event
 
 MAX_BODY_BYTES = 64 * 1024
 MAX_REPLY_CHARS = 3500
+LOGGER = logging.getLogger("investment_knowledge_mcp.dingtalk_api")
 
 
 class DingTalkRequestHandler(BaseHTTPRequestHandler):
@@ -49,6 +51,7 @@ class DingTalkRequestHandler(BaseHTTPRequestHandler):
 
         command = _extract_command(payload)
         sender = _extract_sender(payload)
+        _log_webhook_usage(payload=payload, command=command, sender=sender)
         if not command:
             self._write_json(HTTPStatus.OK, _text_reply("目前只支持文本消息，例如：分析 000660 KR"))
             return
@@ -159,6 +162,23 @@ def _extract_sender(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _log_webhook_usage(
+    *,
+    payload: dict[str, Any],
+    command: str,
+    sender: str | None,
+) -> None:
+    msgtype = str(payload.get("msgtype") or "").strip().lower()
+    if msgtype not in {"audio", "text"}:
+        msgtype = "other"
+    LOGGER.info(
+        "event=dingtalk_http_webhook_received msgtype=%s command_present=%s sender_present=%s",
+        msgtype,
+        str(bool(command)).lower(),
+        str(bool(sender)).lower(),
+    )
+
+
 def _record_event(command: str, ok: bool, message: str, sender: str | None) -> None:
     try:
         record_command_event(
@@ -188,6 +208,10 @@ def _truncate_reply(content: str) -> str:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     config = get_config()
     server = ThreadingHTTPServer((config.dingtalk_api_host, config.dingtalk_api_port), DingTalkRequestHandler)
     print(f"DingTalk API listening on {config.dingtalk_api_host}:{config.dingtalk_api_port}", flush=True)

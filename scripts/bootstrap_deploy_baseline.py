@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Callable, ContextManager, Protocol
 
 try:
-    from scripts.deploy_contract import APPLICATION_SERVICES
+    from scripts.deploy_contract import (
+        APPLICATION_SERVICES,
+        OBSOLETE_APPLICATION_SERVICES,
+    )
     from scripts.deploy_preflight import deployment_lock, validate_runtime
     from scripts.deploy_release import (
         DeploymentEngine,
@@ -27,7 +30,7 @@ try:
     )
     from scripts.deploy_support import CommandRunner, SubprocessRunner
 except ModuleNotFoundError:  # Direct execution through scripts/bootstrap_deploy_baseline.py.
-    from deploy_contract import APPLICATION_SERVICES
+    from deploy_contract import APPLICATION_SERVICES, OBSOLETE_APPLICATION_SERVICES
     from deploy_preflight import deployment_lock, validate_runtime
     from deploy_release import (
         DeploymentEngine,
@@ -56,14 +59,21 @@ RuntimeValidator = Callable[[CommandRunner, Path], tuple[str, ...]]
 LockFactory = Callable[[Path], ContextManager[None]]
 RunningServicesProvider = Callable[[], frozenset[str]]
 _SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
-_APPLICATION_SERVICES = frozenset(APPLICATION_SERVICES)
+_APPLICATION_SERVICES = frozenset(
+    (*APPLICATION_SERVICES, *OBSOLETE_APPLICATION_SERVICES)
+)
 
 
 class _UnusedHealth:
     def check_service(self, service: str, feature_routes: tuple[str, ...]) -> None:
         raise AssertionError("baseline initialization must not restart services")
 
-    def check_aggregate(self, feature_routes: tuple[str, ...]) -> None:
+    def check_aggregate(
+        self,
+        feature_routes: tuple[str, ...],
+        *,
+        services: frozenset[str] | None = None,
+    ) -> None:
         raise AssertionError("baseline initialization must not restart services")
 
 
