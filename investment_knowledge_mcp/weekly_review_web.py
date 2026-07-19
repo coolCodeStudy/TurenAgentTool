@@ -31,6 +31,8 @@ from investment_knowledge_mcp.daily_market_jobs import (
 from investment_knowledge_mcp.db import run_schema
 from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
 from investment_knowledge_mcp.web_experience import (
+    render_access_recovery_panel,
+    render_access_session_script,
     render_experience_css,
     render_primary_navigation,
 )
@@ -830,6 +832,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       </div>
       <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true">正在读取本周复盘状态。</div>
       <div id="error-message" class="notice error" role="alert" hidden></div>
+      <section id="weekly-recovery" aria-labelledby="weekly-recovery-title" hidden>
+        <h2 id="weekly-recovery-title">尚未生成本周复盘</h2>
+        <p id="weekly-recovery-message">读取仍然公开。生成需要私有访问凭证。</p>
+        <button id="weekly-generate" class="primary" type="button">生成 / 刷新复盘</button>
+        {render_access_recovery_panel(prefix="weekly")}
+      </section>
       <div id="source-status" class="status-grid" aria-live="polite"></div>
       <section id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
       <section id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
@@ -853,12 +861,14 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       </div>
     </div>
   </div>
+  {render_access_session_script()}
   <script>
     const state = {{
       context: null,
       markdown: "",
       holdings: [],
       week: null,
+      weekStart: "{start.isoformat()}",
       reportStatus: "loading",
       loadController: null,
       loadGeneration: 0
@@ -867,12 +877,16 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
     const message = $("#message");
     const errorMessage = $("#error-message");
+    const access = window.InvestmentKnowledgeAccess;
 
     $("#prev-week").addEventListener("click", () => shiftWeek(-7));
     $("#this-week").addEventListener("click", () => setThisWeek());
     $("#week-date").addEventListener("change", loadReview);
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
+    $("#weekly-generate").addEventListener("click", () => generateReview().catch((error) => showError(`处理失败：${{error.message}}`)));
+    $("#weekly-access-continue").addEventListener("click", continueWithWeeklyAccess);
+    $("#weekly-access-forget").addEventListener("click", forgetWeeklyAccess);
     loadReview();
     if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
 
@@ -896,12 +910,14 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         if (!response.ok || !data.ok) throw new Error(data.error || "处理失败");
         state.week = data.week || state.week;
         if (state.week && state.week.start) $("#week-date").value = state.week.start;
+        state.weekStart = $("#week-date").value;
         state.reportStatus = data.status || "existing";
         state.context = data.context;
         state.markdown = data.markdown || "";
         state.holdings = data.context ? data.context.holdings_table || [] : [];
         renderAll();
         showStatus(statusMessage(data));
+        showWeeklyRecovery(data.status === "missing", "这一周还没有已生成的复盘。点击生成以恢复内容。");
       }} catch (error) {{
         if (generation !== state.loadGeneration) return;
         if (controller.signal.aborted) {{
@@ -941,15 +957,63 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       return "已读取这一周的复盘内容。";
     }}
 
+    function showWeeklyRecovery(visible, text) {{
+      $("#weekly-recovery").hidden = !visible;
+      $("#weekly-recovery-message").textContent = text;
+      if (!visible) $("#weekly-access-panel").hidden = true;
+    }}
+
+    function showWeeklyAccessRecovery(status, text) {{
+      showWeeklyRecovery(true, text);
+      $("#weekly-access-title").textContent = status === "access_not_configured" ? "Service unavailable" : "Private access";
+      $("#weekly-access-message").textContent = text;
+      $("#weekly-access-panel").hidden = false;
+      if (status !== "access_not_configured") $("#weekly-access-token").focus();
+    }}
+
+    async function generateReview() {{
+      const response = await fetch("/api/weekly-review/generate", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json", ...access.authorizationHeaders() }},
+        body: JSON.stringify({{ week_start: state.weekStart }}),
+      }});
+      const payload = await response.json();
+      const recovery = access.classifyResponse(response.status, payload).status;
+      if (["access_required", "access_rejected", "access_not_configured"].includes(recovery)) {{
+        showWeeklyAccessRecovery(recovery, payload.message || "Private access is required for generation.");
+        return;
+      }}
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "Unable to generate the review.");
+      await loadReview();
+    }}
+
+    function continueWithWeeklyAccess() {{
+      if (access.remember($("#weekly-access-token").value).status !== "ready") {{
+        showWeeklyAccessRecovery("access_required", "Enter the private access credential to continue.");
+        return;
+      }}
+      $("#weekly-access-token").value = "";
+      $("#weekly-access-panel").hidden = true;
+      generateReview().catch((error) => showError(`处理失败：${{error.message}}`));
+    }}
+
+    function forgetWeeklyAccess() {{
+      access.forget();
+      $("#weekly-access-token").value = "";
+      showWeeklyAccessRecovery("access_required", "Saved access has been forgotten. Enter the current credential to continue.");
+    }}
+
     function shiftWeek(days) {{
       const current = parseDateInput($("#week-date").value) || new Date();
       current.setDate(current.getDate() + days);
       $("#week-date").value = formatDateInput(current);
+      state.weekStart = $("#week-date").value;
       loadReview();
     }}
 
     function setThisWeek() {{
       $("#week-date").value = formatDateInput(new Date());
+      state.weekStart = $("#week-date").value;
       loadReview();
     }}
 
@@ -1152,7 +1216,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 def _split_inline_script(html: str) -> tuple[str, str, str]:
     opening = "<script>"
     closing = "</script>"
-    start = html.index(opening)
+    start = html.rindex(opening)
     content_start = start + len(opening)
     end = html.index(closing, content_start)
     return html[:start], html[content_start:end], html[end + len(closing) :]

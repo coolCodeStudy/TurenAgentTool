@@ -46,6 +46,17 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(page.locator("#error-message")).toBeHidden();
     await expect(page.getByRole("heading", { name: "本周复盘" })).toBeVisible();
   });
+
+  test("Weekly missing review offers protected recovery without an access token", async ({ page }) => {
+    await openExperience(page, "/weekly-review");
+    await page.getByLabel("复盘周").fill("2026-01-05");
+    await page.getByLabel("复盘周").press("Tab");
+    await expect(page.locator("#weekly-recovery")).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "生成 / 刷新复盘" }).click();
+    await expect(page.locator("#weekly-access-panel")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("#weekly-access-message")).toContainText("Private access");
+  });
 });
 
 test.describe("Command Workbench desktop journey", () => {
