@@ -2271,6 +2271,8 @@ def _build_exact_command(action: CommandAction, *, target: dict[str, Any] | None
             "market": str(target.get("market") or "").upper(),
         }
         values["target"] = f"{values['market']}.{values['symbol']}"
+        if action.id == "stock_valuation" and target.get("source") == "valuation_name_alias":
+            return f"stock valuation {values['target']}"
         return action.template.format(**values)
     if action.id == "service_logs":
         return action.template.format(service=_normalize_service(str(fields.get("service") or "")))

@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from investment_knowledge_mcp import command_router
+from investment_knowledge_mcp.command_workbench import parse_workbench_command
 from investment_knowledge_mcp.data_sources.contracts import SourceCapability
 from investment_knowledge_mcp.data_sources.pool import DataSourcePool, MemoryResultCache
 from investment_knowledge_mcp.data_sources.valuation import (
@@ -1676,7 +1677,26 @@ class StockValuationCommandRouterTests(unittest.TestCase):
             self.assertTrue(command_router.is_query_command(command), command)
             self.assertFalse(command_router.is_research_write_command(command), command)
 
-    def test_supported_target_without_profile_builds_degraded_artifact_without_bootstrap_write(self) -> None:
+    def test_normal_missing_profile_commands_require_bounded_bootstrap_without_writes(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(command_router.repository, "get_stock_context", return_value={"stock": None}),
+            patch.object(command_router.repository, "upsert_stock_profile") as upsert_profile,
+            patch.object(command_router, "fetch_valuation_snapshot") as fetch_snapshot,
+            patch.object(command_router, "build_valuation_artifact") as build_artifact,
+        ):
+            results = [
+                command_router.handle_command(command, output_dir=Path(temporary))
+                for command in ("valuation KR.000660", "valuation US.MSTR")
+            ]
+
+        self.assertTrue(all(not result.ok for result in results))
+        self.assertTrue(all("Command Workbench" in result.message for result in results))
+        fetch_snapshot.assert_not_called()
+        build_artifact.assert_not_called()
+        upsert_profile.assert_not_called()
+
+    def test_supported_name_alias_preview_executes_trusted_degraded_artifact_without_other_writes(self) -> None:
         snapshot = {
             "target_resolution": {
                 "normalized_symbol": "000660",
@@ -1693,12 +1713,19 @@ class StockValuationCommandRouterTests(unittest.TestCase):
         }
         with (
             tempfile.TemporaryDirectory() as temporary,
+            patch(
+                "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+                return_value=[],
+            ),
             patch.object(command_router.repository, "get_stock_context", return_value={"stock": None}),
             patch.object(command_router.repository, "upsert_stock_profile") as upsert_profile,
+            patch.object(command_router.repository, "record_user_insight") as record_insight,
+            patch.object(command_router.repository, "propose_candidate_insight") as propose_candidate,
             patch.object(command_router, "fetch_valuation_snapshot", return_value=snapshot) as fetch_snapshot,
         ):
+            preview = parse_workbench_command("valuation SK Hynix", allow_llm=False)
             result = command_router.handle_command(
-                "valuation KR.000660",
+                preview["exact_command"],
                 output_dir=Path(temporary),
             )
             packet = load_latest_valuation_artifact(
@@ -1707,6 +1734,7 @@ class StockValuationCommandRouterTests(unittest.TestCase):
                 output_dir=Path(temporary),
             )
 
+        self.assertEqual("stock valuation KR.000660", preview["exact_command"])
         self.assertTrue(result.ok)
         self.assertIsNotNone(packet)
         self.assertIn("missing_stock_profile", packet["degraded_state"]["reason_codes"])
@@ -1716,6 +1744,47 @@ class StockValuationCommandRouterTests(unittest.TestCase):
             company_name="SK hynix Inc.",
         )
         upsert_profile.assert_not_called()
+        record_insight.assert_not_called()
+        propose_candidate.assert_not_called()
+
+    def test_trusted_valuation_form_rejects_non_allowlisted_target_without_writes(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(command_router.repository, "get_stock_context") as get_context,
+            patch.object(command_router.repository, "upsert_stock_profile") as upsert_profile,
+            patch.object(command_router, "fetch_valuation_snapshot") as fetch_snapshot,
+            patch.object(command_router, "build_valuation_artifact") as build_artifact,
+        ):
+            result = command_router.handle_command(
+                "stock valuation US.MSTR",
+                output_dir=Path(temporary),
+            )
+
+        self.assertFalse(result.ok)
+        get_context.assert_not_called()
+        fetch_snapshot.assert_not_called()
+        build_artifact.assert_not_called()
+        upsert_profile.assert_not_called()
+
+    def test_valuation_write_classifier_matches_only_executable_creation_forms(self) -> None:
+        rejected = command_router.handle_command("valuation INTC")
+
+        self.assertFalse(rejected.ok)
+        for command in ("valuation INTC", "valuation CN.600000", "stock valuation US.MSTR"):
+            with self.subTest(command=command):
+                self.assertFalse(command_router.is_research_write_command(command))
+                self.assertFalse(command_router.is_candidate_write_command(command))
+        for command in (
+            "valuation US.INTC",
+            "value INTC US",
+            "估值 KR.000660",
+            "stock valuation US.INTC",
+            "stock valuation KR.000660",
+            "stock valuation HK.01888",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(command_router.is_research_write_command(command))
+                self.assertFalse(command_router.is_candidate_write_command(command))
 
     def test_router_failures_are_bounded_and_do_not_echo_paths_or_raw_exceptions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

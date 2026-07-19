@@ -123,9 +123,9 @@ class StockValuationWorkbenchTests(unittest.TestCase):
 
     def test_supported_name_aliases_normalize_before_generic_stock_bootstrap(self) -> None:
         cases = (
-            ("valuation Intel", "stock_valuation", "valuation US.INTC", "US.INTC"),
-            ("value SK Hynix", "stock_valuation", "valuation KR.000660", "KR.000660"),
-            ("估值 建滔積層板", "stock_valuation", "valuation HK.01888", "HK.01888"),
+            ("valuation Intel", "stock_valuation", "stock valuation US.INTC", "US.INTC"),
+            ("value SK Hynix", "stock_valuation", "stock valuation KR.000660", "KR.000660"),
+            ("估值 建滔積層板", "stock_valuation", "stock valuation HK.01888", "HK.01888"),
             ("latest valuation Intel Corporation", "stock_valuation_latest", "查看估值 US.INTC", "US.INTC"),
             ("查看估值 海力士", "stock_valuation_latest", "查看估值 KR.000660", "KR.000660"),
             ("valuation evidence Kingboard Laminates", "stock_valuation_artifact_evidence", "valuation artifact evidence HK.01888", "HK.01888"),

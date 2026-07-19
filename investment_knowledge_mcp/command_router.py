@@ -93,6 +93,11 @@ DEFAULT_PORTFOLIO_RESEARCH_BATCH_LIMIT = 1
 DEFAULT_RESEARCH_JOB_REQUEUE_LIMIT = 1
 MAX_RESEARCH_JOB_REQUEUE_LIMIT = 3
 DEFAULT_MAX_ACTIVE_CODEX_RESEARCH_JOBS = 1
+TRUSTED_VALUATION_NAME_ALIAS_TARGETS = {
+    ("US", "INTC"): "Intel Corporation",
+    ("KR", "000660"): "SK hynix Inc.",
+    ("HK", "01888"): "Kingboard Laminates Holdings Limited",
+}
 DAILY_MARKET_HISTORY_MAX_ITEMS = 120
 DAILY_MARKET_BRIEF_PAGE_PATH = "/daily-market-brief"
 DAILY_MARKET_HISTORY_ERROR_MESSAGES = {
@@ -476,6 +481,20 @@ def handle_command(
             return CommandResult(ok=False, message="查看估值需要市场限定的股票标的，例如：latest valuation US.INTC")
         symbol, market = target
         return _handle_stock_valuation_latest(symbol=symbol, market=market, output_dir=output_dir)
+
+    trusted_valuation_match = re.fullmatch(r"stock valuation\s+(.+)", cleaned, flags=re.IGNORECASE)
+    if trusted_valuation_match:
+        target = _parse_valuation_target(trusted_valuation_match.group(1))
+        if target is None or (target[1], target[0]) not in TRUSTED_VALUATION_NAME_ALIAS_TARGETS:
+            return CommandResult(ok=False, message="该估值标的不在受支持的名称别名范围内，请使用 Command Workbench 选择股票。")
+        symbol, market = target
+        return _handle_stock_valuation(
+            symbol=symbol,
+            market=market,
+            output_dir=output_dir,
+            command=cleaned,
+            trusted_name_alias=True,
+        )
 
     valuation_match = re.fullmatch(r"(?:估值|valuation|value)\s+(.+)", cleaned, flags=re.IGNORECASE)
     if valuation_match:
@@ -862,11 +881,8 @@ def is_research_write_command(command: str) -> bool:
     return bool(
         normalized in PORTFOLIO_GRAPH_BACKFILL_COMMANDS
         or normalized in RESEARCH_JOB_CREATE_COMMANDS
-        or re.fullmatch(
-            r"(?:估值|valuation|value)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\s+[A-Za-z]{1,5})",
-            normalized,
-            flags=re.IGNORECASE,
-        )
+        or _is_trusted_valuation_write_command(normalized)
+        or _is_normal_valuation_write_command(normalized)
         or re.fullmatch(
             r"(?:创建股票档案|初始化股票|initialize stock profile)\s+\S+\s+\S+",
             normalized,
@@ -980,6 +996,7 @@ def _handle_stock_valuation(
     market: str,
     output_dir: Path,
     command: str,
+    trusted_name_alias: bool = False,
 ) -> CommandResult:
     try:
         context = repository.get_stock_context(symbol=symbol, market=market)
@@ -987,13 +1004,14 @@ def _handle_stock_valuation(
         return CommandResult(ok=False, message="股票资料暂时无法读取，请稍后重试估值。")
     stock = context.get("stock") if isinstance(context, dict) else None
     if not isinstance(stock, dict):
-        target = normalize_valuation_target(symbol, market)
-        company_name = target.get("company_name")
-        if not isinstance(company_name, str):
+        if not trusted_name_alias:
             return CommandResult(
                 ok=False,
                 message=f"未找到股票档案：{market}.{symbol}。请先通过 Command Workbench 初始化股票档案。",
             )
+        company_name = TRUSTED_VALUATION_NAME_ALIAS_TARGETS.get((market, symbol))
+        if company_name is None:
+            return CommandResult(ok=False, message="该估值标的不在受支持的名称别名范围内，请使用 Command Workbench 选择股票。")
         context = {"stock": {"symbol": symbol, "market": market}}
     else:
         company_name = stock.get("name") if isinstance(stock.get("name"), str) else None
@@ -2238,8 +2256,6 @@ def _parse_valuation_target(value: str) -> tuple[str, str] | None:
         market, symbol = market_symbol_match.groups()
     elif symbol_market_match:
         symbol, market = symbol_market_match.groups()
-    elif re.fullmatch(r"[A-Z][A-Z0-9._-]{0,31}", cleaned):
-        symbol, market = cleaned, "US"
     else:
         return None
     try:
@@ -2247,6 +2263,19 @@ def _parse_valuation_target(value: str) -> tuple[str, str] | None:
     except (TypeError, ValueError):
         return None
     return str(target["normalized_symbol"]), str(target["normalized_market"])
+
+
+def _is_trusted_valuation_write_command(command: str) -> bool:
+    matched = re.fullmatch(r"stock valuation\s+(.+)", command, flags=re.IGNORECASE)
+    if matched is None:
+        return False
+    target = _parse_valuation_target(matched.group(1))
+    return target is not None and (target[1], target[0]) in TRUSTED_VALUATION_NAME_ALIAS_TARGETS
+
+
+def _is_normal_valuation_write_command(command: str) -> bool:
+    matched = re.fullmatch(r"(?:估值|valuation|value)\s+(.+)", command, flags=re.IGNORECASE)
+    return matched is not None and _parse_valuation_target(matched.group(1)) is not None
 
 
 def _strip_trailing_punctuation(value: str) -> str:
