@@ -1,18 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:8010";
+const protectedNoArtifacts = process.env.E2E_PROTECTED_NO_ARTIFACTS === "1";
 
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
   workers: 1,
-  reporter: [["html", { open: "never" }], ["list"]],
+  reporter: protectedNoArtifacts ? [["list"]] : [["html", { open: "never" }], ["list"]],
   use: {
     baseURL,
     viewport: { width: 1440, height: 1000 },
-    trace: "retain-on-failure",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    trace: protectedNoArtifacts ? "off" : "retain-on-failure",
+    screenshot: protectedNoArtifacts ? "off" : "only-on-failure",
+    video: protectedNoArtifacts ? "off" : "retain-on-failure",
   },
   projects: [
     {

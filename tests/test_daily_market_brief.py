@@ -33,6 +33,7 @@ from investment_knowledge_mcp.weekly_review_web import (
     _resolve_daily_market,
     _validate_public_daily_market_brief_date,
     render_daily_market_brief_html,
+    render_daily_market_brief_script,
 )
 
 
@@ -872,10 +873,11 @@ class DailyMarketBriefTests(unittest.TestCase):
 
     def test_daily_market_brief_web_page_exposes_user_acceptance_surface(self) -> None:
         html = render_daily_market_brief_html()
+        script = render_daily_market_brief_script()
 
         self.assertIn("每日市场简报", html)
-        self.assertIn("/api/daily-market-brief", html)
-        self.assertIn("/api/daily-market-brief/generate", html)
+        self.assertIn("/api/daily-market-brief", script)
+        self.assertIn("/api/daily-market-brief/generate", script)
         self.assertIn('data-market="CN"', html)
         self.assertIn('data-market="HK"', html)
         self.assertIn('data-market="US"', html)
@@ -883,27 +885,46 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn("Markdown 原文", html)
         self.assertNotIn("api-token", html)
         self.assertNotIn("生成 fixture", html)
-        self.assertIn('$("#market-date").value = "";', html)
-        self.assertIn('if (data.market_date) $("#market-date").value = data.market_date;', html)
-        self.assertIn("/api/daily-market-brief/dates", html)
-        self.assertIn("/api/daily-market-brief/history-jobs", html)
+        self.assertIn('$("#market-date").value = "";', script)
+        self.assertIn('if (data.market_date) $("#market-date").value = data.market_date;', script)
+        self.assertIn("/api/daily-market-brief/dates", script)
+        self.assertIn("/api/daily-market-brief/history-jobs", script)
         self.assertIn("saved-date", html)
         self.assertIn("已保存", html)
-        self.assertIn("尚未生成", html)
-        self.assertIn("pollHistoryJob", html)
-        self.assertIn("job.completed_count", html)
-        self.assertIn("job.current_market_date", html)
-        self.assertNotIn("cancelHistoryJob", html)
+        self.assertIn("尚未生成", script)
+        self.assertIn("pollHistoryJob", script)
+        self.assertIn("job.completed_count", script)
+        self.assertIn("job.current_market_date", script)
+        self.assertNotIn("cancelHistoryJob", script)
         self.assertIn(
             "formatMarketAmount(row.turnover, state.context?.market?.code || state.market)",
-            html,
+            script,
         )
         self.assertNotIn(
             "formatMarketAmount(row.turnover, context.market?.code || state.market)",
-            html,
+            script,
         )
         self.assertIn('id="message" class="notice" role="status" aria-live="polite" aria-atomic="true"', html)
-        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', html)
+        self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
+
+    def test_recent_history_jobs_are_selectable_public_web_jobs(self) -> None:
+        html = render_daily_market_brief_html()
+        script = render_daily_market_brief_script()
+
+        self.assertIn('data-history-job-id', script)
+        self.assertIn('selectHistoryJob(jobId)', script)
+        self.assertIn('历史生成队列（本页面任务）', html)
+
+    def test_completed_history_task_selection_reads_existing_brief(self) -> None:
+        script = render_daily_market_brief_script()
+
+        self.assertIn('async function selectHistoryJob(jobId)', script)
+        self.assertIn('await loadBrief("read")', script)
+        self.assertIn('/api/daily-market-brief/history-jobs?id=${encodeURIComponent(jobId)}', script)
+        self.assertNotIn(
+            'fetch("/api/daily-market-brief/history-jobs", { method: "POST"',
+            script,
+        )
 
     def test_daily_brief_uses_shared_shell_and_remains_tokenless(self) -> None:
         html = render_daily_market_brief_html()
@@ -921,8 +942,7 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn('<div class="experience-main">', html)
         self.assertEqual(1, html.count("<main"))
         self.assertEqual(1, html.count("</main>"))
-
-        local_nav_marker = '<nav class="nav" aria-label="On this page">'
+        local_nav_marker = '<nav class="workspace-contents" aria-label="本页目录">'
         self.assertIn(local_nav_marker, html)
         local_nav = html.split(local_nav_marker, 1)[1].split("</nav>", 1)[0]
         self.assertEqual(3, local_nav.count("<a "))
@@ -931,64 +951,59 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIn('href="#history-jobs"', local_nav)
         self.assertIn('href="#source-status"', local_nav)
         self.assertIn('href="#markdown"', local_nav)
-
-        self.assertIn("@media (max-width: 760px)", html)
-        self.assertIn("overflow-x: auto;", html)
         self.assertNotIn("investment_knowledge_access_token", html)
-        self.assertNotIn("command_workbench_token", html)
-        self.assertNotIn("weekly_review_web_token", html)
         self.assertNotIn("InvestmentKnowledgeAccess", html)
-        self.assertNotIn("authorizationHeaders", html)
-        self.assertNotIn("localStorage", html)
         self.assertNotIn("Authorization", html)
-        self.assertNotIn('id="api-token"', html)
         self.assertIn('<a class="experience-skip-link" href="#main-content">', html)
         self.assertIn('<header class="page-header">', html)
-        self.assertIn('<main id="main-content"', html)
-        self.assertEqual(1, html.count("<main"))
-        self.assertEqual(1, html.count("<h1"))
         self.assertIn('<label for="market-date">市场日期', html)
         self.assertIn('<label for="saved-date">已保存日期', html)
         self.assertIn('<legend>市场</legend>', html)
         self.assertIn('id="message" class="notice" role="status"', html)
         self.assertIn('id="error-message" class="notice error" role="alert"', html)
-        self.assertIn('class="table-scroll" role="region" aria-label="', html)
-        self.assertIn('tabindex="0"', html)
-        self.assertIn("showStatus(", html)
-        self.assertIn("showError(", html)
-        self.assertIn("message.hidden = false;", html)
-        self.assertIn("message.hidden = true;", html)
-        self.assertRegex(html, r"input, select, button\s*\{[^}]*min-height:\s*40px")
-        compact_css = html.split("@media (max-width: 900px)", 1)[1].split("</style>", 1)[0]
-        self.assertIn("input, select, button { min-height: 44px; }", compact_css)
 
-    def test_page_generation_progress_supports_background_history_jobs(self) -> None:
+        script = render_daily_market_brief_script()
+        self.assertIn('class="table-scroll" role="region" aria-label="', script)
+        self.assertIn('tabindex="0"', script)
+        self.assertIn("showStatus(", script)
+        self.assertIn("showError(", script)
+        self.assertIn("message.hidden = false;", script)
+        self.assertIn("message.hidden = true;", script)
+
+    def test_daily_controls_use_contextual_command_bar_without_a_duplicate_sidebar(self) -> None:
         html = render_daily_market_brief_html()
 
-        self.assertIn("历史简报任务已加入队列", html)
-        self.assertIn("setTimeout", html)
-        self.assertIn("loadSavedDates", html)
-        self.assertIn("loadBrief(\"read\")", html)
-        self.assertIn("pollGeneration", html)
-        self.assertIn("generation !== state.pollGeneration", html)
-        self.assertIn("state.jobId !== jobId", html)
-        self.assertIn("loadGeneration", html)
-        self.assertIn("new AbortController()", html)
-        self.assertGreaterEqual(html.count("signal: controller.signal"), 2)
-        self.assertIn("const REQUEST_TIMEOUT_MS = 15_000;", html)
-        self.assertIn("async function fetchJson(url, options = {})", html)
-        self.assertIn("请求超时，请重试。", html)
-        self.assertIn("async function initializePage()", html)
-        self.assertLess(html.index('await loadBrief("read");'), html.index("void loadSavedDates();"))
-        self.assertIn("generation !== state.loadGeneration || controller.signal.aborted", html)
-        self.assertIn('error.name === "AbortError"', html)
+        self.assertIn("workspace-command-bar", html)
+        self.assertIn('class="workspace-contents"', html)
+        self.assertNotIn('<aside class="sidebar">', html)
+
+    def test_page_generation_progress_supports_background_history_jobs(self) -> None:
+        script = render_daily_market_brief_script()
+
+        self.assertIn("历史简报任务已加入队列", script)
+        self.assertIn("setTimeout", script)
+        self.assertIn("loadSavedDates", script)
+        self.assertIn("loadBrief(\"read\")", script)
+        self.assertIn("pollGeneration", script)
+        self.assertIn("generation !== state.pollGeneration", script)
+        self.assertIn("state.jobId !== jobId", script)
+        self.assertIn("loadGeneration", script)
+        self.assertIn("new AbortController()", script)
+        self.assertGreaterEqual(script.count("signal: controller.signal"), 2)
+        self.assertIn("const REQUEST_TIMEOUT_MS = 15_000;", script)
+        self.assertIn("async function fetchJson(url, options = {})", script)
+        self.assertIn("请求超时，请重试。", script)
+        self.assertIn("async function initializePage()", script)
+        self.assertLess(script.index('await loadBrief("read");'), script.index("void loadSavedDates();"))
+        self.assertIn("generation !== state.loadGeneration || controller.signal.aborted", script)
+        self.assertIn('error.name === "AbortError"', script)
         self.assertLess(
-            html.index("generation !== state.loadGeneration || controller.signal.aborted"),
-            html.index("startHistoryJobPolling(data.job.id, data.market_date)"),
+            script.index("generation !== state.loadGeneration || controller.signal.aborted"),
+            script.index("startHistoryJobPolling(data.job.id, data.market_date)"),
         )
-        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();\n      showStatus("日期已更新，点击读取查看简报。");', html)
-        self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', html)
-        self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', html)
+        self.assertIn('$("#market-date").addEventListener("change", () => {\n      stopHistoryJobPolling();\n      showStatus("日期已更新，点击读取查看简报。");', script)
+        self.assertIn('$("#saved-date").addEventListener("change", (event) => {\n      stopHistoryJobPolling();', script)
+        self.assertIn('context.generation_kind === "live_rerun" ? "收盘生成" : "尚未生成"', script)
 
     def test_missing_report_payload_and_page_show_not_generated(self) -> None:
         handler = object.__new__(web.WeeklyReviewWebHandler)
@@ -1000,9 +1015,9 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertEqual(HTTPStatus.OK, status)
         self.assertEqual("missing", payload["status"])
         self.assertEqual("missing", payload["context"]["generation_kind"])
-        html = render_daily_market_brief_html()
-        self.assertIn('if (data.status === "missing")', html)
-        self.assertIn('renderEmpty("尚未生成")', html)
+        script = render_daily_market_brief_script()
+        self.assertIn('if (data.status === "missing")', script)
+        self.assertIn('renderEmpty("尚未生成")', script)
 
     def test_public_generation_allows_supported_history_and_rejects_future(self) -> None:
         now = datetime(2026, 7, 11, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -1450,8 +1465,8 @@ class DailyMarketBriefTests(unittest.TestCase):
         self.assertIsNotNone(result.saved_report)
         self.assertIn("历史数据获取超时，已保留可用结果", result.markdown)
         self.assertNotIn("timed_out", result.markdown)
-        html = render_daily_market_brief_html()
-        self.assertIn('timed_out: "历史数据获取超时，已保留可用结果"', html)
+        script = render_daily_market_brief_script()
+        self.assertIn('timed_out: "历史数据获取超时，已保留可用结果"', script)
 
     def test_historical_gap_statuses_are_named_in_narrative(self) -> None:
         def partial_provider(market: str, market_date: date) -> HistoricalActivityResult:

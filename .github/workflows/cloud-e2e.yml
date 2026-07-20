@@ -10,6 +10,23 @@ on:
         type: string
 
 jobs:
+  protected-fixture-availability:
+    name: Check protected fixture availability
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.fixture.outputs.available }}
+    steps:
+      - name: Check protected fixture secret
+        id: fixture
+        env:
+          E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
+        run: |
+          if [ -n "$E2E_PROTECTED_ACCESS_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   desktop-public:
     name: Desktop public journeys
     runs-on: ubuntu-latest
@@ -45,3 +62,32 @@ jobs:
             test-results/
           if-no-files-found: warn
           retention-days: 14
+
+  desktop-protected:
+    name: Desktop protected fixture
+    needs: protected-fixture-availability
+    if: ${{ needs.protected-fixture-availability.outputs.available == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run protected cloud acceptance
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
+          E2E_PROTECTED_NO_ARTIFACTS: "1"
+          E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
+        run: npm run test:e2e:cloud -- --project=desktop-protected
