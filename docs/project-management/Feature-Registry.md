@@ -76,6 +76,7 @@ User acceptance status:
 
 ### Incomplete PRDs
 
+- Stock valuation research is reconciled and removed from the incomplete set: PRD `ready`, technical plan [`stock-valuation-research.md`](../techplans/stock-valuation-research.md) `ready`, implementation `deployed`, evidence `deploy_verified` at runtime `main@48930c1e56ea377e7fb65fb44279e172e36b054d`; acceptance remains `AT-2026-07-19-001=blocked` only for the approved protected-test fixture.
 - Frontend experience system: reopened by the Owner on 2026-07-19 for desktop interaction reliability, display consolidation, and standardized cloud E2E acceptance.
 - Research display Level 1 decision card: product source needs explicit linkage, but implementation is not currently blocking.
 - Cloud worker execution location: product source needs explicit linkage, but implementation is not currently blocking.
