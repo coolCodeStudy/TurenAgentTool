@@ -112,6 +112,7 @@ PATH_RULES = (
     ),
     PathRule(".github/workflows/codex-worker.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule(".github/workflows/cloud-e2e.yml", DeployMode.NO_DEPLOY, (), "browser acceptance workflow"),
+    PathRule(".github/workflows/protected-e2e.yml", DeployMode.NO_DEPLOY, (), "browser acceptance workflow"),
     PathRule(".github/workflows/deploy.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule(".github/workflows/ops-api.yml", DeployMode.NO_DEPLOY, (), "workflow governance"),
     PathRule("scripts/agent_preflight.py", DeployMode.NO_DEPLOY, (), "local audit"),

@@ -171,6 +171,7 @@ class DeployContractTests(TestCase):
     def test_classifies_known_paths_and_targets(self) -> None:
         cases = [
             ((".github/workflows/cloud-e2e.yml",), DeployMode.NO_DEPLOY, ()),
+            ((".github/workflows/protected-e2e.yml",), DeployMode.NO_DEPLOY, ()),
             (("playwright.config.ts",), DeployMode.NO_DEPLOY, ()),
             (("docs/README.md",), DeployMode.NO_DEPLOY, ()),
             (
