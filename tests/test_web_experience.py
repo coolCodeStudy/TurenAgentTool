@@ -120,8 +120,10 @@ const makeNode = () => ({
   disabled: false,
   innerHTML: "",
   textContent: "",
+  attributes: {},
   listeners: {},
   addEventListener(type, callback) { this.listeners[type] = callback; },
+  setAttribute(name, value) { this.attributes[name] = String(value); },
   focus() {},
 });
 
@@ -418,6 +420,8 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertEqual(1, html.count("<h1"))
         self.assertIn("workspace-command-bar", html)
         self.assertIn('class="workspace-section" id="preview-section"', html)
+        self.assertIn("Target source / 标的来源", html)
+        self.assertIn("Current holding / 当前持仓", html)
         self.assertIn("<aside>", html)
 
     def test_weekly_missing_state_has_protected_recovery_not_blank_sections(self) -> None:

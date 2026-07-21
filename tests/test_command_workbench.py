@@ -228,5 +228,70 @@ class StockValuationWorkbenchTests(unittest.TestCase):
         self.assertIn("retryPendingRequest", html)
 
 
+class PortfolioHoldingResolutionTests(unittest.TestCase):
+    def test_named_current_holding_requires_explicit_profile_setup_when_unprofiled(self) -> None:
+        snapshots = [{"positions": [{"code": "US.SPCX", "stock_name": "SpaceX", "qty": 1}]}]
+        with (
+            mock.patch(
+                "investment_knowledge_mcp.command_workbench.repository.list_account_snapshots",
+                return_value=snapshots,
+            ),
+            mock.patch(
+                "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+                return_value=[],
+            ),
+            mock.patch("investment_knowledge_mcp.command_workbench.repository.upsert_stock_profile") as upsert_stock,
+        ):
+            preview = parse_workbench_command("决策 SpaceX", allow_llm=False)
+
+        self.assertEqual("parsed", preview["status"])
+        self.assertEqual("bootstrap_stock_profile", preview["action_id"])
+        self.assertEqual("创建股票档案 SPCX US", preview["exact_command"])
+        self.assertEqual("US.SPCX", preview["target"]["canonical"])
+        self.assertEqual("portfolio_holding", preview["target"]["source"])
+        self.assertTrue(preview["confirmation_required"])
+        self.assertIn("current holding", preview["recovery_message"])
+        upsert_stock.assert_not_called()
+
+    def test_named_current_holding_uses_existing_profile_without_bootstrap(self) -> None:
+        snapshots = [{"positions": [{"code": "US.SPCX", "stock_name": "SpaceX", "qty": 1}]}]
+        profile = {"symbol": "SPCX", "market": "US", "name": "SpaceX"}
+        with (
+            mock.patch(
+                "investment_knowledge_mcp.command_workbench.repository.list_account_snapshots",
+                return_value=snapshots,
+            ),
+            mock.patch(
+                "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+                side_effect=lambda query: [profile] if query == "SPCX" else [],
+            ),
+        ):
+            preview = parse_workbench_command("决策 SpaceX", allow_llm=False)
+
+        self.assertEqual("parsed", preview["status"])
+        self.assertEqual("decision_card", preview["action_id"])
+        self.assertEqual("决策 US.SPCX", preview["exact_command"])
+        self.assertEqual("US.SPCX", preview["target"]["canonical"])
+        self.assertEqual("portfolio_holding", preview["target"]["source"])
+
+    def test_market_qualified_holding_code_uses_the_same_portfolio_match(self) -> None:
+        snapshots = [{"positions": [{"code": "US.SPCX", "stock_name": "SpaceX", "qty": 1}]}]
+        with (
+            mock.patch(
+                "investment_knowledge_mcp.command_workbench.repository.list_account_snapshots",
+                return_value=snapshots,
+            ),
+            mock.patch(
+                "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+                return_value=[],
+            ),
+        ):
+            preview = parse_workbench_command("决策 US.SPCX", allow_llm=False)
+
+        self.assertEqual("bootstrap_stock_profile", preview["action_id"])
+        self.assertEqual("US.SPCX", preview["target"]["canonical"])
+        self.assertEqual("portfolio_holding", preview["target"]["source"])
+
+
 if __name__ == "__main__":
     unittest.main()

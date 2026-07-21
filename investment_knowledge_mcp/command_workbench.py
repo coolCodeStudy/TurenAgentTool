@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from dataclasses import dataclass, field
 import re
 from typing import Any
@@ -1235,6 +1236,9 @@ def render_command_workbench_html() -> str:
       const confirmation = preview.confirmation_required ? "Explicit confirmation required" : "No extra confirmation";
       const actionLine = preview.action ? `${preview.action.label} / ${preview.action.action_family}` : "Unrecognized";
       const targetText = preview.target ? `${preview.target.name || ""} / ${preview.target.market}.${preview.target.symbol}` : "None";
+      const targetSource = preview.target
+        ? (preview.target.source === "portfolio_holding" ? "Current holding / 当前持仓" : "Stock profile or exact symbol / 研究档案或代码")
+        : "None";
       const candidateHtml = preview.candidates && preview.candidates.length ? `
         <div class="candidates">
           ${preview.candidates.map((candidate, index) => `
@@ -1250,6 +1254,7 @@ def render_command_workbench_html() -> str:
         <div class="preview-grid">
           <div class="item"><span class="label">Action</span><strong>${escapeHtml(actionLine)}</strong></div>
           <div class="item"><span class="label">Target</span>${escapeHtml(targetText)}</div>
+          <div class="item"><span class="label">Target source / 标的来源</span>${escapeHtml(targetSource)}</div>
           <div class="item"><span class="label">Exact command</span><code>${escapeHtml(preview.exact_command || "None")}</code></div>
           <div class="item"><span class="label">Safety</span>${escapeHtml(preview.safety_level || "unknown")} · ${escapeHtml(confirmation)}</div>
           <div class="item"><span class="label">Parser</span>${escapeHtml(preview.parse_source || "unknown")} · confidence ${Number(preview.confidence || 0).toFixed(2)}</div>
@@ -1416,6 +1421,7 @@ def render_command_workbench_html() -> str:
 
     function setBusy(busy) {
       $("#parse").disabled = busy;
+      $("#preview-section").setAttribute("aria-busy", String(busy));
     }
     function readJson(key, fallback) {
       try { return JSON.parse(localStorage.getItem(key) || ""); } catch { return fallback; }
@@ -2007,6 +2013,32 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
             )
         )
 
+    if (
+        status == "parsed"
+        and needs_stock
+        and target is not None
+        and action.id != "bootstrap_stock_profile"
+        and target.get("source") == "portfolio_holding"
+    ):
+        resolved_target = _candidate_with_stock_profile(target)
+        if resolved_target is None:
+            return _preview_from_action(
+                ParseContext(
+                    raw_input=context.raw_input,
+                    action_id="bootstrap_stock_profile",
+                    fields={"stock": f"{target['market']}.{target['symbol']}"},
+                    selected_target=target,
+                    parse_source=context.parse_source,
+                    confidence=min(confidence, float(target.get("confidence") or confidence)),
+                    recovery_message=(
+                        f'I found your current holding {target.get("name") or target["canonical"]} '
+                        f'({target["canonical"]}), but it does not have a research profile yet. '
+                        "Initialize a minimal stock profile, then preview the decision command again."
+                    ),
+                )
+            )
+        target = resolved_target
+
     if action.id == "service_logs":
         service = _normalize_service(str(fields.get("service") or ""))
         fields["service"] = service
@@ -2087,7 +2119,63 @@ def resolve_stock_candidates(query: str) -> list[dict[str, Any]]:
 
     if len(alias_candidates) > 1:
         return _dedupe_candidates(_profile_or_preserve_alias_candidates(alias_candidates, candidates))
-    return _filter_profiled_candidates(_dedupe_candidates(candidates))
+
+    profiled = _filter_profiled_candidates(_dedupe_candidates(candidates))
+    if profiled:
+        return profiled
+    return _portfolio_holding_candidates(cleaned)
+
+
+def _portfolio_holding_candidates(query: str) -> list[dict[str, Any]]:
+    query_key = _holding_lookup_key(query)
+    if not query_key:
+        return []
+    try:
+        today = date.today()
+        snapshots = repository.list_account_snapshots(
+            start=(today - timedelta(days=14)).isoformat(),
+            end=today.isoformat(),
+        )
+    except Exception:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    for snapshot in reversed(snapshots):
+        for position in snapshot.get("positions") or []:
+            candidate = _portfolio_holding_candidate(position, query_key)
+            if candidate is not None:
+                candidates.append(candidate)
+    return _dedupe_candidates(candidates)
+
+
+def _portfolio_holding_candidate(position: dict[str, Any], query_key: str) -> dict[str, Any] | None:
+    if not isinstance(position, dict):
+        return None
+    code = str(position.get("code") or "").strip()
+    parsed = _parse_stock_target(code)
+    if parsed is None:
+        return None
+    symbol, market = parsed
+    name = str(position.get("stock_name") or position.get("name") or "").strip()
+    canonical = f"{market}.{symbol}"
+    if query_key not in {
+        _holding_lookup_key(name),
+        _holding_lookup_key(code),
+        _holding_lookup_key(canonical),
+        _holding_lookup_key(symbol),
+    }:
+        return None
+    return _candidate(
+        symbol=symbol,
+        market=market,
+        name=name or canonical,
+        confidence=0.99,
+        source="portfolio_holding",
+    )
+
+
+def _holding_lookup_key(value: str) -> str:
+    return re.sub(r"[\W_]+", "", value.casefold())
 
 
 def _profile_or_preserve_alias_candidates(

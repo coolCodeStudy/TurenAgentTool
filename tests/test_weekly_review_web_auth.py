@@ -239,6 +239,9 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn("loadGeneration: 0", script)
         self.assertIn("const controller = new AbortController();", script)
         self.assertIn("读取超时，请重试。", script)
+        self.assertIn('id="weekly-retry"', html)
+        self.assertIn("function setReviewBusy(busy)", script)
+        self.assertIn("读取完成，用时", script)
         self.assertIn("function cancelReviewLoad()", script)
         self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
 

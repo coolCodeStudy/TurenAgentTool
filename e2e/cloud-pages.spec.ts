@@ -195,6 +195,37 @@ test.describe("Daily Market Brief desktop journey", () => {
 });
 
 test.describe("Weekly Review desktop journey", () => {
+  test("shows a busy state and elapsed completion time for a slow public read", async ({ page }) => {
+    let releaseInitialRead: (() => void) | undefined;
+    await page.route((url) => url.pathname === "/api/weekly-review", async (route) => {
+      await new Promise<void>((resolve) => {
+        releaseInitialRead = resolve;
+      });
+      const weekStart = new URL(route.request().url()).searchParams.get("week_start");
+      await route.fulfill({
+        json: {
+          ok: true,
+          status: "missing",
+          week: { start: weekStart },
+          context: null,
+          markdown: "",
+        },
+      });
+    });
+
+    await openExperience(page, "/weekly-review");
+    await expect.poll(() => Boolean(releaseInitialRead)).toBe(true);
+    await expect(page.getByRole("button", { name: "上一周" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "本周" })).toBeDisabled();
+    await expect(page.getByLabel("复盘周")).toBeDisabled();
+
+    releaseInitialRead?.();
+
+    await expect(page.getByRole("status")).toContainText("读取完成，用时", { timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "上一周" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "本周" })).toBeEnabled();
+  });
+
   test("settles a public read when the week changes", async ({ page }) => {
     await openExperience(page, "/weekly-review");
     await page.getByRole("button", { name: "本周" }).click();
@@ -266,9 +297,9 @@ test.describe("Command Workbench desktop journey", () => {
     await expect(page.locator("#access-message")).toContainText("Private access");
   });
 
-  test("@protected parses a protected read-only command only when the CI credential is configured", async ({ page }) => {
+  test("@protected parses a protected read-only command only when a feature-specific fixture is configured", async ({ page }) => {
     const token = process.env.E2E_PROTECTED_ACCESS_TOKEN;
-    test.skip(!token, "E2E_PROTECTED_ACCESS_TOKEN is not configured for this run.");
+    test.skip(!token, "A protected fixture is not configured for this run.");
 
     await openExperience(page, "/command");
     await page.getByLabel("Command").fill("系统状态");
@@ -280,4 +311,5 @@ test.describe("Command Workbench desktop journey", () => {
 
     await expect(page.locator("#preview")).toContainText("系统状态", { timeout: 10_000 });
   });
+
 });

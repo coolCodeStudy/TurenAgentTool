@@ -809,6 +809,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
           <button id="prev-week" type="button">上一周</button>
           <button id="this-week" type="button">本周</button>
           <label for="week-date">复盘周<input id="week-date" type="date" value="{start.isoformat()}"></label>
+          <button id="weekly-retry" type="button" hidden>重新读取</button>
           <span class="read-only-badge">公开只读</span>
         </div>
       </div>
@@ -843,7 +844,8 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       weekStart: "{start.isoformat()}",
       reportStatus: "loading",
       loadController: null,
-      loadGeneration: 0
+      loadGeneration: 0,
+      loadStartedAt: null
     }};
     const $ = (selector) => document.querySelector(selector);
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
@@ -854,6 +856,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     $("#prev-week").addEventListener("click", () => shiftWeek(-7));
     $("#this-week").addEventListener("click", () => setThisWeek());
     $("#week-date").addEventListener("change", loadReview);
+    $("#weekly-retry").addEventListener("click", loadReview);
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
     $("#weekly-generate").addEventListener("click", () => generateReview().catch((error) => showError(`处理失败：${{error.message}}`)));
@@ -868,6 +871,8 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 15_000);
       state.loadController = controller;
+      state.loadStartedAt = performance.now();
+      setReviewBusy(true);
       showStatus("正在读取复盘状态...");
       try {{
         const weekStart = $("#week-date").value;
@@ -888,7 +893,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         state.markdown = data.markdown || "";
         state.holdings = data.context ? data.context.holdings_table || [] : [];
         renderAll();
-        showStatus(statusMessage(data));
+        showStatus(`${{statusMessage(data)}} 读取完成，用时 ${{formatElapsed(state.loadStartedAt)}}。`);
         showWeeklyRecovery(data.status === "missing", "这一周还没有已生成的复盘。点击生成以恢复内容。");
       }} catch (error) {{
         if (generation !== state.loadGeneration) return;
@@ -899,7 +904,10 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         showError(`处理失败：${{error.message}}`);
       }} finally {{
         window.clearTimeout(timeout);
-        if (generation === state.loadGeneration && state.loadController === controller) state.loadController = null;
+        if (generation === state.loadGeneration && state.loadController === controller) {{
+          state.loadController = null;
+          setReviewBusy(false);
+        }}
       }}
     }}
 
@@ -914,6 +922,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       errorMessage.textContent = "";
       message.hidden = false;
       message.textContent = text;
+      $("#weekly-retry").hidden = true;
     }}
 
     function showError(text) {{
@@ -921,6 +930,19 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       message.hidden = true;
       errorMessage.textContent = text;
       errorMessage.hidden = false;
+      $("#weekly-retry").hidden = false;
+    }}
+
+    function setReviewBusy(busy) {{
+      ["#prev-week", "#this-week", "#week-date", "#weekly-retry"].forEach((selector) => {{
+        $(selector).disabled = busy;
+      }});
+      document.querySelector("main").setAttribute("aria-busy", String(busy));
+    }}
+
+    function formatElapsed(startedAt) {{
+      const elapsedMs = Math.max(0, performance.now() - Number(startedAt || performance.now()));
+      return `${{(elapsedMs / 1000).toFixed(elapsedMs < 10_000 ? 1 : 0)}} 秒`;
     }}
 
     function statusMessage(data) {{

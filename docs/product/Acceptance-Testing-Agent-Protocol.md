@@ -202,23 +202,23 @@ Recommended automation capabilities:
 
 Playwright is the preferred browser automation tool when browser tests are added because it supports screenshots, traces, and reliable browser interaction.
 
-## Standard Cloud Playwright Workflow
+## Standard Local-First Playwright Workflow
 
-For a cloud-served desktop surface with a committed Playwright suite, Acceptance Testing must use Playwright Test as the primary interaction gate. Browser-control tools may be used for diagnosis, but they do not replace a repeatable Playwright result.
+For a cloud-served desktop surface with a committed Playwright suite, Acceptance Testing must use Playwright Test as the primary repeatable interaction gate. When the Owner's normal journey is a local Chrome browser, local Playwright against the deployed URL plus that Chrome review is the primary evidence. Browser-control tools and GitHub-hosted Chromium are diagnostic controls; neither replaces a repeatable local Playwright result.
 
 1. Confirm the deployed base URL, commit, service health, and the scope of the release.
-2. Run the public desktop suite with fresh browser storage:
+2. Run the public desktop suite with fresh browser storage from the local acceptance environment:
 
    ```bash
    E2E_BASE_URL=<deployed-base-url> npm run test:e2e:cloud -- --project=desktop-public
    ```
 
 3. Require the suite to verify the rendered heading, main region, navigation, desktop overflow, and every non-mutating primary action. A direct API `200` does not pass a visible page that remains loading, blank, or non-interactive.
-4. Run protected coverage only if the approved CI secret `E2E_PROTECTED_ACCESS_TOKEN` is available. The value must be injected as an environment secret, never written to source, artifacts, logs, screenshots, or queue entries. If it is unavailable, record the protected case as explicitly skipped rather than passed.
+4. Run protected coverage only when the feature scope explicitly requires it and an approved test fixture is available. Never request, read, store, or log a user's credential. If that scope is not selected or the fixture is unavailable, record the protected case as explicitly skipped; it is not automatically a blocker for public/local-first acceptance.
 5. Do not use browser acceptance to generate reports, save changes, or execute write-like commands. Test their visible confirmation or recovery state only.
-6. On public-suite failure, retain and link the Playwright trace, screenshot, video, and HTML report. Protected-suite results are job-status-only and artifactless by design. Classify a visible loading loop, a non-responsive primary action, unexpected horizontal overflow, or inaccessible auth recovery as `failed` with severity `major` or `blocker`.
+6. On public-suite failure, retain and link the Playwright trace, screenshot, video, and HTML report. Classify a visible loading loop, a non-responsive primary action, unexpected horizontal overflow, or inaccessible auth recovery as `failed` with severity `major` or `blocker`.
 
-The repository workflow `cloud-e2e.yml` is manually dispatched with a deployed `base_url`; it must not deploy application code. It always runs the `desktop-public` job with `--project=desktop-public` and uploads `cloud-e2e-public-<run_id>` evidence; that job never receives the protected token. A prior `protected-fixture-availability` job scopes `E2E_PROTECTED_ACCESS_TOKEN` to its single check step and writes only the non-secret `available=true|false` result to its job output. `desktop-protected` depends on that output and runs `--project=desktop-protected` only when it is `true`; the token and the non-secret `E2E_PROTECTED_NO_ARTIFACTS=1` control are separately scoped to the `Run protected cloud acceptance` step alongside `E2E_BASE_URL`. That flag disables the Playwright trace, screenshot, video, and HTML report for the protected run, and the protected job uploads no artifacts: its fixture result is job status only and artifactless by design. No step may echo or otherwise reveal the token. When the secret is absent, GitHub Actions skips `desktop-protected`; record protected-success coverage as `explicitly_skipped`, not passed, without placing the token in logs, artifacts, queues, or other evidence.
+The repository workflow `cloud-e2e.yml` is manually dispatched with a deployed `base_url`; it must not deploy application code. It runs only the tokenless `desktop-public` job and uploads `cloud-e2e-public-<run_id>` evidence. It is an optional external-network/browser diagnostic, not a delivery blocker for a local-first feature. A separate feature-scoped protected workflow may exist for another feature's approved fixture; it must not be used to reintroduce a protected-token blocker to a local-first feature.
 
 ## Weekly Review Acceptance Rule
 

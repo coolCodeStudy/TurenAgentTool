@@ -1,4 +1,4 @@
-name: Cloud browser acceptance
+name: Protected browser acceptance
 
 on:
   workflow_dispatch:
@@ -10,8 +10,8 @@ on:
         type: string
 
 jobs:
-  desktop-public:
-    name: Desktop public journeys
+  desktop-protected:
+    name: Feature-scoped protected fixture
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -30,18 +30,14 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run public cloud acceptance
+      - name: Run protected browser acceptance when configured
         env:
           E2E_BASE_URL: ${{ inputs.base_url }}
-        run: npm run test:e2e:cloud -- --project=desktop-public
-
-      - name: Upload Playwright evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cloud-e2e-public-${{ github.run_id }}
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: warn
-          retention-days: 14
+          E2E_PROTECTED_NO_ARTIFACTS: "1"
+          E2E_PROTECTED_ACCESS_TOKEN: ${{ secrets.E2E_PROTECTED_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$E2E_PROTECTED_ACCESS_TOKEN" ]; then
+            echo "No protected fixture is configured; no protected test was run."
+            exit 0
+          fi
+          npm run test:e2e:cloud -- --project=desktop-protected
