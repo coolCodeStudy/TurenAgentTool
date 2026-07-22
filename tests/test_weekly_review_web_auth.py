@@ -259,6 +259,26 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertNotIn("Authorization", render_status)
         self.assertNotIn("/api/weekly-review/source-detail", script)
 
+        detail_definition = script.split("function sourceDetailDefinition", 1)[1].split(
+            "function openSourceDetail", 1
+        )[0]
+        self.assertIn('["状态", sourceStatusLabel(safeItem.status)]', detail_definition)
+        self.assertIn('["记录数", safeDetailCount(safeItem.count)]', detail_definition)
+        self.assertNotIn("statusText(safeItem)", detail_definition)
+        self.assertIn("function renderSourceDetail(detail)", script)
+        open_detail = script.split("function openSourceDetail", 1)[1].split(
+            "function safeDetailValue", 1
+        )[0]
+        self.assertIn("renderSourceDetail(detail);", open_detail)
+
+        render_holdings = script.split("function renderHoldings", 1)[1].split(
+            "function tableRegion", 1
+        )[0]
+        self.assertIn(
+            "escapeHtml(formatSignedMoney(weeklyPl, row.currency))",
+            render_holdings,
+        )
+
     def test_public_weekly_page_uses_shared_shell_with_recovery_only_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()
 

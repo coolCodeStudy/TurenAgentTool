@@ -275,7 +275,12 @@ test.describe("Weekly Review desktop journey", () => {
 
   test("Weekly source detail drawer shows safe source context without another request", async ({ page }) => {
     const readRequests: { authorization: string | null; method: string; url: string }[] = [];
-    await page.route((url) => url.pathname === "/api/weekly-review", async (route) => {
+    const oversizedReason = `Public reason\nwith\ttabs ${"x".repeat(500)} reason-tail-diagnostic`;
+    await page.route((url) => url.pathname.startsWith("/api/"), async (route) => {
+      const requestUrl = new URL(route.request().url());
+      expect(requestUrl.pathname, `Unexpected API request: ${route.request().method()} ${requestUrl.pathname}`).toBe(
+        "/api/weekly-review",
+      );
       readRequests.push({
         authorization: await route.request().headerValue("authorization"),
         method: route.request().method(),
@@ -289,14 +294,20 @@ test.describe("Weekly Review desktop journey", () => {
           markdown: "# 本周复盘",
           context: {
             holdings_table: [
-              { market: "HK", code: "HK.00001", name: "正向标的", theme: "AI", market_val: 1000, current_pl_val: 80, weekly_pl_delta: 12.5, currency: "HKD", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
+              { market: "HK", code: "HK.00001", name: "正向标的", theme: "AI", market_val: 1000, current_pl_val: 80, weekly_pl_delta: 12.5, currency: 'HKD</td><img data-hostile-currency="yes" src=x>', status: "持有", knowledge_note: "观察", next_step: "跟踪" },
               { market: "US", code: "US.NEG", name: "负向标的", theme: "Cloud", market_val: 900, current_pl_val: -40, weekly_pl_delta: -8.25, currency: "USD", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
               { market: "CN", code: "SH.600000", name: "旧版标的", theme: "Bank", market_val: 800, current_pl_val: 10, currency: "CNY", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
             ],
             source_status: {
               trades: { status: "ok", count: 3, provider: "ledger", fetched_at: "2026-06-28T16:00:00Z" },
               indexes: { status: "partial", count: 2, coverage: "2/3 markets", missing: ["US"] },
-              events: { status: "source_blocked", count: 0, reason: "External events are unavailable", provider_errors: ["raw-provider-diagnostic-marker"] },
+              events: { status: "source_blocked", count: 0, reason: oversizedReason, provider_errors: ["raw-provider-diagnostic-marker"] },
+              local_knowledge: {
+                status: "missing",
+                count: { nested: "nested-count-diagnostic" },
+                reason: { nested: ["nested-reason-diagnostic"] },
+                failures: ["raw-failure-diagnostic-marker"],
+              },
             },
             highlights: [], blowups: [], index_summary: [], story: {}, next_week: [], holder_attribution: [], warnings: [],
           },
@@ -306,7 +317,9 @@ test.describe("Weekly Review desktop journey", () => {
 
     await openExperience(page, "/weekly-review");
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("本周盈亏");
-    await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("+12.50 HKD");
+    const positiveWeeklyCell = page.getByRole("row", { name: /正向标的/ }).locator("td").nth(5);
+    await expect(positiveWeeklyCell).toContainText('+12.50 HKD</td><img data-hostile-currency="yes" src=x>');
+    await expect(positiveWeeklyCell.locator('[data-hostile-currency="yes"]')).toHaveCount(0);
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("-8.25 USD");
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("—");
     await expect(page.locator("body")).not.toContainText("raw-provider-diagnostic-marker");
@@ -355,10 +368,24 @@ test.describe("Weekly Review desktop journey", () => {
     await eventsCard.press("Space");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("外部事件");
-    await expect(dialog).toContainText("External events are unavailable");
+    await expect(dialog).toContainText("Public reason with tabs");
+    const reasonValue = dialog.locator("dd", { hasText: "Public reason with tabs" });
+    expect((await reasonValue.textContent())?.length).toBeLessThanOrEqual(400);
+    await expect(dialog).not.toContainText("reason-tail-diagnostic");
     await page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
     await expect(eventsCard).toBeFocused();
+    expect(readRequests).toHaveLength(1);
+
+    const localKnowledgeCard = page.locator('[data-source-key="local_knowledge"]');
+    await localKnowledgeCard.click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("本地知识");
+    await expect(dialog).not.toContainText("nested-count-diagnostic");
+    await expect(dialog).not.toContainText("nested-reason-diagnostic");
+    await expect(dialog).not.toContainText("raw-provider-diagnostic-marker");
+    await expect(dialog).not.toContainText("raw-failure-diagnostic-marker");
+    await dialog.getByRole("button", { name: "关闭" }).click();
     expect(readRequests).toHaveLength(1);
   });
 

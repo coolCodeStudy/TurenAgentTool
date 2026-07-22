@@ -1153,8 +1153,8 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       if (!definition) return null;
       const safeItem = item && typeof item === "object" && !Array.isArray(item) ? item : {{}};
       const fields = [
-        ["状态", statusText(safeItem)],
-        ["记录数", safeDetailValue(safeItem.count)],
+        ["状态", sourceStatusLabel(safeItem.status)],
+        ["记录数", safeDetailCount(safeItem.count)],
         ["提供方", safeDetailValue(safeItem.providers ?? safeItem.provider ?? safeItem.sources)],
         ["读取时间", safeDetailValue(safeItem.fetched_at)],
         ["缓存", safeDetailValue(safeItem.cache_status ?? safeItem.cache ?? safeItem.cached ?? safeItem.from_cache ?? safeItem.stale)],
@@ -1171,20 +1171,30 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       const detail = sourceDetailDefinition(key, item);
       if (!detail) return;
       sourceDetailInvoker = invoker;
-      $("#source-detail-title").textContent = detail.label;
-      $("#source-detail-body").innerHTML = `<p class="source-detail-copy">${{escapeHtml(detail.contribution)}}</p><dl class="source-detail-list">${{detail.fields.map(([label, value]) => `<div><dt>${{escapeHtml(label)}}</dt><dd>${{escapeHtml(value)}}</dd></div>`).join("") || "<div><dd>暂无可展示的来源详情。</dd></div>"}}</dl>`;
+      renderSourceDetail(detail);
       sourceDetailDialog.showModal();
       $("#source-detail-close").focus();
     }}
 
+    function renderSourceDetail(detail) {{
+      $("#source-detail-title").textContent = detail.label;
+      $("#source-detail-body").innerHTML = `<p class="source-detail-copy">${{escapeHtml(detail.contribution)}}</p><dl class="source-detail-list">${{detail.fields.map(([label, value]) => `<div><dt>${{escapeHtml(label)}}</dt><dd>${{escapeHtml(value)}}</dd></div>`).join("") || "<div><dd>暂无可展示的来源详情。</dd></div>"}}</dl>`;
+    }}
+
     function safeDetailValue(value) {{
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value).trim();
-      if (Array.isArray(value)) return value.filter((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean").map((item) => String(item).trim()).filter(Boolean).join("；");
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value).trim().slice(0, 400);
+      if (Array.isArray(value)) return value.filter((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean").map((item) => String(item).trim()).filter(Boolean).join("；").slice(0, 400);
       return "";
     }}
 
+    function safeDetailCount(value) {{
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return "";
+      return String(value).trim().slice(0, 40);
+    }}
+
     function sanitisedReason(value) {{
-      const text = safeDetailValue(value);
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return "";
+      const text = String(value);
       return text.replace(/[\\r\\n\\t]+/g, " ").replace(/\\s+/g, " ").trim().slice(0, 400);
     }}
 
@@ -1252,7 +1262,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       slot("holdings").innerHTML = tableRegion("当前持仓", `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th class="money">本周盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
         ${{rows.map((row) => {{
           const weeklyPl = displayableMoney(row.weekly_pl_delta);
-          const weeklyPlHtml = weeklyPl === null ? "—" : formatSignedMoney(weeklyPl, row.currency);
+          const weeklyPlHtml = weeklyPl === null ? "—" : escapeHtml(formatSignedMoney(weeklyPl, row.currency));
           const weeklyPlClass = weeklyPl === null ? "" : ` ${{moneyClass(weeklyPl)}}`;
           return `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money financial-number">${{formatMoney(row.market_val, row.currency)}}</td><td class="money financial-number ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td class="money financial-number${{weeklyPlClass}}">${{weeklyPlHtml}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`;
         }}).join("")}}
@@ -1300,7 +1310,11 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 
     function statusText(item) {{
       if (!item) return "缺失";
-      const status = item.status || "unknown";
+      const count = item.count === undefined ? "" : safeDetailCount(item.count);
+      const reason = sanitisedReason(item.reason);
+      return `${{sourceStatusLabel(item.status)}}${{count ? `，${{count}} 条` : ""}}${{reason ? "，" + reason : ""}}`;
+    }}
+    function sourceStatusLabel(status) {{
       const labels = {{
         ok: "已读取",
         partial: "部分可用",
@@ -1313,14 +1327,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         backfilled: "已回补",
         fallback: "降级可用"
       }};
-      const count = item.count === undefined ? "" : `，${{item.count}} 条`;
-      const reason = readableReason(item.reason);
-      return `${{labels[status] || "状态待确认"}}${{count}}${{reason ? "，" + reason : ""}}`;
-    }}
-    function readableReason(reason) {{
-      if (!reason) return "";
-      const text = String(reason);
-      return text;
+      return labels[status] || "状态待确认";
     }}
     function parseDateInput(value) {{
       if (!value) return null;
