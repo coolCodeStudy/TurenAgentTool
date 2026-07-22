@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 from investment_knowledge_mcp import command_router
+from investment_knowledge_mcp import stock_valuation
 from investment_knowledge_mcp import valuation_data_provider as valuation_provider
 from investment_knowledge_mcp.command_workbench import parse_workbench_command
 from investment_knowledge_mcp.data_sources.contracts import SourceCapability
@@ -909,6 +910,45 @@ class StockValuationTests(unittest.TestCase):
             ],
         )
         self.assertEqual(list(inspect.signature(load_latest_valuation_artifact).parameters), ["symbol", "market", "output_dir"])
+
+    def test_card_is_chinese_first_with_exact_english_original(self) -> None:
+        packet = self._build(snapshot=self._snapshot())
+        rendered = render_valuation_card(packet)
+        delimiter = "\n\n## English original (原文)\n\n"
+        self.assertIn(delimiter, rendered)
+        chinese, english = rendered.split(delimiter, 1)
+
+        self.assertTrue(chinese.startswith("估值研究卡"))
+        self.assertIn("状态", chinese)
+        self.assertIn("事实", chinese)
+        self.assertIn("计算", chinese)
+        self.assertIn("US.ACME", chinese)
+        self.assertIn("$", chinese)
+        self.assertIn("2026-07-19", chinese)
+        self.assertEqual(
+            english,
+            stock_valuation._render_valuation_card_english(
+                stock_valuation._checked_public_projection(packet)
+            ),
+        )
+
+    def test_method_library_is_chinese_first_and_preserves_order(self) -> None:
+        rendered = render_valuation_methods()
+        delimiter = "\n\n## English original (原文)\n\n"
+        self.assertIn(delimiter, rendered)
+        chinese, english = rendered.split(delimiter, 1)
+
+        self.assertTrue(chinese.startswith("估值方法库"))
+        self.assertIn("专业方法", chinese)
+        self.assertLess(chinese.index("Free Cash Flow"), chinese.index("Comparable Multiples"))
+        self.assertIn("Free Cash Flow", english)
+        self.assertIn("Residual Income / ROE-PB", english)
+
+    def test_unknown_presentation_line_uses_visible_original_fallback(self) -> None:
+        translator = getattr(stock_valuation, "_translate_card_lines", None)
+        self.assertTrue(callable(translator))
+        translated = translator(["Unexpected provider phrase"])
+        self.assertEqual(translated, ["原文回退: Unexpected provider phrase"])
 
     def test_complete_packet_preserves_freshness_and_renders_frame_semantics(self) -> None:
         snapshot = self._snapshot()
@@ -2630,6 +2670,8 @@ class StockValuationCommandRouterTests(unittest.TestCase):
                 with self.subTest(command=command):
                     result = command_router.handle_command(command, output_dir=Path(temporary))
                     self.assertTrue(result.ok)
+                    self.assertTrue(result.message.startswith("估值研究卡"))
+                    self.assertIn("## English original (原文)", result.message)
                     self.assertIn("Valuation research card: US.INTC", result.message)
                     self.assertNotIn(temporary, result.message)
 
@@ -2665,6 +2707,8 @@ class StockValuationCommandRouterTests(unittest.TestCase):
 
         for result in (latest, latest_zh):
             self.assertTrue(result.ok)
+            self.assertTrue(result.message.startswith("估值研究卡"))
+            self.assertIn("## English original (原文)", result.message)
             self.assertIn("Valuation research card: US.INTC", result.message)
         for result in (evidence, evidence_alias):
             self.assertTrue(result.ok)
@@ -2673,6 +2717,8 @@ class StockValuationCommandRouterTests(unittest.TestCase):
             self.assertNotIn("artifact_path", result.message)
         for result in (methods, methods_zh):
             self.assertTrue(result.ok)
+            self.assertTrue(result.message.startswith("估值方法库"))
+            self.assertIn("## English original (原文)", result.message)
             self.assertIn("Valuation method library", result.message)
         for command in (
             "latest valuation US.INTC",

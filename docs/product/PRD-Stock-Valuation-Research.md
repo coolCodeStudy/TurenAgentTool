@@ -33,6 +33,23 @@ P0 goals:
 
 P0 is intentionally a single-stock, artifact-backed valuation workflow. Dedicated valuation tables, portfolio or batch valuation, weekly-review integration, decision-card integration, and other delivery surfaces are follow-ups after the single-stock packet, calculation, source, and degraded-state behavior is reliable.
 
+## Presentation Addendum: Chinese-First With Canonical English Original
+
+The Stock Valuation Command Workbench presentation is Chinese-first for the valuation create card, latest-artifact card, and valuation method library. Each affected Markdown response appends the exact canonical English renderer output under `## English original (原文)`.
+
+This is a presentation-only contract. The `stock_valuation_packet.v1` artifact, bounded evidence JSON, source/provenance values, artifact persistence, authenticated access boundary, and no-formal-insight-write safety contract remain unchanged. Symbols, market-qualified targets, source/provider IDs, fact IDs, numbers, dates, currencies, URLs, and formula/input references remain verbatim. Controlled labels, status/degraded/recovery copy, metric labels, method/frame names, and safety wording are translated deterministically; unknown dynamic English text remains visible with an explicit original/fallback marker. No LLM or external translation service is used.
+
+Acceptance criteria for this addendum:
+
+1. US, HK, and KR valuation create/latest responses begin with Chinese presentation and end with `## English original (原文)`.
+2. The appended English body is byte-for-byte identical to the canonical English output for the same validated public projection.
+3. Chinese output preserves all P0 semantics, values, source coverage, freshness, degraded/recovery state, assumptions, frame evidence, watch items, and safety wording.
+4. The method library preserves ordering and specialist-only markers in both sections.
+5. Artifact JSON and bounded evidence JSON schemas remain unchanged and contain no translated Markdown copy.
+6. Existing path-safety, leakage, no-write, router, and gateway regressions remain green.
+
+Only Stock Valuation P0 is implemented in this slice. Generic Command Workbench output, Weekly Review, Daily Market Brief, decision cards, messaging, locale preferences, auth, ingress, Compose, and public-port wiring remain out of scope.
+
 ## Non-Goals
 
 - Do not automate trading.

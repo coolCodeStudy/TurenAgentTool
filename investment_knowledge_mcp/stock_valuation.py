@@ -126,12 +126,192 @@ def valuation_method_library() -> list[dict[str, Any]]:
     return [{"id": item["id"], "name": item["name"], "core_question": item["core_question"], "triggers": list(item.get("triggers", ())), "failure_conditions": list(item.get("failure_conditions", ())), "specialist_only": bool(item.get("specialist_only"))} for item in (*CORE_FRAMES, *SPECIALIST_FRAMES)]
 
 
-def render_valuation_methods() -> str:
+_ENGLISH_ORIGINAL_HEADER = "## English original (原文)"
+_METHOD_NAMES_ZH = {
+    "Free Cash Flow": "自由现金流 / Free Cash Flow",
+    "Comparable Multiples": "可比倍数 / Comparable Multiples",
+    "SOTP / Asset Value": "分部加总 / 资产价值 / SOTP / Asset Value",
+    "Cyclical": "周期 / Cyclical",
+    "Growth / Scenario": "增长 / 情景 / Growth / Scenario",
+    "Dividend": "股息 / Dividend",
+    "Residual Income / ROE-PB": "剩余收益 / ROE-PB / Residual Income / ROE-PB",
+    "Event-Driven": "事件驱动 / Event-Driven",
+}
+_METRIC_NAMES_ZH = {
+    "capex": "资本开支",
+    "cash": "现金",
+    "debt": "债务",
+    "ebitda": "EBITDA",
+    "gross_profit": "毛利润",
+    "net_income": "净利润",
+    "operating_cash_flow": "经营现金流",
+    "operating_income": "经营利润",
+    "price": "价格",
+    "revenue": "收入",
+    "shares_outstanding": "流通股数",
+    "free_cash_flow": "自由现金流",
+    "net_debt": "净债务",
+    "market_cap": "市值",
+    "enterprise_value": "企业价值",
+    "gross_margin": "毛利率",
+    "operating_margin": "经营利润率",
+    "fcf_margin": "自由现金流率",
+    "fcf_yield": "自由现金流收益率",
+    "pe": "市盈率",
+    "ps": "市销率",
+    "ev_ebitda": "企业价值/EBITDA",
+    "ev_fcf": "企业价值/自由现金流",
+}
+_PRESENTATION_PHRASES = {
+    "Valuation method library (P0 ranks only the five core frames):": "估值方法库（P0 仅对五个核心框架排序）：",
+    "Specialist frames are metadata only unless an explicit specialist workflow triggers them.": "专业方法仅作为元数据，除非明确的专业工作流触发它们。",
+    "What durable free cash flow can the business produce?": "企业能够产生多少可持续的自由现金流？",
+    "Which multiple can comparable businesses support?": "可比业务能够支撑什么估值倍数？",
+    "Are parts or assets worth more than the consolidated value?": "各个部分或资产是否比合并价值更有价值？",
+    "Are earnings at a cycle peak, trough, or mid-cycle?": "盈利处于周期高点、低点还是中段？",
+    "What is the value under explicit growth and milestone scenarios?": "在明确的增长和里程碑情景下价值是多少？",
+    "Can distributable cash flows sustain dividends?": "可分配现金流能否支撑股息？",
+    "Does return on equity exceed the cost of equity?": "股本回报率是否超过股本成本？",
+    "Does a defined corporate event change value realization?": "明确的公司事件是否会改变价值兑现？",
+    "Valuation research card:": "估值研究卡：",
+    "Status: degraded": "状态：降级",
+    "Status: ok": "状态：正常",
+    "Data gaps:": "数据缺口：",
+    "- comparable peer evidence is missing": "- 可比同行证据缺失",
+    "- none identified by the normalized packet": "- 规范化数据包未识别出缺口",
+    "- none available": "- 暂无可用数据",
+    "Facts:": "事实：",
+    "Calculations:": "计算：",
+    "Data freshness:": "数据新鲜度：",
+    "Source coverage:": "来源覆盖：",
+    "Market-implied bridge:": "市场隐含桥接：",
+    "Relevant frames:": "相关框架：",
+    "Assumptions:": "假设：",
+    "Interpretation:": "解读：",
+    "Watch items:": "观察项：",
+    "Safety: research aid only; no buy/sell recommendation and no formal user insight was written.": "安全：仅用于研究辅助；不构成买卖建议，也未写入正式用户心得。",
+    "Financials as of:": "财务数据截至：",
+    "Market data as of:": "市场数据截至：",
+    "Stale fields:": "过期字段：",
+    "Attempted source families:": "已尝试来源族群：",
+    "Missing categories:": "缺失类别：",
+    "Retry needed:": "需要重试：",
+    "Recovery:": "恢复：",
+    "official financial facts are missing": "官方财务事实缺失",
+    "current market data is missing": "当前市场数据缺失",
+    "official financial facts and current market data are missing": "官方财务事实和当前市场数据均缺失",
+    "stale fields require refresh before current-market interpretation": "过期字段需要刷新后才能进行当前市场解读",
+    "timed out": "超时",
+    "failed": "失败",
+    "anchors current market value.": "锚定当前市场价值。",
+    "unavailable because the required market inputs are missing": "由于所需市场输入缺失而不可用",
+    "not meaningful (negative earnings)": "无意义（负收益）",
+    "negative EBITDA": "EBITDA 为负",
+    "negative FCF": "自由现金流为负",
+    "period unavailable": "期间不可用",
+    "period ": "期间 ",
+    "as of ": "截至 ",
+    "(inputs: ": "（输入：",
+    "inputs: ": "输入：",
+    "unavailable": "不可用",
+    "This artifact is deterministic research scaffolding, not a target price.": "此估值产物是确定性研究脚手架，不是目标价。",
+    "Peer sets and analyst estimates require separately sourced evidence.": "同行集合和分析师估算需要单独来源的证据。",
+    "is a selected research frame.": "是已选研究框架。",
+    "Data gaps mean this is research scaffolding rather than a target price.": "数据缺口意味着这是研究脚手架，而不是目标价。",
+    "Optional narrative: unavailable (model unavailable)": "可选叙事：不可用（模型不可用）",
+    "rerating triggers:": "重估触发因素：",
+    "failure conditions:": "失败条件：",
+    "Rule provenance:": "规则溯源：",
+    "fit=": "匹配=",
+    "confidence=": "置信度=",
+    "fits": "匹配",
+    "medium": "中",
+    "low": "低",
+    "unknown": "未知",
+    "official_financial": "官方财务",
+    "market_snapshot": "市场快照",
+    "regulator_filing": "监管申报",
+    "company_ir": "公司 IR",
+    "vendor_financial": "供应商财务",
+    "none": "无",
+}
+
+
+def _render_valuation_methods_english() -> str:
     lines = ["Valuation method library (P0 ranks only the five core frames):"]
     for index, frame in enumerate(valuation_method_library(), 1):
         lines.append(f"{index}. {frame['name']}{' [specialist-only]' if frame['specialist_only'] else ''} — {frame['core_question']}")
     lines.append("Specialist frames are metadata only unless an explicit specialist workflow triggers them.")
     return "\n".join(lines)
+
+
+def _translate_controlled_text(value: str) -> str:
+    translated = value
+    for source, target in sorted(_PRESENTATION_PHRASES.items(), key=lambda item: len(item[0]), reverse=True):
+        translated = translated.replace(source, target)
+    return translated
+
+
+def _translate_method_lines(lines: list[str]) -> list[str]:
+    translated: list[str] = []
+    for line in lines:
+        if line.startswith("Valuation method library") or line.startswith("Specialist frames"):
+            translated.append(_translate_controlled_text(line))
+            continue
+        match = re.match(r"^(\d+)\. (.+?)( \[specialist-only\])? — (.+)$", line)
+        if match:
+            index, name, specialist, question = match.groups()
+            translated_name = _METHOD_NAMES_ZH.get(name, name)
+            suffix = "（专业方法）" if specialist else ""
+            translated.append(f"{index}. {translated_name}{suffix} — {_translate_controlled_text(question)}")
+            continue
+        translated.append(f"原文回退: {line}")
+    return translated
+
+
+def _translate_card_line(line: str) -> str:
+    if line.startswith("Valuation research card:"):
+        return _translate_controlled_text(line)
+    if line.startswith("Status:") or line in _PRESENTATION_PHRASES:
+        return _translate_controlled_text(line)
+    if line.startswith("- "):
+        metric_match = re.match(r"^(\-\s+)([a-z_]+)(:.*)$", line)
+        if metric_match and metric_match.group(2) in _METRIC_NAMES_ZH:
+            prefix, metric, suffix = metric_match.groups()
+            return prefix + _METRIC_NAMES_ZH[metric] + _translate_controlled_text(suffix)
+        frame_match = re.match(r"^(\-\s+)(.+?) rerating triggers: (.*)$", line)
+        if frame_match:
+            prefix, frame, suffix = frame_match.groups()
+            return f"{prefix}{_METHOD_NAMES_ZH.get(frame, frame)} 重估触发因素：{_translate_controlled_text(suffix)}"
+        frame_match = re.match(r"^(\-\s+)(.+?) failure conditions: (.*)$", line)
+        if frame_match:
+            prefix, frame, suffix = frame_match.groups()
+            return f"{prefix}{_METHOD_NAMES_ZH.get(frame, frame)} 失败条件：{_translate_controlled_text(suffix)}"
+        return _translate_controlled_text(line)
+    frame_match = re.match(r"^(\-\s+)(.+?) \(fit=(.+?), confidence=(.+?)\)$", line)
+    if frame_match:
+        prefix, frame, fit, confidence = frame_match.groups()
+        translated_frame = _METHOD_NAMES_ZH.get(frame, frame)
+        return f"{prefix}{translated_frame}（匹配={_translate_controlled_text(fit)}，置信度={_translate_controlled_text(confidence)}）"
+    indented_match = re.match(r"^(\s+)(Assumptions|Rerating triggers|Failure conditions|Rule provenance):\s*(.*)$", line)
+    if indented_match:
+        indent, label, suffix = indented_match.groups()
+        label_zh = {"Assumptions": "假设", "Rerating triggers": "重估触发因素", "Failure conditions": "失败条件", "Rule provenance": "规则溯源"}[label]
+        return f"{indent}{label_zh}：{_translate_controlled_text(suffix)}"
+    return f"原文回退: {line}"
+
+
+def _translate_card_lines(lines: list[str]) -> list[str]:
+    return [_translate_card_line(line) for line in lines]
+
+
+def _compose_bilingual_markdown(chinese_lines: list[str], english: str) -> str:
+    return "\n".join(chinese_lines) + "\n\n" + _ENGLISH_ORIGINAL_HEADER + "\n\n" + english
+
+
+def render_valuation_methods() -> str:
+    english = _render_valuation_methods_english()
+    return _compose_bilingual_markdown(_translate_method_lines(english.splitlines()), english)
 
 
 def build_valuation_artifact(
@@ -222,11 +402,8 @@ def build_valuation_artifact_evidence(packet: dict[str, object]) -> dict[str, ob
     return _checked_public_projection(packet)
 
 
-def render_valuation_card(packet: dict[str, object]) -> str:
-    """Render only the shared typed public projection."""
-    if not isinstance(packet, dict):
-        raise TypeError("packet must be a mapping")
-    public = _checked_public_projection(packet)
+def _render_valuation_card_english(public: dict[str, object]) -> str:
+    """Render the canonical English card from one validated public projection."""
     stock, degraded = public["stock"], public["degraded_state"]
     coverage = public["source_coverage"]
     target = ".".join(str(stock[key]) for key in ("market", "symbol") if stock.get(key))
@@ -308,6 +485,15 @@ def render_valuation_card(packet: dict[str, object]) -> str:
     lines.extend(f"- {item}" for item in public["watch_items"])
     lines.append("Safety: research aid only; no buy/sell recommendation and no formal user insight was written.")
     return "\n".join(lines)
+
+
+def render_valuation_card(packet: dict[str, object]) -> str:
+    """Render a Chinese-first card followed by the canonical English card."""
+    if not isinstance(packet, dict):
+        raise TypeError("packet must be a mapping")
+    public = _checked_public_projection(packet)
+    english = _render_valuation_card_english(public)
+    return _compose_bilingual_markdown(_translate_card_lines(english.splitlines()), english)
 
 
 # Ingress normalization -----------------------------------------------------
