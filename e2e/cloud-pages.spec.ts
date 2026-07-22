@@ -283,6 +283,39 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(page.locator("#weekly-access-panel")).toBeVisible({ timeout: 10_000 });
     await expect(page.locator("#weekly-access-message")).toContainText("Private access");
   });
+
+  test("Weekly generation immediately shows progress and prevents duplicate submission", async ({ page }) => {
+    let releaseGeneration: (() => void) | undefined;
+    let generationRequests = 0;
+    await page.route((url) => url.pathname === "/api/weekly-review", async (route) => {
+      const weekStart = new URL(route.request().url()).searchParams.get("week_start");
+      await route.fulfill({
+        json: { ok: true, status: "missing", week: { start: weekStart }, context: null, markdown: "" },
+      });
+    });
+    await page.route((url) => url.pathname === "/api/weekly-review/generate", async (route) => {
+      generationRequests += 1;
+      await new Promise<void>((resolve) => {
+        releaseGeneration = resolve;
+      });
+      await route.fulfill({ json: { ok: true, status: "generated" } });
+    });
+
+    await openExperience(page, "/weekly-review");
+    const generate = page.locator("#weekly-generate");
+    await expect(generate).toBeVisible();
+    await generate.click();
+
+    await expect.poll(() => Boolean(releaseGeneration)).toBe(true);
+    await expect(generate).toBeDisabled();
+    await expect(generate).toHaveText("正在生成复盘...");
+    await expect(page.getByRole("status")).toContainText("正在生成本周复盘");
+    expect(generationRequests).toBe(1);
+
+    releaseGeneration?.();
+    await expect(generate).toBeEnabled();
+    await expect(generate).toHaveText("生成 / 刷新复盘");
+  });
 });
 
 test.describe("Command Workbench desktop journey", () => {
