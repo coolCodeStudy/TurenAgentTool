@@ -185,3 +185,16 @@ Coordinator cloud smoke must verify `/command`, the action catalog, authenticate
 - A provider call that exceeds the six-second interactive ceiling may continue inside the globally bounded two-worker executor until its own two-second transport operations unwind; additional saturated calls fail closed without spawning more workers or leaking diagnostics.
 - If interruption occurs after the timestamped atomic replace but before the latest replace, the new timestamped artifact remains valid while `latest` remains the previous valid packet; a retry reconciles latest without exposing a partial file.
 - Release remains coordinator-owned: use the recorded `targeted_quick`/workflow `quick` decision and its five service targets only after whole-branch review, push, serialized deploy intent, cloud smoke, and independent acceptance routing. No Task 4 deployment was performed.
+
+## Presentation Enhancement Addendum (2026-07-22)
+
+The approved bilingual presentation slice preserves the existing valuation packet, evidence projection, access/session boundary, and all 17 original P0 criteria. It changes only the Markdown produced by `render_valuation_card()` and `render_valuation_methods()`:
+
+| Addendum criterion | Implementation | Verification | Status |
+|---|---|---|---|
+| Chinese-first create/latest card with canonical English body | `investment_knowledge_mcp/stock_valuation.py`: `_render_valuation_card_english()`, `_translate_card_lines()`, `_compose_bilingual_markdown()`, and the public `render_valuation_card()` wrapper | `test_card_is_chinese_first_with_exact_english_original`, create/latest router assertions | **implemented/verified locally** |
+| Chinese-first method library with preserved ordering and specialist markers | `investment_knowledge_mcp/stock_valuation.py`: `_render_valuation_methods_english()`, `_translate_method_lines()`, and public `render_valuation_methods()` wrapper | `test_method_library_is_chinese_first_and_preserves_order`, method route assertions | **implemented/verified locally** |
+| Unknown presentation text remains visible with explicit fallback | `_translate_card_lines()` returns `原文回退: {original_line}` for uncovered lines | `test_unknown_presentation_line_uses_visible_original_fallback` | **implemented/verified locally** |
+| Artifact/evidence/access/safety contracts unchanged | No changes to packet/evidence builders, artifact persistence, Workbench access, or gateway code | Full valuation/router/gateway/preservation suites, leakage/path/no-write assertions, changed-file review | **verified locally; release pending** |
+
+The English section is produced once from the same validated public projection and appended byte-for-byte. The Chinese mapping is deterministic and valuation-local; no generic Command Workbench translation or external translation dependency is introduced. The coordinator must still run one serialized quick deployment and route `AT-2026-07-19-001` to independent acceptance after the integrated release is smoke-verified.
