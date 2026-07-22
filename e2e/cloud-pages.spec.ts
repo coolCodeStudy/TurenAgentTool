@@ -274,9 +274,13 @@ test.describe("Weekly Review desktop journey", () => {
   });
 
   test("Weekly source detail drawer shows safe source context without another request", async ({ page }) => {
-    const readRequests: { method: string; url: string }[] = [];
+    const readRequests: { authorization: string | null; method: string; url: string }[] = [];
     await page.route((url) => url.pathname === "/api/weekly-review", async (route) => {
-      readRequests.push({ method: route.request().method(), url: route.request().url() });
+      readRequests.push({
+        authorization: route.request().headerValue("authorization"),
+        method: route.request().method(),
+        url: route.request().url(),
+      });
       await route.fulfill({
         json: {
           ok: true,
@@ -305,10 +309,14 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("+12.50 HKD");
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("-8.25 USD");
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("—");
+    await expect(page.locator("body")).not.toContainText("raw-provider-diagnostic-marker");
 
     const sourceCard = page.locator('[data-source-key="indexes"]');
+    await expect(sourceCard).toHaveAttribute("role", "button");
+    await expect(sourceCard).toHaveAttribute("tabindex", "0");
+    await expect(sourceCard).toHaveAttribute("aria-haspopup", "dialog");
     await sourceCard.focus();
-    await sourceCard.click();
+    await sourceCard.press("Enter");
     const dialog = page.locator("#source-detail-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("指数");
@@ -317,15 +325,19 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(dialog).not.toContainText("raw-provider-diagnostic-marker");
     expect(readRequests).toHaveLength(1);
     expect(readRequests[0].method).toBe("GET");
+    expect(readRequests[0].authorization).toBeNull();
 
     await page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
     await expect(sourceCard).toBeFocused();
+    expect(readRequests).toHaveLength(1);
 
-    await sourceCard.click();
+    await sourceCard.press("Space");
+    await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "关闭" }).click();
     await expect(dialog).not.toBeVisible();
     await expect(sourceCard).toBeFocused();
+    expect(readRequests).toHaveLength(1);
   });
 
   test("Weekly missing review offers protected recovery without an access token", async ({ page }) => {
