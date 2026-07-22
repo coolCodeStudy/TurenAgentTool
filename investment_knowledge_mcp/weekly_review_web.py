@@ -845,7 +845,11 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       reportStatus: "loading",
       loadController: null,
       loadGeneration: 0,
-      loadStartedAt: null
+      loadStartedAt: null,
+      readBusy: false,
+      generationBusy: false,
+      generationStartedAt: null,
+      generationTimer: null
     }};
     const $ = (selector) => document.querySelector(selector);
     const slot = (name) => document.querySelector(`[data-slot="${{name}}"]`);
@@ -934,10 +938,31 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     }}
 
     function setReviewBusy(busy) {{
-      ["#prev-week", "#this-week", "#week-date", "#weekly-retry"].forEach((selector) => {{
+      state.readBusy = busy;
+      renderWeeklyBusyControls();
+    }}
+
+    function setGenerationBusy(busy) {{
+      state.generationBusy = busy;
+      if (!busy) {{
+        state.generationStartedAt = null;
+        if (state.generationTimer) window.clearInterval(state.generationTimer);
+        state.generationTimer = null;
+      }}
+      renderWeeklyBusyControls();
+    }}
+
+    function renderWeeklyBusyControls() {{
+      const busy = Boolean(state.readBusy || state.generationBusy);
+      ["#prev-week", "#this-week", "#week-date", "#weekly-retry", "#weekly-generate"].forEach((selector) => {{
         $(selector).disabled = busy;
       }});
+      $("#weekly-generate").textContent = state.generationBusy ? "正在生成复盘..." : "生成 / 刷新复盘";
       document.querySelector("main").setAttribute("aria-busy", String(busy));
+    }}
+
+    function showGenerationProgress() {{
+      showStatus(`正在生成本周复盘，预计约 2 分钟。已等待 ${{formatElapsed(state.generationStartedAt)}}。`);
     }}
 
     function formatElapsed(startedAt) {{
@@ -966,19 +991,28 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     }}
 
     async function generateReview() {{
-      const response = await fetch("/api/weekly-review/generate", {{
-        method: "POST",
-        headers: {{ "Content-Type": "application/json", ...access.authorizationHeaders() }},
-        body: JSON.stringify({{ week_start: state.weekStart }}),
-      }});
-      const payload = await response.json();
-      const recovery = access.classifyResponse(response.status, payload).status;
-      if (["access_required", "access_rejected", "access_not_configured"].includes(recovery)) {{
-        showWeeklyAccessRecovery(recovery, payload.message || "Private access is required for generation.");
-        return;
+      if (state.generationBusy) return;
+      state.generationStartedAt = performance.now();
+      setGenerationBusy(true);
+      showGenerationProgress();
+      state.generationTimer = window.setInterval(showGenerationProgress, 1_000);
+      try {{
+        const response = await fetch("/api/weekly-review/generate", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json", ...access.authorizationHeaders() }},
+          body: JSON.stringify({{ week_start: state.weekStart }}),
+        }});
+        const payload = await response.json();
+        const recovery = access.classifyResponse(response.status, payload).status;
+        if (["access_required", "access_rejected", "access_not_configured"].includes(recovery)) {{
+          showWeeklyAccessRecovery(recovery, payload.message || "Private access is required for generation.");
+          return;
+        }}
+        if (!response.ok || !payload.ok) throw new Error(payload.error || "Unable to generate the review.");
+        await loadReview();
+      }} finally {{
+        setGenerationBusy(false);
       }}
-      if (!response.ok || !payload.ok) throw new Error(payload.error || "Unable to generate the review.");
-      await loadReview();
     }}
 
     function continueWithWeeklyAccess() {{
