@@ -76,3 +76,21 @@ npx playwright test e2e/cloud-pages.spec.ts --project=desktop-public --grep "Wee
 Result: **FAIL** as intended at the existing missing `本周盈亏` assertion. The current holdings text contains only `市场 标的 主题 市值 盈亏 状态 知识库观点 下周节奏`; therefore the new semantic, activation, public-header, whole-page diagnostic, and post-close request-count assertions remain RED behind the primary missing feature contract.
 
 The browser test used only a local `weekly-review-web` page shell on `127.0.0.1:8010`, connected to the preflight local database target (`localhost:55432`). Its sole `/api/weekly-review` response was fulfilled by Playwright, so no real Weekly report was read or generated. The local shell was stopped after verification.
+
+## P1 coverage completion
+
+The same public fixture journey now also exercises the remaining populated and blocked source states without changing production renderer code.
+
+- It opens the `trades` card, asserts the user-visible `3` record count and the defined contribution copy (`Supports realised interval P&L and position-change context.`), then closes through the visible control and verifies focus returns to the `trades` card.
+- It opens the `events` card with Space, asserts the user-visible blocked reason `External events are unavailable`, then closes with Escape and verifies focus returns to the `events` card.
+- Both additional lifecycle checks retain the tokenless public GET assertion, exactly one Weekly-read request, and whole-page raw-diagnostic absence established above.
+
+### P1 focused RED evidence
+
+Command:
+
+```bash
+npx playwright test e2e/cloud-pages.spec.ts --project=desktop-public --grep "Weekly source detail drawer"
+```
+
+Result: **FAIL** as intended at the pre-existing `本周盈亏` assertion. The rendered holdings text remains `市场标的主题市值盈亏状态知识库观点下周节奏`, so the task stays RED for the missing production feature before any dialog assertions run. The local `weekly-review-web` shell was started only on `127.0.0.1:8010`; Playwright fulfilled the one `/api/weekly-review` fixture response, and the shell was stopped immediately afterwards. No real Weekly report was read or generated.

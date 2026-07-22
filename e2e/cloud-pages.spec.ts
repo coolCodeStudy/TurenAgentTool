@@ -338,6 +338,28 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(dialog).not.toBeVisible();
     await expect(sourceCard).toBeFocused();
     expect(readRequests).toHaveLength(1);
+
+    const tradesCard = page.locator('[data-source-key="trades"]');
+    await tradesCard.click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("交易记录");
+    await expect(dialog).toContainText("3");
+    await expect(dialog).toContainText("Supports realised interval P&L and position-change context.");
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(tradesCard).toBeFocused();
+    expect(readRequests).toHaveLength(1);
+
+    const eventsCard = page.locator('[data-source-key="events"]');
+    await eventsCard.focus();
+    await eventsCard.press("Space");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("外部事件");
+    await expect(dialog).toContainText("External events are unavailable");
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(eventsCard).toBeFocused();
+    expect(readRequests).toHaveLength(1);
   });
 
   test("Weekly missing review offers protected recovery without an access token", async ({ page }) => {
