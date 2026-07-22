@@ -300,8 +300,24 @@ test.describe("Weekly Review desktop journey", () => {
             ],
             source_status: {
               trades: { status: "ok", count: 3, provider: "ledger", fetched_at: "2026-06-28T16:00:00Z" },
-              indexes: { status: "partial", count: 2, coverage: "2/3 markets", missing: ["US"] },
-              events: { status: "source_blocked", count: 0, reason: oversizedReason, provider_errors: ["raw-provider-diagnostic-marker"] },
+              indexes: {
+                status: "partial",
+                count: 2,
+                coverage: "2/3 markets",
+                missing: ["US"],
+                uncovered_active_markets: ["US"],
+                selected_source: "yahoo_chart",
+                from_cache: false,
+              },
+              events: {
+                status: "source_blocked",
+                count: 0,
+                reason: oversizedReason,
+                checked_categories: ["company_announcements_or_filings", "user_knowledge"],
+                source_blocked_categories: ["macro_calendar", "general_news_theme_feed"],
+                cached: true,
+                provider_errors: ["raw-provider-diagnostic-marker"],
+              },
               local_knowledge: {
                 status: "missing",
                 count: { nested: "nested-count-diagnostic" },
@@ -317,9 +333,14 @@ test.describe("Weekly Review desktop journey", () => {
 
     await openExperience(page, "/weekly-review");
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("本周盈亏");
-    const positiveWeeklyCell = page.getByRole("row", { name: /正向标的/ }).locator("td").nth(5);
+    const positiveRow = page.getByRole("row", { name: /正向标的/ });
+    const positiveMarketValueCell = positiveRow.locator("td").nth(3);
+    const positiveCurrentPlCell = positiveRow.locator("td").nth(4);
+    const positiveWeeklyCell = positiveRow.locator("td").nth(5);
+    await expect(positiveMarketValueCell).toContainText('1,000.00 HKD</td><img data-hostile-currency="yes" src=x>');
+    await expect(positiveCurrentPlCell).toContainText('80.00 HKD</td><img data-hostile-currency="yes" src=x>');
     await expect(positiveWeeklyCell).toContainText('+12.50 HKD</td><img data-hostile-currency="yes" src=x>');
-    await expect(positiveWeeklyCell.locator('[data-hostile-currency="yes"]')).toHaveCount(0);
+    await expect(page.locator('[data-hostile-currency="yes"]')).toHaveCount(0);
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("-8.25 USD");
     await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("—");
     await expect(page.locator("body")).not.toContainText("raw-provider-diagnostic-marker");
@@ -328,19 +349,31 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(sourceCard).toHaveAttribute("role", "button");
     await expect(sourceCard).toHaveAttribute("tabindex", "0");
     await expect(sourceCard).toHaveAttribute("aria-haspopup", "dialog");
+    await expect(sourceCard).toHaveAccessibleName(/查看数据详情$/);
     await sourceCard.focus();
     await sourceCard.press("Enter");
     const dialog = page.locator("#source-detail-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("指数");
+    await expect(dialog).toContainText("2026-06-22 至 2026-06-28");
+    await expect(dialog).toContainText("yahoo_chart");
     await expect(dialog).toContainText("部分可用");
     await expect(dialog).toContainText("2/3 markets");
+    await expect(dialog).toContainText("未覆盖活跃市场");
+    await expect(dialog).toContainText("否（直接读取数据）");
     await expect(dialog).not.toContainText("raw-provider-diagnostic-marker");
     expect(readRequests).toHaveLength(1);
     expect(readRequests[0].method).toBe("GET");
     expect(readRequests[0].authorization).toBeNull();
 
     await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(sourceCard).toBeFocused();
+    expect(readRequests).toHaveLength(1);
+
+    await sourceCard.press("Space");
+    await expect(dialog).toBeVisible();
+    await page.mouse.click(100, 100);
     await expect(dialog).not.toBeVisible();
     await expect(sourceCard).toBeFocused();
     expect(readRequests).toHaveLength(1);
@@ -368,6 +401,11 @@ test.describe("Weekly Review desktop journey", () => {
     await eventsCard.press("Space");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("外部事件");
+    await expect(dialog).toContainText("已检查类别");
+    await expect(dialog).toContainText("company_announcements_or_filings");
+    await expect(dialog).toContainText("来源阻塞类别");
+    await expect(dialog).toContainText("macro_calendar");
+    await expect(dialog).toContainText("是（使用缓存数据）");
     await expect(dialog).toContainText("Public reason with tabs");
     const reasonValue = dialog.locator("dd", { hasText: "Public reason with tabs" });
     expect((await reasonValue.textContent())?.length).toBeLessThanOrEqual(400);

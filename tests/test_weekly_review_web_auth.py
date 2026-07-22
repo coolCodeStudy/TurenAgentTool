@@ -252,6 +252,9 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn('id="source-detail-dialog"', html)
         self.assertIn("data-source-key", script)
         self.assertIn('aria-haspopup="dialog"', script)
+        self.assertIn("查看数据详情", script)
+        self.assertIn('sourceDetailDialog.addEventListener("click"', script)
+        self.assertIn("event.target === sourceDetailDialog", script)
         self.assertIn("本周盈亏", script)
         self.assertIn("weekly_pl_delta", script)
 
@@ -264,8 +267,16 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         )[0]
         self.assertIn('["状态", sourceStatusLabel(safeItem.status)]', detail_definition)
         self.assertIn('["记录数", safeDetailCount(safeItem.count)]', detail_definition)
+        self.assertIn('["复盘周期", reviewPeriodText()]', detail_definition)
+        self.assertIn('["选用来源", safeDetailValue(safeItem.selected_source', detail_definition)
+        self.assertIn('["未覆盖活跃市场", safeDetailValue(safeItem.uncovered_active_markets)]', detail_definition)
+        self.assertIn('["已检查类别", safeDetailValue(safeItem.checked_categories)]', detail_definition)
+        self.assertIn('["来源阻塞类别", safeDetailValue(safeItem.source_blocked_categories)]', detail_definition)
+        self.assertIn('cacheStateText(safeItem.cache_status ?? safeItem.cache ?? safeItem.cached ?? safeItem.from_cache)', detail_definition)
         self.assertNotIn("statusText(safeItem)", detail_definition)
         self.assertIn("function renderSourceDetail(detail)", script)
+        self.assertIn('function cacheStateText(value)', script)
+        self.assertIn('return value ? "是（使用缓存数据）" : "否（直接读取数据）";', script)
         open_detail = script.split("function openSourceDetail", 1)[1].split(
             "function safeDetailValue", 1
         )[0]
@@ -278,6 +289,21 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
             "escapeHtml(formatSignedMoney(weeklyPl, row.currency))",
             render_holdings,
         )
+        self.assertIn("escapeHtml(formatMoney(row.market_val, row.currency))", render_holdings)
+        self.assertIn("escapeHtml(formatMoney(row.current_pl_val, row.currency))", render_holdings)
+
+        expected_contributions = (
+            "Supports realised interval P&L and position-change context.",
+            "Compares start and end snapshots for interval P&L.",
+            "Supplies current market value and current P&L.",
+            "Supplies next-week subscription context.",
+            "Supplies market-environment comparison.",
+            "Supplies dated company/theme evidence.",
+            "Supplies thesis, theme, and validation context.",
+        )
+        for contribution in expected_contributions:
+            with self.subTest(contribution=contribution):
+                self.assertEqual(1, detail_definition.count(contribution))
 
     def test_public_weekly_page_uses_shared_shell_with_recovery_only_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()

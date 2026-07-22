@@ -920,6 +920,9 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     $("#weekly-access-continue").addEventListener("click", continueWithWeeklyAccess);
     $("#weekly-access-forget").addEventListener("click", forgetWeeklyAccess);
     $("#source-detail-close").addEventListener("click", () => sourceDetailDialog.close());
+    sourceDetailDialog.addEventListener("click", (event) => {{
+      if (event.target === sourceDetailDialog) sourceDetailDialog.close();
+    }});
     sourceDetailDialog.addEventListener("close", () => {{
       const invoker = sourceDetailInvoker;
       sourceDetailInvoker = null;
@@ -1131,9 +1134,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         ["events", "外部事件"],
         ["local_knowledge", "本地知识"],
       ];
-      $("#source-status").innerHTML = entries.map(([key, label]) => `
-        <button type="button" class="status" role="button" tabindex="0" data-source-key="${{key}}" aria-haspopup="dialog"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(statusText(sourceStatus[key]))}}</span></button>
-      `).join("");
+      $("#source-status").innerHTML = entries.map(([key, label]) => {{
+        const status = statusText(sourceStatus[key]);
+        return `
+          <button type="button" class="status" role="button" tabindex="0" data-source-key="${{key}}" aria-haspopup="dialog" aria-label="${{escapeAttr(`${{label}} ${{status}} 查看数据详情`)}}"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(status)}}</span></button>
+        `;
+      }}).join("");
       $("#source-status").querySelectorAll("[data-source-key]").forEach((button) => {{
         button.addEventListener("click", () => openSourceDetail(button.dataset.sourceKey, sourceStatus[button.dataset.sourceKey], button));
       }});
@@ -1142,24 +1148,29 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     function sourceDetailDefinition(key, item) {{
       const definitions = {{
         trades: {{ label: "交易记录", contribution: "Supports realised interval P&L and position-change context." }},
-        account_snapshots: {{ label: "持仓快照", contribution: "Supports interval valuation and position-change comparison." }},
-        positions: {{ label: "当前持仓", contribution: "Supports current holding context and follow-up actions." }},
-        ipo: {{ label: "港股新股", contribution: "Supports new-listing and subscription context." }},
-        indexes: {{ label: "指数", contribution: "Supports market-context comparison for the review." }},
-        events: {{ label: "外部事件", contribution: "Supports event context when an approved source is available." }},
-        local_knowledge: {{ label: "本地知识", contribution: "Supports prior thesis and research context." }},
+        account_snapshots: {{ label: "持仓快照", contribution: "Compares start and end snapshots for interval P&L." }},
+        positions: {{ label: "当前持仓", contribution: "Supplies current market value and current P&L." }},
+        ipo: {{ label: "港股新股", contribution: "Supplies next-week subscription context." }},
+        indexes: {{ label: "指数", contribution: "Supplies market-environment comparison." }},
+        events: {{ label: "外部事件", contribution: "Supplies dated company/theme evidence." }},
+        local_knowledge: {{ label: "本地知识", contribution: "Supplies thesis, theme, and validation context." }},
       }};
       const definition = definitions[key];
       if (!definition) return null;
       const safeItem = item && typeof item === "object" && !Array.isArray(item) ? item : {{}};
       const fields = [
+        ["复盘周期", reviewPeriodText()],
         ["状态", sourceStatusLabel(safeItem.status)],
         ["记录数", safeDetailCount(safeItem.count)],
-        ["提供方", safeDetailValue(safeItem.providers ?? safeItem.provider ?? safeItem.sources)],
+        ["选用来源", safeDetailValue(safeItem.selected_source ?? safeItem.selected_provider ?? safeItem.provider ?? safeItem.source)],
+        ["可用来源", safeDetailValue(safeItem.providers ?? safeItem.sources)],
         ["读取时间", safeDetailValue(safeItem.fetched_at)],
-        ["缓存", safeDetailValue(safeItem.cache_status ?? safeItem.cache ?? safeItem.cached ?? safeItem.from_cache ?? safeItem.stale)],
+        ["缓存", cacheStateText(safeItem.cache_status ?? safeItem.cache ?? safeItem.cached ?? safeItem.from_cache)],
         ["覆盖范围", safeDetailValue(safeItem.coverage)],
         ["缺失项", safeDetailValue(safeItem.missing)],
+        ["未覆盖活跃市场", safeDetailValue(safeItem.uncovered_active_markets)],
+        ["已检查类别", safeDetailValue(safeItem.checked_categories)],
+        ["来源阻塞类别", safeDetailValue(safeItem.source_blocked_categories)],
         ["缺失市场", safeDetailValue(safeItem.missing_markets ?? safeItem.market_gaps)],
         ["缺失类别", safeDetailValue(safeItem.missing_categories ?? safeItem.category_gaps)],
         ["说明", sanitisedReason(safeItem.reason)],
@@ -1185,6 +1196,17 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value).trim().slice(0, 400);
       if (Array.isArray(value)) return value.filter((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean").map((item) => String(item).trim()).filter(Boolean).join("；").slice(0, 400);
       return "";
+    }}
+
+    function reviewPeriodText() {{
+      const start = safeDetailValue(state.week?.start);
+      const end = safeDetailValue(state.week?.end);
+      return start && end ? `${{start}} 至 ${{end}}` : start || end;
+    }}
+
+    function cacheStateText(value) {{
+      if (typeof value === "boolean") return value ? "是（使用缓存数据）" : "否（直接读取数据）";
+      return safeDetailValue(value);
     }}
 
     function safeDetailCount(value) {{
@@ -1264,7 +1286,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
           const weeklyPl = displayableMoney(row.weekly_pl_delta);
           const weeklyPlHtml = weeklyPl === null ? "—" : escapeHtml(formatSignedMoney(weeklyPl, row.currency));
           const weeklyPlClass = weeklyPl === null ? "" : ` ${{moneyClass(weeklyPl)}}`;
-          return `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money financial-number">${{formatMoney(row.market_val, row.currency)}}</td><td class="money financial-number ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td class="money financial-number${{weeklyPlClass}}">${{weeklyPlHtml}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`;
+          return `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money financial-number">${{escapeHtml(formatMoney(row.market_val, row.currency))}}</td><td class="money financial-number ${{moneyClass(row.current_pl_val)}}">${{escapeHtml(formatMoney(row.current_pl_val, row.currency))}}${{ratioText(row.current_pl_ratio)}}</td><td class="money financial-number${{weeklyPlClass}}">${{weeklyPlHtml}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`);
     }}
