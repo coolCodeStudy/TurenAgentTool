@@ -609,6 +609,14 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       border-radius: 6px;
       padding: 10px;
       min-height: 66px;
+      text-align: left;
+    }}
+    button.status {{ width: 100%; }}
+    button.status:hover {{ border-color: var(--accent); }}
+    button.status:focus-visible,
+    #source-detail-dialog button:focus-visible {{
+      outline: 3px solid color-mix(in srgb, var(--accent) 38%, transparent);
+      outline-offset: 2px;
     }}
     .status strong {{
       display: block;
@@ -767,6 +775,40 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       background: #fff1f0;
       color: #7a271a;
     }}
+    #source-detail-dialog {{
+      width: min(440px, calc(100vw - 32px));
+      height: 100vh;
+      max-height: 100vh;
+      margin: 0 0 0 auto;
+      padding: 0;
+      border: 0;
+      box-shadow: -12px 0 32px rgba(20, 33, 48, .2);
+    }}
+    #source-detail-dialog::backdrop {{ background: rgba(20, 33, 48, .38); }}
+    .source-detail-panel {{
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100%;
+      background: #fff;
+    }}
+    .source-detail-header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .source-detail-header h2 {{ margin: 0; font-size: 18px; }}
+    #source-detail-body {{
+      overflow-y: auto;
+      padding: 20px;
+    }}
+    .source-detail-copy {{ margin: 0 0 18px; color: var(--muted); line-height: 1.5; }}
+    .source-detail-list {{ margin: 0; }}
+    .source-detail-list div {{ padding: 10px 0; border-top: 1px solid #edf1f5; }}
+    .source-detail-list dt {{ color: var(--muted); font-size: 12px; }}
+    .source-detail-list dd {{ margin: 3px 0 0; overflow-wrap: anywhere; }}
     [hidden] {{ display: none !important; }}
     .empty {{
       color: var(--muted);
@@ -822,6 +864,15 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         {render_access_recovery_panel(prefix="weekly")}
       </section>
       <div id="source-status" class="status-grid" aria-live="polite"></div>
+      <dialog id="source-detail-dialog" aria-labelledby="source-detail-title">
+        <div class="source-detail-panel">
+          <header class="source-detail-header">
+            <h2 id="source-detail-title">数据源详情</h2>
+            <button id="source-detail-close" type="button" aria-label="关闭">关闭</button>
+          </header>
+          <div id="source-detail-body"></div>
+        </div>
+      </dialog>
       <section class="workspace-section" id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
       <section class="workspace-section" id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
       <section class="workspace-section" id="indexes"><h2>3. 指数</h2><div data-slot="indexes"></div></section>
@@ -856,6 +907,8 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     const message = $("#message");
     const errorMessage = $("#error-message");
     const access = window.InvestmentKnowledgeAccess;
+    const sourceDetailDialog = $("#source-detail-dialog");
+    let sourceDetailInvoker = null;
 
     $("#prev-week").addEventListener("click", () => shiftWeek(-7));
     $("#this-week").addEventListener("click", () => setThisWeek());
@@ -866,6 +919,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     $("#weekly-generate").addEventListener("click", () => generateReview().catch((error) => showError(`处理失败：${{error.message}}`)));
     $("#weekly-access-continue").addEventListener("click", continueWithWeeklyAccess);
     $("#weekly-access-forget").addEventListener("click", forgetWeeklyAccess);
+    $("#source-detail-close").addEventListener("click", () => sourceDetailDialog.close());
+    sourceDetailDialog.addEventListener("close", () => {{
+      const invoker = sourceDetailInvoker;
+      sourceDetailInvoker = null;
+      if (invoker && document.contains(invoker)) invoker.focus();
+    }});
     loadReview();
     if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
 
@@ -1064,17 +1123,69 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 
     function renderStatus(sourceStatus) {{
       const entries = [
-        ["交易记录", sourceStatus.trades],
-        ["持仓快照", sourceStatus.account_snapshots],
-        ["当前持仓", sourceStatus.positions],
-        ["港股新股", sourceStatus.ipo],
-        ["指数", sourceStatus.indexes],
-        ["外部事件", sourceStatus.events],
-        ["本地知识", sourceStatus.local_knowledge],
+        ["trades", "交易记录"],
+        ["account_snapshots", "持仓快照"],
+        ["positions", "当前持仓"],
+        ["ipo", "港股新股"],
+        ["indexes", "指数"],
+        ["events", "外部事件"],
+        ["local_knowledge", "本地知识"],
       ];
-      $("#source-status").innerHTML = entries.map(([label, item]) => `
-        <div class="status"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(statusText(item))}}</span></div>
+      $("#source-status").innerHTML = entries.map(([key, label]) => `
+        <button type="button" class="status" role="button" tabindex="0" data-source-key="${{key}}" aria-haspopup="dialog"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(statusText(sourceStatus[key]))}}</span></button>
       `).join("");
+      $("#source-status").querySelectorAll("[data-source-key]").forEach((button) => {{
+        button.addEventListener("click", () => openSourceDetail(button.dataset.sourceKey, sourceStatus[button.dataset.sourceKey], button));
+      }});
+    }}
+
+    function sourceDetailDefinition(key, item) {{
+      const definitions = {{
+        trades: {{ label: "交易记录", contribution: "Supports realised interval P&L and position-change context." }},
+        account_snapshots: {{ label: "持仓快照", contribution: "Supports interval valuation and position-change comparison." }},
+        positions: {{ label: "当前持仓", contribution: "Supports current holding context and follow-up actions." }},
+        ipo: {{ label: "港股新股", contribution: "Supports new-listing and subscription context." }},
+        indexes: {{ label: "指数", contribution: "Supports market-context comparison for the review." }},
+        events: {{ label: "外部事件", contribution: "Supports event context when an approved source is available." }},
+        local_knowledge: {{ label: "本地知识", contribution: "Supports prior thesis and research context." }},
+      }};
+      const definition = definitions[key];
+      if (!definition) return null;
+      const safeItem = item && typeof item === "object" && !Array.isArray(item) ? item : {{}};
+      const fields = [
+        ["状态", statusText(safeItem)],
+        ["记录数", safeDetailValue(safeItem.count)],
+        ["提供方", safeDetailValue(safeItem.providers ?? safeItem.provider ?? safeItem.sources)],
+        ["读取时间", safeDetailValue(safeItem.fetched_at)],
+        ["缓存", safeDetailValue(safeItem.cache_status ?? safeItem.cache ?? safeItem.cached ?? safeItem.from_cache ?? safeItem.stale)],
+        ["覆盖范围", safeDetailValue(safeItem.coverage)],
+        ["缺失项", safeDetailValue(safeItem.missing)],
+        ["缺失市场", safeDetailValue(safeItem.missing_markets ?? safeItem.market_gaps)],
+        ["缺失类别", safeDetailValue(safeItem.missing_categories ?? safeItem.category_gaps)],
+        ["说明", sanitisedReason(safeItem.reason)],
+      ].filter(([, value]) => value);
+      return {{ ...definition, fields }};
+    }}
+
+    function openSourceDetail(key, item, invoker) {{
+      const detail = sourceDetailDefinition(key, item);
+      if (!detail) return;
+      sourceDetailInvoker = invoker;
+      $("#source-detail-title").textContent = detail.label;
+      $("#source-detail-body").innerHTML = `<p class="source-detail-copy">${{escapeHtml(detail.contribution)}}</p><dl class="source-detail-list">${{detail.fields.map(([label, value]) => `<div><dt>${{escapeHtml(label)}}</dt><dd>${{escapeHtml(value)}}</dd></div>`).join("") || "<div><dd>暂无可展示的来源详情。</dd></div>"}}</dl>`;
+      sourceDetailDialog.showModal();
+      $("#source-detail-close").focus();
+    }}
+
+    function safeDetailValue(value) {{
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value).trim();
+      if (Array.isArray(value)) return value.filter((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean").map((item) => String(item).trim()).filter(Boolean).join("；");
+      return "";
+    }}
+
+    function sanitisedReason(value) {{
+      const text = safeDetailValue(value);
+      return text.replace(/[\\r\\n\\t]+/g, " ").replace(/\\s+/g, " ").trim().slice(0, 400);
     }}
 
     function rankedTable(items, positive) {{
@@ -1138,8 +1249,13 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         slot("holdings").innerHTML = `<div class="empty">当前没有符合条件的持仓。</div>`;
         return;
       }}
-      slot("holdings").innerHTML = tableRegion("当前持仓", `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
-        ${{rows.map((row) => `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money financial-number">${{formatMoney(row.market_val, row.currency)}}</td><td class="money financial-number ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`).join("")}}
+      slot("holdings").innerHTML = tableRegion("当前持仓", `<table><thead><tr><th>市场</th><th>标的</th><th>主题</th><th class="money">市值</th><th class="money">盈亏</th><th class="money">本周盈亏</th><th>状态</th><th>知识库观点</th><th>下周节奏</th></tr></thead><tbody>
+        ${{rows.map((row) => {{
+          const weeklyPl = displayableMoney(row.weekly_pl_delta);
+          const weeklyPlHtml = weeklyPl === null ? "—" : formatSignedMoney(weeklyPl, row.currency);
+          const weeklyPlClass = weeklyPl === null ? "" : ` ${{moneyClass(weeklyPl)}}`;
+          return `<tr><td>${{escapeHtml(row.market)}}</td><td>${{escapeHtml(row.name)}} ${{escapeHtml(row.code)}}</td><td>${{escapeHtml(row.theme)}}</td><td class="money financial-number">${{formatMoney(row.market_val, row.currency)}}</td><td class="money financial-number ${{moneyClass(row.current_pl_val)}}">${{formatMoney(row.current_pl_val, row.currency)}}${{ratioText(row.current_pl_ratio)}}</td><td class="money financial-number${{weeklyPlClass}}">${{weeklyPlHtml}}</td><td>${{escapeHtml(row.status)}}</td><td>${{escapeHtml(row.knowledge_note)}}</td><td>${{escapeHtml(row.next_step)}}</td></tr>`;
+        }}).join("")}}
       </tbody></table>`);
     }}
 
@@ -1222,6 +1338,10 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       const number = Number(value || 0);
       return `${{number.toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }})}}${{currency && currency !== "UNKNOWN" ? " " + currency : ""}}`;
     }}
+    function formatSignedMoney(value, currency) {{
+      const number = Number(value);
+      return `${{number >= 0 ? "+" : ""}}${{formatMoney(number, currency)}}`;
+    }}
     function ratioText(value) {{
       if (value === null || value === undefined || value === "") return "";
       const number = Math.abs(Number(value)) > 1 ? Number(value) : Number(value) * 100;
@@ -1230,6 +1350,9 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     function formatPercent(value) {{
       const number = Number(value || 0);
       return `${{number >= 0 ? "+" : ""}}${{number.toFixed(2)}}%`;
+    }}
+    function displayableMoney(value) {{
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
     }}
     function moneyClass(value) {{ return Number(value || 0) < 0 ? "neg" : "pos"; }}
     function escapeHtml(value) {{

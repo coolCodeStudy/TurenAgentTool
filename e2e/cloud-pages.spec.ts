@@ -277,7 +277,7 @@ test.describe("Weekly Review desktop journey", () => {
     const readRequests: { authorization: string | null; method: string; url: string }[] = [];
     await page.route((url) => url.pathname === "/api/weekly-review", async (route) => {
       readRequests.push({
-        authorization: route.request().headerValue("authorization"),
+        authorization: await route.request().headerValue("authorization"),
         method: route.request().method(),
         url: route.request().url(),
       });

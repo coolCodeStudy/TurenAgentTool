@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from investment_knowledge_mcp.weekly_review import _build_holder_attribution, render_weekly_review_markdown
-from investment_knowledge_mcp.weekly_review_web import render_weekly_review_workbench_html
+from investment_knowledge_mcp.weekly_review_web import render_weekly_review_script, render_weekly_review_workbench_html
 
 
 def _shenghong_position() -> dict:
@@ -171,7 +171,8 @@ class WeeklyReviewHolderAttributionTests(unittest.TestCase):
         self.assertIn("持仓归因卡：HK.02476 胜宏科技", markdown)
         self.assertIn("Source gaps:", markdown)
         self.assertIn('data-slot="attribution"', html)
-        self.assertIn("function attributionCards", html)
+        self.assertIn('<script src="/assets/weekly-review.js"></script>', html)
+        self.assertIn("function attributionCards", render_weekly_review_script())
 
 
 if __name__ == "__main__":
