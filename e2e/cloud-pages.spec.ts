@@ -273,6 +273,61 @@ test.describe("Weekly Review desktop journey", () => {
     expect(readRequests.every(({ method }) => method === "GET")).toBe(true);
   });
 
+  test("Weekly source detail drawer shows safe source context without another request", async ({ page }) => {
+    const readRequests: { method: string; url: string }[] = [];
+    await page.route((url) => url.pathname === "/api/weekly-review", async (route) => {
+      readRequests.push({ method: route.request().method(), url: route.request().url() });
+      await route.fulfill({
+        json: {
+          ok: true,
+          status: "existing",
+          week: { start: "2026-06-22", end: "2026-06-28" },
+          markdown: "# 本周复盘",
+          context: {
+            holdings_table: [
+              { market: "HK", code: "HK.00001", name: "正向标的", theme: "AI", market_val: 1000, current_pl_val: 80, weekly_pl_delta: 12.5, currency: "HKD", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
+              { market: "US", code: "US.NEG", name: "负向标的", theme: "Cloud", market_val: 900, current_pl_val: -40, weekly_pl_delta: -8.25, currency: "USD", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
+              { market: "CN", code: "SH.600000", name: "旧版标的", theme: "Bank", market_val: 800, current_pl_val: 10, currency: "CNY", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
+            ],
+            source_status: {
+              trades: { status: "ok", count: 3, provider: "ledger", fetched_at: "2026-06-28T16:00:00Z" },
+              indexes: { status: "partial", count: 2, coverage: "2/3 markets", missing: ["US"] },
+              events: { status: "source_blocked", count: 0, reason: "External events are unavailable", provider_errors: ["raw-provider-diagnostic-marker"] },
+            },
+            highlights: [], blowups: [], index_summary: [], story: {}, next_week: [], holder_attribution: [], warnings: [],
+          },
+        },
+      });
+    });
+
+    await openExperience(page, "/weekly-review");
+    await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("本周盈亏");
+    await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("+12.50 HKD");
+    await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("-8.25 USD");
+    await expect(page.getByRole("region", { name: "当前持仓" })).toContainText("—");
+
+    const sourceCard = page.locator('[data-source-key="indexes"]');
+    await sourceCard.focus();
+    await sourceCard.click();
+    const dialog = page.locator("#source-detail-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("指数");
+    await expect(dialog).toContainText("部分可用");
+    await expect(dialog).toContainText("2/3 markets");
+    await expect(dialog).not.toContainText("raw-provider-diagnostic-marker");
+    expect(readRequests).toHaveLength(1);
+    expect(readRequests[0].method).toBe("GET");
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(sourceCard).toBeFocused();
+
+    await sourceCard.click();
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(sourceCard).toBeFocused();
+  });
+
   test("Weekly missing review offers protected recovery without an access token", async ({ page }) => {
     await openExperience(page, "/weekly-review");
     await page.getByLabel("复盘周").fill("2026-01-05");

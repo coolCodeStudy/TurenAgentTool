@@ -245,6 +245,20 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn("function cancelReviewLoad()", script)
         self.assertIn('document.documentElement) document.documentElement.dataset.experienceReady = "true";', script)
 
+    def test_weekly_source_cards_have_safe_detail_dialog_contract(self) -> None:
+        html = web.render_weekly_review_workbench_html()
+        script = web.render_weekly_review_script()
+
+        self.assertIn('id="source-detail-dialog"', html)
+        self.assertIn("data-source-key", script)
+        self.assertIn('aria-haspopup="dialog"', script)
+        self.assertIn("本周盈亏", script)
+        self.assertIn("weekly_pl_delta", script)
+
+        render_status = script.split("function renderStatus", 1)[1].split("function rankedTable", 1)[0]
+        self.assertNotIn("Authorization", render_status)
+        self.assertNotIn("/api/weekly-review/source-detail", script)
+
     def test_public_weekly_page_uses_shared_shell_with_recovery_only_token_control(self) -> None:
         html = web.render_weekly_review_workbench_html()
 
