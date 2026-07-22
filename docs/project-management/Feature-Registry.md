@@ -74,6 +74,8 @@ User acceptance status:
 
 ## Audit Queues
 
+> Stock valuation Return Gate update (2026-07-22): independent Acceptance returned blocked for the protected success fixture/session. Keep user acceptance `pending`; Owner/secure fixture administrator must provide only an approved non-production fixture location/session calling contract (never a token value), then rerun `AT-2026-07-19-001` against deployed source `7bcce77`. No redeploy is required.
+
 ### Incomplete PRDs
 
 - Stock valuation research is reconciled through bilingual release source `7bcce77` in authoritative state `main@5a94ee6`: PRD `ready`, technical plan [`stock-valuation-research.md`](../techplans/stock-valuation-research.md) `ready`, implementation `deployed`, evidence `deploy_verified`; independent acceptance remains `AT-2026-07-19-001=blocked` only for explicitly protected Stock P0 method/create/latest/evidence checks. GitHub protected-Chromium setup is not a public/local-first prerequisite.
