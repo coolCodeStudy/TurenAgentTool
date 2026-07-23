@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Weekly Review holdings show server-established weekly P&L and make every source-status card open an accessible, safe explanation drawer.
+**Goal:** Make Weekly Review holdings show server-established weekly P&L, make every source-status card open an accessible, safe explanation drawer, and let the Trades drawer show the individual records already returned for the selected review week.
 
 **Architecture:** Keep the change in the existing Python HTML renderer and its inline browser script. The drawer reads only `state.context.source_status` returned by the public Weekly-read API; no backend field, endpoint, access contract, or data mutation changes.
 
@@ -12,7 +12,7 @@
 
 - Use existing `weekly_pl_delta`; do not recompute P&L in JavaScript.
 - Preserve `public_read_protected_write`, Daily tokenlessness, and all public URLs.
-- Allowlist drawer fields; never render raw provider diagnostics, transactions, snapshots, or unknown source-status fields.
+- Allowlist drawer fields; never render raw provider diagnostics, raw provider payloads, snapshots, or unknown source-status fields. The Trades drawer may render only the safe, already-public transaction fields defined in the design spec.
 - Quality route is L3: focused checks, one serialized quick deployment, and local Playwright against the public URL.
 
 ---
@@ -66,7 +66,7 @@ In `renderStatus`, render `<button type="button" class="status" data-source-key=
 
 - [ ] **Step 3: Add allowlisted dialog rendering and lifecycle**
 
-Implement a fixed `sourceDetailDefinition(key, item)` map with contribution copy and selected fields only: `status`, `count`, `providers`/`provider`/`sources`, `fetched_at`, cache indicators, `coverage`, `missing`, market/category gaps, and a sanitised user-facing reason. Ignore `provider_errors`, `failures`, unknown fields, and arbitrary nested values. On click or keyboard activation, set the title/body with escaped text, `showModal()`, and remember the invoking button. Close restores focus to that button.
+Implement a fixed `sourceDetailDefinition(key, item)` map with contribution copy and selected fields only: `status`, `count`, `providers`/`provider`/`sources`, `fetched_at`, cache indicators, `coverage`, `missing`, market/category gaps, and a sanitised user-facing reason. For `trades` only, render `state.context.trades.records` as an escaped fixed-column table of date, side, symbol/name, quantity, price, and amount. Ignore `provider_errors`, `failures`, unknown fields, arbitrary nested values, and raw transaction payload fields. On click or keyboard activation, set the title/body with escaped text, `showModal()`, and remember the invoking button. Close restores focus to that button.
 
 - [ ] **Step 4: Render weekly P&L without false zeroes**
 

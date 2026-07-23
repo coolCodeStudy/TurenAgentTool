@@ -17,7 +17,7 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 2. A missing or non-numeric legacy weekly P&L displays `—`, never `0`.
 3. Convert every source-status card into a keyboard-operable button that opens one reusable right-side native dialog drawer.
 4. The drawer is populated only from the already-public `source_status` object. It shows an allowlisted set of source name, review period, status, count, selected provider/source, retrieved time, cache/coverage fields, source contribution, and plain-language limitations.
-5. The drawer excludes raw transactions, account snapshots, arbitrary provider payloads, internal provider errors, exception strings, configuration details, write actions, and new network requests.
+5. The Trades drawer also renders the individual trade records already present in the public Weekly-read context. Its fixed table shows only transaction date, buy/sell side, symbol/name, quantity, execution price, and execution amount. It excludes the raw provider payload, account snapshots, identifiers, internal provider errors, exception strings, configuration details, write actions, and new network requests.
 6. The drawer closes through the visible close control, Escape, or modal backdrop behavior, and returns focus to its invoking source card.
 
 ## Source Contribution Copy
@@ -41,7 +41,7 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 
 ## Non-Goals
 
-- Raw broker-record export, source configuration, editable data, new endpoints, token or access-model changes, Daily/Command changes, and a mobile redesign.
+- Arbitrary historical broker-record export, raw provider payloads, source configuration, editable data, new endpoints, token or access-model changes, Daily/Command changes, and a mobile redesign. This slice visualizes only the selected week's already-public transaction records.
 - Exact broker-statement reconciliation. The column retains the existing interval-estimate semantics.
 
 ## Acceptance Criteria
@@ -52,3 +52,4 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 4. Close button, Escape, and backdrop restore the source-card focus.
 5. Existing public Weekly reads and protected generation recovery retain their access boundary; no token value is read, stored, or emitted.
 6. Local Python regression tests and local Playwright against the deployed URL pass after one serialized `weekly-review-web` quick deployment.
+7. Opening the Trades source drawer shows each available transaction in the selected review week in a readable, escaped table; an empty selected week says that there are no transaction records.

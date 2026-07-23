@@ -274,13 +274,16 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertIn('["来源阻塞类别", safeDetailValue(safeItem.source_blocked_categories)]', detail_definition)
         self.assertIn('cacheStateText(safeItem.cache_status ?? safeItem.cache ?? safeItem.cached ?? safeItem.from_cache)', detail_definition)
         self.assertNotIn("statusText(safeItem)", detail_definition)
-        self.assertIn("function renderSourceDetail(detail)", script)
+        self.assertIn('function renderSourceDetail(detail, supplementalHtml = "")', script)
+        self.assertIn("function tradeRecordsTable(records)", script)
+        self.assertIn("逐笔交易明细", script)
+        self.assertIn("state.context?.trades?.records", script)
         self.assertIn('function cacheStateText(value)', script)
         self.assertIn('return value ? "是（使用缓存数据）" : "否（直接读取数据）";', script)
         open_detail = script.split("function openSourceDetail", 1)[1].split(
             "function safeDetailValue", 1
         )[0]
-        self.assertIn("renderSourceDetail(detail);", open_detail)
+        self.assertIn('renderSourceDetail(detail, key === "trades" ? tradeRecordsTable(trades) : "");', open_detail)
 
         render_holdings = script.split("function renderHoldings", 1)[1].split(
             "function tableRegion", 1
