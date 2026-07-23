@@ -396,7 +396,7 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("交易记录");
     await expect(dialog).toContainText("3");
-    await expect(dialog).toContainText("逐笔交易明细");
+    await expect(dialog).toContainText("本复盘周逐笔交易");
     await expect(dialog).toContainText("2026-06-23");
     await expect(dialog).toContainText("买入");
     await expect(dialog).toContainText("正向标的");

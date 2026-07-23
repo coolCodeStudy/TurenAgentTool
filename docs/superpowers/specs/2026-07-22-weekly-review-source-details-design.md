@@ -19,6 +19,8 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 4. The drawer is populated only from the already-public `source_status` object. It shows an allowlisted set of source name, review period, status, count, selected provider/source, retrieved time, cache/coverage fields, source contribution, and plain-language limitations.
 5. The Trades drawer renders individual selected-week trade records from a dedicated safe public view. Its fixed table shows only transaction date, buy/sell side, symbol/name, quantity, execution price, and execution amount. The public response and drawer exclude raw provider payloads, account snapshots, internal identifiers, internal provider errors, exception strings, configuration details, write actions, and new network requests.
 6. The drawer closes through the visible close control, Escape, or modal backdrop behavior, and returns focus to its invoking source card.
+7. Global highlights and blowups rank interval P&L in USD equivalent, never by mixed raw currency amounts. Each row retains its native-currency amount and shows the USD equivalent used for comparison. USD and HKD use the existing 1 USD = 7.80 HKD fallback when a historical snapshot rate is unavailable; unsupported currencies are not mixed into the global ranking.
+8. The Trades card and drawer explicitly say `本复盘周` so their count is understood as the selected review period, not account-history total.
 
 ## Source Contribution Copy
 
@@ -53,3 +55,4 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 5. Existing public Weekly reads and protected generation recovery retain their access boundary; no token value is read, stored, or emitted.
 6. Local Python regression tests and local Playwright against the deployed URL pass after one serialized `weekly-review-web` quick deployment.
 7. Opening the Trades source drawer shows each available transaction in the selected review week in a readable, escaped table; an empty selected week says that there are no transaction records.
+8. A USD gain of 500 ranks above a HKD gain of 1,800; the user sees both native values and their USD-comparison values.

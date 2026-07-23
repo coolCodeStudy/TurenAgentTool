@@ -63,6 +63,44 @@ class WeeklyReviewPublicContextTests(unittest.TestCase):
         )
         self.assertNotIn("by_code", normalized["trades"])
 
+    def test_legacy_context_recomputes_cross_currency_rankings(self) -> None:
+        context = {
+            "position_changes": [
+                {
+                    "code": "HK.00001",
+                    "name": "HK winner",
+                    "currency": "HKD",
+                    "period_pl": 1_800.0,
+                    "pl_val_delta": 1_800.0,
+                    "current_pl_val": 1_800.0,
+                    "movement": "持仓未变",
+                    "confidence": "高",
+                },
+                {
+                    "code": "US.WIN",
+                    "name": "US winner",
+                    "currency": "USD",
+                    "period_pl": 500.0,
+                    "pl_val_delta": 500.0,
+                    "current_pl_val": 500.0,
+                    "movement": "持仓未变",
+                    "confidence": "高",
+                },
+            ],
+            "highlights": [],
+            "blowups": [],
+        }
+
+        normalized = web._normalize_report_context(
+            context,
+            start=date(2026, 6, 23),
+            end=date(2026, 6, 29),
+        )
+
+        self.assertEqual(["US.WIN", "HK.00001"], [item["code"] for item in normalized["highlights"]])
+        self.assertEqual(500.0, normalized["highlights"][0]["ranking_amount_usd"])
+        self.assertEqual(1_800.0, normalized["highlights"][1]["amount"])
+
 
 class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -324,7 +362,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         self.assertNotIn("statusText(safeItem)", detail_definition)
         self.assertIn('function renderSourceDetail(detail, supplementalHtml = "")', script)
         self.assertIn("function tradeRecordsTable(records)", script)
-        self.assertIn("逐笔交易明细", script)
+        self.assertIn("本复盘周逐笔交易", script)
         self.assertIn("state.context?.trades?.records", script)
         self.assertIn('function cacheStateText(value)', script)
         self.assertIn('return value ? "是（使用缓存数据）" : "否（直接读取数据）";', script)

@@ -31,6 +31,11 @@ from investment_knowledge_mcp.research.official_sources import OfficialResearchP
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
+DEFAULT_RANKING_FX_TO_USD = {
+    "USD": 1.0,
+    "HKD": 1.0 / 7.8,
+}
+
 REQUIRED_INDEXES: list[dict[str, str]] = [
     {
         "code": "US.SPX",
@@ -1359,13 +1364,14 @@ def _top_blowups(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _ranked_item(item: dict[str, Any], positive: bool) -> dict[str, Any]:
-    amount = _rank_amount(item)
+    ranking_amount_usd = _rank_amount(item)
     return {
         "code": item["code"],
         "name": item["name"],
         "currency": item["currency"],
         "type": _highlight_type(item) if positive else _blowup_type(item),
-        "amount": amount,
+        "amount": _native_period_amount(item),
+        "ranking_amount_usd": ranking_amount_usd,
         "pl_val_delta": item["pl_val_delta"],
         "realized_pl_estimate": item.get("realized_pl_estimate", 0.0),
         "period_pl_method": item.get("period_pl_method") or "snapshot_pl_delta",
@@ -1395,7 +1401,7 @@ def _build_holdings_table(position_changes: list[dict[str, Any]]) -> list[dict[s
                 "market_val": item["current_market_val"],
                 "current_pl_val": item["current_pl_val"],
                 "current_pl_ratio": item["current_pl_ratio"],
-                "weekly_pl_delta": _rank_amount(item),
+                "weekly_pl_delta": _native_period_amount(item),
                 "snapshot_pl_delta": item["pl_val_delta"],
                 "realized_pl_estimate": item.get("realized_pl_estimate", 0.0),
                 "period_pl_method": item.get("period_pl_method") or "snapshot_pl_delta",
@@ -1532,7 +1538,7 @@ def _build_holder_attribution(
                 "code": code,
                 "name": item.get("name") or holding.get("name") or code,
                 "currency": item.get("currency") or holding.get("currency") or "UNKNOWN",
-                "weekly_pl": _rank_amount(item),
+                "weekly_pl": _native_period_amount(item),
                 "movement": item.get("movement"),
                 "position_confidence": item.get("confidence"),
                 "attribution_verdict": verdict,
@@ -2059,9 +2065,9 @@ def _story_mainline(leaders: list[dict[str, Any]], index_summary: list[dict[str,
 def _portfolio_attribution_text(leaders: list[dict[str, Any]], laggards: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     if leaders:
-        parts.append("高光：" + "、".join(f"{item['name']} {_fmt_money(_rank_amount(item), item.get('currency'))}" for item in leaders[:3]))
+        parts.append("高光：" + "、".join(f"{item['name']} {_fmt_money(_native_period_amount(item), item.get('currency'))}" for item in leaders[:3]))
     if laggards:
-        parts.append("拖累：" + "、".join(f"{item['name']} {_fmt_money(_rank_amount(item), item.get('currency'))}" for item in laggards[:3]))
+        parts.append("拖累：" + "、".join(f"{item['name']} {_fmt_money(_native_period_amount(item), item.get('currency'))}" for item in laggards[:3]))
     return "；".join(parts) if parts else "组合归因需要至少两端快照或交易记录。"
 
 
@@ -2487,6 +2493,13 @@ def _review_question(item: dict[str, Any], positive: bool) -> str:
 
 
 def _rank_amount(item: dict[str, Any]) -> float:
+    native_amount = _native_period_amount(item)
+    currency = str(item.get("currency") or "").strip().upper()
+    rate = DEFAULT_RANKING_FX_TO_USD.get(currency)
+    return native_amount * rate if rate is not None else 0.0
+
+
+def _native_period_amount(item: dict[str, Any]) -> float:
     return _number(item.get("period_pl", item.get("pl_val_delta")))
 
 

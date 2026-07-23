@@ -29,7 +29,12 @@ from investment_knowledge_mcp.daily_market_jobs import (
     list_public_web_history_jobs,
 )
 from investment_knowledge_mcp.db import run_schema
-from investment_knowledge_mcp.weekly_review import build_weekly_review, save_weekly_review_report
+from investment_knowledge_mcp.weekly_review import (
+    _top_blowups,
+    _top_highlights,
+    build_weekly_review,
+    save_weekly_review_report,
+)
 from investment_knowledge_mcp.web_experience import (
     render_access_recovery_panel,
     render_access_session_script,
@@ -1126,7 +1131,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 
     function renderStatus(sourceStatus) {{
       const entries = [
-        ["trades", "交易记录"],
+        ["trades", "本复盘周交易"],
         ["account_snapshots", "持仓快照"],
         ["positions", "当前持仓"],
         ["ipo", "港股新股"],
@@ -1136,8 +1141,9 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       ];
       $("#source-status").innerHTML = entries.map(([key, label]) => {{
         const status = statusText(sourceStatus[key]);
+        const accessibleLabel = key === "trades" ? `交易记录 ${{status}} 查看数据详情` : `${{label}} ${{status}} 查看数据详情`;
         return `
-          <button type="button" class="status" role="button" tabindex="0" data-source-key="${{key}}" aria-haspopup="dialog" aria-label="${{escapeAttr(`${{label}} ${{status}} 查看数据详情`)}}"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(status)}}</span></button>
+          <button type="button" class="status" role="button" tabindex="0" data-source-key="${{key}}" aria-haspopup="dialog" aria-label="${{escapeAttr(accessibleLabel)}}"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(status)}}</span></button>
         `;
       }}).join("");
       $("#source-status").querySelectorAll("[data-source-key]").forEach((button) => {{
@@ -1147,7 +1153,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 
     function sourceDetailDefinition(key, item) {{
       const definitions = {{
-        trades: {{ label: "交易记录", contribution: "Supports realised interval P&L and position-change context." }},
+        trades: {{ label: "本复盘周交易记录", contribution: "Supports realised interval P&L and position-change context." }},
         account_snapshots: {{ label: "持仓快照", contribution: "Compares start and end snapshots for interval P&L." }},
         positions: {{ label: "当前持仓", contribution: "Supplies current market value and current P&L." }},
         ipo: {{ label: "港股新股", contribution: "Supplies next-week subscription context." }},
@@ -1195,8 +1201,8 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 
     function tradeRecordsTable(records) {{
       const safeRecords = Array.isArray(records) ? records.filter((record) => record && typeof record === "object") : [];
-      if (!safeRecords.length) return `<section class="source-detail-trades"><h3>逐笔交易明细</h3><div class="empty">本周无交易记录。</div></section>`;
-      return `<section class="source-detail-trades"><h3>逐笔交易明细</h3>${{tableRegion("交易记录明细", `<table><thead><tr><th>交易日期</th><th>买卖</th><th>标的</th><th class="money">数量</th><th class="money">成交价</th><th class="money">成交金额</th></tr></thead><tbody>${{safeRecords.map((record) => {{
+      if (!safeRecords.length) return `<section class="source-detail-trades"><h3>本复盘周逐笔交易</h3><div class="empty">所选复盘周内无交易记录。</div></section>`;
+      return `<section class="source-detail-trades"><h3>本复盘周逐笔交易</h3>${{tableRegion("交易记录明细", `<table><thead><tr><th>交易日期</th><th>买卖</th><th>标的</th><th class="money">数量</th><th class="money">成交价</th><th class="money">成交金额</th></tr></thead><tbody>${{safeRecords.map((record) => {{
         const currency = safeDetailValue(record.currency) || "";
         const side = tradeSideText(record.trd_side);
         const name = [safeDetailValue(record.stock_name), safeDetailValue(record.code)].filter(Boolean).join(" ");
@@ -1247,7 +1253,9 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       return tableRegion(positive ? "高光明细" : "拖累明细", `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
         ${{items.map((item) => {{
           const amount = item.amount ?? item.pl_val_delta;
-          return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money financial-number ${{moneyClass(amount)}}">${{formatMoney(amount, item.currency)}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
+          const rankingUsd = displayableMoney(item.ranking_amount_usd);
+          const comparison = rankingUsd === null ? "" : ` <span class="muted">(≈ ${{formatMoney(rankingUsd, "USD")}})</span>`;
+          return `<tr><td>${{escapeHtml(item.name)}} ${{escapeHtml(item.code)}}</td><td>${{escapeHtml(item.type)}}</td><td class="money financial-number ${{moneyClass(amount)}}">${{formatMoney(amount, item.currency)}}${{comparison}}</td><td>${{escapeHtml(item.movement)}} / ${{escapeHtml(item.confidence)}}</td><td>${{escapeHtml(item.review_question)}}</td></tr>`;
         }}).join("")}}
       </tbody></table>`);
     }}
@@ -2312,6 +2320,10 @@ def _normalize_report_context(context: dict[str, Any], *, start: date, end: date
     normalized.setdefault("story", {})
     normalized.setdefault("candidate_insights", [])
     normalized.setdefault("warnings", [])
+    position_changes = normalized.get("position_changes")
+    if isinstance(position_changes, list) and all(isinstance(item, dict) for item in position_changes):
+        normalized["highlights"] = _top_highlights(position_changes)
+        normalized["blowups"] = _top_blowups(position_changes)
     normalized["trades"] = {"records": _public_trade_records(normalized.get("trades"))}
     return normalized
 
