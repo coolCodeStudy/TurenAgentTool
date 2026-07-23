@@ -14,6 +14,7 @@
 - Preserve `public_read_protected_write`, Daily tokenlessness, and all public URLs.
 - Allowlist drawer fields; never render raw provider diagnostics, raw provider payloads, snapshots, or unknown source-status fields. The Trades drawer may render only the safe, already-public transaction fields defined in the design spec.
 - Sort global highlights/blowups using USD-equivalent interval P&L, while preserving native-currency display values and labelling the comparison basis.
+- Render the inclusive Monday-to-Sunday review range next to the week-start control, and update it before each public read.
 - Quality route is L3: focused checks, one serialized quick deployment, and local Playwright against the public URL.
 
 ---
