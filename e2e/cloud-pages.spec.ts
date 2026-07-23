@@ -257,11 +257,14 @@ test.describe("Weekly Review desktop journey", () => {
     await openExperience(page, "/weekly-review");
     const weekDate = page.getByLabel("复盘周");
     const initialWeek = await weekDate.inputValue();
+    await expect(page.locator("#review-period")).toContainText("复盘周期");
+    await expect(page.locator("#review-period")).toContainText("至");
 
     await page.getByRole("button", { name: "上一周" }).click();
     await expect(page.getByRole("status")).toContainText("这一周还没有", { timeout: 10_000 });
     const previousWeek = await weekDate.inputValue();
     expect(previousWeek).not.toBe(initialWeek);
+    await expect(page.locator("#review-period")).toContainText(previousWeek.replaceAll("-", "/"));
 
     await page.getByRole("button", { name: "本周" }).click();
     await expect(page.getByRole("status")).toContainText("这一周还没有", { timeout: 10_000 });

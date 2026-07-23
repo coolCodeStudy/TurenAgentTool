@@ -582,6 +582,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       font-size: 12px;
       font-weight: 650;
     }}
+    .review-period {{
+      color: var(--muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }}
     input, select, button {{
       font: inherit;
       min-height: 40px;
@@ -856,6 +862,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
           <button id="prev-week" type="button">上一周</button>
           <button id="this-week" type="button">本周</button>
           <label for="week-date">复盘周<input id="week-date" type="date" value="{start.isoformat()}"></label>
+          <span id="review-period" class="review-period" aria-live="polite"></span>
           <button id="weekly-retry" type="button" hidden>重新读取</button>
           <span class="read-only-badge">公开只读</span>
         </div>
@@ -917,7 +924,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
 
     $("#prev-week").addEventListener("click", () => shiftWeek(-7));
     $("#this-week").addEventListener("click", () => setThisWeek());
-    $("#week-date").addEventListener("change", loadReview);
+    $("#week-date").addEventListener("change", () => {{ updateReviewPeriod(); loadReview(); }});
     $("#weekly-retry").addEventListener("click", loadReview);
     $("#market-filter").addEventListener("change", renderHoldings);
     $("#status-filter").addEventListener("change", renderHoldings);
@@ -933,10 +940,12 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       sourceDetailInvoker = null;
       if (invoker && document.contains(invoker)) invoker.focus();
     }});
+    updateReviewPeriod();
     loadReview();
     if (document.documentElement) document.documentElement.dataset.experienceReady = "true";
 
     async function loadReview() {{
+      updateReviewPeriod();
       cancelReviewLoad();
       const generation = state.loadGeneration;
       const controller = new AbortController();
@@ -959,6 +968,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         state.week = data.week || state.week;
         if (state.week && state.week.start) $("#week-date").value = state.week.start;
         state.weekStart = $("#week-date").value;
+        updateReviewPeriod();
         state.reportStatus = data.status || "existing";
         state.context = data.context;
         state.markdown = data.markdown || "";
@@ -1103,12 +1113,14 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       current.setDate(current.getDate() + days);
       $("#week-date").value = formatDateInput(current);
       state.weekStart = $("#week-date").value;
+      updateReviewPeriod();
       loadReview();
     }}
 
     function setThisWeek() {{
       $("#week-date").value = formatDateInput(new Date());
       state.weekStart = $("#week-date").value;
+      updateReviewPeriod();
       loadReview();
     }}
 
@@ -1392,6 +1404,20 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       const month = String(date.getMonth() + 1).padStart(2, "0");
       const day = String(date.getDate()).padStart(2, "0");
       return `${{year}}-${{month}}-${{day}}`;
+    }}
+    function updateReviewPeriod() {{
+      const start = parseDateInput($("#week-date").value);
+      const period = $("#review-period");
+      if (!start) {{
+        period.textContent = "复盘周期待确认";
+        return;
+      }}
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      period.textContent = `复盘周期 ${{formatReviewDate(start)}} 至 ${{formatReviewDate(end)}}（周一至周日）`;
+    }}
+    function formatReviewDate(date) {{
+      return formatDateInput(date).replaceAll("-", "/");
     }}
     function formatMoney(value, currency) {{
       const number = Number(value || 0);
