@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to implement this plan task by task, with a task-scoped review after each task and a whole-branch review before release.
 
-**Status:** implementation_complete_pending_release
+**Status:** implemented and deployed; independent protected acceptance remains blocked on an approved secure fixture/session.
 
 **Linked PRD:** [`PRD-Stock-Valuation-Research.md`](../product/PRD-Stock-Valuation-Research.md)
 
@@ -210,6 +210,6 @@ P0.1 changes only `render_valuation_card()` presentation over the existing valid
 | State current market valuation at the top of every card | `_valuation_conclusion_lines()` renders price, market capitalization, and enterprise value only from the validated public projection | `test_card_states_market_valuation_and_honest_fair_value_gap` and `test_card_names_missing_market_values_without_fabricating_them` | **implemented/verified locally** |
 | State whether a fair-value range exists | `_valuation_conclusion_lines()` renders a truthful unavailable state until a typed, source-validated scenario bundle is implemented | `test_card_states_market_valuation_and_honest_fair_value_gap` asserts all three required evidence categories | **implemented/verified locally** |
 | Preserve canonical identifiers in Chinese output | Structured confidence/fit labels replace unsafe global short-word translation | `test_chinese_renderer_preserves_canonical_identifiers` covers `fact:operating_cash_flow`, `free_cash_flow`, and `market_snapshot` | **implemented/verified locally** |
-| Preserve current P0 safety boundary | No packet/evidence, provider, router, auth, database, or service change | `tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway`: 124 passed; `py_compile`, `git diff --check`, delivery/flow audits, and deploy classifier pass | **implemented/verified locally; deploy pending** |
+| Preserve current P0 safety boundary | No packet/evidence, provider, router, auth, database, or service change | `tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway`: 125 passed; merged Weekly authorization regression passed 16/16 with ephemeral localhost binding; `py_compile`, `git diff --check`, delivery/flow audits, classifier, and deployed tokenless smoke pass | **deployed/verified** — `main@afcda50`, workflow `30018619840`, `targeted_quick`/`quick` |
 
 The sourced-scenario calculator is explicitly out of P0.1 implementation because it requires an external-source validation contract. The existing cloud research worker can collect official-first candidates but cannot promote Codex prose or social-media results to facts. A follow-up plan must define the versioned scenario-input schema and validation gate before it calculates a range.
