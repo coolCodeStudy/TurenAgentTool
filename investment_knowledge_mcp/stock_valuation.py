@@ -162,6 +162,8 @@ _METRIC_NAMES_ZH = {
     "ev_ebitda": "企业价值/EBITDA",
     "ev_fcf": "企业价值/自由现金流",
 }
+_FIT_NAMES_ZH = {"fits": "匹配", "unknown": "未知"}
+_CONFIDENCE_NAMES_ZH = {"medium": "中", "low": "低", "unknown": "未知"}
 _PRESENTATION_PHRASES = {
     "Valuation method library (P0 ranks only the five core frames):": "估值方法库（P0 仅对五个核心框架排序）：",
     "Specialist frames are metadata only unless an explicit specialist workflow triggers them.": "专业方法仅作为元数据，除非明确的专业工作流触发它们。",
@@ -174,6 +176,7 @@ _PRESENTATION_PHRASES = {
     "Does return on equity exceed the cost of equity?": "股本回报率是否超过股本成本？",
     "Does a defined corporate event change value realization?": "明确的公司事件是否会改变价值兑现？",
     "Valuation research card:": "估值研究卡：",
+    "Valuation conclusion:": "估值结论：",
     "Status: degraded": "状态：降级",
     "Status: ok": "状态：正常",
     "Data gaps:": "数据缺口：",
@@ -218,21 +221,14 @@ _PRESENTATION_PHRASES = {
     "Peer sets and analyst estimates require separately sourced evidence.": "同行集合和分析师估算需要单独来源的证据。",
     "is a selected research frame.": "是已选研究框架。",
     "Data gaps mean this is research scaffolding rather than a target price.": "数据缺口意味着这是研究脚手架，而不是目标价。",
+    "Defensible fair-value range: unavailable. Missing independently sourced peer or method evidence, forward bear/base/bull scenario inputs, and validated valuation assumptions.": "可辩护的合理价值区间：暂不可计算。缺少独立来源的同行或方法证据、悲观/基准/乐观前瞻情景输入，以及已验证的估值假设。",
+    "Next evidence: collect official-first source candidates in the cloud research worker; validate typed inputs before calculating a range.": "下一步证据：在云端研究 worker 中收集官方优先的来源候选项；完成类型化输入验证后再计算区间。",
     "Optional narrative: unavailable (model unavailable)": "可选叙事：不可用（模型不可用）",
     "rerating triggers:": "重估触发因素：",
     "failure conditions:": "失败条件：",
     "Rule provenance:": "规则溯源：",
     "fit=": "匹配=",
     "confidence=": "置信度=",
-    "fits": "匹配",
-    "medium": "中",
-    "low": "低",
-    "unknown": "未知",
-    "official_financial": "官方财务",
-    "market_snapshot": "市场快照",
-    "regulator_filing": "监管申报",
-    "company_ir": "公司 IR",
-    "vendor_financial": "供应商财务",
     "none": "无",
 }
 
@@ -272,6 +268,13 @@ def _translate_method_lines(lines: list[str]) -> list[str]:
 def _translate_card_line(line: str) -> str:
     if line.startswith("Valuation research card:"):
         return _translate_controlled_text(line)
+    current_market_match = re.match(
+        r"^Current market valuation: price (.+); market cap (.+); enterprise value (.+)\.$",
+        line,
+    )
+    if current_market_match:
+        price, market_cap, enterprise_value = current_market_match.groups()
+        return f"当前市场估值：股价 {price}；市值 {market_cap}；企业价值 {enterprise_value}。"
     if line.startswith("Status:") or line in _PRESENTATION_PHRASES:
         return _translate_controlled_text(line)
     if line.startswith("- "):
@@ -292,7 +295,7 @@ def _translate_card_line(line: str) -> str:
     if frame_match:
         prefix, frame, fit, confidence = frame_match.groups()
         translated_frame = _METHOD_NAMES_ZH.get(frame, frame)
-        return f"{prefix}{translated_frame}（匹配={_translate_controlled_text(fit)}，置信度={_translate_controlled_text(confidence)}）"
+        return f"{prefix}{translated_frame}（匹配={_FIT_NAMES_ZH.get(fit, fit)}，置信度={_CONFIDENCE_NAMES_ZH.get(confidence, confidence)}）"
     indented_match = re.match(r"^(\s+)(Assumptions|Rerating triggers|Failure conditions|Rule provenance):\s*(.*)$", line)
     if indented_match:
         indent, label, suffix = indented_match.groups()
@@ -402,12 +405,43 @@ def build_valuation_artifact_evidence(packet: dict[str, object]) -> dict[str, ob
     return _checked_public_projection(packet)
 
 
+def _displayed_metric(public: dict[str, object], metric: str) -> str:
+    for section in ("facts", "deterministic_calculations"):
+        records = public.get(section)
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if isinstance(record, dict) and record.get("metric") == metric and isinstance(record.get("display_value"), str):
+                return str(record["display_value"])
+    return "unavailable"
+
+
+def _valuation_conclusion_lines(public: dict[str, object]) -> list[str]:
+    """Render only values already admitted by the validated public projection."""
+    return [
+        "Valuation conclusion:",
+        "Current market valuation: "
+        f"price {_displayed_metric(public, 'price')}; "
+        f"market cap {_displayed_metric(public, 'market_cap')}; "
+        f"enterprise value {_displayed_metric(public, 'enterprise_value')}.",
+        "Defensible fair-value range: unavailable. Missing independently sourced peer or method evidence, "
+        "forward bear/base/bull scenario inputs, and validated valuation assumptions.",
+        "Next evidence: collect official-first source candidates in the cloud research worker; "
+        "validate typed inputs before calculating a range.",
+    ]
+
+
 def _render_valuation_card_english(public: dict[str, object]) -> str:
     """Render the canonical English card from one validated public projection."""
     stock, degraded = public["stock"], public["degraded_state"]
     coverage = public["source_coverage"]
     target = ".".join(str(stock[key]) for key in ("market", "symbol") if stock.get(key))
-    lines = [f"Valuation research card: {target}{' ' + str(stock['name']) if stock.get('name') else ''}".rstrip(), f"Status: {'degraded' if degraded.get('degraded') else 'ok'}", "Data gaps:"]
+    lines = [
+        f"Valuation research card: {target}{' ' + str(stock['name']) if stock.get('name') else ''}".rstrip(),
+        f"Status: {'degraded' if degraded.get('degraded') else 'ok'}",
+        *_valuation_conclusion_lines(public),
+        "Data gaps:",
+    ]
     lines.extend(f"- {gap}" for gap in degraded.get("data_gaps", []))
     if not degraded.get("data_gaps"):
         lines.append("- none identified by the normalized packet")

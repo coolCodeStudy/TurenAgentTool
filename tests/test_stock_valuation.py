@@ -932,6 +932,52 @@ class StockValuationTests(unittest.TestCase):
             ),
         )
 
+    def test_card_states_market_valuation_and_honest_fair_value_gap(self) -> None:
+        rendered = render_valuation_card(self._build(snapshot=self._snapshot()))
+        chinese, english = rendered.split("\n\n## English original (原文)\n\n", 1)
+
+        self.assertLess(english.index("Valuation conclusion:"), english.index("Data gaps:"))
+        self.assertIn(
+            "Current market valuation: price $10.00/share; market cap $1.0K; enterprise value $1.2K.",
+            english,
+        )
+        self.assertIn(
+            "Defensible fair-value range: unavailable. Missing independently sourced peer or method evidence, "
+            "forward bear/base/bull scenario inputs, and validated valuation assumptions.",
+            english,
+        )
+        self.assertIn("估值结论：", chinese)
+        self.assertIn("当前市场估值：股价 $10.00/share；市值 $1.0K；企业价值 $1.2K。", chinese)
+        self.assertIn("可辩护的合理价值区间：暂不可计算。", chinese)
+
+    def test_chinese_renderer_preserves_canonical_identifiers(self) -> None:
+        translator = getattr(stock_valuation, "_translate_card_lines", None)
+        self.assertTrue(callable(translator))
+        translated = translator([
+            "- free_cash_flow: $150.0 (inputs: fact:operating_cash_flow, fact:free_cash_flow, market_snapshot)",
+        ])
+
+        self.assertEqual(
+            translated,
+            ["- 自由现金流: $150.0 （输入：fact:operating_cash_flow, fact:free_cash_flow, market_snapshot)"],
+        )
+
+    def test_card_names_missing_market_values_without_fabricating_them(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["facts"] = [
+            fact for fact in snapshot["facts"]
+            if fact["metric"] not in {"price", "market_cap", "enterprise_value", "shares_outstanding"}
+        ]
+        snapshot["market_snapshot_status"] = "unavailable"
+
+        rendered = render_valuation_card(self._build(snapshot=snapshot))
+        english = rendered.split("\n\n## English original (原文)\n\n", 1)[1]
+
+        self.assertIn(
+            "Current market valuation: price unavailable; market cap unavailable; enterprise value unavailable.",
+            english,
+        )
+
     def test_method_library_is_chinese_first_and_preserves_order(self) -> None:
         rendered = render_valuation_methods()
         delimiter = "\n\n## English original (原文)\n\n"

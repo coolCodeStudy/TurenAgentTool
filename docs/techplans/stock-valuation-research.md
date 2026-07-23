@@ -198,3 +198,18 @@ The approved bilingual presentation slice preserves the existing valuation packe
 | Artifact/evidence/access/safety contracts unchanged | No changes to packet/evidence builders, artifact persistence, Workbench access, or gateway code | Full valuation/router/gateway/preservation suites, leakage/path/no-write assertions, changed-file review | **verified locally; release pending** |
 
 The English section is produced once from the same validated public projection and appended byte-for-byte. The Chinese mapping is deterministic and valuation-local; no generic Command Workbench translation or external translation dependency is introduced. The coordinator must still run one serialized quick deployment and route `AT-2026-07-19-001` to independent acceptance after the integrated release is smoke-verified.
+
+## Valuation Conclusion P0.1 Addendum (2026-07-23)
+
+The implementation plan is [`2026-07-23-valuation-conclusion-and-sourced-range.md`](../superpowers/plans/2026-07-23-valuation-conclusion-and-sourced-range.md), with product decisions in the linked PRD addendum and the source-trust design in [`2026-07-23-valuation-conclusion-and-sourced-range-design.md`](../superpowers/specs/2026-07-23-valuation-conclusion-and-sourced-range-design.md).
+
+P0.1 changes only `render_valuation_card()` presentation over the existing validated public projection:
+
+| P0.1 criterion | Implementation | Verification | Status |
+|---|---|---|---|
+| State current market valuation at the top of every card | `_valuation_conclusion_lines()` renders price, market capitalization, and enterprise value only from the validated public projection | `test_card_states_market_valuation_and_honest_fair_value_gap` and `test_card_names_missing_market_values_without_fabricating_them` | **implemented/verified locally** |
+| State whether a fair-value range exists | `_valuation_conclusion_lines()` renders a truthful unavailable state until a typed, source-validated scenario bundle is implemented | `test_card_states_market_valuation_and_honest_fair_value_gap` asserts all three required evidence categories | **implemented/verified locally** |
+| Preserve canonical identifiers in Chinese output | Structured confidence/fit labels replace unsafe global short-word translation | `test_chinese_renderer_preserves_canonical_identifiers` covers `fact:operating_cash_flow`, `free_cash_flow`, and `market_snapshot` | **implemented/verified locally** |
+| Preserve current P0 safety boundary | No packet/evidence, provider, router, auth, database, or service change | `tests.test_stock_valuation tests.test_command_workbench tests.test_app_gateway`: 124 passed; `py_compile`, `git diff --check`, delivery/flow audits, and deploy classifier pass | **implemented/verified locally; deploy pending** |
+
+The sourced-scenario calculator is explicitly out of P0.1 implementation because it requires an external-source validation contract. The existing cloud research worker can collect official-first candidates but cannot promote Codex prose or social-media results to facts. A follow-up plan must define the versioned scenario-input schema and validation gate before it calculates a range.

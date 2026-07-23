@@ -59,6 +59,18 @@ Only Stock Valuation P0 is implemented in this slice. Generic Command Workbench 
 - Do not write system-inferred valuation opinions into formal user insights without user confirmation.
 - Do not require a new paid data account for P0.
 
+## Valuation Conclusion Addendum (2026-07-23)
+
+User feedback from a live `valuation US.TSLA` result established that the card must make the distinction between **what the market is currently pricing** and **a defensible fair-value range** visible at the top of the result. The product must never make a user infer this distinction from raw multiples or data-gap copy.
+
+- Every create/latest card must begin its body with `Valuation conclusion / 估值结论`, before `Data gaps / 数据缺口`.
+- Current market valuation must use only validated current market facts already in the packet: available price per share, market capitalization, and enterprise value. Missing values must be named as unavailable.
+- A fair-value range may be calculated only from a future typed scenario bundle with source-validated bear/base/bull inputs, method, calculation date, and numerical-input provenance. Until then, show `unavailable / 暂不可计算` and identify the missing peer/method evidence, forward-scenario inputs, and valuation assumptions.
+- The existing cloud Codex research worker is permitted to collect official-first source *candidates* and source-discovery notes. Its generated text, social-media leads, or unvalidated web results must not be presented as a valuation fact or range input.
+- This addendum is a reusable US/HK/KR Stock Valuation behavior. It does not change generic Command Workbench presentation, artifact/evidence schema, authenticated access, database state, ingress, Compose, or public-port wiring.
+
+The full source and calculation design is recorded in [`2026-07-23-valuation-conclusion-and-sourced-range-design.md`](../superpowers/specs/2026-07-23-valuation-conclusion-and-sourced-range-design.md). The P0.1 implementation plan is [`2026-07-23-valuation-conclusion-and-sourced-range.md`](../superpowers/plans/2026-07-23-valuation-conclusion-and-sourced-range.md).
+
 ## Valuation Method Library
 
 The product should not expose a textbook-style method encyclopedia. The system can keep specialist methods internally, but the default user experience should use five core valuation frames and show only the 1-3 most relevant frames for a stock.
