@@ -1182,14 +1182,36 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
       const detail = sourceDetailDefinition(key, item);
       if (!detail) return;
       sourceDetailInvoker = invoker;
-      renderSourceDetail(detail);
+      const trades = key === "trades" ? state.context?.trades?.records : [];
+      renderSourceDetail(detail, key === "trades" ? tradeRecordsTable(trades) : "");
       sourceDetailDialog.showModal();
       $("#source-detail-close").focus();
     }}
 
-    function renderSourceDetail(detail) {{
+    function renderSourceDetail(detail, supplementalHtml = "") {{
       $("#source-detail-title").textContent = detail.label;
-      $("#source-detail-body").innerHTML = `<p class="source-detail-copy">${{escapeHtml(detail.contribution)}}</p><dl class="source-detail-list">${{detail.fields.map(([label, value]) => `<div><dt>${{escapeHtml(label)}}</dt><dd>${{escapeHtml(value)}}</dd></div>`).join("") || "<div><dd>暂无可展示的来源详情。</dd></div>"}}</dl>`;
+      $("#source-detail-body").innerHTML = `<p class="source-detail-copy">${{escapeHtml(detail.contribution)}}</p>${{supplementalHtml}}<dl class="source-detail-list">${{detail.fields.map(([label, value]) => `<div><dt>${{escapeHtml(label)}}</dt><dd>${{escapeHtml(value)}}</dd></div>`).join("") || "<div><dd>暂无可展示的来源详情。</dd></div>"}}</dl>`;
+    }}
+
+    function tradeRecordsTable(records) {{
+      const safeRecords = Array.isArray(records) ? records.filter((record) => record && typeof record === "object") : [];
+      if (!safeRecords.length) return `<section class="source-detail-trades"><h3>逐笔交易明细</h3><div class="empty">本周无交易记录。</div></section>`;
+      return `<section class="source-detail-trades"><h3>逐笔交易明细</h3>${{tableRegion("交易记录明细", `<table><thead><tr><th>交易日期</th><th>买卖</th><th>标的</th><th class="money">数量</th><th class="money">成交价</th><th class="money">成交金额</th></tr></thead><tbody>${{safeRecords.map((record) => {{
+        const currency = safeDetailValue(record.currency) || "";
+        const side = tradeSideText(record.trd_side);
+        const name = [safeDetailValue(record.stock_name), safeDetailValue(record.code)].filter(Boolean).join(" ");
+        const qty = safeDetailValue(record.qty) || "—";
+        const price = displayableMoney(record.price);
+        const amount = displayableMoney(record.amount);
+        return `<tr><td>${{escapeHtml(safeDetailValue(record.trade_date) || safeDetailValue(record.create_time) || "—")}}</td><td>${{escapeHtml(side)}}</td><td>${{escapeHtml(name || "—")}}</td><td class="money financial-number">${{escapeHtml(qty)}}</td><td class="money financial-number">${{escapeHtml(price === null ? "—" : formatMoney(price, currency))}}</td><td class="money financial-number">${{escapeHtml(amount === null ? "—" : formatMoney(amount, currency))}}</td></tr>`;
+      }}).join("")}}</tbody></table>`)}}</section>`;
+    }}
+
+    function tradeSideText(value) {{
+      const side = safeDetailValue(value).toLowerCase();
+      if (side.includes("buy") || side.includes("买")) return "买入";
+      if (side.includes("sell") || side.includes("卖")) return "卖出";
+      return safeDetailValue(value) || "—";
     }}
 
     function safeDetailValue(value) {{

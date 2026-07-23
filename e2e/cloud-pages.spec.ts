@@ -298,6 +298,12 @@ test.describe("Weekly Review desktop journey", () => {
               { market: "US", code: "US.NEG", name: "负向标的", theme: "Cloud", market_val: 900, current_pl_val: -40, weekly_pl_delta: -8.25, currency: "USD", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
               { market: "CN", code: "SH.600000", name: "旧版标的", theme: "Bank", market_val: 800, current_pl_val: 10, currency: "CNY", status: "持有", knowledge_note: "观察", next_step: "跟踪" },
             ],
+            trades: {
+              records: [
+                { trade_date: "2026-06-23", create_time: "2026-06-23 10:15:00", trd_side: "BUY", code: "HK.00001", stock_name: "正向标的", qty: 100, price: 10.5, amount: 1050, currency: "HKD" },
+                { trade_date: "2026-06-24", create_time: "2026-06-24 14:30:00", trd_side: "SELL", code: "US.NEG", stock_name: "负向标的", qty: 5, price: 180, amount: 900, currency: "USD" },
+              ],
+            },
             source_status: {
               trades: { status: "ok", count: 3, provider: "ledger", fetched_at: "2026-06-28T16:00:00Z" },
               indexes: {
@@ -390,7 +396,16 @@ test.describe("Weekly Review desktop journey", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("交易记录");
     await expect(dialog).toContainText("3");
-    await expect(dialog).toContainText("Supports realised interval P&L and position-change context.");
+    await expect(dialog).toContainText("逐笔交易明细");
+    await expect(dialog).toContainText("2026-06-23");
+    await expect(dialog).toContainText("买入");
+    await expect(dialog).toContainText("正向标的");
+    await expect(dialog).toContainText("100");
+    await expect(dialog).toContainText("10.50 HKD");
+    await expect(dialog).toContainText("1,050.00 HKD");
+    await expect(dialog).toContainText("卖出");
+    await expect(dialog).toContainText("负向标的");
+    await expect(dialog).toContainText("900.00 USD");
     await dialog.getByRole("button", { name: "关闭" }).click();
     await expect(dialog).not.toBeVisible();
     await expect(tradesCard).toBeFocused();
