@@ -66,7 +66,7 @@ In `renderStatus`, render `<button type="button" class="status" data-source-key=
 
 - [ ] **Step 3: Add allowlisted dialog rendering and lifecycle**
 
-Implement a fixed `sourceDetailDefinition(key, item)` map with contribution copy and selected fields only: `status`, `count`, `providers`/`provider`/`sources`, `fetched_at`, cache indicators, `coverage`, `missing`, market/category gaps, and a sanitised user-facing reason. For `trades` only, render `state.context.trades.records` as an escaped fixed-column table of date, side, symbol/name, quantity, price, and amount. Ignore `provider_errors`, `failures`, unknown fields, arbitrary nested values, and raw transaction payload fields. On click or keyboard activation, set the title/body with escaped text, `showModal()`, and remember the invoking button. Close restores focus to that button.
+Implement a fixed `sourceDetailDefinition(key, item)` map with contribution copy and selected fields only: `status`, `count`, `providers`/`provider`/`sources`, `fetched_at`, cache indicators, `coverage`, `missing`, market/category gaps, and a sanitised user-facing reason. For `trades` only, serialise a safe public `state.context.trades.records` view, then render it as an escaped fixed-column table of date, side, symbol/name, quantity, price, and amount. Ignore `provider_errors`, `failures`, unknown fields, arbitrary nested values, raw transaction payloads, and broker/internal identifiers. On click or keyboard activation, set the title/body with escaped text, `showModal()`, and remember the invoking button. Close restores focus to that button.
 
 - [ ] **Step 4: Render weekly P&L without false zeroes**
 

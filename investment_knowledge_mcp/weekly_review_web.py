@@ -2312,7 +2312,30 @@ def _normalize_report_context(context: dict[str, Any], *, start: date, end: date
     normalized.setdefault("story", {})
     normalized.setdefault("candidate_insights", [])
     normalized.setdefault("warnings", [])
+    normalized["trades"] = {"records": _public_trade_records(normalized.get("trades"))}
     return normalized
+
+
+def _public_trade_records(trades: Any) -> list[dict[str, Any]]:
+    records = trades.get("records") if isinstance(trades, dict) else []
+    if not isinstance(records, list):
+        return []
+    fields = (
+        "trade_date",
+        "create_time",
+        "trd_side",
+        "code",
+        "stock_name",
+        "qty",
+        "price",
+        "amount",
+        "currency",
+    )
+    return [
+        {field: record.get(field) for field in fields if field in record}
+        for record in records
+        if isinstance(record, dict)
+    ]
 
 
 def _friendly_source_status(source_status: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from datetime import date
 from http import HTTPStatus
 import http.client
 import json
@@ -14,6 +15,53 @@ from investment_knowledge_mcp import weekly_review_web as web
 
 
 WEEK_START = "2026-06-22"
+
+
+class WeeklyReviewPublicContextTests(unittest.TestCase):
+    def test_public_context_exposes_only_trade_drawer_fields(self) -> None:
+        context = {
+            "trades": {
+                "records": [
+                    {
+                        "trade_date": "2026-06-23",
+                        "create_time": "2026-06-23 10:15:00",
+                        "trd_side": "BUY",
+                        "code": "HK.00001",
+                        "stock_name": "正向标的",
+                        "qty": 100,
+                        "price": 10.5,
+                        "amount": 1050,
+                        "currency": "HKD",
+                        "deal_id": "private-deal-id",
+                        "order_id": "private-order-id",
+                        "raw": {"provider_secret": "must-not-leak"},
+                    }
+                ],
+                "by_code": [{"raw": {"private": True}}],
+            }
+        }
+
+        normalized = web._normalize_report_context(
+            context,
+            start=date(2026, 6, 23),
+            end=date(2026, 6, 29),
+        )
+
+        self.assertEqual(
+            {
+                "trade_date": "2026-06-23",
+                "create_time": "2026-06-23 10:15:00",
+                "trd_side": "BUY",
+                "code": "HK.00001",
+                "stock_name": "正向标的",
+                "qty": 100,
+                "price": 10.5,
+                "amount": 1050,
+                "currency": "HKD",
+            },
+            normalized["trades"]["records"][0],
+        )
+        self.assertNotIn("by_code", normalized["trades"])
 
 
 class WeeklyReviewWebAuthorizationTests(unittest.TestCase):

@@ -17,7 +17,7 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 2. A missing or non-numeric legacy weekly P&L displays `—`, never `0`.
 3. Convert every source-status card into a keyboard-operable button that opens one reusable right-side native dialog drawer.
 4. The drawer is populated only from the already-public `source_status` object. It shows an allowlisted set of source name, review period, status, count, selected provider/source, retrieved time, cache/coverage fields, source contribution, and plain-language limitations.
-5. The Trades drawer also renders the individual trade records already present in the public Weekly-read context. Its fixed table shows only transaction date, buy/sell side, symbol/name, quantity, execution price, and execution amount. It excludes the raw provider payload, account snapshots, identifiers, internal provider errors, exception strings, configuration details, write actions, and new network requests.
+5. The Trades drawer renders individual selected-week trade records from a dedicated safe public view. Its fixed table shows only transaction date, buy/sell side, symbol/name, quantity, execution price, and execution amount. The public response and drawer exclude raw provider payloads, account snapshots, internal identifiers, internal provider errors, exception strings, configuration details, write actions, and new network requests.
 6. The drawer closes through the visible close control, Escape, or modal backdrop behavior, and returns focus to its invoking source card.
 
 ## Source Contribution Copy
