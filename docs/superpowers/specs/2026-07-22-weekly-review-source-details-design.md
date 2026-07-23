@@ -21,6 +21,7 @@ The current-holdings table omits the already-computed weekly interval P&L, even 
 6. The drawer closes through the visible close control, Escape, or modal backdrop behavior, and returns focus to its invoking source card.
 7. Global highlights and blowups rank interval P&L in USD equivalent, never by mixed raw currency amounts. Each row retains its native-currency amount and shows the USD equivalent used for comparison. USD and HKD use the existing 1 USD = 7.80 HKD fallback when a historical snapshot rate is unavailable; unsupported currencies are not mixed into the global ranking.
 8. The Trades card and drawer explicitly say `本复盘周` so their count is understood as the selected review period, not account-history total.
+9. The week control displays both the selected Monday and its inclusive Monday-to-Sunday review range, and updates that range immediately when the user changes weeks.
 
 ## Source Contribution Copy
 
