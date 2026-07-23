@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 import logging
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -25,6 +25,7 @@ IPO_REMINDER_TIMEOUT_SECONDS = 120
 ACCOUNT_SNAPSHOT_TIMEOUT_SECONDS = 300
 DAILY_MARKET_BRIEF_TIMEOUT_SECONDS = 900
 DEFAULT_MARKETS = ("CN", "HK", "US")
+TRADE_RECONCILIATION_DAYS = 14
 
 
 def build_scheduler_host(
@@ -127,15 +128,24 @@ def _account_snapshot_callback(
     now: Callable[[], datetime],
     logger: logging.Logger,
 ) -> Callable[[], object | None]:
-    last_successful_date: date | None = None
+    last_reconciled_date: date | None = None
 
     def run_if_due() -> object | None:
-        nonlocal last_successful_date
+        nonlocal last_reconciled_date
         current = _aware_now(now()).astimezone(SHANGHAI_TZ)
-        if current.time() < scheduled_time or last_successful_date == current.date():
+        if current.time() < scheduled_time:
             return None
-        result = run_account_snapshot_once(snapshot_date=current.date(), logger=logger)
-        last_successful_date = current.date()
+        snapshot_date = current.date()
+        if last_reconciled_date != snapshot_date:
+            trade_start = snapshot_date - timedelta(days=TRADE_RECONCILIATION_DAYS - 1)
+        else:
+            trade_start = snapshot_date
+        result = run_account_snapshot_once(
+            snapshot_date=snapshot_date,
+            trade_start=trade_start,
+            logger=logger,
+        )
+        last_reconciled_date = snapshot_date
         return result
 
     return run_if_due

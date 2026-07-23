@@ -63,6 +63,44 @@ class WeeklyReviewPublicContextTests(unittest.TestCase):
         )
         self.assertNotIn("by_code", normalized["trades"])
 
+    def test_saved_report_response_uses_synced_weekly_trade_records(self) -> None:
+        report = {
+            "summary": "saved report",
+            "portfolio_snapshot": {
+                "source_status": {"trades": {"status": "ok", "count": 1}},
+                "trades": {"records": [{"code": "US.STALE", "deal_id": "not-public"}]},
+            },
+        }
+        synced = [
+            {
+                "trade_date": "2026-06-23",
+                "create_time": "2026-06-23 10:15:00",
+                "trd_side": "BUY",
+                "code": "US.SPCX",
+                "stock_name": "SpaceX",
+                "qty": 6,
+                "price": 133.64,
+                "amount": 801.84,
+                "currency": "USD",
+                "deal_id": "must-not-leak",
+                "raw": {"private": True},
+            }
+        ]
+
+        with mock.patch.object(web.repository, "list_trade_records", return_value=synced) as records:
+            payload = web._report_response(
+                report,
+                start=date(2026, 6, 22),
+                end=date(2026, 6, 28),
+                status="existing",
+            )
+
+        records.assert_called_once_with(start="2026-06-22", end="2026-06-28")
+        self.assertEqual("reconciled", payload["context"]["source_status"]["trades"]["status"])
+        self.assertEqual(1, payload["context"]["source_status"]["trades"]["count"])
+        self.assertEqual("US.SPCX", payload["context"]["trades"]["records"][0]["code"])
+        self.assertNotIn("deal_id", payload["context"]["trades"]["records"][0])
+
     def test_legacy_context_recomputes_cross_currency_rankings(self) -> None:
         context = {
             "position_changes": [
@@ -141,6 +179,7 @@ class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
         )
         self._patches.enter_context(mock.patch.object(web, "get_daily_market_brief_report", return_value=None))
         self._patches.enter_context(mock.patch.object(web.repository, "list_candidate_insights", return_value=[]))
+        self._patches.enter_context(mock.patch.object(web.repository, "list_trade_records", return_value=[]))
         self.server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.WeeklyReviewWebHandler)
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()

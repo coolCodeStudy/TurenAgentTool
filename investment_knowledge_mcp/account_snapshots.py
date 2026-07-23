@@ -52,10 +52,17 @@ def get_account_snapshot_loop_state() -> dict[str, Any]:
     }
 
 
-def run_account_snapshot_once(logger: logging.Logger | None = None, snapshot_date: date | None = None) -> dict[str, Any]:
+def run_account_snapshot_once(
+    logger: logging.Logger | None = None,
+    snapshot_date: date | None = None,
+    trade_start: date | None = None,
+) -> dict[str, Any]:
     logger = logger or logging.getLogger("investment_knowledge_mcp.account_snapshots")
     today = snapshot_date or datetime.now(SHANGHAI_TZ).date()
-    trade_snapshot = get_futu_trade_history(start=today.isoformat(), end=today.isoformat())
+    trade_range_start = trade_start or today
+    if trade_range_start > today:
+        raise ValueError("trade_start must not be after snapshot_date")
+    trade_snapshot = get_futu_trade_history(start=trade_range_start.isoformat(), end=today.isoformat())
     position_snapshot = get_futu_positions()
     trade_result = repository.upsert_trade_records(trade_snapshot.deals)
     fetched_at = trade_snapshot.fetched_at.astimezone(SHANGHAI_TZ)
@@ -71,13 +78,17 @@ def run_account_snapshot_once(logger: logging.Logger | None = None, snapshot_dat
             "position_count": len(position_snapshot.positions),
             "trade_count": len(trade_snapshot.deals),
             "trade_synced_count": trade_result["synced_count"],
+            "trade_range_start": trade_range_start.isoformat(),
+            "trade_range_end": today.isoformat(),
         },
     )
     logger.info(
-        "saved account snapshot: date=%s id=%s trades=%s",
+        "saved account snapshot: date=%s id=%s trades=%s trade_range=%s:%s",
         row.get("snapshot_date"),
         row.get("id"),
         trade_result["synced_count"],
+        trade_range_start.isoformat(),
+        today.isoformat(),
     )
     return row
 

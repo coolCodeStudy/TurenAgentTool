@@ -2318,6 +2318,7 @@ def _report_response(
     already_exists: bool = False,
 ) -> dict[str, Any]:
     context = report.get("portfolio_snapshot") if isinstance(report.get("portfolio_snapshot"), dict) else {}
+    context = _with_synced_weekly_trade_records(context, start=start, end=end)
     context = _normalize_report_context(context, start=start, end=end)
     return {
         "ok": True,
@@ -2328,6 +2329,28 @@ def _report_response(
         "markdown": report.get("summary") or "",
         "saved_report": report,
     }
+
+
+def _with_synced_weekly_trade_records(context: dict[str, Any], *, start: date, end: date) -> dict[str, Any]:
+    """Overlay a saved report's trade drawer with canonical stored executions.
+
+    This is deliberately database-only: public reads neither reach Futu nor alter
+    persisted reports. The scheduler and protected generation paths own mutation.
+    """
+
+    try:
+        records = repository.list_trade_records(start=start.isoformat(), end=end.isoformat())
+    except Exception:
+        return context
+
+    normalized = dict(context)
+    source_status = dict(normalized.get("source_status") or {})
+    trade_status = dict(source_status.get("trades") or {})
+    trade_status.update({"status": "reconciled", "count": len(records)})
+    source_status["trades"] = trade_status
+    normalized["source_status"] = source_status
+    normalized["trades"] = {"records": records}
+    return normalized
 
 
 def _normalize_report_context(context: dict[str, Any], *, start: date, end: date) -> dict[str, Any]:

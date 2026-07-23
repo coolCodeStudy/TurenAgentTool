@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
-from datetime import datetime
+from datetime import datetime, timedelta
 import unittest
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -90,7 +90,7 @@ class SchedulerJobTests(unittest.TestCase):
             ["daily-market-brief-cn", "daily-market-brief-hk", "daily-market-brief-us"],
         )
 
-    def test_account_snapshot_runs_once_after_due_time(self) -> None:
+    def test_account_snapshot_waits_until_due_time(self) -> None:
         wall_time = [datetime(2026, 7, 20, 0, 4, tzinfo=ZoneInfo("Asia/Shanghai"))]
         with mock.patch.object(scheduler_jobs, "run_account_snapshot_once", return_value={"id": 1}) as run:
             host = scheduler_jobs.default_scheduler_host(
@@ -106,7 +106,50 @@ class SchedulerJobTests(unittest.TestCase):
             wall_time[0] = datetime(2026, 7, 20, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
             host.tick(600.0)
 
-        run.assert_called_once_with(snapshot_date=wall_time[0].date(), logger=mock.ANY)
+        self.assertEqual(
+            run.call_args_list,
+            [
+                mock.call(
+                    snapshot_date=wall_time[0].date(),
+                    trade_start=wall_time[0].date() - timedelta(days=13),
+                    logger=mock.ANY,
+                ),
+                mock.call(
+                    snapshot_date=wall_time[0].date(),
+                    trade_start=wall_time[0].date(),
+                    logger=mock.ANY,
+                ),
+            ],
+        )
+
+    def test_account_snapshot_polls_intraday_and_reconciles_once_per_day(self) -> None:
+        wall_time = [datetime(2026, 7, 20, 0, 5, tzinfo=ZoneInfo("Asia/Shanghai"))]
+        with mock.patch.object(scheduler_jobs, "run_account_snapshot_once", return_value={"id": 1}) as run:
+            host = scheduler_jobs.default_scheduler_host(
+                config=self._config(dingtalk_ipo_reminders_enabled=False),
+                clock=lambda: 0.0,
+                now=lambda: wall_time[0],
+                executor=InlineExecutor(),
+            )
+
+            host.tick(0.0)
+            wall_time[0] = datetime(2026, 7, 20, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            host.tick(300.0)
+
+        review_date = wall_time[0].date()
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args_list[0],
+            mock.call(
+                snapshot_date=review_date,
+                trade_start=review_date - timedelta(days=13),
+                logger=mock.ANY,
+            ),
+        )
+        self.assertEqual(
+            run.call_args_list[1],
+            mock.call(snapshot_date=review_date, trade_start=review_date, logger=mock.ANY),
+        )
 
     def test_failed_account_snapshot_is_retried_on_next_interval(self) -> None:
         wall_time = datetime(2026, 7, 20, 0, 5, tzinfo=ZoneInfo("Asia/Shanghai"))

@@ -112,6 +112,7 @@ SOURCE_STATUS_LABELS = {
     "realtime": "实时读取",
     "snapshot": "来自快照",
     "backfilled": "已回补",
+    "reconciled": "已对账",
     "fallback": "降级可用",
 }
 
@@ -412,23 +413,27 @@ def _load_trade_records(
         warnings.append(f"交易记录读取失败：{exc}")
         trades = []
 
-    if trades:
-        source_status["trades"] = {"status": "ok", "count": len(trades)}
-        return trades
-
     try:
         snapshot = get_futu_trade_history(start=start.isoformat(), end=end.isoformat())
         repository.upsert_trade_records(snapshot.deals)
         trades = repository.list_trade_records(start=start.isoformat(), end=end.isoformat())
         source_status["trades"] = {
-            "status": "backfilled",
+            "status": "reconciled",
             "count": len(trades),
             "fetched_at": snapshot.fetched_at.isoformat(),
         }
         return trades
     except FutuProviderError as exc:
+        if trades:
+            warnings.append("交易记录未能完成富途对账，正在显示已保存的数据。")
+            source_status["trades"] = {"status": "partial", "count": len(trades)}
+            return trades
         warnings.append(f"交易记录缺失，富途回补失败：{exc}")
     except Exception as exc:
+        if trades:
+            warnings.append("交易记录未能完成富途对账，正在显示已保存的数据。")
+            source_status["trades"] = {"status": "partial", "count": len(trades)}
+            return trades
         warnings.append(f"交易记录缺失，回补失败：{exc}")
 
     source_status["trades"] = {"status": "missing", "count": 0}
