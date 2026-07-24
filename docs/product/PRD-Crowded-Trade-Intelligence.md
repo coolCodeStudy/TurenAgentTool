@@ -4,6 +4,7 @@ Status: product direction approved; ready for bounded technical implementation p
 Owner: Product Discovery Coordinator
 Feature Registry row: Crowded Trade Intelligence
 Linked technical feasibility note: [`../techplans/crowded-trade-intelligence-feasibility.md`](../techplans/crowded-trade-intelligence-feasibility.md)
+Linked implementation plan: [`../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md`](../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md)
 Last updated: 2026-07-23
 
 ## 1. Decision Summary

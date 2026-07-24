@@ -2,6 +2,7 @@
 
 Status: feasibility ready; product direction approved, bounded implementation plan not yet created
 Linked PRD: [`../product/PRD-Crowded-Trade-Intelligence.md`](../product/PRD-Crowded-Trade-Intelligence.md)
+Linked implementation plan: [`../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md`](../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md)
 Last updated: 2026-07-23
 
 ## 1. Feasibility Conclusion
