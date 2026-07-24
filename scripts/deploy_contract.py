@@ -294,6 +294,12 @@ PATH_RULES = (
         ("weekly-review-web",),
         "AI Industry Panorama public read surface",
     ),
+    PathRule(
+        "investment_knowledge_mcp/earnings_brief_studio/**",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "Earnings Brief Studio public read surface",
+    ),
     PathRule("investment_knowledge_mcp/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "unknown application runtime module"),
     PathRule("db/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "database runtime input"),
     PathRule("Dockerfile", DeployMode.FULL_IMAGE, APPLICATION_SERVICES, "Docker image input", True),
