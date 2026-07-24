@@ -1,6 +1,6 @@
 # Trading Agent Workspace V1 Implementation Plan
 
-Status: gate_a_in_progress
+Status: gate_a_blocked_on_github_dispatch_auth
 
 **Goal:** Deliver one protected Trading Agent browser workflow using a trusted
 read-only evidence snapshot and ChatGPT-authenticated Codex CLI, with five-run
@@ -40,6 +40,9 @@ isolation and no cross-feature or real-trading action.
   unit/ref/health/concurrency, Codex version/login/options, web-search-only tool
   inventory, canary denial, executor boundary feasibility, provider-neutral
   snapshot feasibility, host baseline, and shared browser-access config.
+- [ ] Resume Gate A after the Owner either approves in-memory use of the
+  existing local GitHub PAT for workflow dispatch/log reads (never output or
+  persist it) or signs in to GitHub in the in-app browser.
 - [ ] If any tool/credential/snapshot boundary fails, stop
   `blocked_with_owner`; do not weaken it or start Development.
 

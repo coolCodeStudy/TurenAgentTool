@@ -1,6 +1,6 @@
 # Trading Agent Workspace V1 Technical Design
 
-Status: gate_a_in_progress
+Status: gate_a_blocked_on_github_dispatch_auth
 Owner: Trading Agent Workspace Feature Coordinator
 Source PRD: `docs/product/PRD-Trading-Agent-Workspace.md`
 Implementation plan: `docs/superpowers/plans/2026-07-23-trading-agent-workspace-v1.md`
@@ -379,7 +379,11 @@ Global PM return `TA-DESIGN-001..003` is accepted. The evidence snapshot and
 access UX corrections are incorporated; retention values are defaults.
 Independent bounded re-review found no remaining Critical or Important
 contradiction.
-Choice B and subsequent Global PM approval are recorded. Non-mutating ECS Gate
-A is active under this Feature Coordinator's watch path. Closure:
-`accept_and_route`. Deploy decision: `not_required` until Gate A passes and a
-verified implementation candidate exists.
+Choice B and subsequent Global PM approval are recorded. The verified
+branch-scoped Gate A workflow is pushed, but dispatch is blocked because the
+local GitHub CLI session is invalid and the in-app browser is signed out.
+Repository policy rejected reading a local PAT without fresh, specific Owner
+approval. Closure: `blocked_with_owner`. Exact resume action: approve in-memory
+use of the existing local GitHub PAT solely to dispatch and read this workflow,
+with no token output or persistence; alternatively sign in to GitHub in the
+in-app browser. Deploy decision: `not_required`.
