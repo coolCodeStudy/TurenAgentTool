@@ -1,6 +1,6 @@
 # AI Industry Panorama V1 Implementation Plan
 
-**Status:** `local_verified`; Tasks 1-5 are Coordinator-accepted locally, with full-candidate review, deployment, independent L3 acceptance, and Owner acceptance still pending as of `2026-07-24`.
+**Status:** `deployed_acceptance_passed`; Tasks 1-5, final review, serialized deployment, and independent L3 acceptance are complete. Explicit Owner acceptance remains pending as of `2026-07-24`.
 
 **Independent gates:** Plan Reviewer `/root/panorama_plan_review` found all 12 PRD acceptance criteria compliant and no remaining plan findings at commit `f14136b`. Source Reviewer `/root/panorama_source_review` accepted all 48 relationship/assertion/evidence rows and all six canonical two-hop paths at manifest commit `4069321`; the Coordinator then marked the manifest `reviewed_for_implementation`. Publication, deployment, independent L3 acceptance, and Owner acceptance remain separate later gates.
 
@@ -447,7 +447,7 @@ On the reconciled candidate, 156/156 Panorama/shared-Web/classifier tests, 104/1
 
 Record exact commits, test counts, selected `L3` route, planned URL, deploy mode `targeted_quick`, target `weekly-review-web`, and one Acceptance Queue row. Keep user acceptance `pending`.
 
-- [ ] **Step 4: Commit and push the verified implementation candidate**
+- [x] **Step 4: Commit and push the verified implementation candidate**
 
 ```bash
 git add e2e docs/techplans/ai-industry-panorama-v1.md docs/project-management/Feature-Registry.md docs/project-management/Acceptance-Queue.md docs/project-management/Delivery-Queue.md docs/changes/ai-industry-panorama/context-packet.md
@@ -455,7 +455,7 @@ git commit -m "test: prepare AI panorama release acceptance"
 git push origin codex/ai-industry-panorama-discovery
 ```
 
-- [ ] **Step 5: Coordinator deploys through the shared serialized path**
+- [x] **Step 5: Coordinator deploys through the shared serialized path**
 
 Deploy Intent:
 
@@ -475,7 +475,7 @@ Because the candidate changes `scripts/deploy_contract.py`, serialize these two 
 
 Do not start another deploy channel if `production-deploy` or an Ops API install is active. A failed or mismatched control-plane identity is a deploy blocker; do not bypass it with SSH or an ad hoc restart.
 
-- [ ] **Step 6: Dispatch independent L3 acceptance**
+- [x] **Step 6: Dispatch independent L3 acceptance**
 
 Run the cloud suite against the deployed exact ref:
 
@@ -493,7 +493,7 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 | 2. Public page, script, filters, and drawers | accepted | Head `962e1a0`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 113/113 focused-plus-preserved tests | None; inherited real-browser gate passed in Task 3 |
 | 3. Gateway routes and shared navigation | accepted | Head `251a146`; Spec `PASS`; Quality `APPROVED`; 117/117 focused and 103/103 additional preserved tests; real Chrome desktop/mobile evidence under `/private/tmp/panorama-task3-browser-evidence` | None |
 | 4. Deploy classification and release verification | accepted | Head `51072c1`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 184/184 tests and cumulative weekly-review-web-only classification with exact-SHA control-plane gate | None |
-| 5. Cloud journey, release evidence, and state reconciliation | coordinator_accepted_local_verified | Commit `9a7a659` reconciles current main while preserving both feature histories. Coordinator gates passed 156/156 Panorama/shared-Web/classifier tests, 104/104 concurrent-main shared-boundary tests, 2/2 Chromium page/API contracts, exact weekly-review-web-only classification, and architecture P0=0. DB-backed smoke is environment-limited because local PostgreSQL and Docker are not running. | Independent full-candidate Spec/Quality review, exact pushed SHA, serialized same-SHA control-plane install and app deploy, then independent L3 cloud acceptance |
+| 5. Cloud journey, release evidence, and state reconciliation | deployed_acceptance_passed | Exact ref `acade24a`; final Spec `PASS`; Quality `APPROVED`; Coordinator 185/185 Panorama/shared-Web/classifier/workflow and 104/104 concurrent-main tests; local and cloud Playwright 2/2; Ops install `30072101901`; application run `30072165862`; event `1784874293588`; 30-second stable health; no rollback; independent L3 `passed` with evidence under `/private/tmp/ai-industry-panorama-cloud-acceptance` | Explicit Owner acceptance only |
 
 ## PRD Acceptance Traceability
 
@@ -514,18 +514,18 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 
 ## Release-Verification Manifest Template
 
-- Candidate ref: `codex/ai-industry-panorama-discovery` after state reconciliation; authoritative-main merge commit `9a7a659`; exact pushed candidate SHA will be recorded at the deployment gate
+- Candidate and deployed ref: `acade24aae28146693dfc2e1cfa7e8ee5d8c1abd` on `origin/main` and `origin/codex/ai-industry-panorama-discovery`
 - Quality route: `L3`
 - Deployed service: `weekly-review-web`
-- Deploy mode/event: planned `targeted_quick` / workflow-compatible `quick`; not deployed
+- Deploy mode/event: `targeted_quick`; Ops install run `30072101901`; application run `30072165862`; event `1784874293588`; only `weekly-review-web`; 30-second stable health; no rollback
 - Public page: `http://47.84.190.191:8010/ai-industry-panorama`
 - Public API: `http://47.84.190.191:8010/api/ai-industry-panorama`
 - Release ID and evidence cutoff: `ai-industry-panorama.2026-07-24.v1`; `2026-07-24`
-- Focused developer verification: 156/156 Panorama/shared-Web/classifier tests, 104/104 concurrent-main crowding/command/data-source tests, and 2/2 local Playwright page/API contracts passed on 2026-07-24
-- Cloud Playwright evidence: pending deployment; local desktop and 390px screenshots are `/private/tmp/ai-industry-panorama-task5-desktop.png` and `/private/tmp/ai-industry-panorama-task5-mobile-390.png`
-- Independent tester and date: pending independent L3 cloud dispatch
-- Safety scan: local contracts passed for a public allow-listed API, HTTPS credential-free source URLs, inference premise citations, keyboard focus, responsive containment, and zero Panorama mutation requests
-- Unresolved exceptions: repository-wide `scripts/smoke_test.py` cannot start because the existing local PostgreSQL target at `localhost:55432` and Docker daemon are not running. The prior Weekly assertion drift and queue/state conflicts are reconciled; no focused, shared-boundary, classifier, architecture-P0, or browser gate failed.
+- Focused developer verification: 185/185 Panorama/shared-Web/classifier/workflow tests, 104/104 concurrent-main crowding/command/data-source tests, and 2/2 local Playwright page/API contracts passed on 2026-07-24
+- Cloud Playwright evidence: 2/2 passed; `/private/tmp/ai-industry-panorama-cloud-acceptance/evidence.json`, desktop/mobile/inference/filter screenshots, captured API, and HTML report
+- Independent tester and date: Quality & Acceptance Lead `/root/panorama_manifest_curator`; 2026-07-24; `passed`, highest severity `note`
+- Safety scan: public allow-listed API, HTTPS credential-free source URLs, inference premise citations, keyboard focus, responsive containment, and zero Panorama mutation requests passed on the deployed cloud surface
+- Unresolved exceptions: repository-wide `scripts/smoke_test.py` could not start locally because PostgreSQL at `localhost:55432` and Docker were unavailable. The deployed `/health` field `app_release_sha` is known stale, so exact workflow/event provenance and release semantic identity are authoritative. Neither limitation blocked the static read-only route-valid evidence.
 - User acceptance: `pending`
 
 ## Plan Self-Review
