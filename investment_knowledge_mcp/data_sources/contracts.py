@@ -20,6 +20,10 @@ class SourceCapability(str, Enum):
     NEWS_EVENTS = "news_events"
     POSITIONS = "positions"
     TRADES = "trades"
+    OWNERSHIP_CONCENTRATION = "ownership_concentration"
+    SHORT_INTEREST = "short_interest"
+    OPTIONS_POSITIONING = "options_positioning"
+    EVENT_CALENDAR = "event_calendar"
 
 
 class DataStatus(str, Enum):

@@ -68,6 +68,7 @@ from investment_knowledge_mcp.weekly_review_web import (
     _resolve_request_range,
     _resolve_week_request,
     render_daily_market_brief_html,
+    render_weekly_review_script,
     render_weekly_review_workbench_html,
 )
 
@@ -92,14 +93,16 @@ SMOKE_JOB_MARKET = "TEST"
 def smoke_frontend_experience_renderers() -> tuple[str, str, str]:
     command_html = render_command_workbench_html()
     weekly_html = render_weekly_review_workbench_html()
+    weekly_script = render_weekly_review_script()
     daily_html = render_daily_market_brief_html()
     for path in ("/daily-market-brief", "/weekly-review", "/command"):
         assert path in command_html
         assert path in weekly_html
         assert path in daily_html
     assert "investment_knowledge_access_token" in command_html
+    assert "investment_knowledge_access_token" in weekly_html
     assert "investment_knowledge_access_token" not in daily_html
-    assert "/api/weekly-review" in weekly_html
+    assert "/api/weekly-review" in weekly_script
     assert "公开只读" in weekly_html
     for protected_path in (
         "/api/weekly-review/generate",
@@ -108,12 +111,6 @@ def smoke_frontend_experience_renderers() -> tuple[str, str, str]:
         "/api/candidate-insights",
     ):
         assert protected_path not in weekly_html
-    for access_key in (
-        "investment_knowledge_access_token",
-        "command_workbench_token",
-        "weekly_review_web_token",
-    ):
-        assert access_key not in weekly_html
     return command_html, weekly_html, daily_html
 
 
