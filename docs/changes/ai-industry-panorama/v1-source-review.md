@@ -138,3 +138,84 @@ Source URL summary:
 `correction_required`
 
 The manifest must not be marked `reviewed_for_implementation` at commit `9162248`. Correct the 21 affected rows and re-run an independent row-level review. This document does not change any manifest review state, release state, user-acceptance state, or feature-completion state.
+
+## Re-review of corrected manifest
+
+### Re-review status
+
+- Artifact re-reviewed: `docs/changes/ai-industry-panorama/v1-source-manifest.md` at commit `718c2bd`
+- Reviewer: `/root/panorama_source_review`
+- Re-review date: `2026-07-24`
+- Scope: the 21 previously correction-required rows, new rows `REL-AIP-0046` through `REL-AIP-0048`, the 24 previously accepted rows, all stable-ID and required-field invariants, and all six declared demand-anchor two-hop paths
+- Final re-review verdict: `correction_required`
+- Boundary: this re-review does not mark the manifest, any row, or the feature as published, implemented, complete, or accepted by the user.
+
+### Re-review methodology and source checks
+
+The reviewer reopened the direct official source and locator pairs used by the 24 re-review rows. All 13 affected official URLs (`SRC-001`, `SRC-002`, `SRC-003`, `SRC-004`, `SRC-005`, `SRC-007`, `SRC-008`, `SRC-009`, `SRC-010`, `SRC-011`, `SRC-013`, `SRC-015`, and `SRC-016`) were reachable and matched their official publishers. No secondary source or unlisted URL was used.
+
+The corrected locators for mutable `SRC-007`, title-only `SRC-013`, and undated current-page `SRC-016` now match the displayed content. The reviewer checked assertion text, endpoint identity and direction, relationship type, assertion kind, lifecycle, valid-time precision, observed time, geography/role, confidence inputs and cap, limitations, and premise IDs. The 24 rows accepted in the first review are byte-identical between commits `9162248` and `718c2bd`: both ordered row sets have SHA-256 `c3cc790752221ac7df50727e6a8a04470392207fe54be6296e84c739922cdfad`.
+
+### Re-reviewed row verdicts
+
+| Row ID | Verdict | Re-review finding |
+| --- | --- | --- |
+| REL-AIP-0002 | accepted | `unknown` now correctly separates the disclosed 2025 realized server/machine investment mix from an unsupported operating lifecycle. |
+| REL-AIP-0003 | accepted | `unknown` and the expanded limitation preserve the combined data-center/networking scope without asserting installed or operating capacity. |
+| REL-AIP-0005 | accepted | The assertion and interval now correctly identify calendar year 2026. |
+| REL-AIP-0006 | accepted | Month-precision `2026-04` and the exact-day limitation match “earlier this month” on the dated April 29 source. |
+| REL-AIP-0007 | accepted | The site-level capacity edge retains the disclosed online status while preserving month precision and excluding capacity, utilization, and completion claims. |
+| REL-AIP-0008 | accepted | The row is narrowed to the Q3 fiscal-2026 GPU/CPU CapEx mix, uses `unknown`, and no longer combines that fact with a separate forward capacity statement. |
+| REL-AIP-0011 | accepted | The inference is now premise-faithful and global; premise IDs `AST-AIP-0010` and `AST-AIP-0045` exist and retain their accepted source support. |
+| REL-AIP-0012 | accepted | `unknown` now distinguishes realized 2025 CapEx from an unsupported asset lifecycle. |
+| REL-AIP-0013 | accepted | `depends_on` and the revised limitation accurately bound the filing's shared infrastructure-cost disclosure without claiming a specific facility development edge. |
+| REL-AIP-0015 | accepted | Year-precision 2027 timing, unknown geography, approximate capacity, and future-commitment limitations are explicit. |
+| REL-AIP-0016 | accepted | Unknown geography and the `up to` current/future commitment boundary are explicit. |
+| REL-AIP-0019 | accepted | The assertion starts at the supported September 23 announcement date and the locator now matches the live page and its October 22 update. |
+| REL-AIP-0022 | accepted | `SRC-008` directly supports the `Stargate I` identity, placement within Stargate, and partial operating status. |
+| REL-AIP-0023 | correction_required | The narrowed assertion and `SRC-008` locator support Oracle's first GB200 rack-delivery milestone, but `develops_or_operates` still asserts a site-development or operating relationship that this row's evidence does not establish. |
+| REL-AIP-0026 | accepted | The new Google / Google Cloud endpoint preserves the counterparty named by Anthropic and avoids unsupported parent normalization to Alphabet. |
+| REL-AIP-0028 | accepted | Year-precision 2027 timing now matches the expected availability statement without inventing a start day. |
+| REL-AIP-0037 | accepted | The CoWoS-specific endpoint and assertion now preserve the distinct production statements for CoWoS-S, CoWoS-R, and CoWoS-L. |
+| REL-AIP-0038 | accepted | CoWoS-specific and HBM-specific endpoints remove the earlier unsupported expansion to all advanced packaging and combined memory/storage. |
+| REL-AIP-0040 | accepted | The row is limited to the displayed title's sample-shipment claim and explicitly excludes customer and downstream-status claims. |
+| REL-AIP-0043 | accepted | The assertion now says power distribution and cooling, while the limitation explicitly records that the source does not specify liquid cooling. |
+| REL-AIP-0044 | accepted | The assertion and locator now use the displayed OCP scope names, including “Power Estimation Methodologies.” |
+| REL-AIP-0046 | correction_required | NVIDIA names Hon Hai within a group of subcontractors and contract manufacturers collectively engaged for assembly, testing, and packaging, but does not establish that Hon Hai individually packages or tests; `packages_or_tests_for` over-allocates the grouped activity. |
+| REL-AIP-0047 | correction_required | NVIDIA names Wistron within the same grouped disclosure, but does not establish that Wistron individually packages or tests; `packages_or_tests_for` over-allocates the grouped activity. |
+| REL-AIP-0048 | correction_required | NVIDIA names Fabrinet within the same grouped disclosure, but does not establish that Fabrinet individually packages or tests; `packages_or_tests_for` over-allocates the grouped activity. |
+
+### Structural and path verification
+
+- Entity registry: 35 total records, comprising 21 organizations or organization/services, four projects/programs, and 10 capability nodes. The PRD organization/project count is exactly 25.
+- Graph records: 48 unique sequential relationship IDs, 48 unique sequential assertion IDs, 48 unique sequential evidence IDs, 16 unique sequential source IDs, six taxonomy groups, and six marked demand anchors.
+- Required fields and references: every relationship row has all 14 required data fields; all entity endpoints and source references resolve; admitted assertion kinds and lifecycle values are used; all explicit source-backed rows remain capped at `medium`; the sole inference remains `inference`; and its two premise IDs resolve.
+- Publication boundary: all 48 manifest rows remain `curated_pending_review`; zero are marked `published`.
+- Previously accepted rows: all 24 are byte-identical and remain accepted as standalone rows.
+- Two-hop coverage: four of six declared paths follow canonical directions. The Alphabet and Anthropic declarations incorrectly traverse `REL-AIP-0032` as NVIDIA to TSMC, while that accepted standalone relationship is canonically TSMC to NVIDIA (`manufactures_for`).
+
+### Required repairs
+
+1. For `REL-AIP-0023`, use a relationship type whose semantics are limited to the evidenced rack-delivery/site-infrastructure milestone, or provide a reviewed official locator that directly supports Oracle developing or operating Stargate I and align the exact assertion to it.
+2. For `REL-AIP-0046`, `REL-AIP-0047`, and `REL-AIP-0048`, use a group-faithful contract-manufacturing relationship that does not assign packaging or testing to an individual named contractor. Retain the existing limitation, or add separately reviewed official evidence that allocates at least one of those tasks to each company.
+3. Repair the Alphabet and Anthropic two-hop declarations so both use forward canonical edges. `REL-AIP-0036` is an already accepted forward edge from NVIDIA to the advanced-packaging capability and can replace the reversed use of `REL-AIP-0032`; another independently reviewed forward edge is also acceptable.
+
+### Re-review count summary
+
+| Verdict | Corrected/new rows | All manifest rows |
+| --- | ---: | ---: |
+| accepted | 20 | 44 |
+| correction_required | 4 | 4 |
+| rejected | 0 | 0 |
+| total | 24 | 48 |
+
+Additional graph result:
+
+- Canonical-direction two-hop paths accepted: 4
+- Canonical-direction two-hop paths requiring correction: 2
+
+### Final re-review verdict
+
+`correction_required`
+
+Commit `718c2bd` must not be marked `reviewed_for_implementation`. Four relationship rows and two demand-anchor path declarations require the repairs above, followed by another independent re-review. This result does not publish data, authorize implementation transcription, mark user acceptance, or mark feature completion.
