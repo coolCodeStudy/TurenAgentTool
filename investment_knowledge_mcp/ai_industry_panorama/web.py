@@ -25,11 +25,17 @@ def render_panorama_html() -> str:
   .panorama-controls {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }}
   .panorama-controls label {{ display: grid; gap: 6px; color: var(--experience-muted); font-size: 13px; }}
   .panorama-controls input, .panorama-controls select, .panorama-controls button {{ min-height: 40px; }}
+  .panorama-view-switch {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+  .panorama-view-switch button[aria-pressed="true"] {{
+    color: #ffffff;
+    background: var(--experience-accent);
+  }}
   .panorama-views {{ display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 18px; }}
   .panorama-panel {{ min-width: 0; overflow: hidden; }}
-  #panorama-graph {{ width: 100%; min-height: 560px; overflow: hidden; }}
+  .panorama-graph-scroll {{ max-width: 100%; overflow-x: auto; overflow-y: hidden; }}
+  #panorama-graph {{ display: block; width: 1460px; min-width: 1460px; overflow: hidden; }}
   #panorama-graph g[role="button"] {{ cursor: pointer; }}
-  #panorama-graph text {{ fill: var(--experience-ink); font-size: 11px; }}
+  #panorama-graph text {{ fill: var(--experience-ink); font-size: 12px; }}
   .panorama-drawers {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }}
   .panorama-error {{ color: var(--experience-danger); }}
   .panorama-legend {{ display: flex; flex-wrap: wrap; gap: 12px; color: var(--experience-muted); }}
@@ -78,12 +84,20 @@ def render_panorama_html() -> str:
       The panorama could not be loaded. Refresh the page to try again.
     </p>
 
+    <div class="panorama-view-switch" role="group" aria-label="Panorama view">
+      <button id="graph-view" type="button" aria-controls="graph-panel" aria-pressed="false">Graph</button>
+      <button id="table-view" type="button" aria-controls="table-panel" aria-pressed="false">Table</button>
+      <button id="both-view" type="button" aria-controls="graph-panel table-panel" aria-pressed="true">Both</button>
+    </div>
+
     <section class="panorama-views">
-      <div class="panorama-panel">
+      <div id="graph-panel" class="panorama-panel">
         <h2>Layered relationship map</h2>
-        <svg id="panorama-graph" role="group" aria-label="AI industry relationship graph"></svg>
+        <div id="panorama-graph-scroll" class="panorama-graph-scroll" tabindex="0" aria-label="Scrollable relationship map">
+          <svg id="panorama-graph" role="group" aria-label="AI industry relationship graph"></svg>
+        </div>
       </div>
-      <div class="panorama-panel">
+      <div id="table-panel" class="panorama-panel">
         <h2>Equivalent relationship table</h2>
         <div class="table-scroll">
           <table id="relationship-table">
@@ -104,13 +118,13 @@ def render_panorama_html() -> str:
     </section>
 
     <section class="panorama-drawers" aria-label="Panorama details">
-      <aside id="entity-drawer" class="panorama-drawer" aria-label="Entity details">
+      <aside id="entity-drawer" class="panorama-drawer" aria-label="Entity details" tabindex="-1">
         <h2>Entity details</h2><p>Select a company or project.</p>
       </aside>
-      <aside id="capability-drawer" class="panorama-drawer" aria-label="Capability details">
+      <aside id="capability-drawer" class="panorama-drawer" aria-label="Capability details" tabindex="-1">
         <h2>Capability details</h2><p>Select a capability.</p>
       </aside>
-      <aside id="relationship-drawer" class="panorama-drawer" aria-label="Relationship evidence">
+      <aside id="relationship-drawer" class="panorama-drawer" aria-label="Relationship evidence" tabindex="-1">
         <h2>Relationship evidence</h2><p>Select a relationship.</p>
       </aside>
     </section>
@@ -131,6 +145,8 @@ def render_panorama_script() -> str:
   const byId = (id) => document.getElementById(id);
   const state = {
     projection: null,
+    mode: "curated",
+    viewMode: "both",
     focusEntityId: null,
     hopDepth: 2,
     search: "",
@@ -146,6 +162,41 @@ def render_panorama_script() -> str:
     visibleRelationships: [],
     indexes: null,
   };
+  const DISCLOSED_ASSERTION_KINDS = new Set([
+    "disclosed_fact",
+    "company_guidance",
+    "management_claim",
+  ]);
+  const ASSERTION_KIND_PRIORITY = {
+    disclosed_fact: 0,
+    company_guidance: 1,
+    management_claim: 2,
+    inferred_exposure: 3,
+    user_hypothesis: 4,
+  };
+  const SENSITIVE_QUERY_NAMES = new Set([
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "client_secret",
+    "credential",
+    "key",
+    "password",
+    "private_key",
+    "secret",
+    "sig",
+    "signature",
+    "token",
+  ]);
+  const asciiLower = (value) => String(value).replace(
+    /[A-Z]/g,
+    (character) => character.toLowerCase()
+  );
+  const stableCompare = (left, right) => (
+    left < right ? -1 : left > right ? 1 : 0
+  );
 
   const makeElement = (tagName, text = "") => {
     const element = document.createElement(tagName);
@@ -196,15 +247,16 @@ def render_panorama_script() -> str:
     try {
       const parsed = new URL(String(value));
       if (parsed.protocol !== "https:" || parsed.username || parsed.password) return null;
+      for (const name of parsed.searchParams.keys()) {
+        if (SENSITIVE_QUERY_NAMES.has(asciiLower(name))) return null;
+      }
       return parsed.href;
     } catch (_error) {
       return null;
     }
   };
 
-  const safeInternalPath = (value) => (
-    typeof value === "string" && /^\/command(?:[/?#]|$)/.test(value) ? value : null
-  );
+  const safeInternalPath = (value) => value === "/command" ? value : null;
 
   const makeExternalLink = (label, value) => {
     const href = safeExternalUrl(value);
@@ -214,6 +266,12 @@ def render_panorama_script() -> str:
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
     return link;
+  };
+
+  const focusDetails = (drawer, announcement) => {
+    drawer.setAttribute("tabindex", "-1");
+    drawer.focus();
+    setText("panorama-status", announcement);
   };
 
   const renderMetadata = (projection) => {
@@ -270,14 +328,14 @@ def render_panorama_script() -> str:
     );
   };
 
-  const focusedRelationshipIds = () => {
+  const focusedRelationshipIds = (relationships) => {
     if (!state.focusEntityId) return null;
     let frontier = new Set([state.focusEntityId]);
     const visitedEntities = new Set(frontier);
     const admitted = new Set();
     for (let depth = 0; depth < state.hopDepth; depth += 1) {
       const next = new Set();
-      for (const relationship of state.projection.relationships) {
+      for (const relationship of relationships) {
         const sourceSeen = frontier.has(relationship.source_entity_id);
         const targetSeen = frontier.has(relationship.target_entity_id);
         if (!sourceSeen && !targetSeen) continue;
@@ -294,7 +352,7 @@ def render_panorama_script() -> str:
   };
 
   const searchMatches = (relationship) => {
-    const query = state.search.trim().toLocaleLowerCase();
+    const query = asciiLower(state.search.trim());
     if (!query) return true;
     const endpointMatches = [
       relationship.source_entity_id,
@@ -307,19 +365,47 @@ def render_panorama_script() -> str:
         entity.summary,
         ...(entity.aliases || []),
         ...(entity.capability_roles || []),
-      ].some((value) => String(value).toLocaleLowerCase().includes(query));
+      ].some((value) => asciiLower(value).includes(query));
     });
     return endpointMatches || [
       relationship.relationship_type,
       relationship.text,
       relationship.assertion_kind,
-    ].some((value) => String(value).toLocaleLowerCase().includes(query));
+    ].some((value) => asciiLower(value).includes(query));
   };
 
-  const deriveVisibleRelationships = () => {
-    const focusedIds = focusedRelationshipIds();
-    return [...state.projection.relationships].filter((relationship) => {
-      if (focusedIds && !focusedIds.has(relationship.relationship_id)) return false;
+  const periodBounds = (value) => {
+    if (!value) return null;
+    const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(value);
+    if (!match) return null;
+    const [, year, month, day] = match;
+    return {
+      start: `${year}-${month || "01"}-${day || "01"}`,
+      end: `${year}-${month || "12"}-${day || "31"}`,
+    };
+  };
+
+  const relationshipOverlapsPeriod = (relationship, selected) => {
+    const hasReportingPeriod = Boolean(
+      relationship.reporting_period_start || relationship.reporting_period_end
+    );
+    const startValue = hasReportingPeriod
+      ? relationship.reporting_period_start
+      : relationship.effective_from;
+    const endValue = hasReportingPeriod
+      ? relationship.reporting_period_end
+      : relationship.effective_to;
+    if (selected === "unknown") return !startValue && !endValue;
+    if (!startValue && !endValue) return false;
+    const years = selected.split("-");
+    const selectedStart = `${years[0]}-01-01`;
+    const selectedEnd = `${years[1] || years[0]}-12-31`;
+    const relationshipStart = periodBounds(startValue)?.start || "0000-01-01";
+    const relationshipEnd = periodBounds(endValue)?.end || "9999-12-31";
+    return relationshipStart <= selectedEnd && relationshipEnd >= selectedStart;
+  };
+
+  const passesNonFocusFilters = (relationship) => {
       if (!searchMatches(relationship)) return false;
       if (
         state.filters.layer
@@ -331,7 +417,10 @@ def render_panorama_script() -> str:
           ([geographyId]) => geographyId === state.filters.geography
         )
       ) return false;
-      if (state.filters.time && relationship.time_precision !== state.filters.time) {
+      if (
+        state.filters.time
+        && !relationshipOverlapsPeriod(relationship, state.filters.time)
+      ) {
         return false;
       }
       if (
@@ -348,11 +437,62 @@ def render_panorama_script() -> str:
       ) return false;
       if (
         state.filters.disclosedOnly
-        && relationship.assertion_kind === "inferred_exposure"
+        && !DISCLOSED_ASSERTION_KINDS.has(relationship.assertion_kind)
       ) return false;
       return true;
-    }).sort(
-      (left, right) => left.relationship_id.localeCompare(right.relationship_id)
+  };
+
+  const curatedRelationships = () => {
+    const selected = new Map();
+    const anchors = state.projection.entities
+      .filter((entity) => entity.is_demand_anchor)
+      .sort((left, right) => stableCompare(left.entity_id, right.entity_id));
+    for (const anchor of anchors) {
+      const candidates = state.projection.relationships
+        .filter(
+          (relationship) => relationship.source_entity_id === anchor.entity_id
+            || relationship.target_entity_id === anchor.entity_id
+        )
+        .sort((left, right) => {
+          const otherEntity = (relationship) => state.indexes.entities.get(
+            relationship.source_entity_id === anchor.entity_id
+              ? relationship.target_entity_id
+              : relationship.source_entity_id
+          );
+          const leftKind = otherEntity(left)?.kind;
+          const rightKind = otherEntity(right)?.kind;
+          const kindDifference = (
+            (leftKind === "organization" || leftKind === "project" ? 0 : 1)
+            - (rightKind === "organization" || rightKind === "project" ? 0 : 1)
+          );
+          if (kindDifference) return kindDifference;
+          const assertionDifference = (
+            (ASSERTION_KIND_PRIORITY[left.assertion_kind] ?? 9)
+            - (ASSERTION_KIND_PRIORITY[right.assertion_kind] ?? 9)
+          );
+          if (assertionDifference) return assertionDifference;
+          return stableCompare(right.observed_at, left.observed_at)
+            || stableCompare(left.relationship_id, right.relationship_id);
+        });
+      candidates.slice(0, 2).forEach(
+        (relationship) => selected.set(relationship.relationship_id, relationship)
+      );
+    }
+    return [...selected.values()].sort(
+      (left, right) => stableCompare(left.relationship_id, right.relationship_id)
+    );
+  };
+
+  const deriveVisibleRelationships = () => {
+    const base = state.mode === "curated"
+      ? curatedRelationships()
+      : state.projection.relationships;
+    const admitted = base.filter(passesNonFocusFilters);
+    const focusedIds = focusedRelationshipIds(admitted);
+    return admitted.filter(
+      (relationship) => !focusedIds || focusedIds.has(relationship.relationship_id)
+    ).sort(
+      (left, right) => stableCompare(left.relationship_id, right.relationship_id)
     );
   };
 
@@ -438,6 +578,7 @@ def render_panorama_script() -> str:
     }
     fragments.push(links);
     drawer.replaceChildren(...fragments);
+    focusDetails(drawer, `Entity details opened: ${entity.label}.`);
   };
 
   const renderCapabilityDrawer = (entity) => {
@@ -487,6 +628,7 @@ def render_panorama_script() -> str:
       makeList("Upstream roles", upstream),
       makeList("Downstream roles", downstream),
     );
+    focusDetails(drawer, `Capability details opened: ${entity.label}.`);
   };
 
   const renderRelationshipDrawer = (relationship) => {
@@ -516,16 +658,7 @@ def render_panorama_script() -> str:
     appendDetail(details, "Confidence", relationship.confidence_label);
     appendDetail(details, "Confidence inputs", relationship.confidence_rationale);
     appendDetail(details, "Limitations", relationship.limitations);
-    const premiseText = relationship.premise_assertion_ids.map((id) => {
-      const premise = state.indexes.assertionRelationships.get(id);
-      return premise ? `${id}: ${premise.text}` : id;
-    });
-    const evidenceSection = makeElement("section");
-    evidenceSection.append(makeElement("h3", "Evidence and sources"));
-    for (const evidenceId of relationship.evidence_ids) {
-      const evidence = state.indexes.evidence.get(evidenceId);
-      const source = evidence && state.indexes.sources.get(evidence.source_id);
-      if (!evidence || !source) continue;
+    const appendCitation = (container, evidence, source, premiseLink) => {
       const item = makeElement("article");
       item.append(makeElement("h4", source.document_title));
       appendDetail(item, "Publisher", source.publisher);
@@ -537,24 +670,66 @@ def render_panorama_script() -> str:
       appendDetail(item, "Evidence excerpt", evidence.bounded_excerpt);
       appendDetail(item, "Review state", evidence.review_state);
       const link = makeExternalLink("Open official source", source.url);
-      if (link) item.append(link);
-      evidenceSection.append(item);
+      if (link) {
+        if (premiseLink) link.setAttribute("data-premise-source-link", "true");
+        item.append(link);
+      }
+      container.append(item);
+    };
+    const premiseSection = makeElement("section");
+    premiseSection.append(makeElement("h3", "Inference derivation"));
+    if (!relationship.premise_assertion_ids.length) {
+      premiseSection.append(makeElement("p", "No inference premises."));
+    }
+    for (const premiseId of relationship.premise_assertion_ids) {
+      const premise = state.indexes.assertionRelationships.get(premiseId);
+      const premiseItem = makeElement("article");
+      premiseItem.setAttribute("data-premise-assertion-id", premiseId);
+      premiseItem.append(makeElement("h4", premiseId));
+      if (!premise) {
+        premiseItem.append(makeElement("p", "Premise unavailable."));
+        premiseSection.append(premiseItem);
+        continue;
+      }
+      appendDetail(premiseItem, "Premise assertion", premise.text);
+      appendDetail(premiseItem, "Assertion kind", premise.assertion_kind);
+      appendDetail(premiseItem, "Limitations", premise.limitations);
+      for (const evidenceId of new Set(premise.evidence_ids)) {
+        const evidence = state.indexes.evidence.get(evidenceId);
+        const source = evidence && state.indexes.sources.get(evidence.source_id);
+        if (evidence && source) appendCitation(premiseItem, evidence, source, true);
+      }
+      premiseSection.append(premiseItem);
+    }
+    const evidenceSection = makeElement("section");
+    evidenceSection.append(makeElement("h3", "Evidence and sources"));
+    for (const evidenceId of new Set(relationship.evidence_ids)) {
+      const evidence = state.indexes.evidence.get(evidenceId);
+      const source = evidence && state.indexes.sources.get(evidence.source_id);
+      if (!evidence || !source) continue;
+      appendCitation(evidenceSection, evidence, source, false);
     }
     drawer.replaceChildren(
       makeElement("h2", "Relationship evidence"),
       details,
-      makeList("Inference derivation", premiseText, "No inference premises."),
+      premiseSection,
       evidenceSection,
+    );
+    focusDetails(
+      drawer,
+      `Relationship evidence opened: ${sourceEntity?.label || "Unknown"} to `
+        + `${targetEntity?.label || "Unknown"}.`
     );
   };
 
   const selectEntity = (entity) => {
+    state.mode = "complete";
     state.focusEntityId = entity.entity_id;
     state.search = "";
     byId("panorama-search").value = "";
+    renderAll();
     if (entity.kind === "capability") renderCapabilityDrawer(entity);
     else renderEntityDrawer(entity);
-    renderAll();
   };
 
   const renderGraph = (relationships) => {
@@ -567,14 +742,19 @@ def render_panorama_script() -> str:
         ]
       )
     );
+    if (state.mode === "curated") {
+      state.projection.entities
+        .filter((entity) => entity.is_demand_anchor)
+        .forEach((entity) => entityIds.add(entity.entity_id));
+    }
     if (state.focusEntityId) entityIds.add(state.focusEntityId);
     const entities = [...entityIds]
       .map((id) => state.indexes.entities.get(id))
       .filter(Boolean)
       .sort((left, right) => (
         entityLayer(left) - entityLayer(right)
-        || left.label.localeCompare(right.label)
-        || left.entity_id.localeCompare(right.entity_id)
+        || stableCompare(left.label, right.label)
+        || stableCompare(left.entity_id, right.entity_id)
       ));
     const layers = new Map();
     for (const entity of entities) {
@@ -592,7 +772,8 @@ def render_panorama_script() -> str:
       });
     }
     const maxRows = Math.max(1, ...[...layers.values()].map((items) => items.length));
-    graph.setAttribute("viewBox", `0 0 1460 ${Math.max(560, maxRows * 78 + 80)}`);
+    graph.setAttribute("width", "1460");
+    graph.setAttribute("height", String(Math.max(560, maxRows * 78 + 80)));
     const marker = makeSvg("marker", {
       id: "panorama-arrow",
       markerWidth: 8,
@@ -721,9 +902,37 @@ def render_panorama_script() -> str:
       : null;
     setText(
       "panorama-status",
-      `${state.visibleRelationships.length} relationships shown`
+      `${state.mode === "curated" ? "Curated start" : "Complete V1"}: `
+        + `${state.visibleRelationships.length} relationships shown`
         + `${focus ? ` around ${focus} (${state.hopDepth} hop).` : "."}`
     );
+  };
+
+  const derivePeriodFacets = (projection) => {
+    const years = new Set();
+    for (const relationship of projection.relationships) {
+      for (const value of [
+        relationship.reporting_period_start,
+        relationship.reporting_period_end,
+        relationship.effective_from,
+        relationship.effective_to,
+      ]) {
+        const match = /^(\d{4})/.exec(value || "");
+        if (match) years.add(Number(match[1]));
+      }
+    }
+    const cutoffYear = Number(String(projection.release.evidence_cutoff).slice(0, 4));
+    years.add(cutoffYear);
+    years.add(cutoffYear + 1);
+    const items = [...years]
+      .sort((left, right) => left - right)
+      .map((year) => ({id: String(year), label: String(year)}));
+    items.push({
+      id: `${cutoffYear}-${cutoffYear + 1}`,
+      label: `${cutoffYear}–${cutoffYear + 1}`,
+    });
+    items.push({id: "unknown", label: "Unknown valid period"});
+    return items;
   };
 
   const populateSelect = (id, allLabel, items) => {
@@ -748,8 +957,8 @@ def render_panorama_script() -> str:
     );
     populateSelect(
       "time-filter",
-      "All time horizons",
-      projection.facets.time_horizon
+      "All valid periods",
+      derivePeriodFacets(projection)
     );
     populateSelect(
       "lifecycle-filter",
@@ -768,7 +977,21 @@ def render_panorama_script() -> str:
     );
   };
 
+  const setViewMode = (mode) => {
+    state.viewMode = mode;
+    byId("graph-panel").hidden = mode === "table";
+    byId("table-panel").hidden = mode === "graph";
+    for (const [id, value] of [
+      ["graph-view", "graph"],
+      ["table-view", "table"],
+      ["both-view", "both"],
+    ]) {
+      byId(id).setAttribute("aria-pressed", String(mode === value));
+    }
+  };
+
   const resetState = () => {
+    state.mode = "complete";
     state.focusEntityId = null;
     state.hopDepth = 2;
     state.search = "";
@@ -797,6 +1020,7 @@ def render_panorama_script() -> str:
 
   const wireControls = () => {
     byId("panorama-search").addEventListener("input", (event) => {
+      state.mode = "complete";
       state.search = event.target.value;
       renderAll();
     });
@@ -810,34 +1034,96 @@ def render_panorama_script() -> str:
     };
     for (const [id, field] of Object.entries(bindings)) {
       byId(id).addEventListener("change", (event) => {
+        state.mode = "complete";
         state.filters[field] = event.target.value;
         renderAll();
       });
     }
     byId("disclosed-only").addEventListener("change", (event) => {
+      state.mode = "complete";
       state.filters.disclosedOnly = Boolean(event.target.checked);
       renderAll();
     });
     byId("hop-depth").addEventListener("change", (event) => {
+      state.mode = "complete";
       state.hopDepth = event.target.value === "1" ? 1 : 2;
       renderAll();
     });
+    byId("graph-view").addEventListener("click", () => setViewMode("graph"));
+    byId("table-view").addEventListener("click", () => setViewMode("table"));
+    byId("both-view").addEventListener("click", () => setViewMode("both"));
     byId("reset-panorama").addEventListener("click", resetState);
   };
 
   const responseByteLength = (text) => new TextEncoder().encode(text).byteLength;
 
-  const loadProjection = async () => {
-    const response = await fetch(API_PATH, {headers: {Accept: "application/json"}});
-    if (!response.ok) throw new Error("The panorama service returned an error.");
-    const declaredLength = Number(response.headers.get("content-length") || "0");
-    if (declaredLength > MAX_RESPONSE_BYTES) {
+  const readBoundedBody = async (response) => {
+    const rawDeclaredLength = response.headers.get("content-length");
+    if (rawDeclaredLength !== null && !/^\d+$/.test(rawDeclaredLength)) {
+      throw new Error("The panorama response length is invalid.");
+    }
+    const declaredLength = rawDeclaredLength === null
+      ? null
+      : Number(rawDeclaredLength);
+    if (declaredLength !== null && declaredLength > MAX_RESPONSE_BYTES) {
+      if (response.body && typeof response.body.cancel === "function") {
+        try {
+          await response.body.cancel();
+        } catch (_error) {
+          // Preserve the user-facing size error if stream cancellation itself fails.
+        }
+      }
       throw new Error("The panorama response is larger than 2 MiB.");
+    }
+
+    if (response.body && typeof response.body.getReader === "function") {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8", {fatal: true});
+      const chunks = [];
+      let receivedBytes = 0;
+      let cancelled = false;
+      try {
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          receivedBytes += value.byteLength;
+          if (receivedBytes > MAX_RESPONSE_BYTES) {
+            cancelled = true;
+            try {
+              await reader.cancel();
+            } catch (_error) {
+              // Preserve the user-facing size error if stream cancellation itself fails.
+            }
+            throw new Error("The panorama response is larger than 2 MiB.");
+          }
+          chunks.push(decoder.decode(value, {stream: true}));
+        }
+        chunks.push(decoder.decode());
+        return chunks.join("");
+      } catch (error) {
+        if (!cancelled && typeof reader.cancel === "function") {
+          await reader.cancel();
+        }
+        throw error;
+      }
+    }
+
+    if (declaredLength === null) {
+      throw new Error(
+        "The panorama response cannot be bounded because bounded streaming is unavailable."
+      );
     }
     const text = await response.text();
     if (responseByteLength(text) > MAX_RESPONSE_BYTES) {
       throw new Error("The panorama response is larger than 2 MiB.");
     }
+    return text;
+  };
+
+  const loadProjection = async () => {
+    const response = await fetch(API_PATH, {headers: {Accept: "application/json"}});
+    if (!response.ok) throw new Error("The panorama service returned an error.");
+    const text = await readBoundedBody(response);
     const projection = JSON.parse(text);
     if (!projection || projection.schema_version !== "ai_industry_panorama_public.v1") {
       throw new Error("The panorama response format is not supported.");
@@ -853,6 +1139,7 @@ def render_panorama_script() -> str:
       renderMetadata(projection);
       populateControls(projection);
       wireControls();
+      setViewMode("both");
       renderAll();
       byId("panorama-error").hidden = true;
     } catch (error) {
