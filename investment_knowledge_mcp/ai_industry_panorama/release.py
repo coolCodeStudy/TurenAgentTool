@@ -214,6 +214,53 @@ _CONFIDENCE_VALUES = {
             "T3 official program",
         }
     ),
+    "explicit": frozenset(
+        {
+            "CoWoS/HBM composition",
+            "amount, period, and primary business purpose",
+            "asset classes and period",
+            "category share",
+            "cost categories and shared infrastructure role",
+            "derived",
+            "facility category and future-capacity role",
+            "issuer capability description",
+            "named amount and calendar period",
+            "named amount and period",
+            "named chip families and capability",
+            "named company, site, and delivery milestone",
+            "named contractor within stated activity group",
+            "named counterpart, approximate capacity, platform, and start year",
+            "named counterpart, upper-bound capacity, and platform",
+            "named foundry and activity",
+            "named packaging technology",
+            "named parties and product scope",
+            "named parties and role",
+            "named parties, Google Cloud context, technology, and expected start",
+            "named parties, capacity, project, and geography",
+            "named parties, co-development, and design scope",
+            "named partner and hardware family",
+            "named partner and product class",
+            "named party, technology, and expected start",
+            "named platform, parties, and development roles",
+            "named platform, site, and partial operating status",
+            "named product generation and lifecycle",
+            "named range and period",
+            "named site and operating milestone",
+            "named site, vendor, and product family",
+            "named supplier and component class",
+            "named variants, function, and variant lifecycles",
+            "named vendor and hardware class",
+            "partial operating status and workload type",
+            "power and cooling scope",
+            "product classes and use",
+            "scope and bottleneck statements",
+            "scope bullets",
+            "site online",
+            "technology portfolio and development scope",
+            "technology, scale class, and expected start year",
+            "title-level product and sample-shipment claim",
+        }
+    ),
     "corr": frozenset({"single primary", "two non-bilateral premises"}),
     "time": frozenset(
         {
@@ -308,27 +355,65 @@ _SENSITIVE_QUERY_NAMES = frozenset(
         "token",
     }
 )
-_RESEARCH_LINKS_BY_ENTITY = {
-    "entity:ENT-ORG-ALPHABET": frozenset({"US.GOOGL"}),
-    "entity:ENT-ORG-MICROSOFT": frozenset({"US.MSFT"}),
-    "entity:ENT-ORG-META": frozenset({"US.META"}),
-    "entity:ENT-ORG-AMAZON": frozenset({"US.AMZN"}),
-    "entity:ENT-ORG-NVIDIA": frozenset({"US.NVDA"}),
-    "entity:ENT-ORG-HONHAI": frozenset({"TW.2317"}),
-    "entity:ENT-ORG-WISTRON": frozenset({"TW.3231"}),
-    "entity:ENT-ORG-FABRINET": frozenset({"US.FN"}),
-    "entity:ENT-ORG-TSMC": frozenset({"US.TSM"}),
-    "entity:ENT-ORG-SAMSUNG": frozenset({"KR.005930"}),
-    "entity:ENT-ORG-SKHYNIX": frozenset({"KR.000660"}),
-    "entity:ENT-ORG-MICRON": frozenset({"US.MU"}),
-    "entity:ENT-ORG-ASML": frozenset({"US.ASML"}),
-    "entity:ENT-ORG-BROADCOM": frozenset({"US.AVGO"}),
-    "entity:ENT-ORG-CORNING": frozenset({"US.GLW"}),
-    "entity:ENT-ORG-ORACLE": frozenset({"US.ORCL"}),
-    "entity:ENT-ORG-SCHNEIDER": frozenset({"FR.SU"}),
-    "entity:ENT-ORG-SOFTBANK": frozenset({"JP.9984"}),
+_SOURCE_AUTHORITY_CLASSIFICATION = {
+    "source:SRC-001": "T2 issuer IR",
+    "source:SRC-002": "T2 issuer IR",
+    "source:SRC-003": "T2 issuer IR",
+    "source:SRC-004": "T1 regulator filing",
+    "source:SRC-005": "T2 issuer IR",
+    "source:SRC-006": "T2 supplier announcement",
+    "source:SRC-007": "T2 company announcement",
+    "source:SRC-008": "T2 company announcement",
+    "source:SRC-009": "T2 company announcement",
+    "source:SRC-010": "T1 regulator filing",
+    "source:SRC-011": "T2 issuer annual report",
+    "source:SRC-012": "T2 issuer newsroom",
+    "source:SRC-013": "T2 issuer newsroom",
+    "source:SRC-014": "T2 issuer annual report",
+    "source:SRC-015": "T2 company announcement",
+    "source:SRC-016": "T3 official program",
 }
-_RESEARCH_LINK_KINDS = frozenset({"research", "valuation"})
+_COMBINED_AUTHORITY_BY_SOURCE_SET = {
+    frozenset(
+        {"source:SRC-003", "source:SRC-016"}
+    ): "T2 issuer plus T3 official-program premises",
+}
+_PUBLIC_STOCK_IDS_BY_LINK_KIND = {
+    "research": {
+        "entity:ENT-ORG-ALPHABET": frozenset({"US.GOOGL"}),
+        "entity:ENT-ORG-MICROSOFT": frozenset({"US.MSFT"}),
+        "entity:ENT-ORG-META": frozenset({"US.META"}),
+        "entity:ENT-ORG-AMAZON": frozenset({"US.AMZN"}),
+        "entity:ENT-ORG-NVIDIA": frozenset({"US.NVDA"}),
+        "entity:ENT-ORG-FABRINET": frozenset({"US.FN"}),
+        "entity:ENT-ORG-TSMC": frozenset({"US.TSM"}),
+        "entity:ENT-ORG-MICRON": frozenset({"US.MU"}),
+        "entity:ENT-ORG-ASML": frozenset({"US.ASML"}),
+        "entity:ENT-ORG-BROADCOM": frozenset({"US.AVGO"}),
+        "entity:ENT-ORG-CORNING": frozenset({"US.GLW"}),
+        "entity:ENT-ORG-ORACLE": frozenset({"US.ORCL"}),
+    },
+    "valuation": {
+        "entity:ENT-ORG-ALPHABET": frozenset({"US.GOOGL"}),
+        "entity:ENT-ORG-MICROSOFT": frozenset({"US.MSFT"}),
+        "entity:ENT-ORG-META": frozenset({"US.META"}),
+        "entity:ENT-ORG-AMAZON": frozenset({"US.AMZN"}),
+        "entity:ENT-ORG-NVIDIA": frozenset({"US.NVDA"}),
+        "entity:ENT-ORG-FABRINET": frozenset({"US.FN"}),
+        "entity:ENT-ORG-TSMC": frozenset({"US.TSM"}),
+        "entity:ENT-ORG-SAMSUNG": frozenset({"KR.005930"}),
+        "entity:ENT-ORG-SKHYNIX": frozenset({"KR.000660"}),
+        "entity:ENT-ORG-MICRON": frozenset({"US.MU"}),
+        "entity:ENT-ORG-ASML": frozenset({"US.ASML"}),
+        "entity:ENT-ORG-BROADCOM": frozenset({"US.AVGO"}),
+        "entity:ENT-ORG-CORNING": frozenset({"US.GLW"}),
+        "entity:ENT-ORG-ORACLE": frozenset({"US.ORCL"}),
+    },
+}
+_PUBLIC_STOCK_MARKETS_BY_LINK_KIND = {
+    "research": frozenset({"US", "HK"}),
+    "valuation": frozenset({"US", "HK", "KR"}),
+}
 _T = TypeVar("_T")
 
 
@@ -573,6 +658,11 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     relationship_ids = {item.relationship_id for item in release.relationships}
     assertion_ids = {item.assertion_id for item in release.assertions}
 
+    if source_ids != set(_SOURCE_AUTHORITY_CLASSIFICATION):
+        raise PanoramaReleaseError(
+            "source authority classification is incomplete for reviewed V1 sources"
+        )
+
     _prefixes(release.taxonomy, "taxonomy_id", _PREFIXES["taxonomy"])
     _prefixes(release.geographies, "geography_id", _PREFIXES["geography"])
     _prefixes(release.entities, "entity_id", _PREFIXES["entity"])
@@ -622,6 +712,12 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     for item in release.sources:
         if item.tier not in _SOURCE_TIERS:
             raise PanoramaReleaseError("unsupported source tier")
+        if not _SOURCE_AUTHORITY_CLASSIFICATION[item.source_id].startswith(
+            f"{item.tier} "
+        ):
+            raise PanoramaReleaseError(
+                "source authority classification contradicts source tier"
+            )
         parsed = urlparse(item.url)
         if parsed.scheme != "https" or not parsed.netloc:
             raise PanoramaReleaseError("source URL must use HTTPS")
@@ -785,7 +881,6 @@ def _validate_confidence(
     referenced.extend(
         assertion_by_id[premise_id]
         for premise_id in item.premise_assertion_ids
-        if premise_id in assertion_by_id
     )
     referenced_evidence = [
         evidence_by_id[evidence_id]
@@ -800,21 +895,39 @@ def _validate_confidence(
         raise PanoramaReleaseError(
             "confidence requires independently reviewed referenced evidence"
         )
-    source_tiers = {
-        source_by_id[evidence.source_id].tier
-        for evidence in referenced_evidence
-        if evidence.source_id in source_by_id
-    }
-    authority_tiers = set(re.findall(r"T[123]", inputs["auth"]))
-    if source_tiers != authority_tiers:
+    source_ids = frozenset(evidence.source_id for evidence in referenced_evidence)
+    if not source_ids <= set(source_by_id):
         raise PanoramaReleaseError(
-            "confidence authority contradicts referenced source tiers"
+            "confidence source set contains an unresolved source"
+        )
+    source_authorities = {
+        _SOURCE_AUTHORITY_CLASSIFICATION[source_id]
+        for source_id in source_ids
+    }
+    if item.assertion_kind == "inferred_exposure":
+        expected_authority = _COMBINED_AUTHORITY_BY_SOURCE_SET.get(source_ids)
+    else:
+        expected_authority = (
+            next(iter(source_authorities))
+            if len(source_authorities) == 1
+            else None
+        )
+    if inputs["auth"] != expected_authority:
+        raise PanoramaReleaseError(
+            "confidence authority contradicts resolved source classification"
+        )
+    expected_corroboration = {
+        1: "single primary",
+        2: "two non-bilateral premises",
+    }.get(len(source_ids))
+    if inputs["corr"] != expected_corroboration:
+        raise PanoramaReleaseError(
+            "confidence corroboration contradicts resolved unique source count"
         )
 
     if item.assertion_kind == "inferred_exposure":
         inference_shape = (
             inputs["explicit"] == "derived"
-            and inputs["corr"] == "two non-bilateral premises"
             and inputs["extraction"] == "manual derivation unreviewed"
             and bool(item.premise_assertion_ids)
         )
@@ -822,7 +935,6 @@ def _validate_confidence(
     else:
         primary_shape = (
             inputs["explicit"] != "derived"
-            and inputs["corr"] == "single primary"
             and inputs["extraction"] == "manual unreviewed"
             and not item.premise_assertion_ids
         )
@@ -936,7 +1048,14 @@ def _validate_research_link(
     entity: PanoramaEntity,
     link: PanoramaResearchLink,
 ) -> None:
-    admitted_stock_ids = _RESEARCH_LINKS_BY_ENTITY.get(entity.entity_id)
+    admitted_by_entity = _PUBLIC_STOCK_IDS_BY_LINK_KIND.get(link.kind)
+    admitted_stock_ids = (
+        admitted_by_entity.get(entity.entity_id)
+        if admitted_by_entity is not None
+        else None
+    )
+    market = link.canonical_stock_id.partition(".")[0]
+    admitted_markets = _PUBLIC_STOCK_MARKETS_BY_LINK_KIND.get(link.kind)
     executing_hint = link.command_hint.lower().startswith(
         (
             "execute",
@@ -951,7 +1070,8 @@ def _validate_research_link(
     if (
         entity.kind != "organization"
         or admitted_stock_ids is None
-        or link.kind not in _RESEARCH_LINK_KINDS
+        or admitted_markets is None
+        or market not in admitted_markets
         or not _STOCK_ID_RE.fullmatch(link.canonical_stock_id)
         or link.canonical_stock_id not in admitted_stock_ids
         or link.internal_path != "/command"

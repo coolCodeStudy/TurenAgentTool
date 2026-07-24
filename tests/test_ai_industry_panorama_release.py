@@ -63,6 +63,30 @@ def plain_record(value: object) -> object:
     return value
 
 
+def replace_confidence_input(
+    assertion: dict[str, object],
+    key: str,
+    value: str,
+) -> None:
+    confidence = dict(assertion["confidence_inputs"])
+    confidence[key] = value
+    assertion["confidence_inputs"] = [
+        [name, confidence[name]] for name in sorted(confidence)
+    ]
+    assertion["confidence_rationale"] = "; ".join(
+        f"{name}={confidence[name]}"
+        for name in (
+            "auth",
+            "explicit",
+            "corr",
+            "time",
+            "geo",
+            "extraction",
+            "conflict",
+        )
+    )
+
+
 class PanoramaReleaseTests(unittest.TestCase):
     def test_canonical_release_has_reviewed_manifest_counts(self) -> None:
         release = load_release()
@@ -280,6 +304,56 @@ class PanoramaReleaseTests(unittest.TestCase):
                     "confidence",
                 ):
                     validate_release(mutation)
+
+    def test_confidence_authority_is_exactly_derived_from_source_role(self) -> None:
+        payload = canonical_payload()
+        replace_confidence_input(
+            payload["assertions"][0],
+            "auth",
+            "T2 company announcement",
+        )
+
+        with self.assertRaisesRegex(PanoramaReleaseError, "confidence authority"):
+            validate_release(payload)
+
+    def test_single_primary_requires_exactly_one_resolved_source(self) -> None:
+        payload = canonical_payload()
+        payload["assertions"][0]["evidence_ids"].append("evidence:EVD-AIP-0005")
+
+        with self.assertRaisesRegex(
+            PanoramaReleaseError,
+            "confidence corroboration",
+        ):
+            validate_release(payload)
+
+    def test_confidence_explicitness_is_limited_to_reviewed_categories(self) -> None:
+        payload = canonical_payload()
+        replace_confidence_input(
+            payload["assertions"][0],
+            "explicit",
+            "arbitrary source prose",
+        )
+
+        with self.assertRaisesRegex(
+            PanoramaReleaseError,
+            "confidence explicit",
+        ):
+            validate_release(payload)
+
+    def test_inference_confidence_requires_exact_premise_source_set(self) -> None:
+        payload = canonical_payload()
+        inferred = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_kind"] == "inferred_exposure"
+        )
+        inferred["premise_assertion_ids"] = [
+            "assertion:AST-AIP-0014",
+            "assertion:AST-AIP-0045",
+        ]
+
+        with self.assertRaisesRegex(PanoramaReleaseError, "confidence authority"):
+            validate_release(payload)
 
     def test_published_assertion_requires_reviewed_evidence(self) -> None:
         payload = canonical_payload()
@@ -640,6 +714,84 @@ class PanoramaReleaseTests(unittest.TestCase):
             with self.subTest(label=label):
                 with self.assertRaisesRegex(PanoramaReleaseError, "research link"):
                     validate_release(mutation)
+
+    def test_valuation_links_admit_only_supported_market_specific_ids(self) -> None:
+        valid_links = (
+            (
+                "entity:ENT-ORG-NVIDIA",
+                "US.NVDA",
+            ),
+            (
+                "entity:ENT-ORG-SKHYNIX",
+                "KR.000660",
+            ),
+        )
+        for entity_id, stock_id in valid_links:
+            with self.subTest(valid=stock_id):
+                payload = canonical_payload()
+                entity = next(
+                    item
+                    for item in payload["entities"]
+                    if item["entity_id"] == entity_id
+                )
+                entity["research_links"] = [
+                    {
+                        "kind": "valuation",
+                        "label": f"{entity['label']} valuation workspace",
+                        "canonical_stock_id": stock_id,
+                        "internal_path": "/command",
+                        "command_hint": "Open the workspace and formulate a valuation question.",
+                    }
+                ]
+                self.assertEqual("published", validate_release(payload).review_state)
+
+        unsupported_links = (
+            ("entity:ENT-ORG-HONHAI", "TW.2317"),
+            ("entity:ENT-ORG-SCHNEIDER", "FR.SU"),
+            ("entity:ENT-ORG-SOFTBANK", "JP.9984"),
+        )
+        for entity_id, stock_id in unsupported_links:
+            with self.subTest(unsupported=stock_id):
+                payload = canonical_payload()
+                entity = next(
+                    item
+                    for item in payload["entities"]
+                    if item["entity_id"] == entity_id
+                )
+                entity["research_links"] = [
+                    {
+                        "kind": "valuation",
+                        "label": f"{entity['label']} valuation workspace",
+                        "canonical_stock_id": stock_id,
+                        "internal_path": "/command",
+                        "command_hint": "Open the workspace and formulate a valuation question.",
+                    }
+                ]
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    "research link",
+                ):
+                    validate_release(payload)
+
+    def test_research_links_use_research_specific_market_boundary(self) -> None:
+        payload = canonical_payload()
+        sk_hynix = next(
+            item
+            for item in payload["entities"]
+            if item["entity_id"] == "entity:ENT-ORG-SKHYNIX"
+        )
+        sk_hynix["research_links"] = [
+            {
+                "kind": "research",
+                "label": "SK hynix research workspace",
+                "canonical_stock_id": "KR.000660",
+                "internal_path": "/command",
+                "command_hint": "Open the workspace and formulate a stock question.",
+            }
+        ]
+
+        with self.assertRaisesRegex(PanoramaReleaseError, "research link"):
+            validate_release(payload)
 
     def test_domain_has_no_forbidden_imports_or_calls(self) -> None:
         forbidden = {
