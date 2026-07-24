@@ -481,6 +481,16 @@ E2E_BASE_URL=http://47.84.190.191:8010 npm run test:e2e:cloud -- --project=deskt
 
 The Quality & Acceptance Lead captures desktop/mobile screenshots, API response, safety scan, exact ref/deploy event, and usefulness findings. Failure routes back to Development and the same Acceptance Queue item becomes `needs_retest`; pass routes to the Coordinator Return Gate and then `waiting_for_user_acceptance`.
 
+## Implementation Progress
+
+| Task | Status | Accepted evidence | Remaining gate |
+|---|---|---|---|
+| 1. Release domain and reviewed V1 artifact | accepted | Head `9091744`; Spec `PASS`; Quality `APPROVED`; Source Reviewer approved the exact `SRC-006` reconciliation; Coordinator verified 97/97 focused-plus-preserved tests | None |
+| 2. Public page, script, filters, and drawers | in_progress | Dispatch `DQ-2026-07-24-004` | Development RED/GREEN, Coordinator verification, independent spec and quality review |
+| 3. Gateway routes and shared navigation | not_started | — | Task 2 acceptance |
+| 4. Deploy classification and release verification | not_started | — | Task 3 acceptance |
+| 5. Cloud journey, release evidence, and state reconciliation | not_started | — | Task 4 acceptance |
+
 ## PRD Acceptance Traceability
 
 | # | PRD acceptance criterion | Implementation | Verification |

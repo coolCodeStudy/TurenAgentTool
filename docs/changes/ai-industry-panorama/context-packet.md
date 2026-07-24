@@ -9,24 +9,24 @@
 - Technical plan: `docs/techplans/ai-industry-panorama-v1.md` is independently accepted and `ready`; discovery rationale remains in `docs/techplans/ai-industry-panorama-feasibility.md`.
 - Feature Registry row: `AI Industry Panorama`
 - Acceptance Queue row: `AT-2026-07-24-001` is `pending`; user acceptance remains `pending`.
-- Delivery Queue rows: Product readiness `DQ-2026-07-24-001` and technical planning/source review `DQ-2026-07-24-002` are closed; Development Task 1 is queued as `DQ-2026-07-24-003`.
+- Delivery Queue rows: Product readiness `DQ-2026-07-24-001`, technical planning/source review `DQ-2026-07-24-002`, and Development Task 1 `DQ-2026-07-24-003` are closed; Development Task 2 is active as `DQ-2026-07-24-004`.
 - Current authoritative branch/ref: `origin/main@82f742526f81b1a05b22677624cdb8c230dde46e`
-- Related coordinator branch/ref: `origin/codex/ai-industry-panorama-discovery@4069321` before this state reconciliation commit.
+- Related coordinator branch/ref: `codex/ai-industry-panorama-discovery@9091744` before this Task 1 state reconciliation commit.
 - Current deployed ref or deploy event: None; discovery documents only.
 - User-facing surface: Planned public read-only `/ai-industry-panorama` page, `/api/ai-industry-panorama` API, and `/assets/ai-industry-panorama.js` asset on existing `weekly-review-web`.
 - Quality route: `L3`
 - Route rationale: V1 is a new cloud-served browser product with a versioned evidence graph, external primary-source provenance, inference boundaries, geography/time filters, and a real-surface user journey. It requires independent deployed-surface acceptance.
 - Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Pending implementation candidate. Route is `L3`; ref, exact route, deploy event, evidence bundle, and exceptions must be filled before acceptance dispatch.
-- Current state: PRD and exact technical plan are `ready`; implementation is `not_started`; user acceptance is `pending`. Plan Reviewer `/root/panorama_plan_review` accepted all 12 PRD criteria and the one-pass plan at `f14136b`. Source Reviewer `/root/panorama_source_review` accepted all 48 rows and all six forward paths at manifest `4069321`; the manifest is now `reviewed_for_implementation` but not published.
+- Current state: PRD is `ready`, technical implementation is `in_progress`, Task 1 is accepted at `9091744`, and user acceptance is `pending`. Plan Reviewer `/root/panorama_plan_review` accepted all 12 PRD criteria and the one-pass plan at `f14136b`. Task 1 Spec Reviewer returned `PASS`, Quality Reviewer returned `APPROVED`, Source Reviewer approved the exact `SRC-006` manifest reconciliation, and the Coordinator independently verified 97/97 focused-plus-preserved tests. The reviewed release remains unpublished.
 - Known blockers: No credential, paid-source, budget, product, plan, or source-review blocker for V1. Deployment and acceptance gates apply only after a verified implementation candidate exists.
-- Active child threads or role sessions: Product, technical-plan, curator, and source-review returns are closed and accepted. Development Task 1 is the next bounded dispatch.
+- Active child threads or role sessions: Product, technical-plan, curator, source-review, and Task 1 returns are closed and accepted. Development Task 2 is the next bounded dispatch.
 - Watch contract:
-  - Watched item: Development Task 1 release-domain commit and its red/green verification.
+  - Watched item: Development Task 2 public-page/browser-script commit and its red/green verification.
   - Wake event or cadence: This Feature Coordinator actively waits on the bounded Development agent and applies the Return Gate immediately on return.
-  - Expected return artifact: One Task 1 commit, focused tests, reviewed-manifest transcription evidence, no later-task edits, and a clean worktree.
-  - Coordinator action on wake: Inspect and verify Task 1; accept and route Task 2, or reject and return exact findings.
-- Next owner: Development Agent for Task 1.
-- Next handoff: `accept_and_route` using `DQ-2026-07-24-003`.
+  - Expected return artifact: One Task 2 commit, browser-script RED/GREEN evidence, shared-filter-state and hostile-input coverage, no later-task edits, and a clean worktree apart from Coordinator scratch.
+  - Coordinator action on wake: Inspect and verify Task 2; obtain independent specification and quality review; accept and route Task 3, or reject and return exact findings.
+- Next owner: Development Agent for Task 2.
+- Next handoff: `accept_and_route` using `DQ-2026-07-24-004`.
 - Deploy needed: Not yet; deployment becomes required after a verified browser release candidate exists.
 - Deploy decision: `not_required` before implementation because no runtime code or cloud surface has changed yet.
 - Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.
