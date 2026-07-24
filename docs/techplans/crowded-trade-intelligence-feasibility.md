@@ -471,11 +471,10 @@ No service, database table, dependency, social scraper, premium vendor, credenti
 
 ### 11.2 Remaining release gates
 
-1. Push and integrate the verified branch.
-2. Classify and deploy the command surface through the shared release path.
-3. Verify the deployed action catalog, preview, execution, redaction, and Futu entitlement behavior.
-4. Complete independent acceptance item `AT-2026-07-24-001`.
-5. Keep user acceptance pending until the Owner explicitly accepts the deployed surface.
+1. Integration, serialized deployment, public/tokenless checks, approved-session class-share preview, and fail-closed single-symbol execution are complete at `main@61ee36dca794ce7996e84644e0298aecd381aace`, workflow `30060363722` attempt 2, event `1784858995286`.
+2. Independent degraded-mode acceptance passed. `AT-2026-07-24-001` remains `blocked/major` for full live-source US/HK behavior.
+3. The accountable data/licence operator must complete the approval register and confirm deployed quote entitlements. Only then enable the runtime gate and rerun the same acceptance item; no code redeploy is required merely for the current approval blocker.
+4. Keep user acceptance pending until the Owner explicitly accepts the deployed surface.
 
 ### 11.3 Architecture audit disposition
 
