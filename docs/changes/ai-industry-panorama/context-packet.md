@@ -1,0 +1,35 @@
+# Coordinator Context Packet: AI Industry Panorama
+
+- Feature: AI Industry Panorama
+- Coordinator thread/session: Product Discovery Coordinator task delegated from `019f3821-3e6c-79b3-96b3-a5e91aaaa184`, now continuing as the Feature Coordinator
+- Owner intent: Deliver the approved bounded V1 through implementation, deployment, independent acceptance, and readiness for explicit Owner acceptance without returning routine coordination to the Global Project Manager.
+- Operating model source: `docs/product/Agent-Operating-Model.md`
+- Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
+- Product doc / PRD: `docs/product/PRD-AI-Industry-Panorama.md`
+- Technical plan: Discovery feasibility is in `docs/techplans/ai-industry-panorama-feasibility.md`; an exact implementation plan is still required before product-code changes.
+- Feature Registry row: `AI Industry Panorama`
+- Acceptance Queue row: Not created yet. Create one active release-candidate row before independent acceptance; user acceptance remains `pending`.
+- Delivery Queue rows: Product readiness dispatch `DQ-2026-07-24-001` is closed after accepted return `117a9ae`; exact technical planning is the next dispatch.
+- Current authoritative branch/ref: `origin/main@82f742526f81b1a05b22677624cdb8c230dde46e`
+- Related coordinator branch/ref: `origin/codex/ai-industry-panorama-discovery@d0816ff4728818a10c41d8e11344478ed3f9719c`
+- Current deployed ref or deploy event: None; discovery documents only.
+- User-facing surface: Planned read-only cloud browser surface on the existing user-facing web service. The exact route and service target must be locked by the implementation plan.
+- Quality route: `L3`
+- Route rationale: V1 is a new cloud-served browser product with a versioned evidence graph, external primary-source provenance, inference boundaries, geography/time filters, and a real-surface user journey. It requires independent deployed-surface acceptance.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Pending implementation candidate. Route is `L3`; ref, exact route, deploy event, evidence bundle, and exceptions must be filled before acceptance dispatch.
+- Current state: Discovery PRD and feasibility note are committed and pushed. On 2026-07-24 the Owner instructed this Feature Coordinator to continue the recommended bounded V1 through user acceptance. Product return `117a9ae` was inspected and accepted: the PRD is `ready`, the feasibility note remains discovery-only, implementation is `not_started`, and user acceptance remains `pending`.
+- Known blockers: No credential, paid-source, budget, or product blocker for the recommended V1. Exact persistence, route, module, curated-release ownership, and verification commands remain technical-planning decisions.
+- Active child threads or role sessions: Product readiness agent `/root/panorama_product_ready` returned and is closed. Exact technical planning is ready to dispatch.
+- Watch contract:
+  - Watched item: Exact technical implementation plan for the approved bounded V1.
+  - Wake event or cadence: This Feature Coordinator will actively wait on the dispatched Technical Planning / Development Agent and apply the Return Gate immediately when it returns.
+  - Expected return artifact: One exact implementation plan with persistence, curated-release ownership, modules, routes, tests, L3 evidence, deploy ownership, and PRD traceability; commit/ref and verification evidence.
+  - Coordinator action on wake: Inspect the plan against every PRD criterion, accept or reject the return, update delivery state, and dispatch implementation only after plan acceptance.
+- Next owner: Technical Planning / Development Agent.
+- Next handoff: `accept_and_route`: Product return `117a9ae` is accepted; dispatch one exact implementation plan before product-code changes.
+- Deploy needed: No for the Product readiness return; deployment will be required for the later browser release candidate.
+- Deploy decision: `not_required` for this Product-only phase because no runtime code or cloud surface changes.
+- Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.
+- User decision needed: None before technical planning. Explicit final Owner acceptance remains required after independent acceptance passes.
+- Completion gate: Reach `waiting_for_user_acceptance` only after ready PRD and technical plan, verified implementation, deployed cloud surface, passed L3 independent acceptance, reconciled Registry/Acceptance/Delivery state, and role-learning review.
+- Role learning check: Pending completion evidence; record only reusable lessons that pass `docs/lesson-capture-protocol.md`.
