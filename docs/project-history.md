@@ -28,6 +28,7 @@ It is intentionally not a day-by-day log.
 - Portfolio display and analysis were adjusted for multi-currency holdings: HKD and USD should not be naively summed when FX conversion is unavailable.
 - The product direction shifted away from daily long reports toward lower-friction portfolio review, weekly review, account snapshots, cash-flow adjustment, and knowledge-assisted interpretation.
 - Account snapshots and trade records are the intended foundation for stricter monthly/weekly return attribution.
+- Crowded Trade Intelligence V1 was integrated and deployed on 2026-07-24 as a direction-specific, provenance-first research aid. Its fail-closed cloud mode passed independent acceptance; live US/HK positioning remains disabled until the source approval register and deployed entitlements are complete, while KR/CN remain evidence-only.
 
 ## Research Pipeline
 
@@ -35,6 +36,7 @@ It is intentionally not a day-by-day log.
 - Cloud research worker execution became the default path, with execution metadata such as `execution_location`, `worker`, artifact flags, warnings, token usage, and import status visible in job lists.
 - Task 2 was validated with a real cloud research sample: ASML US completed queueing, claiming, source expansion, draft, audit/review, artifact writeback, and import.
 - Task 3 changed default stock display to Level 1 decision cards while keeping full evidence and artifacts available through explicit detail/verbose paths.
+- AI Industry Panorama V1 was deployed on 2026-07-24 at exact `main@acade24a` as a public, read-only, versioned evidence graph with six demand anchors, 48 reviewed relationships, 16 primary sources, explicit fact/inference boundaries, and desktop/mobile drill-down. Serialized deploy event `1784874293588` targeted only `weekly-review-web`; independent L3 acceptance passed and explicit Owner acceptance remains pending.
 
 ## Delivery System
 

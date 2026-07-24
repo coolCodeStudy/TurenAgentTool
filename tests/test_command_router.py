@@ -7,6 +7,83 @@ from unittest import mock
 from investment_knowledge_mcp import command_router
 
 
+class CrowdingCommandTests(unittest.TestCase):
+    def test_single_symbol_crowding_is_a_read_only_evidence_query(self) -> None:
+        assessment = object()
+        with (
+            mock.patch.object(
+                command_router,
+                "investigate_symbol_crowding",
+                return_value=assessment,
+            ) as investigate,
+            mock.patch.object(
+                command_router,
+                "render_crowding_assessment",
+                return_value="US.NVDA evidence report",
+            ),
+        ):
+            result = command_router.handle_command("拥挤度 US.NVDA")
+
+        self.assertTrue(result.ok)
+        self.assertIn("US.NVDA", result.message)
+        investigate.assert_called_once_with("NVDA", "US")
+        self.assertTrue(command_router.is_query_command("拥挤度 US.NVDA"))
+        self.assertTrue(command_router.is_query_command("crowding NVDA US"))
+        self.assertTrue(command_router.is_query_command("crowding US.BRK.B"))
+        self.assertFalse(command_router.is_query_command("拥挤度 NVDA"))
+
+    def test_invalid_or_unsupported_single_symbol_is_rejected_before_fetch(self) -> None:
+        with mock.patch.object(command_router, "investigate_symbol_crowding") as investigate:
+            unqualified = command_router.handle_command("拥挤度 NVDA")
+            unsupported = command_router.handle_command("crowding JP.7203")
+
+        self.assertFalse(unqualified.ok)
+        self.assertFalse(unsupported.ok)
+        self.assertIn("市场限定", unqualified.message)
+        self.assertIn("US/HK/KR/CN", unsupported.message)
+        investigate.assert_not_called()
+
+    def test_portfolio_crowding_reads_positions_and_never_exposes_provider_errors(self) -> None:
+        snapshot = mock.Mock(positions=[{"code": "US.NVDA"}])
+        report = object()
+        with (
+            mock.patch.object(command_router, "get_futu_positions", return_value=snapshot),
+            mock.patch.object(
+                command_router,
+                "investigate_portfolio_crowding",
+                return_value=report,
+            ) as investigate,
+            mock.patch.object(
+                command_router,
+                "render_portfolio_crowding",
+                return_value="按市场分组；不是投资建议",
+            ),
+        ):
+            result = command_router.handle_command("持仓拥挤度")
+
+        self.assertTrue(result.ok)
+        self.assertIn("不是投资建议", result.message)
+        investigate.assert_called_once_with(snapshot.positions)
+        self.assertTrue(command_router.is_query_command("持仓拥挤度"))
+        self.assertTrue(command_router.is_query_command("portfolio crowding"))
+
+        with mock.patch.object(
+            command_router,
+            "get_futu_positions",
+            side_effect=RuntimeError("password=secret /private/path"),
+        ):
+            failed = command_router.handle_command("拥挤交易")
+        self.assertFalse(failed.ok)
+        self.assertIn("持仓暂时不可用", failed.message)
+        self.assertNotIn("secret", failed.message)
+        self.assertNotIn("/private", failed.message)
+
+    def test_help_includes_both_crowding_entry_points(self) -> None:
+        result = command_router.handle_command("help")
+        self.assertIn("持仓拥挤度", result.message)
+        self.assertIn("拥挤度 US.NVDA", result.message)
+
+
 class DailyMarketBriefHistoryCommandTests(unittest.TestCase):
     def test_date_range_normalizes_markets_and_filters_weekends(self) -> None:
         parsed = command_router._match_daily_market_history_job_command(

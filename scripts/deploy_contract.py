@@ -178,6 +178,12 @@ PATH_RULES = (
         "DingTalk HTTP adapter",
     ),
     PathRule(
+        "investment_knowledge_mcp/web_experience.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "shared Web experience shell",
+    ),
+    PathRule(
         "investment_knowledge_mcp/app_gateway.py",
         DeployMode.TARGETED_QUICK,
         ("weekly-review-web",),
@@ -281,6 +287,12 @@ PATH_RULES = (
         DeployMode.TARGETED_QUICK,
         ("dingtalk-api", "dingtalk-stream-bot", "mcp", "scheduler-host", "weekly-review-web"),
         "shared daily market history queue",
+    ),
+    PathRule(
+        "investment_knowledge_mcp/ai_industry_panorama/**",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "AI Industry Panorama public read surface",
     ),
     PathRule("investment_knowledge_mcp/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "unknown application runtime module"),
     PathRule("db/**", DeployMode.TARGETED_QUICK, APPLICATION_SERVICES, "database runtime input"),

@@ -1,0 +1,35 @@
+# Coordinator Context Packet: AI Industry Panorama
+
+- Feature: AI Industry Panorama
+- Coordinator thread/session: Product Discovery Coordinator task delegated from `019f3821-3e6c-79b3-96b3-a5e91aaaa184`, now continuing as the Feature Coordinator
+- Owner intent: Deliver the approved bounded V1 through implementation, deployment, independent acceptance, and readiness for explicit Owner acceptance without returning routine coordination to the Global Project Manager.
+- Operating model source: `docs/product/Agent-Operating-Model.md`
+- Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
+- Product doc / PRD: `docs/product/PRD-AI-Industry-Panorama.md`
+- Technical plan: `docs/techplans/ai-industry-panorama-v1.md` is implemented, deployed, and independently L3-accepted; discovery rationale remains in `docs/techplans/ai-industry-panorama-feasibility.md`.
+- Feature Registry row: `AI Industry Panorama`
+- Acceptance Queue row: `AT-2026-07-24-002` is `passed` with highest severity `note`; explicit Owner acceptance remains `pending`.
+- Delivery Queue rows: `DQ-2026-07-24-002` through `DQ-2026-07-24-010` are closed through final review, serialized deployment, and independent L3 acceptance.
+- Current authoritative branch/ref: `origin/main@acade24aae28146693dfc2e1cfa7e8ee5d8c1abd`
+- Related coordinator branch/ref: `codex/ai-industry-panorama-discovery@acade24aae28146693dfc2e1cfa7e8ee5d8c1abd`
+- Current deployed ref or deploy event: `acade24aae28146693dfc2e1cfa7e8ee5d8c1abd`; Ops install run `30072101901`; application run `30072165862`; deploy event `1784874293588`.
+- User-facing surface: Public read-only `/ai-industry-panorama` page, `/api/ai-industry-panorama` API, and `/assets/ai-industry-panorama.js` asset on `weekly-review-web`.
+- Quality route: `L3`
+- Route rationale: V1 is a new cloud-served browser product with a versioned evidence graph, external primary-source provenance, inference boundaries, geography/time filters, and a real-surface user journey. It requires independent deployed-surface acceptance.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Route `L3`; exact deployed ref `acade24aae28146693dfc2e1cfa7e8ee5d8c1abd`; final Spec `PASS`; final Quality `APPROVED`; source-semantics review `APPROVED`; 185/185 Panorama/shared-Web/classifier/workflow tests, 104/104 concurrent-main boundary tests, and local plus cloud 2/2 Chromium page/API contracts passed. Ops install run `30072101901` preceded application run `30072165862`; event `1784874293588` used `targeted_quick`, activated only `weekly-review-web`, passed page/API feature-route smoke, held healthy for 30 seconds, and did not roll back. Independent L3 evidence is `/private/tmp/ai-industry-panorama-cloud-acceptance`, including desktop/mobile screenshots and the captured API. Architecture P0=0. The DB-backed local repository smoke remains environment-limited because local PostgreSQL and Docker were unavailable.
+- Current state: `waiting_for_user_acceptance`. PRD and technical plan are ready; implementation is deployed; independent L3 acceptance passed; explicit Owner acceptance remains `pending`.
+- Known blockers: None for V1 readiness. `/health` exposes a known-stale `app_release_sha`, so immutable workflow/event provenance and the served release semantic identity are the version evidence. The local DB-backed smoke limit is nonblocking for this static read-only surface and was not represented as a pass.
+- Active child threads or role sessions: Product, planning, curation, source review, development, Spec, Quality, deploy, and independent L3 acceptance are closed.
+- Watch contract:
+  - Watched item: explicit Owner acceptance of the deployed V1.
+  - Wake event or cadence: Resume when the Owner accepts or reports a concrete issue from the cloud page.
+  - Expected return artifact: explicit acceptance, or exact user-visible feedback to route through the same feature coordinator.
+  - Coordinator action on wake: Record Owner acceptance, or reopen one bounded recovery/retest loop without creating a parallel acceptance item.
+- Next owner: Owner for explicit acceptance at `http://47.84.190.191:8010/ai-industry-panorama`.
+- Next handoff: Owner explores the six demand anchors, Microsoft one/two-hop path, filters, evidence drawers, and inference/source boundaries, then explicitly accepts or reports a concrete gap.
+- Deploy needed: No; exact V1 is deployed and independently accepted.
+- Deploy decision: `not_required`.
+- Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.
+- User decision needed: Explicit final Owner acceptance only.
+- Completion gate: Reach `waiting_for_user_acceptance` only after ready PRD and technical plan, verified implementation, deployed cloud surface, passed L3 independent acceptance, reconciled Registry/Acceptance/Delivery state, and role-learning review.
+- Role learning check: Product, Engineering, Testing, and Coordinator loops were reviewed. The feature-specific PRD/runtime enum drift is now prevented by an executable contract test and recorded in the technical plan/source review; no broader cross-task lesson met the anti-overlearning threshold.

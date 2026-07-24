@@ -518,3 +518,465 @@ test.describe("Command Workbench desktop journey", () => {
   });
 
 });
+
+test.describe("AI Industry Panorama public journey", () => {
+  type PanoramaEntity = {
+    entity_id: string;
+    label: string;
+    kind: string;
+    summary: string;
+    aliases: string[];
+    capability_roles: string[];
+  };
+  type PanoramaRelationship = {
+    relationship_id: string;
+    source_entity_id: string;
+    target_entity_id: string;
+    relationship_type: string;
+    text: string;
+    assertion_kind: string;
+    lifecycle_state: string;
+    geography_roles: [string, string][];
+    reporting_period_start: string | null;
+    reporting_period_end: string | null;
+    effective_from: string | null;
+    effective_to: string | null;
+  };
+  type PanoramaProjection = {
+    entities: PanoramaEntity[];
+    relationships: PanoramaRelationship[];
+    facets: {
+      lifecycle: { id: string; label: string }[];
+      geography_role: { id: string; label: string }[];
+    };
+  };
+  type ObservedRequest = { method: string; pathname: string };
+
+  const sortedIds = (relationships: PanoramaRelationship[]) =>
+    relationships.map((item) => item.relationship_id).sort();
+
+  const relationshipIds = async (locator: import("@playwright/test").Locator) =>
+    locator.evaluateAll((items) =>
+      items
+        .map((item) => item.getAttribute("data-relationship-id"))
+        .filter((value): value is string => Boolean(value))
+        .sort(),
+    );
+
+  const expectGraphTableIds = async (
+    page: import("@playwright/test").Page,
+    expectedIds: string[],
+  ) => {
+    const graph = page.locator("#panorama-graph [data-relationship-id]");
+    const table = page.locator("#relationship-table-body [data-relationship-id]");
+    await expect.poll(() => relationshipIds(graph)).toEqual(expectedIds);
+    expect(await relationshipIds(table)).toEqual(expectedIds);
+  };
+
+  const expectNoPageOverflow = async (page: import("@playwright/test").Page) => {
+    await expect
+      .poll(() =>
+        page
+          .locator("html")
+          .evaluate((documentElement) => documentElement.scrollWidth <= documentElement.clientWidth),
+      )
+      .toBe(true);
+  };
+
+  const searchRelationships = (projection: PanoramaProjection, query: string) => {
+    const lowered = query.toLowerCase();
+    const entities = new Map(projection.entities.map((item) => [item.entity_id, item]));
+    return projection.relationships.filter((relationship) => {
+      const endpointMatch = [
+        entities.get(relationship.source_entity_id),
+        entities.get(relationship.target_entity_id),
+      ].filter(Boolean).some((entity) =>
+        [
+          entity!.label,
+          entity!.kind,
+          entity!.summary,
+          ...entity!.aliases,
+          ...entity!.capability_roles,
+        ].some((value) => value.toLowerCase().includes(lowered)),
+      );
+      return endpointMatch || [
+        relationship.relationship_type,
+        relationship.text,
+        relationship.assertion_kind,
+      ].some((value) => value.toLowerCase().includes(lowered));
+    });
+  };
+
+  const focusedRelationships = (
+    projection: PanoramaProjection,
+    entityId: string,
+    hopDepth: number,
+  ) => {
+    let frontier = new Set([entityId]);
+    const visited = new Set(frontier);
+    const admitted = new Set<string>();
+    for (let depth = 0; depth < hopDepth; depth += 1) {
+      const next = new Set<string>();
+      for (const relationship of projection.relationships) {
+        const sourceSeen = frontier.has(relationship.source_entity_id);
+        const targetSeen = frontier.has(relationship.target_entity_id);
+        if (!sourceSeen && !targetSeen) continue;
+        admitted.add(relationship.relationship_id);
+        const other = sourceSeen
+          ? relationship.target_entity_id
+          : relationship.source_entity_id;
+        if (!visited.has(other)) next.add(other);
+      }
+      next.forEach((id) => visited.add(id));
+      frontier = next;
+    }
+    return [...admitted].sort();
+  };
+
+  const overlaps2026And2027 = (relationship: PanoramaRelationship) => {
+    const usesReportingPeriod = Boolean(
+      relationship.reporting_period_start || relationship.reporting_period_end,
+    );
+    const start = usesReportingPeriod
+      ? relationship.reporting_period_start
+      : relationship.effective_from;
+    const end = usesReportingPeriod
+      ? relationship.reporting_period_end
+      : relationship.effective_to;
+    if (!start && !end) return false;
+    return (start || "0000-01-01") <= "2027-12-31"
+      && (end || "9999-12-31") >= "2026-01-01";
+  };
+
+  const observeSameOrigin = (
+    page: import("@playwright/test").Page,
+    origin: string,
+  ) => {
+    const observed: ObservedRequest[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin) {
+        observed.push({ method: request.method(), pathname: url.pathname });
+      }
+    });
+    return observed;
+  };
+
+  const expectReadOnlyPanoramaJourney = (observed: ObservedRequest[]) => {
+    expect(observed.every(({ method }) => method === "GET" || method === "HEAD")).toBe(true);
+    const panorama = observed
+      .filter(({ pathname }) => pathname.includes("ai-industry-panorama"))
+      .sort((left, right) => left.pathname.localeCompare(right.pathname));
+    expect(panorama).toEqual([
+      { method: "GET", pathname: "/ai-industry-panorama" },
+      { method: "GET", pathname: "/api/ai-industry-panorama" },
+      { method: "GET", pathname: "/assets/ai-industry-panorama.js" },
+    ]);
+  };
+
+  test("AI Industry Panorama supports exact read-only evidence traversal on fresh desktop and mobile documents", async (
+    { page, request, browser },
+    testInfo,
+  ) => {
+    const apiResponse = await request.get("/api/ai-industry-panorama");
+    expect(apiResponse.status()).toBe(200);
+    const projection = await apiResponse.json() as PanoramaProjection;
+    expect(projection.entities).toHaveLength(35);
+    expect(projection.relationships).toHaveLength(48);
+
+    const completeIds = sortedIds(projection.relationships);
+    const microsoftSearchIds = sortedIds(searchRelationships(projection, "Microsoft"));
+    const microsoftHopOneIds = focusedRelationships(
+      projection,
+      "entity:ENT-ORG-MICROSOFT",
+      1,
+    );
+    const microsoftHopTwoIds = focusedRelationships(
+      projection,
+      "entity:ENT-ORG-MICROSOFT",
+      2,
+    );
+    const unitedStatesIds = sortedIds(projection.relationships.filter((relationship) =>
+      relationship.geography_roles.some(([id]) => id === "geography:us"),
+    ));
+    const periodIds = sortedIds(projection.relationships.filter(overlaps2026And2027));
+    const committedIds = sortedIds(projection.relationships.filter(
+      (relationship) => relationship.lifecycle_state === "committed",
+    ));
+    const announcedIds = sortedIds(projection.relationships.filter(
+      (relationship) => relationship.lifecycle_state === "announced",
+    ));
+    const projectSiteIds = sortedIds(projection.relationships.filter(
+      (relationship) =>
+        relationship.geography_roles.some(([, role]) => role === "project_site"),
+    ));
+    const equipmentManufacturingIds = sortedIds(
+      projection.relationships.filter((relationship) =>
+        relationship.geography_roles.some(
+          ([, role]) => role === "equipment_component_manufacturing",
+        ),
+      ),
+    );
+    const packagingTestIds = sortedIds(projection.relationships.filter(
+      (relationship) =>
+        relationship.geography_roles.some(([, role]) => role === "packaging_test"),
+    ));
+    const unknownRoleIds = sortedIds(projection.relationships.filter(
+      (relationship) =>
+        relationship.geography_roles.some(([, role]) => role === "unknown"),
+    ));
+    const disclosedIds = sortedIds(projection.relationships.filter(
+      (relationship) => [
+        "disclosed_fact",
+        "company_guidance",
+        "management_claim",
+      ].includes(relationship.assertion_kind),
+    ));
+    expect(completeIds).toHaveLength(48);
+    expect(microsoftSearchIds).not.toEqual(completeIds);
+    expect(microsoftHopOneIds).toHaveLength(3);
+    expect(microsoftHopTwoIds).toHaveLength(11);
+    const microsoftHopTwoSet = new Set(microsoftHopTwoIds);
+    expect(microsoftHopOneIds.every((id) => microsoftHopTwoSet.has(id))).toBe(true);
+    expect(microsoftHopOneIds).not.toEqual(microsoftHopTwoIds);
+    expect(unitedStatesIds).toHaveLength(8);
+    expect(periodIds).toHaveLength(42);
+    expect(committedIds).toHaveLength(12);
+    expect(announcedIds).toEqual(["relationship:REL-AIP-0019"]);
+    expect(projectSiteIds).toEqual([
+      "relationship:REL-AIP-0019",
+      "relationship:REL-AIP-0021",
+      "relationship:REL-AIP-0022",
+    ]);
+    expect(equipmentManufacturingIds).toEqual([
+      "relationship:REL-AIP-0018",
+      "relationship:REL-AIP-0046",
+      "relationship:REL-AIP-0047",
+      "relationship:REL-AIP-0048",
+    ]);
+    expect(packagingTestIds).toEqual(["relationship:REL-AIP-0036"]);
+    expect(unknownRoleIds).toEqual([
+      "relationship:REL-AIP-0015",
+      "relationship:REL-AIP-0016",
+      "relationship:REL-AIP-0040",
+    ]);
+    expect(projection.facets.lifecycle.map((item) => item.id)).toContain("announced");
+    expect(projection.facets.geography_role.map((item) => item.id)).toContain(
+      "project_site",
+    );
+    expect(disclosedIds).toHaveLength(47);
+
+    const baseOrigin = new URL(
+      process.env.E2E_BASE_URL ?? "http://127.0.0.1:8010",
+    ).origin;
+    const desktopRequests = observeSameOrigin(page, baseOrigin);
+    await page.goto("/ai-industry-panorama", { waitUntil: "commit" });
+    await expect(page.locator("body")).toHaveAttribute("data-experience-ready", "true");
+    await expect(page.getByRole("heading", { name: "AI Industry Panorama", exact: true })).toBeVisible();
+    await expect(page.locator('nav a[href="/ai-industry-panorama"]')).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("#release-id")).toHaveText("ai-industry-panorama.2026-07-24.v1");
+    await expect(page.locator("#taxonomy-version")).toHaveText(
+      "ai-industry-panorama-taxonomy.2026-07-24.v1",
+    );
+    await expect(page.locator("#evidence-cutoff")).toHaveText("2026-07-24");
+    await expect(page.locator("#change-summary li")).not.toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText("Curated start");
+    await expectNoPageOverflow(page);
+
+    const curatedIds = await relationshipIds(
+      page.locator("#panorama-graph [data-relationship-id]"),
+    );
+    expect(curatedIds.length).toBeGreaterThan(0);
+    expect(curatedIds).toEqual(
+      await relationshipIds(page.locator("#relationship-table-body [data-relationship-id]")),
+    );
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    await expectGraphTableIds(page, completeIds);
+
+    const search = page.getByPlaceholder(
+      "Entity, project, standard, capability, or alias",
+    );
+    await search.fill("Microsoft");
+    await expectGraphTableIds(page, microsoftSearchIds);
+    const microsoft = page.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-ORG-MICROSOFT"]',
+    );
+    await microsoft.focus();
+    await expect(microsoft).toBeFocused();
+    await microsoft.press("Enter");
+    await expect(page.locator("#entity-drawer")).toBeFocused();
+    await expect(page.locator("#entity-drawer")).toContainText("Microsoft Corporation");
+    await expectGraphTableIds(page, microsoftHopTwoIds);
+
+    await page.locator("#hop-depth").selectOption("1");
+    await expectGraphTableIds(page, microsoftHopOneIds);
+    await page.locator("#hop-depth").selectOption("2");
+    await expectGraphTableIds(page, microsoftHopTwoIds);
+
+    const assertFilter = async (id: string, value: string, expectedIds: string[]) => {
+      await page.getByRole("button", { name: "Reset panorama" }).click();
+      await page.locator(id).selectOption(value);
+      await expectGraphTableIds(page, expectedIds);
+    };
+    await assertFilter("#geography-filter", "geography:us", unitedStatesIds);
+    await assertFilter("#time-filter", "2026-2027", periodIds);
+    await assertFilter("#lifecycle-filter", "committed", committedIds);
+    await assertFilter("#lifecycle-filter", "announced", announcedIds);
+    await expect(
+      page.locator(
+        '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0019"]',
+      ),
+    ).toHaveCount(1);
+    await page
+      .locator(
+        '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0019"]',
+      )
+      .getByRole("button", { name: "View evidence" })
+      .click();
+    await expect(page.locator("#relationship-drawer")).toContainText(
+      "Lifecycle: announced",
+    );
+    await expect(page.locator("#relationship-drawer")).toContainText(
+      "United States (project_site)",
+    );
+    await assertFilter("#geography-role-filter", "project_site", projectSiteIds);
+    await assertFilter(
+      "#geography-role-filter",
+      "equipment_component_manufacturing",
+      equipmentManufacturingIds,
+    );
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    await page.locator("#disclosed-only").check();
+    await expectGraphTableIds(page, disclosedIds);
+    expect(disclosedIds.length).toBeGreaterThan(0);
+
+    await page.getByRole("button", { name: "Graph", exact: true }).click();
+    await expect(page.locator("#graph-panel")).toBeVisible();
+    await expect(page.locator("#table-panel")).toBeHidden();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    await expect(page.locator("#graph-panel")).toBeHidden();
+    await expect(page.locator("#table-panel")).toBeVisible();
+    await page.getByRole("button", { name: "Both", exact: true }).click();
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    await search.fill("Advanced semiconductor packaging");
+    const capability = page.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-CAP-ADVANCED-PACKAGING"]',
+    );
+    await capability.focus();
+    await capability.press(" ");
+    await expect(page.locator("#capability-drawer")).toBeFocused();
+    await expect(page.locator("#capability-drawer")).toContainText("Advanced semiconductor packaging");
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    await search.fill("OCP Open Data Centers for AI");
+    const standard = page.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-STD-OCP-ODCAI"]',
+    );
+    await standard.focus();
+    await standard.press("Enter");
+    await expect(page.locator("#entity-drawer")).toContainText(
+      "Entity type: standards_program",
+    );
+    await expect(page.locator("#entity-drawer")).toContainText(
+      "No admitted research or valuation link",
+    );
+    await expectGraphTableIds(page, [
+      "relationship:REL-AIP-0003",
+      "relationship:REL-AIP-0007",
+      "relationship:REL-AIP-0010",
+      "relationship:REL-AIP-0013",
+      "relationship:REL-AIP-0025",
+      "relationship:REL-AIP-0044",
+      "relationship:REL-AIP-0045",
+    ]);
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    const inferenceRow = page.locator(
+      '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0011"]',
+    );
+    await inferenceRow.getByRole("button", { name: "View evidence" }).click();
+    const relationshipDrawer = page.locator("#relationship-drawer");
+    await expect(relationshipDrawer).toBeFocused();
+    await expect(relationshipDrawer).toContainText("Assertion kind: inferred_exposure");
+    const metaPremise = relationshipDrawer.locator(
+      '[data-premise-assertion-id="assertion:AST-AIP-0010"]',
+    );
+    const ocpPremise = relationshipDrawer.locator(
+      '[data-premise-assertion-id="assertion:AST-AIP-0045"]',
+    );
+    await expect(metaPremise).toContainText("Meta Investor Relations");
+    await expect(metaPremise).toContainText("Meta Reports First Quarter 2026 Results");
+    await expect(metaPremise).toContainText("Publication: 2026-04-29");
+    await expect(metaPremise.getByRole("link", { name: "Open official source" })).toHaveAttribute(
+      "href",
+      "https://investor.atmeta.com/investor-news/press-release-details/2026/Meta-Reports-First-Quarter-2026-Results/",
+    );
+    await expect(ocpPremise).toContainText("Open Compute Project Foundation");
+    await expect(ocpPremise).toContainText("Open Data Centers for AI");
+    await expect(ocpPremise).toContainText("Publication: Undated");
+    await expect(ocpPremise.getByRole("link", { name: "Open official source" })).toHaveAttribute(
+      "href",
+      "https://www.opencompute.org/community/open-data-centers-for-ai",
+    );
+    for (const link of await relationshipDrawer.getByRole("link", { name: "Open official source" }).all()) {
+      expect(await link.getAttribute("rel")).toBe("noopener noreferrer");
+      expect(await link.getAttribute("target")).toBe("_blank");
+    }
+    expectReadOnlyPanoramaJourney(desktopRequests);
+    await testInfo.attach("ai-panorama-desktop", {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+
+    const mobileContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+    });
+    const mobilePage = await mobileContext.newPage();
+    const mobileRequests = observeSameOrigin(mobilePage, baseOrigin);
+    await mobilePage.goto("/ai-industry-panorama", { waitUntil: "commit" });
+    await expect(mobilePage.locator("body")).toHaveAttribute("data-experience-ready", "true");
+    await expect(mobilePage.getByRole("status")).toContainText("Curated start");
+    await expectNoPageOverflow(mobilePage);
+    const mobileCuratedIds = await relationshipIds(
+      mobilePage.locator("#panorama-graph [data-relationship-id]"),
+    );
+    expect(mobileCuratedIds.length).toBeGreaterThan(0);
+    expect(mobileCuratedIds).toEqual(
+      await relationshipIds(mobilePage.locator("#relationship-table-body [data-relationship-id]")),
+    );
+    const graphScroll = mobilePage.locator("#panorama-graph-scroll");
+    const scrollSize = await graphScroll.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(scrollSize.scrollWidth).toBeGreaterThan(scrollSize.clientWidth);
+    await graphScroll.evaluate((element) => {
+      element.scrollLeft = 240;
+    });
+    await expect.poll(() => graphScroll.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+
+    const mobileSearch = mobilePage.getByPlaceholder(
+      "Entity, project, standard, capability, or alias",
+    );
+    await mobileSearch.fill("Microsoft");
+    await expectGraphTableIds(mobilePage, microsoftSearchIds);
+    const mobileMicrosoft = mobilePage.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-ORG-MICROSOFT"]',
+    );
+    await mobileMicrosoft.focus();
+    await mobileMicrosoft.press("Enter");
+    await expectGraphTableIds(mobilePage, microsoftHopTwoIds);
+    await mobilePage.getByRole("button", { name: "Reset panorama" }).click();
+    await mobilePage.locator("#geography-filter").selectOption("geography:us");
+    await expectGraphTableIds(mobilePage, unitedStatesIds);
+    await expectNoPageOverflow(mobilePage);
+    expectReadOnlyPanoramaJourney(mobileRequests);
+    await testInfo.attach("ai-panorama-mobile-390", {
+      body: await mobilePage.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+    await mobileContext.close();
+  });
+});

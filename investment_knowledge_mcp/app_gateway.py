@@ -7,6 +7,9 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from investment_knowledge_mcp.ai_industry_panorama.controller import (
+    dispatch_panorama_get,
+)
 from investment_knowledge_mcp.command_workbench import (
     list_workbench_actions,
     render_command_workbench_html,
@@ -54,6 +57,19 @@ _ROUTES = (
     RouteContract("GET", "/assets/weekly-review.js", "weekly_review", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/daily-market-brief", "daily_market_brief", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/assets/daily-market-brief.js", "daily_market_brief", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/ai-industry-panorama", "ai_industry_panorama", AccessClass.PUBLIC_READ),
+    RouteContract(
+        "GET",
+        "/assets/ai-industry-panorama.js",
+        "ai_industry_panorama",
+        AccessClass.PUBLIC_READ,
+    ),
+    RouteContract(
+        "GET",
+        "/api/ai-industry-panorama",
+        "ai_industry_panorama",
+        AccessClass.PUBLIC_READ,
+    ),
     RouteContract("GET", "/health", "gateway", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/command", "command", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/api/command-workbench/actions", "command", AccessClass.PUBLIC_READ),
@@ -102,6 +118,9 @@ def dispatch_get(handler: Any) -> None:
         return
     if route.owner == "daily_market_brief":
         dispatch_daily_market_brief_get(handler, parsed)
+        return
+    if route.owner == "ai_industry_panorama":
+        dispatch_panorama_get(handler, parsed)
         return
     if parsed.path == "/health":
         handler._write_json(
