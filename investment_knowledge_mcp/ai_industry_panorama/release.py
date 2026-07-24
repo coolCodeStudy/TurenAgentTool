@@ -228,7 +228,13 @@ _PUBLIC_SCHEMA_VERSION = "ai_industry_panorama_public.v1"
 _MAX_PROJECTION_BYTES = 2 * 1024 * 1024
 
 _ENTITY_KINDS = frozenset(
-    {"organization", "project", "standard", "capability"}
+    {
+        "organization",
+        "project",
+        "standards_program",
+        "standard",
+        "capability",
+    }
 )
 _ASSERTION_KINDS = frozenset(
     {
@@ -764,11 +770,13 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     covered = [
         item
         for item in release.entities
-        if item.kind in {"organization", "project", "standard"}
+        if item.kind
+        in {"organization", "project", "standards_program", "standard"}
     ]
     if not 25 <= len(covered) <= 35:
         raise PanoramaReleaseError(
-            "organization/project/standard count must be between 25 and 35"
+            "organization/project/standards-program/standard count "
+            "must be between 25 and 35"
         )
     capabilities = [item for item in release.entities if item.kind == "capability"]
     if len(capabilities) > 10:

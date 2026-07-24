@@ -710,6 +710,21 @@ test.describe("AI Industry Panorama public journey", () => {
       (relationship) =>
         relationship.geography_roles.some(([, role]) => role === "project_site"),
     ));
+    const equipmentManufacturingIds = sortedIds(
+      projection.relationships.filter((relationship) =>
+        relationship.geography_roles.some(
+          ([, role]) => role === "equipment_component_manufacturing",
+        ),
+      ),
+    );
+    const packagingTestIds = sortedIds(projection.relationships.filter(
+      (relationship) =>
+        relationship.geography_roles.some(([, role]) => role === "packaging_test"),
+    ));
+    const unknownRoleIds = sortedIds(projection.relationships.filter(
+      (relationship) =>
+        relationship.geography_roles.some(([, role]) => role === "unknown"),
+    ));
     const disclosedIds = sortedIds(projection.relationships.filter(
       (relationship) => [
         "disclosed_fact",
@@ -732,6 +747,18 @@ test.describe("AI Industry Panorama public journey", () => {
       "relationship:REL-AIP-0019",
       "relationship:REL-AIP-0021",
       "relationship:REL-AIP-0022",
+    ]);
+    expect(equipmentManufacturingIds).toEqual([
+      "relationship:REL-AIP-0018",
+      "relationship:REL-AIP-0046",
+      "relationship:REL-AIP-0047",
+      "relationship:REL-AIP-0048",
+    ]);
+    expect(packagingTestIds).toEqual(["relationship:REL-AIP-0036"]);
+    expect(unknownRoleIds).toEqual([
+      "relationship:REL-AIP-0015",
+      "relationship:REL-AIP-0016",
+      "relationship:REL-AIP-0040",
     ]);
     expect(projection.facets.lifecycle.map((item) => item.id)).toContain("announced");
     expect(projection.facets.geography_role.map((item) => item.id)).toContain(
@@ -814,6 +841,11 @@ test.describe("AI Industry Panorama public journey", () => {
       "United States (project_site)",
     );
     await assertFilter("#geography-role-filter", "project_site", projectSiteIds);
+    await assertFilter(
+      "#geography-role-filter",
+      "equipment_component_manufacturing",
+      equipmentManufacturingIds,
+    );
     await page.getByRole("button", { name: "Reset panorama" }).click();
     await page.locator("#disclosed-only").check();
     await expectGraphTableIds(page, disclosedIds);
@@ -845,7 +877,7 @@ test.describe("AI Industry Panorama public journey", () => {
     await standard.focus();
     await standard.press("Enter");
     await expect(page.locator("#entity-drawer")).toContainText(
-      "Entity type: standard",
+      "Entity type: standards_program",
     );
     await expect(page.locator("#entity-drawer")).toContainText(
       "No admitted research or valuation link",

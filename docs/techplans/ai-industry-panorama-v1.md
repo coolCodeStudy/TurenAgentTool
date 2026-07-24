@@ -100,6 +100,8 @@ Every nested JSON record uses exactly these fields:
 
 `geography_roles` and `confidence_inputs` are sorted tuples of exact key/value pairs. Geography role values are limited to `headquarters`, `demand_region`, `deployment_region`, `data_center_site`, `project_site`, `fab`, `packaging_test`, `equipment_component_manufacturing`, `grid_utility_region`, `global_scope`, and `unknown`. `reasons` is a mapping from every changed/expired/removed stable ID to a nonempty reason. JSON object keys and the frozen-record fields must match exactly; unknown keys fail validation.
 
+Entity kinds are limited to `organization`, `project`, `standards_program`, `standard`, and `capability`. The canonical OCP Open Data Centers for AI entity is a `standards_program`, not a published `standard`; `standard` remains a distinct admitted kind for a future independently reviewed standards entity. Neither kind requires or implies stock linkage.
+
 `PanoramaRelationship` holds only stable endpoints, relationship type, and identity. `PanoramaAssertion` holds `relationship_id`, assertion text/kind, lifecycle, valid time, geography references, confidence inputs/label, limitations, evidence IDs, premise assertion IDs, review state, and supersession metadata. `PanoramaReleaseDiff` carries deterministic `added`, `changed`, `expired`, and `removed` stable-ID lists plus a reason for every non-added change.
 
 The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable IDs use the prefixes `taxonomy:`, `geography:`, `entity:`, `source:`, `evidence:`, `relationship:`, and `assertion:`. The loader accepts an optional `Path` only for tests; production uses `Path(__file__).parent / "releases" / "2026-07-24.v1.json"`.
@@ -110,7 +112,7 @@ The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable 
 - ISO-8601 dates/timestamps and `effective_from <= effective_to`;
 - unique stable IDs and valid foreign keys;
 - exactly six demand-anchor IDs;
-- 25-35 organization/project/program/standard records, at most 10 additional capability nodes, and 45-70 relationships;
+- 25-35 organization/project/standards-program/standard records, at most 10 additional capability nodes, and 45-70 relationships;
 - a traversable path of at least two supported hops from every demand anchor;
 - nonempty English labels and bounded summaries/excerpts;
 - admitted taxonomy layers, entity kinds, relationship types, assertion kinds, lifecycle states, geography roles, source tiers, and review states;
@@ -273,7 +275,7 @@ def test_page_exposes_equivalent_graph_and_table_regions() -> None:
     assert 'data-experience-ready="true"' in html
 ```
 
-The Node harness must load the script with a synthetic public projection and assert that alias, project, standard, company, and capability search; one-hop/two-hop focus; layer/geography/geography-role/time/lifecycle/evidence/confidence filters; and disclosed-only mode update both SVG and table from one filtered relationship set. It must also inject hostile labels, excerpts, and URLs and prove they render as text, reject non-HTTPS external links, and add `rel="noopener noreferrer"` to external links.
+The Node harness must load the script with a synthetic public projection and assert that alias, project, standards program, standard, company, and capability search; one-hop/two-hop focus; layer/geography/geography-role/time/lifecycle/evidence/confidence filters; and disclosed-only mode update both SVG and table from one filtered relationship set. It must also inject hostile labels, excerpts, and URLs and prove they render as text, reject non-HTTPS external links, and add `rel="noopener noreferrer"` to external links.
 
 - [ ] **Step 2: Run tests and verify RED**
 

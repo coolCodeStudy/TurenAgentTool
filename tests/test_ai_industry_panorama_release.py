@@ -157,13 +157,18 @@ class PanoramaReleaseTests(unittest.TestCase):
         covered_entities = [
             entity
             for entity in release.entities
-            if entity.kind in {"organization", "project", "standard"}
+            if entity.kind
+            in {"organization", "project", "standards_program", "standard"}
         ]
 
         self.assertEqual(6, len(release.taxonomy))
         self.assertEqual(35, len(release.entities))
         self.assertEqual(25, len(covered_entities))
-        self.assertEqual(1, sum(entity.kind == "standard" for entity in release.entities))
+        self.assertEqual(
+            1,
+            sum(entity.kind == "standards_program" for entity in release.entities),
+        )
+        self.assertEqual(0, sum(entity.kind == "standard" for entity in release.entities))
         self.assertEqual(10, sum(entity.kind == "capability" for entity in release.entities))
         self.assertEqual(48, len(release.relationships))
         self.assertEqual(48, len(release.assertions))
@@ -191,9 +196,9 @@ class PanoramaReleaseTests(unittest.TestCase):
         self.assertTrue({"announced", "operating"} <= lifecycle_states)
         self.assertTrue({"announced", "operating"} <= lifecycle_facets)
 
-    def test_canonical_standard_is_distinct_unlisted_and_traversable(self) -> None:
+    def test_canonical_standards_program_is_unlisted_and_traversable(self) -> None:
         release = load_release()
-        standard = next(
+        standards_program = next(
             entity
             for entity in release.entities
             if entity.entity_id == "entity:ENT-STD-OCP-ODCAI"
@@ -203,20 +208,78 @@ class PanoramaReleaseTests(unittest.TestCase):
             outgoing.setdefault(relationship.source_entity_id, set()).add(
                 relationship.target_entity_id
             )
-        first_hop = outgoing.get(standard.entity_id, set())
+        first_hop = outgoing.get(standards_program.entity_id, set())
         second_hop = {
             target
             for intermediate in first_hop
             for target in outgoing.get(intermediate, set())
         }
 
-        self.assertEqual("standard", standard.kind)
-        self.assertEqual((), standard.research_links)
+        self.assertEqual("standards_program", standards_program.kind)
+        self.assertEqual((), standards_program.research_links)
         self.assertEqual(
             {"entity:ENT-CAP-DATACENTER-CAPACITY"},
             first_hop,
         )
         self.assertIn("entity:ENT-CAP-POWER-COOLING", second_hop)
+
+    def test_validator_admits_an_unlisted_standard_without_stock_linkage(self) -> None:
+        payload = canonical_payload()
+        standard = copy.deepcopy(
+            next(
+                entity
+                for entity in payload["entities"]
+                if entity["entity_id"] == "entity:ENT-STD-OCP-ODCAI"
+            )
+        )
+        standard.update(
+            {
+                "entity_id": "entity:ENT-STD-TEST-UNLISTED",
+                "kind": "standard",
+                "label": "Test-only unlisted standard",
+                "aliases": [],
+                "summary": "Test-only standard fixture for schema validation.",
+                "research_links": [],
+            }
+        )
+        payload["entities"].append(standard)
+        payload["release_diff"]["added"].append(standard["entity_id"])
+        payload["release_diff"]["added"].sort()
+
+        release = validate_release(payload)
+        admitted = next(
+            entity for entity in release.entities
+            if entity.entity_id == standard["entity_id"]
+        )
+        self.assertEqual("standard", admitted.kind)
+        self.assertEqual((), admitted.research_links)
+
+    def test_canonical_geography_roles_follow_source_gate_corrections(self) -> None:
+        assertions = {
+            item.assertion_id: item
+            for item in load_release().assertions
+        }
+        expected = {
+            "assertion:AST-AIP-0037": (("geography:global", "global_scope"),),
+            "assertion:AST-AIP-0039": (("geography:global", "global_scope"),),
+            "assertion:AST-AIP-0040": (("geography:unknown", "unknown"),),
+            "assertion:AST-AIP-0046": (
+                ("geography:asia", "equipment_component_manufacturing"),
+            ),
+            "assertion:AST-AIP-0047": (
+                ("geography:asia", "equipment_component_manufacturing"),
+            ),
+            "assertion:AST-AIP-0048": (
+                ("geography:asia", "equipment_component_manufacturing"),
+            ),
+        }
+
+        for assertion_id, geography_roles in expected.items():
+            with self.subTest(assertion_id=assertion_id):
+                self.assertEqual(
+                    geography_roles,
+                    assertions[assertion_id].geography_roles,
+                )
 
     def test_geography_roles_are_controlled_validated_and_publicly_faceted(
         self,

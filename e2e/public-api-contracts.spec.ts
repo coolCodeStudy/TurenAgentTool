@@ -238,7 +238,7 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
       entity.entity_id === "entity:ENT-STD-OCP-ODCAI",
   );
   expect(standard).toMatchObject({
-    kind: "standard",
+    kind: "standards_program",
     research_links: [],
   });
   expect(
@@ -247,6 +247,28 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
     lifecycle_state: "announced",
     geography_roles: [["geography:us", "project_site"]],
   });
+  const correctedGeographyRoles = new Map([
+    ["assertion:AST-AIP-0037", [["geography:global", "global_scope"]]],
+    ["assertion:AST-AIP-0039", [["geography:global", "global_scope"]]],
+    ["assertion:AST-AIP-0040", [["geography:unknown", "unknown"]]],
+    [
+      "assertion:AST-AIP-0046",
+      [["geography:asia", "equipment_component_manufacturing"]],
+    ],
+    [
+      "assertion:AST-AIP-0047",
+      [["geography:asia", "equipment_component_manufacturing"]],
+    ],
+    [
+      "assertion:AST-AIP-0048",
+      [["geography:asia", "equipment_component_manufacturing"]],
+    ],
+  ]);
+  for (const [assertionId, geographyRoles] of correctedGeographyRoles) {
+    expect(relationshipsByAssertion.get(assertionId).geography_roles).toEqual(
+      geographyRoles,
+    );
+  }
 
   const inference = payload.relationships.find(
     (item: { relationship_id: string }) =>

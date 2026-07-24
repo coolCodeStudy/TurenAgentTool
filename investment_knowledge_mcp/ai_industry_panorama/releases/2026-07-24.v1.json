@@ -952,7 +952,7 @@
     },
     {
       "entity_id": "entity:ENT-STD-OCP-ODCAI",
-      "kind": "standard",
+      "kind": "standards_program",
       "label": "OCP Open Data Centers for AI",
       "aliases": [
         "ODCAI",
@@ -4273,8 +4273,8 @@
       "freshness_state": "current",
       "geography_roles": [
         [
-          "geography:taiwan",
-          "packaging_test"
+          "geography:global",
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4300,14 +4300,14 @@
         ],
         [
           "geo",
-          "partly specific"
+          "global"
         ],
         [
           "time",
           "recent period"
         ]
       ],
-      "confidence_rationale": "auth=T2 issuer annual report; explicit=named variants, function, and variant lifecycles; corr=single primary; time=recent period; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_rationale": "auth=T2 issuer annual report; explicit=named variants, function, and variant lifecycles; corr=single primary; time=recent period; geo=global; extraction=manual unreviewed; conflict=none",
       "confidence_label": "medium",
       "limitations": "Lifecycle is variant-specific and does not imply every CoWoS configuration has the same status; the annual report names no customer or customer-level capacity.",
       "evidence_ids": [
@@ -4393,8 +4393,8 @@
       "freshness_state": "current",
       "geography_roles": [
         [
-          "geography:south-korea",
-          "equipment_component_manufacturing"
+          "geography:global",
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4420,14 +4420,14 @@
         ],
         [
           "geo",
-          "partly specific"
+          "global"
         ],
         [
           "time",
           "current"
         ]
       ],
-      "confidence_rationale": "auth=T2 issuer newsroom; explicit=named product generation and lifecycle; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_rationale": "auth=T2 issuer newsroom; explicit=named product generation and lifecycle; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
       "confidence_label": "medium",
       "limitations": "No customer, shipment volume, qualified system, revenue, or capacity allocation is disclosed in this assertion.",
       "evidence_ids": [
@@ -4453,8 +4453,8 @@
       "freshness_state": "current",
       "geography_roles": [
         [
-          "geography:south-korea",
-          "equipment_component_manufacturing"
+          "geography:unknown",
+          "unknown"
         ]
       ],
       "confidence_inputs": [
@@ -4480,14 +4480,14 @@
         ],
         [
           "geo",
-          "global"
+          "unknown"
         ],
         [
           "time",
           "current"
         ]
       ],
-      "confidence_rationale": "auth=T2 issuer newsroom; explicit=title-level product and sample-shipment claim; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_rationale": "auth=T2 issuer newsroom; explicit=title-level product and sample-shipment claim; corr=single primary; time=current; geo=unknown; extraction=manual unreviewed; conflict=none",
       "confidence_label": "medium",
       "limitations": "Evidence is title-level only because the listed page has no text description; no customer identity, qualification, volume, revenue, design win, or mass-production status is supported.",
       "evidence_ids": [
@@ -4814,7 +4814,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "packaging_test"
+          "equipment_component_manufacturing"
         ]
       ],
       "confidence_inputs": [
@@ -4874,7 +4874,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "packaging_test"
+          "equipment_component_manufacturing"
         ]
       ],
       "confidence_inputs": [
@@ -4934,7 +4934,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "packaging_test"
+          "equipment_component_manufacturing"
         ]
       ],
       "confidence_inputs": [

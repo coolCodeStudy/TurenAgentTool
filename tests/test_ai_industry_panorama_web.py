@@ -504,6 +504,20 @@ assert.deepEqual(
 );
 
 trigger(nodes.get("reset-panorama"), "click");
+nodes.get("geography-role-filter").value = "equipment_component_manufacturing";
+trigger(nodes.get("geography-role-filter"), "change");
+assert.deepEqual(relationshipIds(graph), [
+  "relationship:REL-AIP-0018",
+  "relationship:REL-AIP-0046",
+  "relationship:REL-AIP-0047",
+  "relationship:REL-AIP-0048",
+]);
+assert.deepEqual(
+  relationshipIds(graph),
+  relationshipIds(nodes.get("relationship-table-body")),
+);
+
+trigger(nodes.get("reset-panorama"), "click");
 nodes.get("panorama-search").value = "OCP Open Data Centers for AI";
 trigger(nodes.get("panorama-search"), "input");
 const standard = findByAttribute(
@@ -513,7 +527,10 @@ const standard = findByAttribute(
 );
 assert.ok(standard);
 trigger(standard, "click");
-assert.match(textTree(nodes.get("entity-drawer")), /Entity type:\\s+standard/);
+assert.match(
+  textTree(nodes.get("entity-drawer")),
+  /Entity type:\\s+standards_program/,
+);
 assert.match(
   textTree(nodes.get("entity-drawer")),
   /No admitted research or valuation link/,
