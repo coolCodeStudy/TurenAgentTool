@@ -249,6 +249,49 @@ class DeployContractTests(TestCase):
                 self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
                 self.assertEqual(("weekly-review-web",), plan.targets)
 
+    def test_ai_panorama_package_targets_only_weekly_review_web(self) -> None:
+        paths = (
+            "investment_knowledge_mcp/ai_industry_panorama/release.py",
+            "investment_knowledge_mcp/ai_industry_panorama/web.py",
+            "investment_knowledge_mcp/ai_industry_panorama/controller.py",
+            "investment_knowledge_mcp/ai_industry_panorama/releases/2026-07-24.v1.json",
+        )
+
+        for path in paths:
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(("weekly-review-web",), plan.targets)
+                self.assertEqual(
+                    (f"{path}: AI Industry Panorama public read surface",),
+                    plan.reasons,
+                )
+
+    def test_ai_panorama_mixed_paths_preserve_risk_and_control_plane_semantics(self) -> None:
+        full = classify_paths(
+            (
+                "investment_knowledge_mcp/ai_industry_panorama/web.py",
+                "requirements.txt",
+            ),
+            compose_image_changed=False,
+        )
+        control_plane = classify_paths(
+            (
+                "investment_knowledge_mcp/ai_industry_panorama/release.py",
+                "scripts/deploy_contract.py",
+            ),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.FULL_IMAGE, full.mode)
+        self.assertEqual(APPLICATION_SERVICES, full.targets)
+        self.assertEqual(("requirements.txt",), full.image_input_files)
+        self.assertEqual(DeployMode.TARGETED_QUICK, control_plane.mode)
+        self.assertEqual(("weekly-review-web",), control_plane.targets)
+        self.assertTrue(
+            serialize_plan(control_plane)["control_plane_update_required"]
+        )
+
     def test_shared_access_targets_only_the_gateway_after_command_retirement(self) -> None:
         for path in (
             "investment_knowledge_mcp/command_http.py",

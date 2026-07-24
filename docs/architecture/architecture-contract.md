@@ -25,10 +25,25 @@ Architecture & Code Health audit output.
 | `/command` | `investment_knowledge_mcp.command_workbench` | protected | `tests/test_web_experience.py` |
 | `/weekly-review` | `investment_knowledge_mcp.weekly_review_web` | public_read_protected_write | `tests/test_weekly_review_web_auth.py` |
 | `/daily-market-brief` | `investment_knowledge_mcp.weekly_review_web` | public_read | `tests/test_daily_market_brief.py` |
+| `/ai-industry-panorama` | `investment_knowledge_mcp.ai_industry_panorama.controller` | public_read | `tests/test_app_gateway.py` |
+| `/assets/ai-industry-panorama.js` | `investment_knowledge_mcp.ai_industry_panorama.controller` | public_read | `tests/test_app_gateway.py` |
+| `/api/ai-industry-panorama` | `investment_knowledge_mcp.ai_industry_panorama.controller` | public_read | `tests/test_app_gateway.py` |
 
 Allowed access classes are `public_read`, `protected`, and
 `public_read_protected_write`. This table declares intent; its contract tests
 remain the behavioral source of truth.
+
+The AI Industry Panorama routes are one read-only surface. The controller reads
+the frozen, validated release from
+`investment_knowledge_mcp.ai_industry_panorama.release` and serves the renderer
+from `investment_knowledge_mcp.ai_industry_panorama.web`. Its focused contracts
+are `tests/test_ai_industry_panorama_release.py`,
+`tests/test_ai_industry_panorama_web.py`, `tests/test_app_gateway.py`, and
+`tests/test_web_experience.py`. It admits no write method, authorization token,
+portfolio flow, knowledge/insight mutation, order entrypoint, or job
+entrypoint. L3 coverage belongs to `e2e/cloud-pages.spec.ts` for the public
+browser journey and `e2e/public-api-contracts.spec.ts` for the public JSON
+semantics.
 
 ## Rule Admission Gate
 

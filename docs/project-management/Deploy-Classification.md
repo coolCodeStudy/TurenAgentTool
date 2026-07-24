@@ -48,6 +48,7 @@ an application deployment target.
 | Path or module family | Mapped targets |
 | --- | --- |
 | Web-only Daily Market Brief files such as `daily_market_brief_web.py`, Web templates, and Web shell modules | `weekly-review-web` |
+| `investment_knowledge_mcp/ai_industry_panorama/**`, including frozen release JSON | `weekly-review-web` |
 | `command_workbench.py` and shared Web command-workbench assets | `weekly-review-web`, `command-api` |
 | Shared command logic such as `command_router.py`, `daily_market_brief.py`, and `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
 | Database initialization code such as `scripts/init_db.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
@@ -89,6 +90,33 @@ the shared-image application service set is `weekly-review-web`, `command-api`,
 
 The highest-impact changed file wins: a docs change plus app-runtime code is
 `targeted_quick`; a docs change plus a dependency change is `full_image`.
+
+## AI Industry Panorama Release Sequence
+
+A business change under
+`investment_knowledge_mcp/ai_industry_panorama/**` is `targeted_quick` and
+targets only `weekly-review-web`. This applies to its release validator,
+renderer, controller, and canonical release JSON. It does not broaden shared
+command, scheduler, DingTalk, or MCP targets.
+
+A candidate that changes `scripts/deploy_contract.py` has an independent Ops
+control-plane update even when its business target is only
+`weekly-review-web`. Release that exact candidate SHA in two serialized
+operations under the shared deployment lock:
+
+1. Install the Ops API control plane from the exact target SHA. Wait for its
+   private health check and verify that its reported control-plane identity is
+   that same SHA.
+2. Only after the identity check passes, run the same-SHA application quick
+   deploy for `weekly-review-web`.
+
+Do not bypass a failed or mismatched control-plane identity with a parallel
+deploy channel. The existing `feature_routes` request should check HTTP success
+for `/ai-industry-panorama` and `/api/ai-industry-panorama`; no change to
+`scripts/deploy_release.py` is needed. Those checks establish route
+availability, not JSON correctness. The L3 public API contract must separately
+verify `ok`, schema version, release ID, and nonempty entity and relationship
+collections.
 
 ## Preflight and Product-Safe Failure
 
