@@ -144,12 +144,12 @@ Rollback is release-level rollback to the prior healthy application ref. Because
 
 | PRD criterion | Implementation area | Verification | State |
 |---|---|---|---|
-| Working selector and fixture | controller, release catalog, web | release/web/Playwright tests | local_verified |
-| Typed evidence and provenance | release validator and fixture | mutation and projection tests | local_verified |
-| Judgment, KPI, signal, flow, trends, mix, structure, scenarios | page renderer | semantic and visual tests | local_verified |
-| PNG export | browser canvas renderer | real Chromium PNG signature, 1440px width, long height, and file-size test | local_verified |
-| Shared shell and isolated state | gateway and web experience | gateway/navigation regressions | local_verified |
-| Cloud acceptance | serialized deploy and L3 test | Acceptance Queue evidence | pending_deploy |
+| Working selector and fixture | controller, release catalog, web | release/web/Playwright tests | deployed_verified |
+| Typed evidence and provenance | release validator and fixture | mutation and projection tests | deployed_verified |
+| Judgment, KPI, signal, flow, trends, mix, structure, scenarios | page renderer | semantic and visual tests | deployed_verified |
+| PNG export | browser canvas renderer | real Chromium PNG signature, 1440px width, long height, and file-size test | deployed_verified |
+| Shared shell and isolated state | gateway and web experience | gateway/navigation regressions | deployed_verified |
+| Cloud acceptance | serialized deploy and L3 test | `AT-2026-07-24-003`; workflow `30103135072`; event `1784905201785` | passed |
 
 ## 12. Plan Review
 
