@@ -154,6 +154,20 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
   expect(payload.relationships).toHaveLength(48);
   expect(payload.evidence).toHaveLength(48);
   expect(payload.sources).toHaveLength(16);
+  expect(payload.facets.lifecycle.map((item: { id: string }) => item.id)).toEqual(
+    expect.arrayContaining(["announced", "operating"]),
+  );
+  expect(payload.facets.geography_role.map((item: { id: string }) => item.id)).toEqual([
+    "data_center_site",
+    "demand_region",
+    "deployment_region",
+    "equipment_component_manufacturing",
+    "fab",
+    "global_scope",
+    "packaging_test",
+    "project_site",
+    "unknown",
+  ]);
 
   const entityIds = new Set(payload.entities.map((entity: { entity_id: string }) => entity.entity_id));
   const relationshipIds = new Set(
@@ -219,6 +233,20 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
     }
   }
   expect(assertionIds.size).toBe(payload.relationships.length);
+  const standard = payload.entities.find(
+    (entity: { entity_id: string }) =>
+      entity.entity_id === "entity:ENT-STD-OCP-ODCAI",
+  );
+  expect(standard).toMatchObject({
+    kind: "standard",
+    research_links: [],
+  });
+  expect(
+    relationshipsByAssertion.get("assertion:AST-AIP-0019"),
+  ).toMatchObject({
+    lifecycle_state: "announced",
+    geography_roles: [["geography:us", "project_site"]],
+  });
 
   const inference = payload.relationships.find(
     (item: { relationship_id: string }) =>
@@ -264,6 +292,12 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
     );
     expect(secondHop.size).toBeGreaterThan(0);
   }
+  expect(forward.get("entity:ENT-STD-OCP-ODCAI")).toEqual(
+    new Set(["entity:ENT-CAP-DATACENTER-CAPACITY"]),
+  );
+  expect(forward.get("entity:ENT-CAP-DATACENTER-CAPACITY")).toContain(
+    "entity:ENT-CAP-POWER-COOLING",
+  );
 
   const forbiddenKeys = new Set([
     "api_key",

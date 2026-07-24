@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Implement only the approved bounded V1: six demand anchors, 25-35 reviewed organizations/projects (plus bounded capability/standard nodes), and 45-70 reviewed relationships.
+- Implement only the approved bounded V1: six demand anchors, 25-35 reviewed organizations/projects/programs/standards (plus at most 10 capability nodes), and 45-70 reviewed relationships.
 - Use a committed immutable release artifact; do not add a database migration, graph database, runtime crawler, scheduled ingestion, or mutable browser authoring.
 - Keep `disclosed_fact`, `company_guidance`, `management_claim`, `inferred_exposure`, and `user_hypothesis` distinct in storage and display.
 - Every published relationship must have stable identity, time, geography, lifecycle, confidence inputs, and at least one reviewed evidence reference.
@@ -98,7 +98,7 @@ Every nested JSON record uses exactly these fields:
 - `PanoramaEvidence`: `evidence_id`, `source_id`, `locator`, `bounded_excerpt`, `extraction_method`, `review_state`.
 - `PanoramaReleaseDiff`: `added`, `changed`, `expired`, `removed`, `reasons`.
 
-`geography_roles` and `confidence_inputs` are sorted tuples of exact key/value pairs. `reasons` is a mapping from every changed/expired/removed stable ID to a nonempty reason. JSON object keys and the frozen-record fields must match exactly; unknown keys fail validation.
+`geography_roles` and `confidence_inputs` are sorted tuples of exact key/value pairs. Geography role values are limited to `headquarters`, `demand_region`, `deployment_region`, `data_center_site`, `project_site`, `fab`, `packaging_test`, `equipment_component_manufacturing`, `grid_utility_region`, `global_scope`, and `unknown`. `reasons` is a mapping from every changed/expired/removed stable ID to a nonempty reason. JSON object keys and the frozen-record fields must match exactly; unknown keys fail validation.
 
 `PanoramaRelationship` holds only stable endpoints, relationship type, and identity. `PanoramaAssertion` holds `relationship_id`, assertion text/kind, lifecycle, valid time, geography references, confidence inputs/label, limitations, evidence IDs, premise assertion IDs, review state, and supersession metadata. `PanoramaReleaseDiff` carries deterministic `added`, `changed`, `expired`, and `removed` stable-ID lists plus a reason for every non-added change.
 
@@ -110,7 +110,7 @@ The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable 
 - ISO-8601 dates/timestamps and `effective_from <= effective_to`;
 - unique stable IDs and valid foreign keys;
 - exactly six demand-anchor IDs;
-- 25-35 organization/project records (capability/standard nodes are additional) and 45-70 relationships;
+- 25-35 organization/project/program/standard records, at most 10 additional capability nodes, and 45-70 relationships;
 - a traversable path of at least two supported hops from every demand anchor;
 - nonempty English labels and bounded summaries/excerpts;
 - admitted taxonomy layers, entity kinds, relationship types, assertion kinds, lifecycle states, geography roles, source tiers, and review states;
@@ -150,7 +150,7 @@ The projection is an exact allow-list:
 - each `entity` item: the admitted `PanoramaEntity` fields, with research links limited to safe internal paths and non-executing hints;
 - each projected `relationship`: its four identity fields plus exactly one active joined assertion with `assertion_id`, `text`, `assertion_kind`, `lifecycle_state`, all time/precision/freshness fields, `geography_roles`, `confidence_inputs`, `confidence_rationale`, `confidence_label`, `limitations`, `evidence_ids`, and `premise_assertion_ids`;
 - each `evidence` and `source` item: the admitted record fields above, except `bounded_excerpt` remains length-capped;
-- `facets`: deterministic sorted IDs/labels for layer, geography, time horizon, lifecycle, evidence tier, and confidence.
+- `facets`: deterministic sorted IDs/labels for layer, geography, geography role, time horizon, lifecycle, evidence tier, and confidence.
 
 The join fails validation if a relationship has zero or more than one active assertion in the release. Superseded assertions remain in the immutable release history but are not joined into the active relationship projection; their IDs remain discoverable through release-diff and supersession metadata.
 
@@ -273,7 +273,7 @@ def test_page_exposes_equivalent_graph_and_table_regions() -> None:
     assert 'data-experience-ready="true"' in html
 ```
 
-The Node harness must load the script with a synthetic public projection and assert that alias, project, company, and capability search; one-hop/two-hop focus; layer/geography/time/lifecycle/evidence/confidence filters; and disclosed-only mode update both SVG and table from one filtered relationship set. It must also inject hostile labels, excerpts, and URLs and prove they render as text, reject non-HTTPS external links, and add `rel="noopener noreferrer"` to external links.
+The Node harness must load the script with a synthetic public projection and assert that alias, project, standard, company, and capability search; one-hop/two-hop focus; layer/geography/geography-role/time/lifecycle/evidence/confidence filters; and disclosed-only mode update both SVG and table from one filtered relationship set. It must also inject hostile labels, excerpts, and URLs and prove they render as text, reject non-HTTPS external links, and add `rel="noopener noreferrer"` to external links.
 
 - [ ] **Step 2: Run tests and verify RED**
 

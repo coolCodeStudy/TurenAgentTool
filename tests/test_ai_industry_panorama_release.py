@@ -157,12 +157,14 @@ class PanoramaReleaseTests(unittest.TestCase):
         covered_entities = [
             entity
             for entity in release.entities
-            if entity.kind in {"organization", "project"}
+            if entity.kind in {"organization", "project", "standard"}
         ]
 
         self.assertEqual(6, len(release.taxonomy))
         self.assertEqual(35, len(release.entities))
         self.assertEqual(25, len(covered_entities))
+        self.assertEqual(1, sum(entity.kind == "standard" for entity in release.entities))
+        self.assertEqual(10, sum(entity.kind == "capability" for entity in release.entities))
         self.assertEqual(48, len(release.relationships))
         self.assertEqual(48, len(release.assertions))
         self.assertEqual(48, len(release.evidence))
@@ -170,6 +172,91 @@ class PanoramaReleaseTests(unittest.TestCase):
         self.assertEqual(6, sum(entity.is_demand_anchor for entity in release.entities))
         self.assertEqual("published", release.review_state)
         self.assertNotEqual(release.curator, release.reviewer)
+
+    def test_canonical_release_exposes_announced_and_operating_lifecycle_examples(
+        self,
+    ) -> None:
+        release = load_release()
+        assertions = {item.assertion_id: item for item in release.assertions}
+        lifecycle_states = {item.lifecycle_state for item in release.assertions}
+        lifecycle_facets = {
+            item["id"]
+            for item in build_public_projection(release)["facets"]["lifecycle"]
+        }
+
+        self.assertEqual(
+            "announced",
+            assertions["assertion:AST-AIP-0019"].lifecycle_state,
+        )
+        self.assertTrue({"announced", "operating"} <= lifecycle_states)
+        self.assertTrue({"announced", "operating"} <= lifecycle_facets)
+
+    def test_canonical_standard_is_distinct_unlisted_and_traversable(self) -> None:
+        release = load_release()
+        standard = next(
+            entity
+            for entity in release.entities
+            if entity.entity_id == "entity:ENT-STD-OCP-ODCAI"
+        )
+        outgoing: dict[str, set[str]] = {}
+        for relationship in release.relationships:
+            outgoing.setdefault(relationship.source_entity_id, set()).add(
+                relationship.target_entity_id
+            )
+        first_hop = outgoing.get(standard.entity_id, set())
+        second_hop = {
+            target
+            for intermediate in first_hop
+            for target in outgoing.get(intermediate, set())
+        }
+
+        self.assertEqual("standard", standard.kind)
+        self.assertEqual((), standard.research_links)
+        self.assertEqual(
+            {"entity:ENT-CAP-DATACENTER-CAPACITY"},
+            first_hop,
+        )
+        self.assertIn("entity:ENT-CAP-POWER-COOLING", second_hop)
+
+    def test_geography_roles_are_controlled_validated_and_publicly_faceted(
+        self,
+    ) -> None:
+        expected_vocabulary = {
+            "headquarters",
+            "demand_region",
+            "deployment_region",
+            "data_center_site",
+            "project_site",
+            "fab",
+            "packaging_test",
+            "equipment_component_manufacturing",
+            "grid_utility_region",
+            "global_scope",
+            "unknown",
+        }
+        release = load_release()
+        used_roles = {
+            role
+            for assertion in release.assertions
+            for _, role in assertion.geography_roles
+        }
+        projection = build_public_projection(release)
+        facet_roles = {
+            item["id"]
+            for item in projection["facets"].get("geography_role", ())
+        }
+
+        self.assertEqual(
+            expected_vocabulary,
+            set(getattr(panorama_release, "_GEOGRAPHY_ROLES", ())),
+        )
+        self.assertLessEqual(used_roles, expected_vocabulary)
+        self.assertEqual(used_roles, facet_roles)
+
+        payload = canonical_payload()
+        payload["assertions"][0]["geography_roles"][0][1] = "free-form role"
+        with self.assertRaisesRegex(PanoramaReleaseError, "geography role"):
+            validate_release(payload)
 
     def test_canonical_release_preserves_reviewed_year_and_unknown_geography(self) -> None:
         release = load_release()
@@ -184,7 +271,7 @@ class PanoramaReleaseTests(unittest.TestCase):
         for assertion_id in ("assertion:AST-AIP-0015", "assertion:AST-AIP-0016"):
             with self.subTest(assertion_id=assertion_id):
                 self.assertEqual(
-                    (("geography:unknown", "cloud-capacity provider to demand anchor"),),
+                    (("geography:unknown", "unknown"),),
                     assertions[assertion_id].geography_roles,
                 )
         self.assertIsNone(sources["source:SRC-016"].publication_date)

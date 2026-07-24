@@ -64,10 +64,11 @@ def render_panorama_html() -> str:
 
     <section class="panorama-controls" aria-label="Panorama filters">
       <label>Search
-        <input id="panorama-search" type="search" placeholder="Entity, project, capability, or alias">
+        <input id="panorama-search" type="search" placeholder="Entity, project, standard, capability, or alias">
       </label>
       <label>Capability layer<select id="layer-filter"><option value="">All layers</option></select></label>
       <label>Geography<select id="geography-filter"><option value="">All geographies</option></select></label>
+      <label>Geography role<select id="geography-role-filter"><option value="">All geography roles</option></select></label>
       <label>Time horizon<select id="time-filter"><option value="">All time horizons</option></select></label>
       <label>Lifecycle<select id="lifecycle-filter"><option value="">All lifecycle states</option></select></label>
       <label>Evidence<select id="evidence-filter"><option value="">All evidence tiers</option></select></label>
@@ -154,6 +155,7 @@ def render_panorama_script() -> str:
     filters: {
       layer: "",
       geography: "",
+      geographyRole: "",
       time: "",
       lifecycle: "",
       evidence: "",
@@ -420,6 +422,12 @@ def render_panorama_script() -> str:
         state.filters.geography
         && !relationship.geography_roles.some(
           ([geographyId]) => geographyId === state.filters.geography
+        )
+      ) return false;
+      if (
+        state.filters.geographyRole
+        && !relationship.geography_roles.some(
+          ([, role]) => role === state.filters.geographyRole
         )
       ) return false;
       if (
@@ -982,6 +990,11 @@ def render_panorama_script() -> str:
       projection.facets.geography
     );
     populateSelect(
+      "geography-role-filter",
+      "All geography roles",
+      projection.facets.geography_role
+    );
+    populateSelect(
       "time-filter",
       "All valid periods",
       derivePeriodFacets(projection)
@@ -1024,6 +1037,7 @@ def render_panorama_script() -> str:
     state.filters = {
       layer: "",
       geography: "",
+      geographyRole: "",
       time: "",
       lifecycle: "",
       evidence: "",
@@ -1034,6 +1048,7 @@ def render_panorama_script() -> str:
     for (const id of [
       "layer-filter",
       "geography-filter",
+      "geography-role-filter",
       "time-filter",
       "lifecycle-filter",
       "evidence-filter",
@@ -1053,6 +1068,7 @@ def render_panorama_script() -> str:
     const bindings = {
       "layer-filter": "layer",
       "geography-filter": "geography",
+      "geography-role-filter": "geographyRole",
       "time-filter": "time",
       "lifecycle-filter": "lifecycle",
       "evidence-filter": "evidence",

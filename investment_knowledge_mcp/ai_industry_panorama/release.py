@@ -227,7 +227,9 @@ _SCHEMA_VERSION = "ai_industry_panorama_release.v1"
 _PUBLIC_SCHEMA_VERSION = "ai_industry_panorama_public.v1"
 _MAX_PROJECTION_BYTES = 2 * 1024 * 1024
 
-_ENTITY_KINDS = frozenset({"organization", "project", "capability"})
+_ENTITY_KINDS = frozenset(
+    {"organization", "project", "standard", "capability"}
+)
 _ASSERTION_KINDS = frozenset(
     {
         "disclosed_fact",
@@ -239,12 +241,28 @@ _ASSERTION_KINDS = frozenset(
 )
 _LIFECYCLE_STATES = frozenset(
     {
+        "announced",
         "operating",
         "committed",
         "under_development",
         "sampling",
         "mass_production",
         "qualification",
+        "unknown",
+    }
+)
+_GEOGRAPHY_ROLES = frozenset(
+    {
+        "headquarters",
+        "demand_region",
+        "deployment_region",
+        "data_center_site",
+        "project_site",
+        "fab",
+        "packaging_test",
+        "equipment_component_manufacturing",
+        "grid_utility_region",
+        "global_scope",
         "unknown",
     }
 )
@@ -687,6 +705,11 @@ def _build_public_projection(
             "geography": _facet(
                 (item.geography_id, item.label) for item in release.geographies
             ),
+            "geography_role": _facet(
+                (role, role.replace("_", " "))
+                for item in active_by_relationship.values()
+                for _, role in item.geography_roles
+            ),
             "time_horizon": _facet(
                 (item.time_precision, item.time_precision)
                 for item in active_by_relationship.values()
@@ -738,9 +761,15 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
 
     if len(release.taxonomy) != 6:
         raise PanoramaReleaseError("release requires exactly six taxonomy layers")
-    covered = [item for item in release.entities if item.kind in {"organization", "project"}]
+    covered = [
+        item
+        for item in release.entities
+        if item.kind in {"organization", "project", "standard"}
+    ]
     if not 25 <= len(covered) <= 35:
-        raise PanoramaReleaseError("organization/project count must be between 25 and 35")
+        raise PanoramaReleaseError(
+            "organization/project/standard count must be between 25 and 35"
+        )
     capabilities = [item for item in release.entities if item.kind == "capability"]
     if len(capabilities) > 10:
         raise PanoramaReleaseError("capability count exceeds reviewed V1 maximum")
@@ -914,6 +943,8 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
             raise PanoramaReleaseError("geography roles must be sorted")
         if any(key not in geography_ids for key, _ in item.geography_roles):
             raise PanoramaReleaseError("assertion geography foreign key is invalid")
+        if any(role not in _GEOGRAPHY_ROLES for _, role in item.geography_roles):
+            raise PanoramaReleaseError("unsupported geography role")
         _validate_confidence(
             item,
             assertion_by_id=assertion_by_id,

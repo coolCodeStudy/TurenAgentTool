@@ -952,7 +952,7 @@
     },
     {
       "entity_id": "entity:ENT-STD-OCP-ODCAI",
-      "kind": "project",
+      "kind": "standard",
       "label": "OCP Open Data Centers for AI",
       "aliases": [
         "ODCAI",
@@ -2111,7 +2111,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor capital formation"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2171,7 +2171,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor compute input"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2231,7 +2231,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor facility and network input"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2291,7 +2291,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand anchor to accelerator partner"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2351,7 +2351,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor capital formation"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2411,7 +2411,7 @@
       "geography_roles": [
         [
           "geography:us-wisconsin",
-          "site operator"
+          "data_center_site"
         ]
       ],
       "confidence_inputs": [
@@ -2471,7 +2471,7 @@
       "geography_roles": [
         [
           "geography:us-wisconsin",
-          "facility-capacity enablement"
+          "data_center_site"
         ]
       ],
       "confidence_inputs": [
@@ -2531,7 +2531,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor compute input"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2591,7 +2591,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor capital formation"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2651,7 +2651,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor facility input"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2711,7 +2711,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "inferred physical-infrastructure exposure"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2774,7 +2774,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand-anchor capital formation"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2834,7 +2834,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "cloud and facility infrastructure input"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2894,7 +2894,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "custom-compute operator and supplier"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -2954,7 +2954,7 @@
       "geography_roles": [
         [
           "geography:unknown",
-          "cloud-capacity provider to demand anchor"
+          "unknown"
         ]
       ],
       "confidence_inputs": [
@@ -3014,7 +3014,7 @@
       "geography_roles": [
         [
           "geography:unknown",
-          "cloud-capacity provider to demand anchor"
+          "unknown"
         ]
       ],
       "confidence_inputs": [
@@ -3074,7 +3074,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "buyer to optical supplier"
+          "deployment_region"
         ]
       ],
       "confidence_inputs": [
@@ -3134,7 +3134,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "optical supplier"
+          "equipment_component_manufacturing"
         ]
       ],
       "confidence_inputs": [
@@ -3182,7 +3182,7 @@
       "relationship_id": "relationship:REL-AIP-0019",
       "text": "OpenAI described Stargate as its overarching AI-infrastructure platform and announced five new U.S. data-center sites with Oracle and SoftBank site-development roles.",
       "assertion_kind": "management_claim",
-      "lifecycle_state": "under_development",
+      "lifecycle_state": "announced",
       "effective_from": "2025-09-23",
       "effective_to": null,
       "time_precision": "day",
@@ -3194,7 +3194,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "platform operator and demand anchor"
+          "project_site"
         ]
       ],
       "confidence_inputs": [
@@ -3254,7 +3254,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "demand anchor to cloud/site partner"
+          "deployment_region"
         ]
       ],
       "confidence_inputs": [
@@ -3314,7 +3314,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "demand anchor to financing/site-development partner"
+          "project_site"
         ]
       ],
       "confidence_inputs": [
@@ -3374,7 +3374,7 @@
       "geography_roles": [
         [
           "geography:us-texas",
-          "platform-to-site hierarchy"
+          "project_site"
         ]
       ],
       "confidence_inputs": [
@@ -3434,7 +3434,7 @@
       "geography_roles": [
         [
           "geography:us-texas",
-          "rack-delivery supplier to site"
+          "data_center_site"
         ]
       ],
       "confidence_inputs": [
@@ -3494,7 +3494,7 @@
       "geography_roles": [
         [
           "geography:us-texas",
-          "site to compute-platform supplier"
+          "data_center_site"
         ]
       ],
       "confidence_inputs": [
@@ -3554,7 +3554,7 @@
       "geography_roles": [
         [
           "geography:us-texas",
-          "operating facility capacity"
+          "data_center_site"
         ]
       ],
       "confidence_inputs": [
@@ -3614,7 +3614,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "demand anchor to TPU/cloud partner"
+          "demand_region"
         ]
       ],
       "confidence_inputs": [
@@ -3674,7 +3674,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "demand anchor to custom-compute technology partner"
+          "demand_region"
         ]
       ],
       "confidence_inputs": [
@@ -3734,7 +3734,7 @@
       "geography_roles": [
         [
           "geography:us",
-          "demand-anchor compute input"
+          "demand_region"
         ]
       ],
       "confidence_inputs": [
@@ -3794,7 +3794,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand anchor to primary cloud/training partner"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -3854,7 +3854,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "demand anchor to accelerator supplier"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -3914,7 +3914,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "accelerated-compute and networking supplier"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -3974,7 +3974,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "foundry to fabless chip company"
+          "fab"
         ]
       ],
       "confidence_inputs": [
@@ -4034,7 +4034,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "foundry to fabless chip company"
+          "fab"
         ]
       ],
       "confidence_inputs": [
@@ -4094,7 +4094,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "memory supplier to compute-platform company"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4154,7 +4154,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "memory supplier to compute-platform company"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4214,7 +4214,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "packaging input"
+          "packaging_test"
         ]
       ],
       "confidence_inputs": [
@@ -4274,7 +4274,7 @@
       "geography_roles": [
         [
           "geography:taiwan",
-          "CoWoS developer and producer"
+          "packaging_test"
         ]
       ],
       "confidence_inputs": [
@@ -4334,7 +4334,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "CoWoS-specific capability dependency"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4394,7 +4394,7 @@
       "geography_roles": [
         [
           "geography:south-korea",
-          "HBM producer"
+          "equipment_component_manufacturing"
         ]
       ],
       "confidence_inputs": [
@@ -4454,7 +4454,7 @@
       "geography_roles": [
         [
           "geography:south-korea",
-          "HBM sample supplier"
+          "equipment_component_manufacturing"
         ]
       ],
       "confidence_inputs": [
@@ -4514,7 +4514,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "semiconductor equipment and process enablement"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4574,7 +4574,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "physical-infrastructure co-designer to compute-platform company"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4634,7 +4634,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "power/cooling design provider"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4694,7 +4694,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "open facility-design and operations program"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4754,7 +4754,7 @@
       "geography_roles": [
         [
           "geography:global",
-          "facility-capability dependency"
+          "global_scope"
         ]
       ],
       "confidence_inputs": [
@@ -4814,7 +4814,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "named member of contract-manufacturing group"
+          "packaging_test"
         ]
       ],
       "confidence_inputs": [
@@ -4874,7 +4874,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "named member of contract-manufacturing group"
+          "packaging_test"
         ]
       ],
       "confidence_inputs": [
@@ -4934,7 +4934,7 @@
       "geography_roles": [
         [
           "geography:asia",
-          "named member of contract-manufacturing group"
+          "packaging_test"
         ]
       ],
       "confidence_inputs": [

@@ -545,6 +545,10 @@ test.describe("AI Industry Panorama public journey", () => {
   type PanoramaProjection = {
     entities: PanoramaEntity[];
     relationships: PanoramaRelationship[];
+    facets: {
+      lifecycle: { id: string; label: string }[];
+      geography_role: { id: string; label: string }[];
+    };
   };
   type ObservedRequest = { method: string; pathname: string };
 
@@ -699,6 +703,13 @@ test.describe("AI Industry Panorama public journey", () => {
     const committedIds = sortedIds(projection.relationships.filter(
       (relationship) => relationship.lifecycle_state === "committed",
     ));
+    const announcedIds = sortedIds(projection.relationships.filter(
+      (relationship) => relationship.lifecycle_state === "announced",
+    ));
+    const projectSiteIds = sortedIds(projection.relationships.filter(
+      (relationship) =>
+        relationship.geography_roles.some(([, role]) => role === "project_site"),
+    ));
     const disclosedIds = sortedIds(projection.relationships.filter(
       (relationship) => [
         "disclosed_fact",
@@ -716,6 +727,16 @@ test.describe("AI Industry Panorama public journey", () => {
     expect(unitedStatesIds).toHaveLength(8);
     expect(periodIds).toHaveLength(42);
     expect(committedIds).toHaveLength(12);
+    expect(announcedIds).toEqual(["relationship:REL-AIP-0019"]);
+    expect(projectSiteIds).toEqual([
+      "relationship:REL-AIP-0019",
+      "relationship:REL-AIP-0021",
+      "relationship:REL-AIP-0022",
+    ]);
+    expect(projection.facets.lifecycle.map((item) => item.id)).toContain("announced");
+    expect(projection.facets.geography_role.map((item) => item.id)).toContain(
+      "project_site",
+    );
     expect(disclosedIds).toHaveLength(47);
 
     const baseOrigin = new URL(
@@ -746,7 +767,9 @@ test.describe("AI Industry Panorama public journey", () => {
     await page.getByRole("button", { name: "Reset panorama" }).click();
     await expectGraphTableIds(page, completeIds);
 
-    const search = page.getByPlaceholder("Entity, project, capability, or alias");
+    const search = page.getByPlaceholder(
+      "Entity, project, standard, capability, or alias",
+    );
     await search.fill("Microsoft");
     await expectGraphTableIds(page, microsoftSearchIds);
     const microsoft = page.locator(
@@ -772,6 +795,25 @@ test.describe("AI Industry Panorama public journey", () => {
     await assertFilter("#geography-filter", "geography:us", unitedStatesIds);
     await assertFilter("#time-filter", "2026-2027", periodIds);
     await assertFilter("#lifecycle-filter", "committed", committedIds);
+    await assertFilter("#lifecycle-filter", "announced", announcedIds);
+    await expect(
+      page.locator(
+        '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0019"]',
+      ),
+    ).toHaveCount(1);
+    await page
+      .locator(
+        '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0019"]',
+      )
+      .getByRole("button", { name: "View evidence" })
+      .click();
+    await expect(page.locator("#relationship-drawer")).toContainText(
+      "Lifecycle: announced",
+    );
+    await expect(page.locator("#relationship-drawer")).toContainText(
+      "United States (project_site)",
+    );
+    await assertFilter("#geography-role-filter", "project_site", projectSiteIds);
     await page.getByRole("button", { name: "Reset panorama" }).click();
     await page.locator("#disclosed-only").check();
     await expectGraphTableIds(page, disclosedIds);
@@ -794,6 +836,29 @@ test.describe("AI Industry Panorama public journey", () => {
     await capability.press(" ");
     await expect(page.locator("#capability-drawer")).toBeFocused();
     await expect(page.locator("#capability-drawer")).toContainText("Advanced semiconductor packaging");
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    await search.fill("OCP Open Data Centers for AI");
+    const standard = page.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-STD-OCP-ODCAI"]',
+    );
+    await standard.focus();
+    await standard.press("Enter");
+    await expect(page.locator("#entity-drawer")).toContainText(
+      "Entity type: standard",
+    );
+    await expect(page.locator("#entity-drawer")).toContainText(
+      "No admitted research or valuation link",
+    );
+    await expectGraphTableIds(page, [
+      "relationship:REL-AIP-0003",
+      "relationship:REL-AIP-0007",
+      "relationship:REL-AIP-0010",
+      "relationship:REL-AIP-0013",
+      "relationship:REL-AIP-0025",
+      "relationship:REL-AIP-0044",
+      "relationship:REL-AIP-0045",
+    ]);
 
     await page.getByRole("button", { name: "Reset panorama" }).click();
     const inferenceRow = page.locator(
@@ -860,7 +925,9 @@ test.describe("AI Industry Panorama public journey", () => {
     });
     await expect.poll(() => graphScroll.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 
-    const mobileSearch = mobilePage.getByPlaceholder("Entity, project, capability, or alias");
+    const mobileSearch = mobilePage.getByPlaceholder(
+      "Entity, project, standard, capability, or alias",
+    );
     await mobileSearch.fill("Microsoft");
     await expectGraphTableIds(mobilePage, microsoftSearchIds);
     const mobileMicrosoft = mobilePage.locator(

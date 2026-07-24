@@ -73,8 +73,8 @@ class ElementStub {
 const ids = [
   "panorama-app", "panorama-status", "panorama-error", "release-id",
   "taxonomy-version", "evidence-cutoff", "change-summary", "panorama-search",
-  "layer-filter", "geography-filter", "time-filter", "lifecycle-filter",
-  "evidence-filter", "confidence-filter", "disclosed-only", "hop-depth",
+  "layer-filter", "geography-filter", "geography-role-filter", "time-filter",
+  "lifecycle-filter", "evidence-filter", "confidence-filter", "disclosed-only", "hop-depth",
   "reset-panorama", "panorama-graph", "relationship-table-body",
   "entity-drawer", "capability-drawer", "relationship-drawer",
   "graph-view", "table-view", "both-view", "graph-panel", "table-panel",
@@ -216,6 +216,7 @@ class PanoramaWebTests(unittest.TestCase):
             'id="panorama-search"',
             'id="layer-filter"',
             'id="geography-filter"',
+            'id="geography-role-filter"',
             'id="time-filter"',
             'id="lifecycle-filter"',
             'id="evidence-filter"',
@@ -417,6 +418,7 @@ assert.deepEqual(
 const filters = [
   ["layer-filter", "layer-02"],
   ["geography-filter", "geography:us"],
+  ["geography-role-filter", "data_center_site"],
   ["time-filter", "day"],
   ["lifecycle-filter", "operating"],
   ["evidence-filter", "T2"],
@@ -450,6 +452,81 @@ assert.equal(
   window.AIIndustryPanorama.state.visibleRelationships.length,
   projection.relationships.length,
 );
+"""
+        )
+
+    def test_announced_standard_and_geography_role_filter_drawer_contracts(
+        self,
+    ) -> None:
+        _run_panorama_script(
+            """
+const graph = nodes.get("panorama-graph");
+const lifecycleValues = nodes.get("lifecycle-filter").children.map(
+  (option) => option.value
+);
+const roleValues = nodes.get("geography-role-filter").children.map(
+  (option) => option.value
+);
+assert.ok(lifecycleValues.includes("announced"));
+assert.ok(lifecycleValues.includes("operating"));
+assert.ok(roleValues.includes("project_site"));
+assert.ok(roleValues.includes("data_center_site"));
+
+trigger(nodes.get("reset-panorama"), "click");
+nodes.get("lifecycle-filter").value = "announced";
+trigger(nodes.get("lifecycle-filter"), "change");
+assert.deepEqual(relationshipIds(graph), ["relationship:REL-AIP-0019"]);
+assert.deepEqual(
+  relationshipIds(nodes.get("relationship-table-body")),
+  ["relationship:REL-AIP-0019"],
+);
+const announced = findByAttribute(
+  graph,
+  "data-relationship-id",
+  "relationship:REL-AIP-0019",
+);
+trigger(announced, "click");
+const announcedText = textTree(nodes.get("relationship-drawer"));
+assert.match(announcedText, /Lifecycle:\\s+announced/);
+assert.match(announcedText, /United States \\(project_site\\)/);
+
+trigger(nodes.get("reset-panorama"), "click");
+nodes.get("geography-role-filter").value = "project_site";
+trigger(nodes.get("geography-role-filter"), "change");
+assert.deepEqual(relationshipIds(graph), [
+  "relationship:REL-AIP-0019",
+  "relationship:REL-AIP-0021",
+  "relationship:REL-AIP-0022",
+]);
+assert.deepEqual(
+  relationshipIds(graph),
+  relationshipIds(nodes.get("relationship-table-body")),
+);
+
+trigger(nodes.get("reset-panorama"), "click");
+nodes.get("panorama-search").value = "OCP Open Data Centers for AI";
+trigger(nodes.get("panorama-search"), "input");
+const standard = findByAttribute(
+  graph,
+  "data-entity-id",
+  "entity:ENT-STD-OCP-ODCAI",
+);
+assert.ok(standard);
+trigger(standard, "click");
+assert.match(textTree(nodes.get("entity-drawer")), /Entity type:\\s+standard/);
+assert.match(
+  textTree(nodes.get("entity-drawer")),
+  /No admitted research or valuation link/,
+);
+assert.deepEqual(relationshipIds(graph), [
+  "relationship:REL-AIP-0003",
+  "relationship:REL-AIP-0007",
+  "relationship:REL-AIP-0010",
+  "relationship:REL-AIP-0013",
+  "relationship:REL-AIP-0025",
+  "relationship:REL-AIP-0044",
+  "relationship:REL-AIP-0045",
+]);
 """
         )
 
