@@ -273,3 +273,42 @@ All six demand-anchor paths now contain two forward canonical hops.
 `reviewed_for_implementation`
 
 All 48 relationship/assertion/evidence rows at commit `4069321` have passed independent source review, and all six declared demand-anchor paths follow canonical directions. This verdict authorizes implementation transcription under the technical plan's separate controls; it does not publish the data or mark deployment, user acceptance, or feature completion.
+
+## Corrective source-semantics re-review
+
+### Corrective re-review status
+
+- Artifact re-reviewed: the source manifest and frozen release at commit `251e15bf596c4d2ba173fd655628916b16ce7149`
+- Prior rejected correction: commit `1d5fbc63a02e9fbce8f8454f0795a745eb88937f`
+- Reviewer: `/root/panorama_task1_spec_review` acting as an independent source-semantics reviewer, distinct from Development
+- Re-review date: `2026-07-24`
+- Scope: `AST-AIP-0019`, the OCP entity classification, `AST-AIP-0037`, `AST-AIP-0039`, `AST-AIP-0040`, `AST-AIP-0046` through `AST-AIP-0048`, the other 42 geography-role mappings, source and stable-ID invariants, deterministic counts, and all six demand-anchor two-hop paths
+- Corrective re-review verdict: `reviewed_for_implementation`
+- Boundary: this verdict approves the source semantics of the exact corrective commit only. It does not publish a release, authorize deployment, mark user acceptance, or mark feature completion.
+
+### Resolution of prior findings
+
+| Reviewed item | Verdict | Corrective finding |
+| --- | --- | --- |
+| `AST-AIP-0019` | accepted | `announced` and `geography:us / project_site` remain bounded by `SRC-007`, which announces five new U.S. data-center sites under the Stargate platform. The limitation continues to exclude an unsupported claim that every site is operating or fully funded. |
+| `ENT-STD-OCP-ODCAI` | accepted | `standards_program` matches `SRC-016`, which describes an initiative developing standardized solutions. The entity remains distinct, unlisted, and without research or stock linkage; its limitation now expressly says the program is not itself a published standard. The validator separately admits a `standard` entity without requiring a stock link, so schema capability is preserved without laundering this program into a standard. |
+| `AST-AIP-0037` | accepted | `geography:global / global_scope` removes the unsupported Taiwan packaging-location interpretation. CoWoS function and variant-specific production lifecycle remain unchanged and retain their customer/capacity limitations. |
+| `AST-AIP-0039` | accepted | `geography:global / global_scope` preserves the disclosed HBM4 production claim without using SK hynix headquarters or general facility discussion as a proxy for the product's manufacturing location. |
+| `AST-AIP-0040` | accepted | `geography:unknown / unknown` matches the title-only sample-shipment evidence, which does not establish a manufacturing or shipment location. The title-only and downstream-status limitations remain explicit. |
+| `AST-AIP-0046` through `AST-AIP-0048` | accepted | `geography:asia / equipment_component_manufacturing` preserves NVIDIA's Asia-concentrated supply-chain disclosure and each company's membership in the contract-manufacturer group without assigning packaging or testing to an individual contractor. Each row retains the limitation that the source does not allocate an individual task, product, volume, revenue, capacity, or supplier share. |
+
+The admitted geography-role vocabulary is `headquarters`, `demand_region`, `deployment_region`, `data_center_site`, `project_site`, `fab`, `packaging_test`, `equipment_component_manufacturing`, `grid_utility_region`, `global_scope`, and `unknown`. All 48 canonical mappings use only this vocabulary. The other 42 mappings are byte-identical between commits `1d5fbc6` and `251e15b`, with ordered assertion SHA-256 `28f59c3ca1c83e9a3aa29196c6d7608f4f1da00219053b54a527071d67f93ef5`. The corrected set no longer uses headquarters as a manufacturing or deployment proxy and no longer allocates grouped packaging or testing activity to an individual contractor.
+
+### Corrective deterministic verification
+
+- Source objects are unchanged, with ordered SHA-256 `42ac48e5e68eb108778c779f8432cc00d7d3a87df974be457d2c508368a60768`.
+- Ordered taxonomy, entity, relationship, assertion, evidence, and source stable IDs are unchanged, with SHA-256 `3c4e0c0672fb9ff2cc6fcc2e773219c3edced82469aba3de6d57031cfa7ce1d9`.
+- Counts remain exact: six taxonomy groups, 35 entities, 25 organization/project/standards-program records, 10 capability nodes, six demand anchors, 48 relationships, 48 assertions, 48 evidence records, 16 official sources, and one inference.
+- All six declared demand-anchor paths retain two forward canonical hops.
+- The canonical release contains one `standards_program` and no entity falsely classified as a published `standard`; the separately tested validator contract still admits an unlisted standard without stock linkage.
+
+### Corrective final verdict
+
+`reviewed_for_implementation`
+
+The prior source-semantics findings against commit `1d5fbc6` are resolved at exact commit `251e15bf596c4d2ba173fd655628916b16ce7149`. No residual source-semantics blocker remains within this bounded corrective scope.
