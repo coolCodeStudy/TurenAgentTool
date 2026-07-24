@@ -213,9 +213,9 @@ def _source_authority_classification(
             "official image/video media entry",
         }:
             return "T2 issuer newsroom"
+        if source_kind == "official supplier announcement":
+            return "T2 supplier announcement"
         if source_kind == "official company announcement":
-            if source.publisher == "Corning Incorporated":
-                return "T2 supplier announcement"
             return "T2 company announcement"
     raise PanoramaReleaseError(
         "source authority classification is not admitted"
@@ -810,6 +810,13 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
             raise PanoramaReleaseError(
                 "source retrieval date cannot be after evidence cutoff"
             )
+        if (
+            item.publication_date is not None
+            and item.publication_date > item.retrieval_date
+        ):
+            raise PanoramaReleaseError(
+                "source publication date cannot be after retrieval date"
+            )
         _bounded_english(item.publisher, 120, "source publisher")
         _bounded_english(item.document_title, 800, "source title")
         if not item.immutable_locator.strip():
@@ -869,6 +876,10 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
         _bounded_english(item.text, 800, "assertion text")
         _bounded_english(item.limitations, 500, "assertion limitations")
         _validate_temporal_fields(item)
+        if item.observed_at > item.reviewed_at:
+            raise PanoramaReleaseError(
+                "assertion observed_at cannot be after reviewed_at"
+            )
         if item.observed_at > evidence_cutoff:
             raise PanoramaReleaseError(
                 "assertion observed_at cannot be after evidence cutoff"
@@ -912,6 +923,7 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
         _validate_supersession(item, assertion_by_id)
     if any(count != 1 for count in active_counts.values()):
         raise PanoramaReleaseError("relationship must have exactly one active assertion")
+    _validate_supersession_chains(release.assertions)
 
     outgoing: dict[str, set[str]] = {}
     for item in release.relationships:
@@ -1074,6 +1086,62 @@ def _validate_supersession(
         or superseded.review_state != "superseded"
     ):
         raise PanoramaReleaseError("supersedes assertion reference is invalid")
+
+
+def _validate_supersession_chains(
+    assertions: tuple[PanoramaAssertion, ...],
+) -> None:
+    by_relationship: dict[str, list[PanoramaAssertion]] = {}
+    for assertion in assertions:
+        by_relationship.setdefault(assertion.relationship_id, []).append(
+            assertion
+        )
+
+    for relationship_assertions in by_relationship.values():
+        by_id = {
+            assertion.assertion_id: assertion
+            for assertion in relationship_assertions
+        }
+        active = [
+            assertion
+            for assertion in relationship_assertions
+            if assertion.review_state != "superseded"
+        ]
+        if len(active) != 1:
+            continue
+        active_id = active[0].assertion_id
+        successor_by_predecessor: dict[str, str] = {}
+        for successor in relationship_assertions:
+            predecessor_id = successor.supersedes_assertion_id
+            if predecessor_id is None:
+                continue
+            if predecessor_id in successor_by_predecessor:
+                raise PanoramaReleaseError(
+                    "supersession chain predecessor has multiple successors"
+                )
+            successor_by_predecessor[predecessor_id] = successor.assertion_id
+
+        for assertion in relationship_assertions:
+            if assertion.review_state != "superseded":
+                continue
+            current_id = assertion.assertion_id
+            visited: set[str] = set()
+            while by_id[current_id].review_state == "superseded":
+                if current_id in visited:
+                    raise PanoramaReleaseError(
+                        "supersession chain contains a cycle"
+                    )
+                visited.add(current_id)
+                successor_id = successor_by_predecessor.get(current_id)
+                if successor_id is None:
+                    raise PanoramaReleaseError(
+                        "supersession chain does not terminate at the active assertion"
+                    )
+                current_id = successor_id
+            if current_id != active_id:
+                raise PanoramaReleaseError(
+                    "supersession chain terminates outside the active assertion"
+                )
 
 
 def _validate_temporal_fields(item: PanoramaAssertion) -> None:

@@ -51,6 +51,53 @@ def next_release_payload(previous: object) -> dict[str, object]:
     return payload
 
 
+def multi_hop_supersession_payload(previous: object) -> dict[str, object]:
+    payload = canonical_payload()
+    payload["release_id"] = "ai-industry-panorama.2026-07-25.v2"
+    payload["prior_release_id"] = previous.release_id
+    payload["published_at"] = "2026-07-25T00:00:00Z"
+    payload["evidence_cutoff"] = "2026-07-25"
+    payload["change_summary"] = [
+        "Test-only reviewed multi-hop assertion replacement."
+    ]
+    oldest = next(
+        item
+        for item in payload["assertions"]
+        if item["assertion_id"] == "assertion:AST-AIP-0015"
+    )
+    original = copy.deepcopy(oldest)
+    oldest["effective_to"] = "2027"
+    oldest["reviewed_at"] = "2026-07-25"
+    oldest["review_state"] = "superseded"
+
+    middle = copy.deepcopy(original)
+    middle["assertion_id"] = "assertion:AST-AIP-0049"
+    middle["text"] = f'{middle["text"]} This is an intermediate review.'
+    middle["effective_to"] = "2027"
+    middle["reviewed_at"] = "2026-07-25"
+    middle["review_state"] = "superseded"
+    middle["supersedes_assertion_id"] = oldest["assertion_id"]
+
+    active = copy.deepcopy(original)
+    active["assertion_id"] = "assertion:AST-AIP-0050"
+    active["text"] = f'{active["text"]} This is the active reviewed replacement.'
+    active["reviewed_at"] = "2026-07-25"
+    active["supersedes_assertion_id"] = middle["assertion_id"]
+    payload["assertions"].extend((middle, active))
+    payload["release_diff"] = {
+        "added": sorted([middle["assertion_id"], active["assertion_id"]]),
+        "changed": [],
+        "expired": [oldest["assertion_id"]],
+        "removed": [],
+        "reasons": {
+            oldest["assertion_id"]: (
+                "Test-only expiry after a reviewed multi-hop replacement."
+            ),
+        },
+    }
+    return payload
+
+
 def plain_record(value: object) -> object:
     if dataclasses.is_dataclass(value):
         return {
@@ -451,41 +498,17 @@ class PanoramaReleaseTests(unittest.TestCase):
         self,
     ) -> None:
         previous = load_release()
-        payload = canonical_payload()
-        payload["release_id"] = "ai-industry-panorama.2026-07-25.v2"
-        payload["prior_release_id"] = previous.release_id
-        payload["published_at"] = "2026-07-25T00:00:00Z"
-        payload["evidence_cutoff"] = "2026-07-25"
-        payload["change_summary"] = [
-            "Test-only reviewed replacement of one active assertion."
-        ]
+        payload = multi_hop_supersession_payload(previous)
         old_assertion = next(
             item
             for item in payload["assertions"]
             if item["assertion_id"] == "assertion:AST-AIP-0015"
         )
-        new_assertion = copy.deepcopy(old_assertion)
-        old_assertion["effective_to"] = "2027"
-        old_assertion["reviewed_at"] = "2026-07-25"
-        old_assertion["review_state"] = "superseded"
-        new_assertion["assertion_id"] = "assertion:AST-AIP-0049"
-        new_assertion["text"] = (
-            f'{new_assertion["text"]} This record supersedes the prior review.'
+        active_assertion = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_id"] == "assertion:AST-AIP-0050"
         )
-        new_assertion["reviewed_at"] = "2026-07-25"
-        new_assertion["supersedes_assertion_id"] = old_assertion["assertion_id"]
-        payload["assertions"].append(new_assertion)
-        payload["release_diff"] = {
-            "added": [new_assertion["assertion_id"]],
-            "changed": [],
-            "expired": [old_assertion["assertion_id"]],
-            "removed": [],
-            "reasons": {
-                old_assertion["assertion_id"]: (
-                    "Test-only expiry after a reviewed replacement."
-                ),
-            },
-        }
 
         try:
             current = validate_release(payload, previous=previous)
@@ -500,7 +523,94 @@ class PanoramaReleaseTests(unittest.TestCase):
             for item in build_public_projection(current)["relationships"]
             if item["relationship_id"] == old_assertion["relationship_id"]
         )
-        self.assertEqual(new_assertion["assertion_id"], projected["assertion_id"])
+        self.assertEqual(
+            active_assertion["assertion_id"],
+            projected["assertion_id"],
+        )
+
+    def test_supersession_history_rejects_invalid_successor_graphs(self) -> None:
+        previous = load_release()
+        mutations = []
+
+        payload = multi_hop_supersession_payload(previous)
+        orphan = copy.deepcopy(
+            next(
+                item
+                for item in payload["assertions"]
+                if item["assertion_id"] == "assertion:AST-AIP-0049"
+            )
+        )
+        orphan["assertion_id"] = "assertion:AST-AIP-0051"
+        orphan["text"] = f'{orphan["text"]} Orphaned history record.'
+        orphan["supersedes_assertion_id"] = None
+        payload["assertions"].append(orphan)
+        payload["release_diff"]["added"].append(orphan["assertion_id"])
+        payload["release_diff"]["added"].sort()
+        mutations.append(("orphan", payload, "does not terminate"))
+
+        payload = multi_hop_supersession_payload(previous)
+        active = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_id"] == "assertion:AST-AIP-0050"
+        )
+        active["supersedes_assertion_id"] = "assertion:AST-AIP-0015"
+        mutations.append(("fork", payload, "multiple successors"))
+
+        payload = multi_hop_supersession_payload(previous)
+        oldest = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_id"] == "assertion:AST-AIP-0015"
+        )
+        active = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_id"] == "assertion:AST-AIP-0050"
+        )
+        oldest["supersedes_assertion_id"] = "assertion:AST-AIP-0049"
+        active["supersedes_assertion_id"] = None
+        mutations.append(("cycle", payload, "contains a cycle"))
+
+        payload = multi_hop_supersession_payload(previous)
+        template = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_id"] == "assertion:AST-AIP-0049"
+        )
+        disconnected_old = copy.deepcopy(template)
+        disconnected_old["assertion_id"] = "assertion:AST-AIP-0051"
+        disconnected_old["text"] = (
+            f'{disconnected_old["text"]} Disconnected predecessor.'
+        )
+        disconnected_old["supersedes_assertion_id"] = None
+        disconnected_new = copy.deepcopy(template)
+        disconnected_new["assertion_id"] = "assertion:AST-AIP-0052"
+        disconnected_new["text"] = (
+            f'{disconnected_new["text"]} Disconnected successor.'
+        )
+        disconnected_new["supersedes_assertion_id"] = disconnected_old[
+            "assertion_id"
+        ]
+        payload["assertions"].extend((disconnected_old, disconnected_new))
+        payload["release_diff"]["added"].extend(
+            (
+                disconnected_old["assertion_id"],
+                disconnected_new["assertion_id"],
+            )
+        )
+        payload["release_diff"]["added"].sort()
+        mutations.append(
+            ("disconnected chain", payload, "does not terminate")
+        )
+
+        for label, mutation, error_pattern in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    error_pattern,
+                ):
+                    validate_release(mutation, previous=previous)
 
     def test_v2_admits_referenced_source_growth_of_reviewed_class(self) -> None:
         previous = load_release()
@@ -566,6 +676,24 @@ class PanoramaReleaseTests(unittest.TestCase):
             "source authority classification",
         ):
             validate_release(payload)
+
+    def test_supplier_source_classification_is_semantic_not_publisher_named(
+        self,
+    ) -> None:
+        payload = canonical_payload()
+        source = next(
+            item
+            for item in payload["sources"]
+            if item["source_id"] == "source:SRC-006"
+        )
+        source["publisher"] = "Example Optical Supplier"
+        refresh_source_hash(payload, source["source_id"])
+
+        try:
+            release = validate_release(payload)
+        except PanoramaReleaseError as error:
+            self.fail(f"semantic supplier source was rejected: {error}")
+        self.assertEqual("published", release.review_state)
 
     def test_prior_release_is_required_and_must_match(self) -> None:
         previous = load_release()
@@ -802,6 +930,29 @@ class PanoramaReleaseTests(unittest.TestCase):
         payload["assertions"][0]["reviewed_at"] = "2026-07-25"
         mutations.append(("assertion review", payload, "assertion reviewed"))
 
+        payload = canonical_payload()
+        payload["sources"][0]["publication_date"] = "2026-07-24"
+        payload["sources"][0]["retrieval_date"] = "2026-07-23"
+        refresh_source_hash(payload, payload["sources"][0]["source_id"])
+        mutations.append(
+            (
+                "publication after retrieval",
+                payload,
+                "publication.*retrieval",
+            )
+        )
+
+        payload = canonical_payload()
+        payload["assertions"][0]["observed_at"] = "2026-07-24"
+        payload["assertions"][0]["reviewed_at"] = "2026-07-23"
+        mutations.append(
+            (
+                "observation after review",
+                payload,
+                "observed.*reviewed",
+            )
+        )
+
         for label, mutation, error_pattern in mutations:
             with self.subTest(label=label):
                 with self.assertRaisesRegex(
@@ -847,6 +998,16 @@ class PanoramaReleaseTests(unittest.TestCase):
     def test_source_publication_date_preserves_explicit_undated_state(self) -> None:
         payload = canonical_payload()
         payload["sources"][0]["publication_date"] = None
+        with self.assertRaisesRegex(PanoramaReleaseError, "publication date"):
+            validate_release(payload)
+
+        payload = canonical_payload()
+        source = next(
+            item
+            for item in payload["sources"]
+            if item["source_id"] == "source:SRC-016"
+        )
+        source["publication_date"] = source["retrieval_date"]
         with self.assertRaisesRegex(PanoramaReleaseError, "publication date"):
             validate_release(payload)
 
@@ -906,16 +1067,6 @@ class PanoramaReleaseTests(unittest.TestCase):
         payload["sources"][0]["content_hash"] = f"sha256:{'0' * 64}"
 
         with self.assertRaisesRegex(PanoramaReleaseError, "content_hash"):
-            validate_release(payload)
-
-        payload = canonical_payload()
-        source = next(
-            item
-            for item in payload["sources"]
-            if item["source_id"] == "source:SRC-016"
-        )
-        source["publication_date"] = source["retrieval_date"]
-        with self.assertRaisesRegex(PanoramaReleaseError, "publication date"):
             validate_release(payload)
 
     def test_research_links_are_allowlisted_safe_and_nonexecuting(self) -> None:
