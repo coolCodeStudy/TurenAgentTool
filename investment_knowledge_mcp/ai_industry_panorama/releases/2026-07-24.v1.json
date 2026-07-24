@@ -149,6 +149,7 @@
       "geography:netherlands",
       "geography:south-korea",
       "geography:taiwan",
+      "geography:unknown",
       "geography:us",
       "geography:us-texas",
       "geography:us-wisconsin",
@@ -352,6 +353,12 @@
       "label": "Japan",
       "country_code": "JP",
       "region": "Asia"
+    },
+    {
+      "geography_id": "geography:unknown",
+      "label": "Unknown geography",
+      "country_code": null,
+      "region": "unknown"
     }
   ],
   "entities": [
@@ -1403,7 +1410,7 @@
       "publisher": "Open Compute Project Foundation",
       "document_title": "Open Data Centers for AI",
       "url": "https://www.opencompute.org/community/open-data-centers-for-ai",
-      "publication_date": "2026-07-24",
+      "publication_date": null,
       "retrieval_date": "2026-07-24",
       "immutable_locator": "“Scope” bullets covering reference designs, advanced power/cooling, energy bottlenecks, open SLAs, telemetry/management, and power estimation methodologies",
       "content_hash": "sha256:9941f2409c1e6ea3c006cebdb75cb591aed15fb53163eeedf1031451fb9a45a8",
@@ -2936,9 +2943,9 @@
       "text": "Amazon said it secured a commitment from OpenAI to consume approximately 2 GW of Trainium capacity through AWS infrastructure, beginning to ramp in 2027.",
       "assertion_kind": "disclosed_fact",
       "lifecycle_state": "committed",
-      "effective_from": null,
+      "effective_from": "2027",
       "effective_to": null,
-      "time_precision": "unknown",
+      "time_precision": "year",
       "observed_at": "2026-04-29",
       "reporting_period_start": null,
       "reporting_period_end": null,
@@ -2946,7 +2953,7 @@
       "freshness_state": "current",
       "geography_roles": [
         [
-          "geography:global",
+          "geography:unknown",
           "cloud-capacity provider to demand anchor"
         ]
       ],
@@ -3006,7 +3013,7 @@
       "freshness_state": "current",
       "geography_roles": [
         [
-          "geography:global",
+          "geography:unknown",
           "cloud-capacity provider to demand anchor"
         ]
       ],
@@ -3716,9 +3723,9 @@
       "text": "Anthropic said the Google/Broadcom agreement will provide multiple gigawatts of next-generation TPU compute capacity, expected to start becoming available in 2027.",
       "assertion_kind": "company_guidance",
       "lifecycle_state": "committed",
-      "effective_from": null,
+      "effective_from": "2027",
       "effective_to": null,
-      "time_precision": "unknown",
+      "time_precision": "year",
       "observed_at": "2026-04-06",
       "reporting_period_start": null,
       "reporting_period_end": null,

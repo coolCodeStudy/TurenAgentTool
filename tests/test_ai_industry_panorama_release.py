@@ -6,6 +6,8 @@ import dataclasses
 import json
 from pathlib import Path
 import re
+from types import MappingProxyType
+from typing import Mapping
 import unittest
 from unittest import mock
 
@@ -48,6 +50,19 @@ def next_release_payload(previous: object) -> dict[str, object]:
     return payload
 
 
+def plain_record(value: object) -> object:
+    if dataclasses.is_dataclass(value):
+        return {
+            field.name: plain_record(getattr(value, field.name))
+            for field in dataclasses.fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {key: plain_record(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [plain_record(item) for item in value]
+    return value
+
+
 class PanoramaReleaseTests(unittest.TestCase):
     def test_canonical_release_has_reviewed_manifest_counts(self) -> None:
         release = load_release()
@@ -67,6 +82,31 @@ class PanoramaReleaseTests(unittest.TestCase):
         self.assertEqual(6, sum(entity.is_demand_anchor for entity in release.entities))
         self.assertEqual("published", release.review_state)
         self.assertNotEqual(release.curator, release.reviewer)
+
+    def test_canonical_release_preserves_reviewed_year_and_unknown_geography(self) -> None:
+        release = load_release()
+        assertions = {item.assertion_id: item for item in release.assertions}
+        sources = {item.source_id: item for item in release.sources}
+
+        for assertion_id in ("assertion:AST-AIP-0015", "assertion:AST-AIP-0028"):
+            with self.subTest(assertion_id=assertion_id):
+                assertion = assertions[assertion_id]
+                self.assertEqual("2027", assertion.effective_from)
+                self.assertEqual("year", assertion.time_precision)
+        for assertion_id in ("assertion:AST-AIP-0015", "assertion:AST-AIP-0016"):
+            with self.subTest(assertion_id=assertion_id):
+                self.assertEqual(
+                    (("geography:unknown", "cloud-capacity provider to demand anchor"),),
+                    assertions[assertion_id].geography_roles,
+                )
+        self.assertIsNone(sources["source:SRC-016"].publication_date)
+
+    def test_canonical_payload_round_trips_without_field_loss(self) -> None:
+        payload = canonical_payload()
+        release = validate_release(payload)
+
+        self.assertEqual(payload, plain_record(release))
+        self.assertIsInstance(release.release_diff.reasons, MappingProxyType)
 
     def test_release_and_nested_records_are_frozen(self) -> None:
         release = load_release()
@@ -175,6 +215,72 @@ class PanoramaReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(PanoramaReleaseError, "confidence label"):
             validate_release(payload)
 
+    def test_confidence_inputs_are_exact_and_evidence_derived(self) -> None:
+        mutations = []
+
+        payload = canonical_payload()
+        payload["assertions"][0]["confidence_inputs"][0][0] = "authority"
+        mutations.append(("keys", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["confidence_inputs"][0][1] = "T1 regulator filing"
+        mutations.append(("authority tier", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["confidence_inputs"][4][1] = (
+            "manual derivation unreviewed"
+        )
+        mutations.append(("extraction shape", payload))
+
+        payload = canonical_payload()
+        inferred = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_kind"] == "inferred_exposure"
+        )
+        confidence = dict(inferred["confidence_inputs"])
+        confidence["corr"] = "single primary"
+        inferred["confidence_inputs"] = [
+            [key, confidence[key]] for key in sorted(confidence)
+        ]
+        mutations.append(("inference corroboration", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["confidence_inputs"][1][1] = "contradicted"
+        mutations.append(("conflict", payload))
+
+        payload = canonical_payload()
+        confidence = dict(payload["assertions"][0]["confidence_inputs"])
+        confidence["geo"] = "specific"
+        payload["assertions"][0]["confidence_inputs"] = [
+            [key, confidence[key]] for key in sorted(confidence)
+        ]
+        payload["assertions"][0]["confidence_rationale"] = "; ".join(
+            f"{key}={confidence[key]}"
+            for key in (
+                "auth",
+                "explicit",
+                "corr",
+                "time",
+                "geo",
+                "extraction",
+                "conflict",
+            )
+        )
+        mutations.append(("geography relationship", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["geography_roles"] = []
+        mutations.append(("missing geography role", payload))
+
+        for label, mutation in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    "confidence",
+                ):
+                    validate_release(mutation)
+
     def test_published_assertion_requires_reviewed_evidence(self) -> None:
         payload = canonical_payload()
         payload["evidence"][0]["review_state"] = "curated_pending_review"
@@ -250,6 +356,62 @@ class PanoramaReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(PanoramaReleaseError, "prior release"):
             validate_release(mismatched, previous=previous)
 
+    def test_load_release_supports_v3_with_immediate_v2_snapshot(self) -> None:
+        v1 = load_release()
+        v2_payload = next_release_payload(v1)
+        v2 = validate_release(v2_payload, previous=v1)
+        v3_payload = copy.deepcopy(v2_payload)
+        v3_payload["release_id"] = "ai-industry-panorama.2026-07-26.v3"
+        v3_payload["prior_release_id"] = v2.release_id
+        v3_payload["published_at"] = "2026-07-26T00:00:00Z"
+        v3_payload["evidence_cutoff"] = "2026-07-26"
+        v3_payload["change_summary"] = ["Test-only third release."]
+        changed = v3_payload["assertions"][1]
+        changed["text"] = f'{changed["text"]} Third-release review.'
+        v3_payload["release_diff"] = {
+            "added": [],
+            "changed": [changed["assertion_id"]],
+            "expired": [],
+            "removed": [],
+            "reasons": {
+                changed["assertion_id"]: "Test-only third-release correction.",
+            },
+        }
+        v2_path = self._temp_file(json.dumps(v2_payload))
+        v3_path = self._temp_file(json.dumps(v3_payload))
+
+        loaded = load_release(v3_path, prior_path=v2_path)
+
+        self.assertEqual(v3_payload, plain_record(loaded))
+        self.assertEqual(v2.release_id, loaded.prior_release_id)
+
+    def test_relationship_identity_cannot_change_across_releases(self) -> None:
+        previous = load_release()
+        for field, value in (
+            ("source_entity_id", "entity:ENT-ORG-WISTRON"),
+            ("target_entity_id", "entity:ENT-ORG-MICRON"),
+            ("relationship_type", "partners_with"),
+        ):
+            payload = next_release_payload(previous)
+            relationship = payload["relationships"][45]
+            relationship[field] = value
+            changed_ids = sorted(
+                {
+                    payload["assertions"][0]["assertion_id"],
+                    relationship["relationship_id"],
+                }
+            )
+            payload["release_diff"]["changed"] = changed_ids
+            payload["release_diff"]["reasons"][
+                relationship["relationship_id"]
+            ] = "Test-only relationship identity mutation."
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    "relationship identity",
+                ):
+                    validate_release(payload, previous=previous)
+
     def test_same_release_id_cannot_be_reused_with_changed_content(self) -> None:
         previous = load_release()
         payload = canonical_payload()
@@ -310,6 +472,174 @@ class PanoramaReleaseTests(unittest.TestCase):
         payload["release_diff"]["added"].append(duplicate["assertion_id"])
         with self.assertRaisesRegex(PanoramaReleaseError, "active assertion"):
             validate_release(payload)
+
+    def test_taxonomy_freshness_capability_and_time_enums_are_bounded(self) -> None:
+        mutations = []
+
+        payload = canonical_payload()
+        payload["taxonomy"][0]["layer"] = "layer-99"
+        mutations.append(("taxonomy layer", payload))
+
+        payload = canonical_payload()
+        payload["entities"][0]["freshness_state"] = "fresh"
+        mutations.append(("entity freshness", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["freshness_state"] = "fresh"
+        mutations.append(("assertion freshness", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["time_precision"] = "quarter-ish"
+        mutations.append(("time precision", payload))
+
+        payload = canonical_payload()
+        capability = copy.deepcopy(
+            next(item for item in payload["entities"] if item["kind"] == "capability")
+        )
+        capability["entity_id"] = "entity:ENT-CAP-EXTRA"
+        capability["label"] = "Unreviewed extra capability"
+        payload["entities"].append(capability)
+        payload["release_diff"]["added"].append(capability["entity_id"])
+        payload["release_diff"]["added"].sort()
+        mutations.append(("capability maximum", payload))
+
+        for label, mutation in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    "taxonomy|freshness|time precision|capability",
+                ):
+                    validate_release(mutation)
+
+    def test_temporal_precision_and_ranges_are_consistent(self) -> None:
+        mutations = []
+
+        payload = canonical_payload()
+        payload["assertions"][0]["effective_to"] = "2025-01-01"
+        mutations.append(("reversed effective range", payload))
+
+        payload = canonical_payload()
+        period = next(
+            item
+            for item in payload["assertions"]
+            if item["time_precision"] == "reporting_period"
+        )
+        period["reporting_period_end"] = None
+        mutations.append(("incomplete reporting period", payload))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["time_precision"] = "year"
+        mutations.append(("year with day value", payload))
+
+        for label, mutation in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    "time|reporting|effective",
+                ):
+                    validate_release(mutation)
+
+    def test_supersession_reference_must_exist_be_nonself_and_same_relationship(
+        self,
+    ) -> None:
+        for value in (
+            "assertion:AST-AIP-9999",
+            "assertion:AST-AIP-0001",
+            "assertion:AST-AIP-0002",
+        ):
+            payload = canonical_payload()
+            payload["assertions"][0]["supersedes_assertion_id"] = value
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(PanoramaReleaseError, "supersed"):
+                    validate_release(payload)
+
+    def test_source_urls_and_valid_fields_reject_credentials(self) -> None:
+        mutations = []
+
+        payload = canonical_payload()
+        payload["sources"][0]["url"] = "https://user:password@example.com/source"
+        mutations.append(("userinfo", payload))
+
+        payload = canonical_payload()
+        payload["sources"][0]["url"] = "https://example.com/source?api_key=secret"
+        mutations.append(("sensitive query", payload))
+
+        payload = canonical_payload()
+        payload["sources"][0]["publisher"] = "token=private-value"
+        mutations.append(("credential-looking value", payload))
+
+        for label, mutation in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(PanoramaReleaseError, "credential"):
+                    validate_release(mutation)
+
+    def test_source_publication_date_preserves_explicit_undated_state(self) -> None:
+        payload = canonical_payload()
+        payload["sources"][0]["publication_date"] = None
+        with self.assertRaisesRegex(PanoramaReleaseError, "publication date"):
+            validate_release(payload)
+
+        payload = canonical_payload()
+        source = next(
+            item
+            for item in payload["sources"]
+            if item["source_id"] == "source:SRC-016"
+        )
+        source["publication_date"] = source["retrieval_date"]
+        with self.assertRaisesRegex(PanoramaReleaseError, "publication date"):
+            validate_release(payload)
+
+    def test_research_links_are_allowlisted_safe_and_nonexecuting(self) -> None:
+        safe_link = {
+            "kind": "research",
+            "label": "NVIDIA research workspace",
+            "canonical_stock_id": "US.NVDA",
+            "internal_path": "/command",
+            "command_hint": "Open the workspace and formulate a stock question.",
+        }
+        payload = canonical_payload()
+        nvidia = next(
+            item
+            for item in payload["entities"]
+            if item["entity_id"] == "entity:ENT-ORG-NVIDIA"
+        )
+        nvidia["research_links"] = [safe_link]
+        self.assertEqual("published", validate_release(payload).review_state)
+
+        mutations = []
+        for entity_id in (
+            "entity:ENT-CAP-HBM",
+            "entity:ENT-ORG-OPENAI",
+        ):
+            payload = canonical_payload()
+            entity = next(
+                item for item in payload["entities"] if item["entity_id"] == entity_id
+            )
+            entity["research_links"] = [copy.deepcopy(safe_link)]
+            mutations.append((entity_id, payload))
+
+        for field, value in (
+            ("canonical_stock_id", "US.AMZN"),
+            ("canonical_stock_id", "NVDA"),
+            ("kind", "external"),
+            ("internal_path", "/command?run=valuation"),
+            ("command_hint", "valuation US.NVDA"),
+        ):
+            payload = canonical_payload()
+            entity = next(
+                item
+                for item in payload["entities"]
+                if item["entity_id"] == "entity:ENT-ORG-NVIDIA"
+            )
+            link = copy.deepcopy(safe_link)
+            link[field] = value
+            entity["research_links"] = [link]
+            mutations.append((field, payload))
+
+        for label, mutation in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(PanoramaReleaseError, "research link"):
+                    validate_release(mutation)
 
     def test_domain_has_no_forbidden_imports_or_calls(self) -> None:
         forbidden = {

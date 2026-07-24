@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import Any, Mapping, TypeVar
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 
 class PanoramaReleaseError(ValueError):
@@ -184,6 +184,76 @@ _REVIEW_STATES = frozenset(
     }
 )
 _SOURCE_TIERS = frozenset({"T1", "T2", "T3"})
+_TAXONOMY_LAYERS = {
+    "taxonomy:TAX-01": "layer-01",
+    "taxonomy:TAX-02": "layer-02",
+    "taxonomy:TAX-03": "layer-03",
+    "taxonomy:TAX-04": "layer-04",
+    "taxonomy:TAX-05": "layer-05",
+    "taxonomy:TAX-06": "layer-06",
+}
+_FRESHNESS_STATES = frozenset(
+    {"current", "needs_recheck", "stale", "source_unavailable"}
+)
+_TIME_PRECISIONS = frozenset(
+    {"day", "month", "year", "reporting_period", "unknown"}
+)
+_CONFIDENCE_KEYS = frozenset(
+    {"auth", "explicit", "corr", "time", "geo", "extraction", "conflict"}
+)
+_CONFIDENCE_VALUES = {
+    "auth": frozenset(
+        {
+            "T1 regulator filing",
+            "T2 company announcement",
+            "T2 issuer IR",
+            "T2 issuer annual report",
+            "T2 issuer newsroom",
+            "T2 issuer plus T3 official-program premises",
+            "T2 supplier announcement",
+            "T3 official program",
+        }
+    ),
+    "corr": frozenset({"single primary", "two non-bilateral premises"}),
+    "time": frozenset(
+        {
+            "current",
+            "current with month precision",
+            "current-page state",
+            "current/forward",
+            "forward",
+            "forward with year precision",
+            "recent period",
+            "recent/current",
+        }
+    ),
+    "geo": frozenset(
+        {"global", "global only", "mostly specific", "partly specific", "specific", "unknown"}
+    ),
+    "extraction": frozenset(
+        {"manual unreviewed", "manual derivation unreviewed"}
+    ),
+    "conflict": frozenset({"none"}),
+}
+_CONFIDENCE_RATIONALE_ORDER = (
+    "auth",
+    "explicit",
+    "corr",
+    "time",
+    "geo",
+    "extraction",
+    "conflict",
+)
+_GEOGRAPHY_CONFIDENCE = {
+    "geography:global": frozenset({"global", "global only"}),
+    "geography:unknown": frozenset({"unknown"}),
+    "geography:us": frozenset({"specific", "mostly specific"}),
+    "geography:us-wisconsin": frozenset({"specific"}),
+    "geography:us-texas": frozenset({"specific"}),
+    "geography:asia": frozenset({"partly specific"}),
+    "geography:taiwan": frozenset({"partly specific"}),
+    "geography:south-korea": frozenset({"partly specific", "global"}),
+}
 _RELATIONSHIP_TYPES = frozenset(
     {
         "buys_from",
@@ -211,8 +281,54 @@ _PREFIXES = {
 }
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+_YEAR_RE = re.compile(r"^\d{4}$")
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _ENGLISH_RE = re.compile(r"[A-Za-z]")
+_STOCK_ID_RE = re.compile(r"^[A-Z]{2}\.[A-Z0-9]{1,10}$")
+_CREDENTIAL_VALUE_RE = re.compile(
+    r"(?i)(?:password|passphrase|api[_-]?key|access[_-]?token|token|secret|"
+    r"credential)\s*[:=]\s*\S+|bearer\s+\S+|ghp_[A-Za-z0-9]{20,}|"
+    r"sk-[A-Za-z0-9]{20,}"
+)
+_SENSITIVE_QUERY_NAMES = frozenset(
+    {
+        "access_token",
+        "api_key",
+        "apikey",
+        "auth",
+        "authorization",
+        "client_secret",
+        "credential",
+        "key",
+        "password",
+        "private_key",
+        "secret",
+        "sig",
+        "signature",
+        "token",
+    }
+)
+_RESEARCH_LINKS_BY_ENTITY = {
+    "entity:ENT-ORG-ALPHABET": frozenset({"US.GOOGL"}),
+    "entity:ENT-ORG-MICROSOFT": frozenset({"US.MSFT"}),
+    "entity:ENT-ORG-META": frozenset({"US.META"}),
+    "entity:ENT-ORG-AMAZON": frozenset({"US.AMZN"}),
+    "entity:ENT-ORG-NVIDIA": frozenset({"US.NVDA"}),
+    "entity:ENT-ORG-HONHAI": frozenset({"TW.2317"}),
+    "entity:ENT-ORG-WISTRON": frozenset({"TW.3231"}),
+    "entity:ENT-ORG-FABRINET": frozenset({"US.FN"}),
+    "entity:ENT-ORG-TSMC": frozenset({"US.TSM"}),
+    "entity:ENT-ORG-SAMSUNG": frozenset({"KR.005930"}),
+    "entity:ENT-ORG-SKHYNIX": frozenset({"KR.000660"}),
+    "entity:ENT-ORG-MICRON": frozenset({"US.MU"}),
+    "entity:ENT-ORG-ASML": frozenset({"US.ASML"}),
+    "entity:ENT-ORG-BROADCOM": frozenset({"US.AVGO"}),
+    "entity:ENT-ORG-CORNING": frozenset({"US.GLW"}),
+    "entity:ENT-ORG-ORACLE": frozenset({"US.ORCL"}),
+    "entity:ENT-ORG-SCHNEIDER": frozenset({"FR.SU"}),
+    "entity:ENT-ORG-SOFTBANK": frozenset({"JP.9984"}),
+}
+_RESEARCH_LINK_KINDS = frozenset({"research", "valuation"})
 _T = TypeVar("_T")
 
 
@@ -223,7 +339,15 @@ def load_release(
 ) -> PanoramaRelease:
     release_path = path or _RELEASE_PATH
     payload = _read_json(release_path)
-    previous = validate_release(_read_json(prior_path)) if prior_path else None
+    previous = (
+        _validate_release(
+            _read_json(prior_path),
+            previous=None,
+            allow_unresolved_prior=True,
+        )
+        if prior_path
+        else None
+    )
     return validate_release(payload, previous=previous)
 
 
@@ -231,6 +355,19 @@ def validate_release(
     payload: Mapping[str, object],
     *,
     previous: PanoramaRelease | None = None,
+) -> PanoramaRelease:
+    return _validate_release(
+        payload,
+        previous=previous,
+        allow_unresolved_prior=False,
+    )
+
+
+def _validate_release(
+    payload: Mapping[str, object],
+    *,
+    previous: PanoramaRelease | None,
+    allow_unresolved_prior: bool,
 ) -> PanoramaRelease:
     if not isinstance(payload, Mapping):
         raise PanoramaReleaseError("release payload must be a JSON object")
@@ -281,17 +418,28 @@ def validate_release(
                 "release ID reuse with byte-significant content change"
             )
         return release
+    unresolved_prior = (
+        allow_unresolved_prior
+        and previous is None
+        and release.prior_release_id is not None
+    )
     if release.prior_release_id is None:
         if previous is not None:
             raise PanoramaReleaseError("prior release must be null for first release")
-    elif previous is None or previous.release_id != release.prior_release_id:
+    elif (
+        not unresolved_prior
+        and (previous is None or previous.release_id != release.prior_release_id)
+    ):
         raise PanoramaReleaseError("prior release is required and must match")
 
     _validate_release_graph(release)
-    expected_diff = _compute_diff(previous, release)
-    stored_diff = _diff_to_dict(release.release_diff)
-    if expected_diff != stored_diff:
-        raise PanoramaReleaseError("stored release diff does not match computed diff")
+    if previous is not None:
+        _validate_relationship_identity(previous, release)
+    if not unresolved_prior:
+        expected_diff = _compute_diff(previous, release)
+        stored_diff = _diff_to_dict(release.release_diff)
+        if expected_diff != stored_diff:
+            raise PanoramaReleaseError("stored release diff does not match computed diff")
     _validate_diff_reasons(release.release_diff)
 
     if release.review_state == "published":
@@ -438,6 +586,9 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     covered = [item for item in release.entities if item.kind in {"organization", "project"}]
     if not 25 <= len(covered) <= 35:
         raise PanoramaReleaseError("organization/project count must be between 25 and 35")
+    capabilities = [item for item in release.entities if item.kind == "capability"]
+    if len(capabilities) > 10:
+        raise PanoramaReleaseError("capability count exceeds reviewed V1 maximum")
     if not 45 <= len(release.relationships) <= 70:
         raise PanoramaReleaseError("relationship count must be between 45 and 70")
     anchors = [item for item in release.entities if item.is_demand_anchor]
@@ -447,6 +598,8 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     for item in release.taxonomy:
         if item.parent_id is not None and item.parent_id not in taxonomy_ids:
             raise PanoramaReleaseError("taxonomy foreign key is invalid")
+        if _TAXONOMY_LAYERS.get(item.taxonomy_id) != item.layer:
+            raise PanoramaReleaseError("taxonomy layer is not admitted")
         _bounded_english(item.label, 120, "taxonomy label")
         _bounded_english(item.definition, 800, "taxonomy definition")
     for item in release.geographies:
@@ -454,6 +607,8 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     for item in release.entities:
         if item.kind not in _ENTITY_KINDS:
             raise PanoramaReleaseError("unsupported entity kind")
+        if item.freshness_state not in _FRESHNESS_STATES:
+            raise PanoramaReleaseError("unsupported entity freshness state")
         _bounded_english(item.label, 120, "entity label")
         _bounded_english(item.summary, 800, "entity summary")
         if not item.taxonomy_ids or not set(item.taxonomy_ids) <= taxonomy_ids:
@@ -462,7 +617,7 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
             raise PanoramaReleaseError("entity geography foreign key is invalid")
         _validate_date(item.last_reviewed_at, "entity last_reviewed_at")
         for link in item.research_links:
-            _validate_research_link(link)
+            _validate_research_link(item, link)
 
     for item in release.sources:
         if item.tier not in _SOURCE_TIERS:
@@ -470,6 +625,20 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
         parsed = urlparse(item.url)
         if parsed.scheme != "https" or not parsed.netloc:
             raise PanoramaReleaseError("source URL must use HTTPS")
+        if parsed.username is not None or parsed.password is not None:
+            raise PanoramaReleaseError("source URL contains credentials")
+        if any(
+            key.lower() in _SENSITIVE_QUERY_NAMES
+            for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+        ):
+            raise PanoramaReleaseError("source URL contains credential query data")
+        is_explicitly_undated = (
+            "no publication date displayed" in item.license_class.lower()
+        )
+        if (item.publication_date is None) != is_explicitly_undated:
+            raise PanoramaReleaseError(
+                "source publication date contradicts undated metadata"
+            )
         if item.publication_date is not None:
             _validate_date(item.publication_date, "source publication_date")
         _validate_date(item.retrieval_date, "source retrieval_date")
@@ -514,6 +683,8 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
             raise PanoramaReleaseError("unsupported lifecycle state")
         if item.review_state not in _REVIEW_STATES:
             raise PanoramaReleaseError("unsupported assertion review state")
+        if item.freshness_state not in _FRESHNESS_STATES:
+            raise PanoramaReleaseError("unsupported assertion freshness state")
         _bounded_english(item.text, 800, "assertion text")
         _bounded_english(item.limitations, 500, "assertion limitations")
         _validate_temporal_fields(item)
@@ -529,25 +700,27 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
                 raise PanoramaReleaseError(
                     "published assertion requires reviewed evidence"
                 )
-        expected_confidence = (
-            "inference" if item.assertion_kind == "inferred_exposure" else "medium"
-        )
-        if item.confidence_label != expected_confidence:
-            raise PanoramaReleaseError(
-                "confidence label does not match structured inputs"
-            )
-        if tuple(sorted(item.confidence_inputs)) != item.confidence_inputs:
-            raise PanoramaReleaseError("confidence inputs must be sorted")
-        if tuple(sorted(item.geography_roles)) != item.geography_roles:
-            raise PanoramaReleaseError("geography roles must be sorted")
-        if any(key not in geography_ids for key, _ in item.geography_roles):
-            raise PanoramaReleaseError("assertion geography foreign key is invalid")
         if item.assertion_kind == "inferred_exposure":
             _validate_inference(item, assertion_by_id)
         elif item.premise_assertion_ids:
             raise PanoramaReleaseError(
                 "only inference assertions may have inference derivation"
             )
+        if not item.geography_roles:
+            raise PanoramaReleaseError(
+                "confidence requires a structured geography role"
+            )
+        if tuple(sorted(item.geography_roles)) != item.geography_roles:
+            raise PanoramaReleaseError("geography roles must be sorted")
+        if any(key not in geography_ids for key, _ in item.geography_roles):
+            raise PanoramaReleaseError("assertion geography foreign key is invalid")
+        _validate_confidence(
+            item,
+            assertion_by_id=assertion_by_id,
+            evidence_by_id=evidence_by_id,
+            source_by_id=source_by_id,
+        )
+        _validate_supersession(item, assertion_by_id)
     if any(count != 1 for count in active_counts.values()):
         raise PanoramaReleaseError("relationship must have exactly one active assertion")
 
@@ -581,22 +754,167 @@ def _validate_inference(
             raise PanoramaReleaseError("inference derivation is invalid")
 
 
+def _validate_confidence(
+    item: PanoramaAssertion,
+    *,
+    assertion_by_id: Mapping[str, PanoramaAssertion],
+    evidence_by_id: Mapping[str, PanoramaEvidence],
+    source_by_id: Mapping[str, PanoramaSourceSnapshot],
+) -> None:
+    if (
+        len(item.confidence_inputs) != len(_CONFIDENCE_KEYS)
+        or {key for key, _ in item.confidence_inputs} != _CONFIDENCE_KEYS
+    ):
+        raise PanoramaReleaseError("confidence inputs have invalid keys")
+    if tuple(sorted(item.confidence_inputs)) != item.confidence_inputs:
+        raise PanoramaReleaseError("confidence inputs must be sorted")
+    inputs = dict(item.confidence_inputs)
+    for key, allowed in _CONFIDENCE_VALUES.items():
+        if inputs[key] not in allowed:
+            raise PanoramaReleaseError(f"confidence {key} value is not admitted")
+    _bounded_english(inputs["explicit"], 300, "confidence explicitness")
+    expected_rationale = "; ".join(
+        f"{key}={inputs[key]}" for key in _CONFIDENCE_RATIONALE_ORDER
+    )
+    if item.confidence_rationale != expected_rationale:
+        raise PanoramaReleaseError(
+            "confidence rationale contradicts structured inputs"
+        )
+
+    referenced = [item]
+    referenced.extend(
+        assertion_by_id[premise_id]
+        for premise_id in item.premise_assertion_ids
+        if premise_id in assertion_by_id
+    )
+    referenced_evidence = [
+        evidence_by_id[evidence_id]
+        for assertion in referenced
+        for evidence_id in assertion.evidence_ids
+        if evidence_id in evidence_by_id
+    ]
+    if not referenced_evidence or any(
+        evidence.review_state != "reviewed_for_implementation"
+        for evidence in referenced_evidence
+    ):
+        raise PanoramaReleaseError(
+            "confidence requires independently reviewed referenced evidence"
+        )
+    source_tiers = {
+        source_by_id[evidence.source_id].tier
+        for evidence in referenced_evidence
+        if evidence.source_id in source_by_id
+    }
+    authority_tiers = set(re.findall(r"T[123]", inputs["auth"]))
+    if source_tiers != authority_tiers:
+        raise PanoramaReleaseError(
+            "confidence authority contradicts referenced source tiers"
+        )
+
+    if item.assertion_kind == "inferred_exposure":
+        inference_shape = (
+            inputs["explicit"] == "derived"
+            and inputs["corr"] == "two non-bilateral premises"
+            and inputs["extraction"] == "manual derivation unreviewed"
+            and bool(item.premise_assertion_ids)
+        )
+        expected_label = "inference" if inference_shape else None
+    else:
+        primary_shape = (
+            inputs["explicit"] != "derived"
+            and inputs["corr"] == "single primary"
+            and inputs["extraction"] == "manual unreviewed"
+            and not item.premise_assertion_ids
+        )
+        expected_label = "medium" if primary_shape else None
+    if expected_label is None or item.confidence_label != expected_label:
+        raise PanoramaReleaseError(
+            "confidence label does not match evidence-derived inputs"
+        )
+
+    geography_ids = {key for key, _ in item.geography_roles}
+    admitted_geography_labels = set.intersection(
+        *(
+            set(_GEOGRAPHY_CONFIDENCE.get(geography_id, ()))
+            for geography_id in geography_ids
+        )
+    )
+    if inputs["geo"] not in admitted_geography_labels:
+        raise PanoramaReleaseError(
+            "confidence geography contradicts structured geography roles"
+        )
+    if item.time_precision == "year" and "year precision" not in inputs["time"]:
+        raise PanoramaReleaseError(
+            "confidence time contradicts year precision"
+        )
+    if item.time_precision == "month" and "month precision" not in inputs["time"]:
+        raise PanoramaReleaseError(
+            "confidence time contradicts month precision"
+        )
+
+
+def _validate_supersession(
+    item: PanoramaAssertion,
+    assertion_by_id: Mapping[str, PanoramaAssertion],
+) -> None:
+    if item.supersedes_assertion_id is None:
+        return
+    superseded = assertion_by_id.get(item.supersedes_assertion_id)
+    if (
+        superseded is None
+        or superseded.assertion_id == item.assertion_id
+        or superseded.relationship_id != item.relationship_id
+        or superseded.review_state != "superseded"
+    ):
+        raise PanoramaReleaseError("supersedes assertion reference is invalid")
+
+
 def _validate_temporal_fields(item: PanoramaAssertion) -> None:
     _validate_date(item.observed_at, "assertion observed_at")
     _validate_date(item.reviewed_at, "assertion reviewed_at")
-    for name in (
-        "effective_from",
-        "effective_to",
-        "reporting_period_start",
-        "reporting_period_end",
-    ):
+    if item.time_precision not in _TIME_PRECISIONS:
+        raise PanoramaReleaseError("assertion time precision is not admitted")
+    if item.time_precision == "unknown":
+        if any(
+            value is not None
+            for value in (
+                item.effective_from,
+                item.effective_to,
+                item.reporting_period_start,
+                item.reporting_period_end,
+            )
+        ):
+            raise PanoramaReleaseError(
+                "unknown time precision cannot carry effective or reporting dates"
+            )
+        return
+
+    if item.effective_from is None:
+        raise PanoramaReleaseError("time precision requires effective_from")
+    for name in ("effective_from", "effective_to"):
         value = getattr(item, name)
         if value is not None:
-            _validate_date(
-                value,
-                f"assertion {name}",
-                allow_month=name in {"effective_from", "effective_to"},
+            _validate_date_for_precision(value, item.time_precision, name)
+
+    if item.time_precision == "reporting_period":
+        if item.reporting_period_start is None or item.reporting_period_end is None:
+            raise PanoramaReleaseError(
+                "reporting period requires both start and end"
             )
+        _validate_date(item.reporting_period_start, "reporting_period_start")
+        _validate_date(item.reporting_period_end, "reporting_period_end")
+        if (
+            item.reporting_period_start != item.effective_from
+            or item.reporting_period_end != item.effective_to
+        ):
+            raise PanoramaReleaseError(
+                "reporting period must match the effective range"
+            )
+    elif item.reporting_period_start is not None or item.reporting_period_end is not None:
+        raise PanoramaReleaseError(
+            "non-reporting time precision cannot carry a reporting period"
+        )
+
     if (
         item.effective_from
         and item.effective_to
@@ -605,12 +923,41 @@ def _validate_temporal_fields(item: PanoramaAssertion) -> None:
         raise PanoramaReleaseError("assertion effective_from exceeds effective_to")
 
 
-def _validate_research_link(link: PanoramaResearchLink) -> None:
+def _validate_date_for_precision(value: str, precision: str, label: str) -> None:
+    if precision == "year":
+        _validate_date(value, label, allow_year=True)
+    elif precision == "month":
+        _validate_date(value, label, allow_month=True)
+    else:
+        _validate_date(value, label)
+
+
+def _validate_research_link(
+    entity: PanoramaEntity,
+    link: PanoramaResearchLink,
+) -> None:
+    admitted_stock_ids = _RESEARCH_LINKS_BY_ENTITY.get(entity.entity_id)
+    executing_hint = link.command_hint.lower().startswith(
+        (
+            "execute",
+            "latest valuation ",
+            "research ",
+            "run ",
+            "stock valuation ",
+            "valuation ",
+            "/",
+        )
+    )
     if (
-        not link.canonical_stock_id.strip()
-        or not link.internal_path.startswith("/command")
+        entity.kind != "organization"
+        or admitted_stock_ids is None
+        or link.kind not in _RESEARCH_LINK_KINDS
+        or not _STOCK_ID_RE.fullmatch(link.canonical_stock_id)
+        or link.canonical_stock_id not in admitted_stock_ids
+        or link.internal_path != "/command"
         or "\n" in link.command_hint
-        or link.command_hint.lower().startswith(("execute", "run ", "/"))
+        or executing_hint
+        or any(character in link.command_hint for character in (";", "|", "`"))
     ):
         raise PanoramaReleaseError("research link is unsafe")
     _bounded_english(link.label, 120, "research link label")
@@ -660,6 +1007,27 @@ def _compute_diff(
             if stable_id in reasons
         },
     }
+
+
+def _validate_relationship_identity(
+    previous: PanoramaRelease,
+    current: PanoramaRelease,
+) -> None:
+    previous_by_id = {
+        item.relationship_id: item for item in previous.relationships
+    }
+    for relationship in current.relationships:
+        prior = previous_by_id.get(relationship.relationship_id)
+        if prior is None:
+            continue
+        if (
+            relationship.source_entity_id != prior.source_entity_id
+            or relationship.target_entity_id != prior.target_entity_id
+            or relationship.relationship_type != prior.relationship_type
+        ):
+            raise PanoramaReleaseError(
+                "relationship identity cannot change under an existing ID"
+            )
 
 
 def _stable_records(release: PanoramaRelease) -> dict[str, dict[str, object]]:
@@ -927,6 +1295,8 @@ def _reject_unsafe_tree(value: object) -> None:
             or "\\users\\" in lowered
         ):
             raise PanoramaReleaseError("local filesystem path is forbidden")
+        if _CREDENTIAL_VALUE_RE.search(value):
+            raise PanoramaReleaseError("credential-looking value is forbidden")
 
 
 def _unique_ids(collection: tuple[object, ...], attribute: str) -> None:
@@ -950,10 +1320,13 @@ def _validate_date(
     *,
     timestamp: bool = False,
     allow_month: bool = False,
+    allow_year: bool = False,
 ) -> None:
     try:
         if timestamp:
             datetime.fromisoformat(value.replace("Z", "+00:00"))
+        elif allow_year and _YEAR_RE.fullmatch(value):
+            date.fromisoformat(f"{value}-01-01")
         elif allow_month and _MONTH_RE.fullmatch(value):
             date.fromisoformat(f"{value}-01")
         elif _DATE_RE.fullmatch(value):
@@ -965,7 +1338,11 @@ def _validate_date(
 
 
 def _date_sort_key(value: str) -> str:
-    return f"{value}-01" if _MONTH_RE.fullmatch(value) else value
+    if _YEAR_RE.fullmatch(value):
+        return f"{value}-01-01"
+    if _MONTH_RE.fullmatch(value):
+        return f"{value}-01"
+    return value
 
 
 def _bounded_english(value: str, maximum: int, label: str) -> None:
