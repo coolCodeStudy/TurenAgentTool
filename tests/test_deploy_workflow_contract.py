@@ -172,6 +172,17 @@ class DeployWorkflowContractTests(TestCase):
             3,
         )
 
+    def test_each_deploy_payload_verifies_daily_and_panorama_routes(self) -> None:
+        shared_start = self.workflow.index("  shared_deploy:")
+        full_start = self.workflow.index("  full_image:")
+        payload_routes = (
+            '"feature_routes": ["/daily-market-brief", '
+            '"/ai-industry-panorama", "/api/ai-industry-panorama"]'
+        )
+
+        self.assertEqual(1, self.workflow[shared_start:full_start].count(payload_routes))
+        self.assertEqual(1, self.workflow[full_start:].count(payload_routes))
+
     def test_full_preflight_uses_isolated_run_scoped_tmp_checkout(self) -> None:
         full_start = self.workflow.index("  full_image:")
         preflight_start = self.workflow.index("Remote deploy_preflight.py resource gate", full_start)

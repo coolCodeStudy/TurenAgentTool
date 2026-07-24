@@ -437,7 +437,7 @@ jobs:
               "ref": os.environ["TARGET_SHA"],
               "mode": os.environ["DEPLOY_MODE"],
               "targets": json.loads(os.environ["TARGETS_JSON"]),
-              "feature_routes": ["/daily-market-brief"],
+              "feature_routes": ["/daily-market-brief", "/ai-industry-panorama", "/api/ai-industry-panorama"],
               "source": "github_actions",
               "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",
           }
@@ -640,7 +640,7 @@ jobs:
               "targets": json.loads(os.environ["TARGETS_JSON"]),
               "archive_path": os.environ["REMOTE_ARCHIVE"],
               "archive_sha256": os.environ["ARCHIVE_SHA256"],
-              "feature_routes": ["/daily-market-brief"],
+              "feature_routes": ["/daily-market-brief", "/ai-industry-panorama", "/api/ai-industry-panorama"],
               "source": "github_actions",
               "requested_by": f"github_run_{os.environ['GITHUB_RUN_ID']}",
           }
