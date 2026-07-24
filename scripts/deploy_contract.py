@@ -178,6 +178,12 @@ PATH_RULES = (
         "DingTalk HTTP adapter",
     ),
     PathRule(
+        "investment_knowledge_mcp/web_experience.py",
+        DeployMode.TARGETED_QUICK,
+        ("weekly-review-web",),
+        "shared Web experience shell",
+    ),
+    PathRule(
         "investment_knowledge_mcp/app_gateway.py",
         DeployMode.TARGETED_QUICK,
         ("weekly-review-web",),

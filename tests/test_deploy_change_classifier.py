@@ -249,6 +249,15 @@ class DeployContractTests(TestCase):
                 self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
                 self.assertEqual(("weekly-review-web",), plan.targets)
 
+    def test_shared_web_experience_targets_only_weekly_review_web(self) -> None:
+        plan = classify_paths(
+            ("investment_knowledge_mcp/web_experience.py",),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+        self.assertEqual(("weekly-review-web",), plan.targets)
+
     def test_ai_panorama_package_targets_only_weekly_review_web(self) -> None:
         paths = (
             "investment_knowledge_mcp/ai_industry_panorama/release.py",
@@ -291,6 +300,35 @@ class DeployContractTests(TestCase):
         self.assertTrue(
             serialize_plan(control_plane)["control_plane_update_required"]
         )
+
+    def test_ai_panorama_cumulative_candidate_is_contained_to_web(self) -> None:
+        plan = classify_paths(
+            (
+                "docs/architecture/architecture-contract.md",
+                "docs/product/PRD-AI-Industry-Panorama.md",
+                "docs/project-management/Deploy-Classification.md",
+                "docs/techplans/ai-industry-panorama-v1.md",
+                "investment_knowledge_mcp/ai_industry_panorama/__init__.py",
+                "investment_knowledge_mcp/ai_industry_panorama/controller.py",
+                "investment_knowledge_mcp/ai_industry_panorama/release.py",
+                "investment_knowledge_mcp/ai_industry_panorama/releases/2026-07-24.v1.json",
+                "investment_knowledge_mcp/ai_industry_panorama/web.py",
+                "investment_knowledge_mcp/app_gateway.py",
+                "investment_knowledge_mcp/web_experience.py",
+                "scripts/deploy_contract.py",
+                "tests/test_ai_industry_panorama_release.py",
+                "tests/test_ai_industry_panorama_web.py",
+                "tests/test_app_gateway.py",
+                "tests/test_deploy_change_classifier.py",
+                "tests/test_web_experience.py",
+            ),
+            compose_image_changed=False,
+        )
+
+        self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+        self.assertEqual(("weekly-review-web",), plan.targets)
+        self.assertEqual((), plan.image_input_files)
+        self.assertTrue(serialize_plan(plan)["control_plane_update_required"])
 
     def test_shared_access_targets_only_the_gateway_after_command_retirement(self) -> None:
         for path in (

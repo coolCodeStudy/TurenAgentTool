@@ -48,6 +48,7 @@ an application deployment target.
 | Path or module family | Mapped targets |
 | --- | --- |
 | Web-only Daily Market Brief files such as `daily_market_brief_web.py`, Web templates, and Web shell modules | `weekly-review-web` |
+| Shared browser shell `investment_knowledge_mcp/web_experience.py` | `weekly-review-web` |
 | `investment_knowledge_mcp/ai_industry_panorama/**`, including frozen release JSON | `weekly-review-web` |
 | `command_workbench.py` and shared Web command-workbench assets | `weekly-review-web`, `command-api` |
 | Shared command logic such as `command_router.py`, `daily_market_brief.py`, and `weekly_review.py` | `weekly-review-web`, `command-api`, `dingtalk-api`, `mcp`, `dingtalk-stream-bot` |
