@@ -9,24 +9,24 @@
 - Technical plan: `docs/techplans/ai-industry-panorama-v1.md` is independently accepted and `ready`; discovery rationale remains in `docs/techplans/ai-industry-panorama-feasibility.md`.
 - Feature Registry row: `AI Industry Panorama`
 - Acceptance Queue row: `AT-2026-07-24-001` is `pending`; user acceptance remains `pending`.
-- Delivery Queue rows: `DQ-2026-07-24-001` through `DQ-2026-07-24-004` are closed through accepted Task 2; Development Task 3 is active as `DQ-2026-07-24-005`.
+- Delivery Queue rows: `DQ-2026-07-24-001` through `DQ-2026-07-24-005` are closed through accepted Task 3; Development Task 4 is active as `DQ-2026-07-24-006`.
 - Current authoritative branch/ref: `origin/main@82f742526f81b1a05b22677624cdb8c230dde46e`
-- Related coordinator branch/ref: `codex/ai-industry-panorama-discovery@962e1a0` before this Task 2 state reconciliation commit.
+- Related coordinator branch/ref: `codex/ai-industry-panorama-discovery@251a146` before this Task 3 state reconciliation commit.
 - Current deployed ref or deploy event: None; discovery documents only.
 - User-facing surface: Planned public read-only `/ai-industry-panorama` page, `/api/ai-industry-panorama` API, and `/assets/ai-industry-panorama.js` asset on existing `weekly-review-web`.
 - Quality route: `L3`
 - Route rationale: V1 is a new cloud-served browser product with a versioned evidence graph, external primary-source provenance, inference boundaries, geography/time filters, and a real-surface user journey. It requires independent deployed-surface acceptance.
 - Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Pending implementation candidate. Route is `L3`; ref, exact route, deploy event, evidence bundle, and exceptions must be filled before acceptance dispatch.
-- Current state: PRD is `ready`, technical implementation is `in_progress`, Tasks 1-2 are accepted at `9091744` and `962e1a0`, and user acceptance is `pending`. Task 2 Spec returned `PASS`, Quality returned `APPROVED`, and the Coordinator independently verified 113/113 tests. Real-browser computed-layout and native-keyboard verification remains a Task 3 gate. The reviewed release remains unpublished.
+- Current state: PRD is `ready`, technical implementation is `in_progress`, Tasks 1-3 are accepted through `251a146`, and user acceptance is `pending`. Task 3 Spec returned `PASS`, Quality returned `APPROVED`, the Coordinator independently verified 117/117 tests, and additional preserved review suites passed 103/103. Real Chrome desktop/mobile layout and native-keyboard gates passed with evidence under `/private/tmp/panorama-task3-browser-evidence`. The reviewed release remains unpublished.
 - Known blockers: No credential, paid-source, budget, product, plan, or source-review blocker for V1. Deployment and acceptance gates apply only after a verified implementation candidate exists.
-- Active child threads or role sessions: Product, technical-plan, curator, source-review, and Tasks 1-2 are closed and accepted. Development Task 3 is the next bounded dispatch.
+- Active child threads or role sessions: Product, technical-plan, curator, source-review, and Tasks 1-3 are closed and accepted. Development Task 4 is the next bounded dispatch.
 - Watch contract:
-  - Watched item: Development Task 3 controller/routes/navigation commit plus real-browser local verification.
+  - Watched item: Development Task 4 deploy-classification and architecture/deploy-inventory commit.
   - Wake event or cadence: This Feature Coordinator actively waits on the bounded Development agent and applies the Return Gate immediately on return.
-  - Expected return artifact: One Task 3 commit, route/navigation RED/GREEN evidence, route-isolation checks, and real-browser desktop/mobile layout and keyboard evidence without Task 4+ edits.
-  - Coordinator action on wake: Inspect and verify Task 3; obtain independent specification and quality review; accept and route Task 4, or reject and return exact findings.
-- Next owner: Development Agent for Task 3.
-- Next handoff: `accept_and_route` using `DQ-2026-07-24-005`.
+  - Expected return artifact: One Task 4 commit, classifier RED/GREEN evidence, exact weekly-review-web targeting, route/test inventory, and explicit Ops-control-plane classification without Task 5 edits or deployment.
+  - Coordinator action on wake: Inspect and verify Task 4; obtain independent specification and quality review; accept and route Task 5, or reject and return exact findings.
+- Next owner: Development Agent for Task 4.
+- Next handoff: `accept_and_route` using `DQ-2026-07-24-006`.
 - Deploy needed: Not yet; deployment becomes required after a verified browser release candidate exists.
 - Deploy decision: `not_required` before implementation because no runtime code or cloud surface has changed yet.
 - Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.

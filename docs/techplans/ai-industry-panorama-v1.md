@@ -486,9 +486,9 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 | Task | Status | Accepted evidence | Remaining gate |
 |---|---|---|---|
 | 1. Release domain and reviewed V1 artifact | accepted | Head `9091744`; Spec `PASS`; Quality `APPROVED`; Source Reviewer approved the exact `SRC-006` reconciliation; Coordinator verified 97/97 focused-plus-preserved tests | None |
-| 2. Public page, script, filters, and drawers | accepted | Head `962e1a0`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 113/113 focused-plus-preserved tests | Real-browser computed-layout and native-keyboard behavior are deliberately verified after Task 3 supplies the route |
-| 3. Gateway routes and shared navigation | in_progress | Dispatch `DQ-2026-07-24-005` | Development RED/GREEN, routed real-browser desktop/mobile gate, Coordinator verification, independent spec and quality review |
-| 4. Deploy classification and release verification | not_started | — | Task 3 acceptance |
+| 2. Public page, script, filters, and drawers | accepted | Head `962e1a0`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 113/113 focused-plus-preserved tests | None; inherited real-browser gate passed in Task 3 |
+| 3. Gateway routes and shared navigation | accepted | Head `251a146`; Spec `PASS`; Quality `APPROVED`; 117/117 focused and 103/103 additional preserved tests; real Chrome desktop/mobile evidence under `/private/tmp/panorama-task3-browser-evidence` | None |
+| 4. Deploy classification and release verification | in_progress | Dispatch `DQ-2026-07-24-006` | Development RED/GREEN, Coordinator verification, independent spec and quality review |
 | 5. Cloud journey, release evidence, and state reconciliation | not_started | — | Task 4 acceptance |
 
 ## PRD Acceptance Traceability
