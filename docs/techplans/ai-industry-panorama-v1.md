@@ -34,7 +34,7 @@
 - Modify `investment_knowledge_mcp/app_gateway.py`: admit and dispatch the three public routes.
 - Modify `investment_knowledge_mcp/web_experience.py`: add the panorama to the stable primary navigation.
 - Modify `scripts/deploy_contract.py`: classify the dedicated package as targeted-quick for `weekly-review-web`.
-- Modify `scripts/deploy_release.py`: include `/ai-industry-panorama` and `/api/ai-industry-panorama` in feature-route verification.
+- Modify `docs/architecture/architecture-contract.md`: register the new public route, owner, and contract test.
 
 ### Verification files
 
@@ -43,12 +43,12 @@
 - Modify `tests/test_app_gateway.py`: route ownership, public access, and dispatch.
 - Modify `tests/test_web_experience.py`: navigation order and active state.
 - Modify `tests/test_deploy_change_classifier.py`: exact target/mode classification.
-- Modify `tests/test_deploy_release.py`: feature-route smoke contract.
 - Modify `e2e/cloud-pages.spec.ts`: desktop and mobile panorama journey.
 - Modify `e2e/public-api-contracts.spec.ts`: public page, asset, and API GET contracts.
 
 ### Durable delivery files
 
+- Read: `docs/changes/ai-industry-panorama/v1-source-manifest.md`: independently reviewed, implementation-consumable entity/assertion/evidence manifest.
 - Modify `docs/techplans/ai-industry-panorama-v1.md`: implementation traceability and evidence after each accepted task.
 - Modify `docs/project-management/Feature-Registry.md`: implementation, evidence, deploy, and next-action state.
 - Modify `docs/project-management/Acceptance-Queue.md`: keep one active L3 release-candidate row.
@@ -64,19 +64,41 @@
 class PanoramaRelease:
     schema_version: str
     release_id: str
+    prior_release_id: str | None
     taxonomy_version: str
     published_at: str
     evidence_cutoff: str
+    review_state: str
     change_summary: tuple[str, ...]
+    release_diff: PanoramaReleaseDiff
     curator: str
     reviewer: str
+    taxonomy: tuple[PanoramaTaxonomyNode, ...]
+    geographies: tuple[PanoramaGeography, ...]
     entities: tuple[PanoramaEntity, ...]
-    sources: tuple[PanoramaSource, ...]
+    sources: tuple[PanoramaSourceSnapshot, ...]
     evidence: tuple[PanoramaEvidence, ...]
     relationships: tuple[PanoramaRelationship, ...]
+    assertions: tuple[PanoramaAssertion, ...]
 ```
 
-The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable IDs use the prefixes `entity:`, `source:`, `evidence:`, and `relationship:`. The loader accepts an optional `Path` only for tests; production uses `Path(__file__).parent / "releases" / "2026-07-24.v1.json"`.
+Every nested JSON record uses exactly these fields:
+
+- `PanoramaTaxonomyNode`: `taxonomy_id`, `parent_id`, `label`, `layer`, `sort_order`.
+- `PanoramaGeography`: `geography_id`, `label`, `country_code`, `region`.
+- `PanoramaResearchLink`: `kind`, `label`, `canonical_stock_id`, `internal_path`, `command_hint`.
+- `PanoramaEntity`: `entity_id`, `kind`, `label`, `aliases`, `summary`, `taxonomy_ids`, `geography_ids`, `capability_roles`, `is_demand_anchor`, `research_links`.
+- `PanoramaRelationship`: `relationship_id`, `source_entity_id`, `target_entity_id`, `relationship_type`.
+- `PanoramaAssertion`: `assertion_id`, `relationship_id`, `text`, `assertion_kind`, `lifecycle_state`, `effective_from`, `effective_to`, `geography_roles`, `confidence_inputs`, `confidence_label`, `limitations`, `evidence_ids`, `premise_assertion_ids`, `review_state`, `supersedes_assertion_id`.
+- `PanoramaSourceSnapshot`: `source_id`, `tier`, `publisher`, `document_title`, `url`, `publication_date`, `retrieval_date`, `immutable_locator`, `content_hash`, `license_class`.
+- `PanoramaEvidence`: `evidence_id`, `source_id`, `locator`, `bounded_excerpt`, `extraction_method`, `review_state`.
+- `PanoramaReleaseDiff`: `added`, `changed`, `expired`, `removed`, `reasons`.
+
+`geography_roles` and `confidence_inputs` are sorted tuples of exact key/value pairs. `reasons` is a mapping from every changed/expired/removed stable ID to a nonempty reason. JSON object keys and the frozen-record fields must match exactly; unknown keys fail validation.
+
+`PanoramaRelationship` holds only stable endpoints, relationship type, and identity. `PanoramaAssertion` holds `relationship_id`, assertion text/kind, lifecycle, valid time, geography references, confidence inputs/label, limitations, evidence IDs, premise assertion IDs, review state, and supersession metadata. `PanoramaReleaseDiff` carries deterministic `added`, `changed`, `expired`, and `removed` stable-ID lists plus a reason for every non-added change.
+
+The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable IDs use the prefixes `taxonomy:`, `geography:`, `entity:`, `source:`, `evidence:`, `relationship:`, and `assertion:`. The loader accepts an optional `Path` only for tests; production uses `Path(__file__).parent / "releases" / "2026-07-24.v1.json"`.
 
 `validate_release(payload)` returns the frozen release or raises `PanoramaReleaseError` with a sanitized deterministic message. It validates:
 
@@ -88,11 +110,14 @@ The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable 
 - a traversable path of at least two supported hops from every demand anchor;
 - nonempty English labels and bounded summaries/excerpts;
 - admitted taxonomy layers, entity kinds, relationship types, assertion kinds, lifecycle states, geography roles, source tiers, and review states;
-- at least one evidence item per relationship;
+- at least one reviewed evidence item per published assertion;
 - source locator, publication date, retrieval date, and publisher on every evidence path;
-- inference derivation references only existing disclosed/guidance/claim relationships;
+- inference derivation references only existing disclosed/guidance/claim premise assertion IDs;
 - confidence labels derived from evidence attributes rather than accepted from prose;
 - admitted optional research/valuation links with a canonical stock ID, safe internal path, and non-executing command hint;
+- computed release diffs exactly matching stored added/changed/expired/removed IDs and reasons, with stable prior identities preserved;
+- `review_state == "published"` only when curator and reviewer are distinct and every assertion is independently reviewed;
+- HTTPS-only external source URLs, internal research paths beginning with `/command`, labels of at most 120 characters, summaries/assertions of at most 800 characters, excerpts of at most 600 characters, limitations of at most 500 characters, and a UTF-8 public projection no larger than 2 MiB;
 - no credential-looking fields, local filesystem paths, raw source documents, or unsupported keys.
 
 `build_public_projection(release)` returns:
@@ -124,6 +149,8 @@ No other release object is serialized by the gateway.
 - Official issuer, regulator, filing, standards-body, grid/operator, and consortium sources are Tier 1. Named technical or partner announcements are Tier 2. Secondary context is Tier 3 and cannot independently support `disclosed_fact`.
 - V1 contains no automatic fetch. A later acquisition adapter may create review-required candidates but may not publish relationships.
 
+Implementation Task 1 is blocked until `docs/changes/ai-industry-panorama/v1-source-manifest.md` names the Research Curator and a distinct Source Reviewer, contains every stable entity/relationship/assertion/evidence/source ID, has 25-35 entities and 45-70 relationships, records an exact official locator for every evidence item, and is marked `reviewed_for_implementation`. Development transcribes that reviewed manifest; it does not invent or reclassify supply-chain facts.
+
 ## Task 1: Release Domain, Validator, And Reviewed V1 Artifact
 
 **Files:**
@@ -141,27 +168,33 @@ No other release object is serialized by the gateway.
 - [ ] **Step 1: Write failing validator and public-projection tests**
 
 ```python
-def test_canonical_release_has_bounded_counts_and_six_demand_anchors() -> None:
-    release = load_release()
-    assert 25 <= len(release.entities) <= 35
-    assert 45 <= len(release.relationships) <= 70
-    assert sum(entity.is_demand_anchor for entity in release.entities) == 6
+class PanoramaReleaseTests(unittest.TestCase):
+    def test_canonical_release_has_bounded_counts_and_six_demand_anchors(self) -> None:
+        release = load_release()
+        self.assertLessEqual(25, len(release.entities))
+        self.assertLessEqual(len(release.entities), 35)
+        self.assertLessEqual(45, len(release.relationships))
+        self.assertLessEqual(len(release.relationships), 70)
+        self.assertEqual(6, sum(entity.is_demand_anchor for entity in release.entities))
 
-def test_inference_requires_visible_derivation() -> None:
-    payload = canonical_payload()
-    inferred = next(item for item in payload["relationships"] if item["assertion_kind"] == "inferred_exposure")
-    inferred["derivation_relationship_ids"] = []
-    with self.assertRaisesRegex(PanoramaReleaseError, "inference derivation"):
-        validate_release(payload)
+    def test_inference_requires_visible_derivation(self) -> None:
+        payload = canonical_payload()
+        inferred = next(item for item in payload["assertions"] if item["assertion_kind"] == "inferred_exposure")
+        inferred["premise_assertion_ids"] = []
+        with self.assertRaisesRegex(PanoramaReleaseError, "inference derivation"):
+            validate_release(payload)
 
-def test_second_fixture_produces_diff_without_mutating_history() -> None:
-    previous = load_release()
-    current = validate_release(next_release_payload(previous))
-    change = diff_releases(previous, current)
-    self.assertEqual(previous.release_id, "ai-panorama:2026-07-24:v1")
-    self.assertEqual(change["from_release_id"], previous.release_id)
-    self.assertEqual(change["to_release_id"], current.release_id)
+    def test_second_fixture_produces_diff_without_mutating_history(self) -> None:
+        previous_bytes = canonical_release_path().read_bytes()
+        previous = load_release()
+        current = validate_release(next_release_payload(previous))
+        change = diff_releases(previous, current)
+        self.assertEqual(["assertion:example:v2"], change["changed"])
+        self.assertEqual([], change["removed"])
+        self.assertEqual(previous_bytes, canonical_release_path().read_bytes())
 ```
+
+The same test module parses the panorama package AST and rejects imports of `repository`, `portfolio_graph`, `stock_valuation`, `candidate_insights`, order modules, and job-creation modules. Patch those existing modules' public read/write entrypoints to raise during `load_release()` and `build_public_projection()`; the projection must still succeed, proving the domain neither reads nor writes them.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -175,7 +208,7 @@ Keep validation functions small and deterministic. Parse JSON with UTF-8, reject
 
 - [ ] **Step 4: Curate the canonical release**
 
-Use only reviewed primary-source relationships from the PRD discovery set and directly linked official materials. Include the six anchors and enough first-order entities/projects to satisfy the locked counts and two-hop traversal invariant. Include explicit examples of announced versus operating, sampling versus mass production, and guidance versus observed fact. An unnamed customer remains an unnamed entity/category; do not infer a named customer. Technical compatibility is not a purchase contract. Add optional research/valuation links only for listed organizations with canonical stock IDs; unlisted labs, projects, standards, and capabilities carry no stock record.
+Transcribe only `reviewed_for_implementation` rows from `docs/changes/ai-industry-panorama/v1-source-manifest.md`. Preserve exact stable IDs, assertion kinds, locators, limitations, curator, and reviewer. Include the six anchors, locked counts, two-hop traversal, and lifecycle examples verified by the manifest. An unnamed customer remains unnamed; technical compatibility remains distinct from a purchase contract. Optional research/valuation links are allowed only for manifest-listed public organizations with canonical stock IDs.
 
 - [ ] **Step 5: Run release tests and verify GREEN**
 
@@ -213,7 +246,7 @@ def test_page_exposes_equivalent_graph_and_table_regions() -> None:
     assert 'data-experience-ready="true"' in html
 ```
 
-The Node harness must load the script with a synthetic public projection and assert that search, one-hop/two-hop focus, layer/geography/time/lifecycle/evidence/confidence filters, and disclosed-only mode update both SVG and table from one filtered relationship set.
+The Node harness must load the script with a synthetic public projection and assert that alias, project, company, and capability search; one-hop/two-hop focus; layer/geography/time/lifecycle/evidence/confidence filters; and disclosed-only mode update both SVG and table from one filtered relationship set. It must also inject hostile labels, excerpts, and URLs and prove they render as text, reject non-HTTPS external links, and add `rel="noopener noreferrer"` to external links.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -223,11 +256,11 @@ Expected: import failure because the renderer does not exist.
 
 - [ ] **Step 3: Implement HTML and CSS**
 
-Use `render_primary_navigation("ai_industry_panorama")` and `render_experience_css()`. The page must contain a heading, release metadata, change summary, search, filter controls, disclosed-only switch, hop-depth control, layered SVG region, equivalent table, entity drawer, relationship/evidence drawer, legend, loading status, and readable failure state.
+Use `render_primary_navigation("ai_industry_panorama")` and `render_experience_css()`. The page must contain a heading, release metadata, change summary, search, filter controls, disclosed-only switch, hop-depth control, layered SVG region, equivalent table, entity drawer, capability drawer, relationship/evidence drawer, legend, loading status, and readable failure state.
 
 - [ ] **Step 4: Implement plain JavaScript**
 
-Fetch only `/api/ai-industry-panorama`. Render SVG nodes as keyboard-focusable buttons/groups with text labels; use deterministic layer columns and stable ordering rather than force simulation. Selecting a node focuses one or two hops. Selecting a relationship opens evidence, source, time, geography, lifecycle, assertion kind, confidence inputs, and derivation. The entity drawer renders an optional safe research/valuation link plus a non-executing command hint for listed organizations; unlisted entities render no stock placeholder. Never build HTML from unescaped source strings.
+Fetch only `/api/ai-industry-panorama`. Reject responses above 2 MiB before rendering. Render SVG nodes as keyboard-focusable buttons/groups with text labels; use deterministic layer columns and stable ordering rather than force simulation. Selecting a node focuses one or two hops. The entity drawer shows identity, aliases, headquarters/operating geography, capability roles, separated disclosed and inferred relationships, dated guidance, coverage gaps, staleness, and optional safe research/valuation links with non-executing command hints. The capability drawer shows definition, upstream/downstream roles, standards/version context, geography, and coverage gaps. Selecting a relationship opens evidence, source, time, geography, lifecycle, assertion kind, confidence inputs, derivation, and limitations. Build DOM with `textContent` and admitted attributes, never source-derived `innerHTML`.
 
 - [ ] **Step 5: Run tests and verify GREEN**
 
@@ -259,7 +292,7 @@ git commit -m "feat: render AI panorama browser"
 
 - [ ] **Step 1: Add failing route and navigation tests**
 
-Assert exact owner `ai_industry_panorama`, `AccessClass.PUBLIC_READ`, no panorama `POST`, the page/asset/API response types, stable navigation order, and the panorama active state.
+Assert exact owner `ai_industry_panorama`, `AccessClass.PUBLIC_READ`, no panorama `POST`, the page/asset/API response types, stable navigation order, and the panorama active state. Patch repository/portfolio/knowledge/insight/order/job entrypoints to raise while dispatching the API GET; the response must still be the validated projection.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -289,44 +322,47 @@ git commit -m "feat: expose AI panorama routes"
 **Files:**
 
 - Modify: `scripts/deploy_contract.py`
-- Modify: `scripts/deploy_release.py`
 - Modify: `tests/test_deploy_change_classifier.py`
-- Modify: `tests/test_deploy_release.py`
+- Modify: `docs/architecture/architecture-contract.md`
 
 **Interfaces:**
 
 - Produces: targeted-quick classification with only `weekly-review-web`.
-- Produces: local deploy verification for `/ai-industry-panorama` and `/api/ai-industry-panorama`.
+- Produces: declared route ownership/access/test inventory.
+- Consumes: the existing `feature_routes` request field for deployment HTTP success checks; the L3 API suite, not the independent Ops control plane, verifies JSON semantics.
 
 - [ ] **Step 1: Add failing deploy-contract tests**
 
 ```python
-def test_ai_panorama_package_targets_only_weekly_review_web() -> None:
-    decision = classify_paths(["investment_knowledge_mcp/ai_industry_panorama/release.py"])
-    assert decision.mode == DeployMode.TARGETED_QUICK
-    assert decision.targets == ("weekly-review-web",)
+def test_ai_panorama_package_targets_only_weekly_review_web(self) -> None:
+    decision = classify_paths(
+        ["investment_knowledge_mcp/ai_industry_panorama/release.py"],
+        compose_image_changed=False,
+    )
+    self.assertEqual(DeployMode.TARGETED_QUICK, decision.mode)
+    self.assertEqual(("weekly-review-web",), decision.targets)
 ```
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `.venv/bin/python -m unittest tests.test_deploy_change_classifier tests.test_deploy_release -v`
+Run: `.venv/bin/python -m unittest tests.test_deploy_change_classifier -v`
 
-Expected: the new package is not specifically classified and panorama routes are not verified.
+Expected: the assertion fails because the fallback `investment_knowledge_mcp/**` rule targets all application services.
 
-- [ ] **Step 3: Add the exact package rule and feature-route smoke**
+- [ ] **Step 3: Add the exact package rule and route inventory**
 
-Add one prefix rule for `investment_knowledge_mcp/ai_industry_panorama/`. Do not broaden shared-service targets. Verify page status/content and API `ok`, schema version, release ID, and nonempty entities/relationships.
+Add one prefix rule for `investment_knowledge_mcp/ai_industry_panorama/**`. Do not broaden shared-service targets. Register `/ai-industry-panorama` with owner `investment_knowledge_mcp.ai_industry_panorama`, access `public_read`, and its contract tests in the architecture inventory. Leave `scripts/deploy_release.py` unchanged: pass page and API paths through the already-supported `feature_routes` deploy request, and verify `ok`, schema version, release ID, and nonempty entities/relationships in `e2e/public-api-contracts.spec.ts`.
 
 - [ ] **Step 4: Run tests and verify GREEN**
 
-Run: `.venv/bin/python -m unittest tests.test_deploy_change_classifier tests.test_deploy_release -v`
+Run: `.venv/bin/python -m unittest tests.test_deploy_change_classifier -v`
 
-Expected: all deploy planning and preservation tests pass.
+Expected: all deploy-classification tests pass, including exact `weekly-review-web` targeting.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/deploy_contract.py scripts/deploy_release.py tests/test_deploy_change_classifier.py tests/test_deploy_release.py
+git add scripts/deploy_contract.py tests/test_deploy_change_classifier.py docs/architecture/architecture-contract.md
 git commit -m "ops: classify AI panorama release"
 ```
 
@@ -356,7 +392,7 @@ The test must verify page heading/navigation/release metadata, no horizontal ove
 Run the focused Python suite:
 
 ```bash
-.venv/bin/python -m unittest tests.test_ai_industry_panorama_release tests.test_ai_industry_panorama_web tests.test_app_gateway tests.test_web_experience tests.test_deploy_change_classifier tests.test_deploy_release -v
+.venv/bin/python -m unittest tests.test_ai_industry_panorama_release tests.test_ai_industry_panorama_web tests.test_app_gateway tests.test_web_experience tests.test_deploy_change_classifier -v
 ```
 
 Start only `weekly-review-web` in a dedicated local terminal, using the verified local database target inherited from preflight:
@@ -396,6 +432,7 @@ Deploy Intent:
 - Deploy mode: `targeted_quick` (workflow-compatible `quick`)
 - Affected services: `weekly-review-web`
 - Reason: publish the new public panorama page/API/asset
+- Verification routes supplied through the existing deploy request: `/ai-industry-panorama`, `/api/ai-industry-panorama`
 - Verification URL: `http://47.84.190.191:8010/ai-industry-panorama`
 - Watch owner/path: this AI Industry Panorama Feature Coordinator polling the one serialized deploy
 
