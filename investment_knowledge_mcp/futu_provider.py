@@ -6,7 +6,7 @@ import inspect
 import re
 import socket
 import time
-from typing import Any
+from typing import Any, Callable
 
 from investment_knowledge_mcp.config import AppConfig, get_config
 from investment_knowledge_mcp.serialization import to_jsonable
@@ -65,6 +65,17 @@ class CashFlowSnapshot:
     source: str = "futu"
 
 
+@dataclass(frozen=True)
+class FutuCrowdingSnapshot:
+    ownership_by_code: dict[str, list[dict[str, Any]]]
+    short_interest_by_code: dict[str, list[dict[str, Any]]]
+    options_by_code: dict[str, list[dict[str, Any]]]
+    events_by_code: dict[str, list[dict[str, Any]]]
+    failures_by_code: dict[str, dict[str, str]]
+    fetched_at: datetime
+    source: str = "futu"
+
+
 _CACHE: PositionSnapshot | None = None
 _CACHE_MONOTONIC: float = 0.0
 _IPO_CACHE: IpoSnapshot | None = None
@@ -120,6 +131,15 @@ def get_futu_market_bars(codes: list[str], start: str, end: str, config: AppConf
 def get_futu_cash_flows(start: str, end: str, config: AppConfig | None = None) -> CashFlowSnapshot:
     config = config or get_config()
     return _fetch_cash_flows(config=config, start=start, end=end)
+
+
+def get_futu_crowding_snapshot(
+    codes: list[str],
+    start: str,
+    end: str,
+    config: AppConfig | None = None,
+) -> FutuCrowdingSnapshot:
+    return _fetch_futu_crowding_snapshot(config or get_config(), codes, start, end)
 
 
 def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
@@ -452,6 +472,220 @@ def _fetch_market_bars(config: AppConfig, codes: list[str], start: str, end: str
         quote_context.close()
 
 
+def _fetch_futu_crowding_snapshot(
+    config: AppConfig,
+    codes: list[str],
+    start: str,
+    end: str,
+    *,
+    futu_module: Any | None = None,
+    context_factory: Callable[..., Any] | None = None,
+    now: Callable[[], datetime] | None = None,
+) -> FutuCrowdingSnapshot:
+    cleaned_codes = tuple(dict.fromkeys(code.strip().upper() for code in codes if code and code.strip()))
+    if not cleaned_codes or any(not code.startswith(("US.", "HK.")) for code in cleaned_codes):
+        raise ValueError("crowding data supports market-qualified US/HK symbols only")
+    start_date = _parse_iso_date(start)
+    end_date = _parse_iso_date(end)
+    if start_date > end_date:
+        raise ValueError("start cannot be after end")
+
+    ft = futu_module
+    factory = context_factory
+    if ft is None or factory is None:
+        _ensure_opend_reachable(host=config.futu_opend_host, port=config.futu_opend_port, family="拥挤交易证据")
+        try:
+            import futu as imported_futu
+        except ImportError as exc:
+            raise FutuProviderError("futu-api 未安装，无法读取拥挤交易证据。") from exc
+        except Exception as exc:
+            raise FutuProviderError("futu-api 初始化失败，无法读取拥挤交易证据。") from exc
+        ft = ft or imported_futu
+        factory = factory or ft.OpenQuoteContext
+
+    quote_context = _create_quote_context(
+        factory,
+        {"host": config.futu_opend_host, "port": config.futu_opend_port},
+    )
+    ownership: dict[str, list[dict[str, Any]]] = {}
+    shorts: dict[str, list[dict[str, Any]]] = {}
+    options: dict[str, list[dict[str, Any]]] = {}
+    events: dict[str, list[dict[str, Any]]] = {}
+    failures: dict[str, dict[str, str]] = {}
+    try:
+        for code in cleaned_codes:
+            code_failures: dict[str, str] = {}
+            try:
+                ret, payload = quote_context.get_shareholders_overview(code, period_id=0)
+                if ret != ft.RET_OK:
+                    raise FutuProviderError("ownership provider unavailable")
+                main_holders = payload.get("main_holder") if isinstance(payload, dict) else None
+                rows = _table_records(main_holders)
+                ownership[code] = [
+                    {
+                        "name": _clean_empty(row.get("name")),
+                        "holder_pct": _optional_number(row.get("holder_pct")),
+                        "observed_at": _clean_empty(row.get("static_date_str")),
+                    }
+                    for row in rows
+                    if _optional_number(row.get("holder_pct")) is not None
+                ]
+            except Exception:
+                code_failures["ownership"] = "provider_unavailable"
+
+            try:
+                ret, us_data, hk_data = quote_context.get_short_interest(code)
+                if ret != ft.RET_OK:
+                    raise FutuProviderError("short-interest provider unavailable")
+                selected = us_data if code.startswith("US.") else hk_data
+                shorts[code] = [
+                    {
+                        "shares_short": _optional_number(row.get("shares_short")),
+                        "short_percent": _optional_number(
+                            row.get("short_percent")
+                            if code.startswith("US.")
+                            else row.get("aggregated_short_ratio")
+                        ),
+                        "days_to_cover": _optional_number(row.get("days_to_cover")),
+                        "aggregated_short": _optional_number(row.get("aggregated_short")),
+                        "observed_at": _clean_empty(row.get("timestamp_str")),
+                    }
+                    for row in _table_records(selected)
+                ]
+            except Exception:
+                code_failures["short_interest"] = "provider_unavailable"
+
+            try:
+                ret, chain = quote_context.get_option_chain(code, start=start, end=end)
+                if ret != ft.RET_OK:
+                    raise FutuProviderError("option-chain provider unavailable")
+                chain_rows = _table_records(chain)[:200]
+                option_codes = [
+                    str(row.get("code") or "").strip().upper()
+                    for row in chain_rows
+                    if str(row.get("code") or "").strip()
+                ]
+                snapshots: dict[str, dict[str, Any]] = {}
+                for offset in range(0, len(option_codes), 100):
+                    chunk = option_codes[offset : offset + 100]
+                    ret, snapshot_table = quote_context.get_market_snapshot(chunk)
+                    if ret != ft.RET_OK:
+                        raise FutuProviderError("option-snapshot provider unavailable")
+                    for item in _table_records(snapshot_table):
+                        snapshot_code = str(item.get("code") or "").strip().upper()
+                        if snapshot_code:
+                            snapshots[snapshot_code] = item
+                normalized_options = []
+                for row in chain_rows:
+                    option_code = str(row.get("code") or "").strip().upper()
+                    snapshot_row = snapshots.get(option_code, {})
+                    normalized_options.append(
+                        {
+                            "code": option_code,
+                            "option_type": str(
+                                row.get("option_type")
+                                or snapshot_row.get("option_type")
+                                or ""
+                            ).upper(),
+                            "expiry_date": _clean_empty(row.get("strike_time")),
+                            "strike_price": _optional_number(row.get("strike_price")),
+                            "volume": _optional_number(snapshot_row.get("volume")) or 0.0,
+                            "open_interest": _optional_number(
+                                snapshot_row.get("option_open_interest")
+                            )
+                            or 0.0,
+                            "implied_volatility": _optional_number(
+                                snapshot_row.get("option_implied_volatility")
+                            ),
+                        }
+                    )
+                options[code] = normalized_options
+            except Exception:
+                code_failures["options"] = "provider_unavailable"
+
+            if code_failures:
+                failures[code] = code_failures
+
+        codes_by_market = {
+            market: tuple(code for code in cleaned_codes if code.startswith(f"{market}."))
+            for market in ("US", "HK")
+        }
+        for market, market_codes in codes_by_market.items():
+            if not market_codes:
+                continue
+            market_events: list[dict[str, Any]] = []
+            event_failed = False
+            for window_start, window_end in _bounded_date_windows(start_date, end_date, 7):
+                try:
+                    market_enum = _optional_enum_value(getattr(ft, "Market", None), market)
+                    ret, table = quote_context.get_earnings_calendar(
+                        market_enum or market,
+                        begin_date=window_start.isoformat(),
+                        end_date=window_end.isoformat(),
+                    )
+                    if ret != ft.RET_OK:
+                        raise FutuProviderError("earnings-calendar provider unavailable")
+                    market_events.extend(_table_records(table))
+                except Exception:
+                    event_failed = True
+                    break
+            for code in market_codes:
+                matching: list[dict[str, Any]] = []
+                seen: set[tuple[str, str]] = set()
+                for row in market_events:
+                    security = str(row.get("security") or "").strip().upper()
+                    event_date = str(row.get("earnings_date") or "").strip()
+                    if security != code or not event_date:
+                        continue
+                    key = (security, event_date)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matching.append(
+                        {
+                            "event_type": "earnings",
+                            "event_date": event_date,
+                            "date_status": _clean_empty(row.get("pub_type")) or "unknown",
+                        }
+                    )
+                events[code] = matching
+                if event_failed:
+                    failures.setdefault(code, {})["events"] = "provider_unavailable"
+
+        return FutuCrowdingSnapshot(
+            ownership_by_code=ownership,
+            short_interest_by_code=shorts,
+            options_by_code=options,
+            events_by_code=events,
+            failures_by_code=failures,
+            fetched_at=(now or (lambda: datetime.now(timezone.utc)))(),
+        )
+    finally:
+        quote_context.close()
+
+
+def _table_records(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if hasattr(value, "to_dict"):
+        records = value.to_dict("records")
+    elif isinstance(value, list):
+        records = value
+    else:
+        return []
+    return [dict(item) for item in records if isinstance(item, dict)]
+
+
+def _bounded_date_windows(start: date, end: date, max_days: int) -> list[tuple[date, date]]:
+    windows: list[tuple[date, date]] = []
+    current = start
+    while current <= end:
+        window_end = min(current + timedelta(days=max_days - 1), end)
+        windows.append((current, window_end))
+        current = window_end + timedelta(days=1)
+    return windows
+
+
 def _ensure_opend_reachable(host: str, port: int, family: str) -> None:
     try:
         with socket.create_connection((host, port), timeout=1.5):
@@ -662,6 +896,17 @@ def _clean_empty(value: Any) -> Any:
     if isinstance(value, str) and value.strip().upper() in {"", "N/A", "NONE", "NULL"}:
         return None
     return value
+
+
+def _optional_number(value: Any) -> float | None:
+    cleaned = _clean_empty(value)
+    if cleaned is None or isinstance(cleaned, bool):
+        return None
+    try:
+        number = float(cleaned)
+    except (TypeError, ValueError):
+        return None
+    return number
 
 
 def _enum_value(enum_cls: Any, name: str) -> Any:

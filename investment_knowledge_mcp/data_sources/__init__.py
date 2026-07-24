@@ -18,8 +18,10 @@ from .market_bars import (
 )
 from .crowding import (
     FUTU_CROWDING_APPROVAL,
+    FutuCrowdingSource,
     SOURCE_APPROVALS,
     SourceApproval,
+    default_crowding_source_pool,
     source_is_approved,
 )
 
@@ -41,6 +43,8 @@ __all__ = [
     "market_bar_records_by_symbol",
     "SourceApproval",
     "FUTU_CROWDING_APPROVAL",
+    "FutuCrowdingSource",
     "SOURCE_APPROVALS",
+    "default_crowding_source_pool",
     "source_is_approved",
 ]
