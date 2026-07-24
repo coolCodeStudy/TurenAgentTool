@@ -1,6 +1,6 @@
 # AI Industry Panorama V1 Implementation Plan
 
-**Status:** `implementation_in_progress`; Task 5 is returned and incomplete pending authoritative-main reconciliation as of `2026-07-24`.
+**Status:** `local_verified`; Tasks 1-5 are Coordinator-accepted locally, with full-candidate review, deployment, independent L3 acceptance, and Owner acceptance still pending as of `2026-07-24`.
 
 **Independent gates:** Plan Reviewer `/root/panorama_plan_review` found all 12 PRD acceptance criteria compliant and no remaining plan findings at commit `f14136b`. Source Reviewer `/root/panorama_source_review` accepted all 48 relationship/assertion/evidence rows and all six canonical two-hop paths at manifest commit `4069321`; the Coordinator then marked the manifest `reviewed_for_implementation`. Publication, deployment, independent L3 acceptance, and Owner acceptance remain separate later gates.
 
@@ -415,7 +415,7 @@ git commit -m "ops: classify AI panorama release"
 
 The test must verify page heading/navigation/release metadata, no horizontal overflow at desktop and 390px mobile, nonblank graph and table, search for a demand anchor, one-hop and two-hop focus, disclosed-only filtering, geography/time/lifecycle filters, entity drawer, relationship evidence drawer, source link, visible inference label/derivation, keyboard focus, and zero panorama mutation requests.
 
-- [ ] **Step 2: Run local developer verification**
+- [x] **Step 2: Run local developer verification**
 
 Run the focused Python suite:
 
@@ -439,7 +439,9 @@ python3 scripts/audit_delivery_state.py --feature "AI Industry Panorama"
 
 Expected: all focused tests, local public browser journey, smoke checks, and delivery audit pass.
 
-- [ ] **Step 3: Update implementation traceability and release-candidate state**
+On the reconciled candidate, 156/156 Panorama/shared-Web/classifier tests, 104/104 concurrent-main crowding/command/data-source tests, and 2/2 Chromium page/API contracts passed. The DB-backed repository smoke was attempted but could not start because `localhost:55432` and the local Docker daemon were not running; this environmental limit is preserved explicitly and is not represented as a passing result.
+
+- [x] **Step 3: Update implementation traceability and release-candidate state**
 
 Record exact commits, test counts, selected `L3` route, planned URL, deploy mode `targeted_quick`, target `weekly-review-web`, and one Acceptance Queue row. Keep user acceptance `pending`.
 
@@ -489,7 +491,7 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 | 2. Public page, script, filters, and drawers | accepted | Head `962e1a0`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 113/113 focused-plus-preserved tests | None; inherited real-browser gate passed in Task 3 |
 | 3. Gateway routes and shared navigation | accepted | Head `251a146`; Spec `PASS`; Quality `APPROVED`; 117/117 focused and 103/103 additional preserved tests; real Chrome desktop/mobile evidence under `/private/tmp/panorama-task3-browser-evidence` | None |
 | 4. Deploy classification and release verification | accepted | Head `51072c1`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 184/184 tests and cumulative weekly-review-web-only classification with exact-SHA control-plane gate | None |
-| 5. Cloud journey, release evidence, and state reconciliation | development_returned_pending_main_reconciliation | Strengthened local contracts pin 35 entities, 48 relationships, 48 evidence records, 16 sources, exact filter/focus sets, exact inference premises, fresh desktop/mobile documents, and all-same-origin read-only requests; 156/156 focused Python tests and 2/2 local Playwright page/API contracts passed | Reconcile current main's Weekly smoke fix and non-Panorama queue/state rows; rerun smoke/full/E2E/classifier; then Coordinator review, exact candidate SHA, push, deploy, and independent L3 acceptance |
+| 5. Cloud journey, release evidence, and state reconciliation | coordinator_accepted_local_verified | Commit `9a7a659` reconciles current main while preserving both feature histories. Coordinator gates passed 156/156 Panorama/shared-Web/classifier tests, 104/104 concurrent-main shared-boundary tests, 2/2 Chromium page/API contracts, exact weekly-review-web-only classification, and architecture P0=0. DB-backed smoke is environment-limited because local PostgreSQL and Docker are not running. | Independent full-candidate Spec/Quality review, exact pushed SHA, serialized same-SHA control-plane install and app deploy, then independent L3 cloud acceptance |
 
 ## PRD Acceptance Traceability
 
@@ -510,18 +512,18 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 
 ## Release-Verification Manifest Template
 
-- Candidate ref: none yet; the Task 5 corrective commit on `codex/ai-industry-panorama-discovery` remains a Development return until authoritative-main reconciliation and Coordinator acceptance
+- Candidate ref: `codex/ai-industry-panorama-discovery` after state reconciliation; authoritative-main merge commit `9a7a659`; exact pushed candidate SHA will be recorded at the deployment gate
 - Quality route: `L3`
 - Deployed service: `weekly-review-web`
 - Deploy mode/event: planned `targeted_quick` / workflow-compatible `quick`; not deployed
 - Public page: `http://47.84.190.191:8010/ai-industry-panorama`
 - Public API: `http://47.84.190.191:8010/api/ai-industry-panorama`
 - Release ID and evidence cutoff: `ai-industry-panorama.2026-07-24.v1`; `2026-07-24`
-- Focused developer verification: 156/156 Python tests and 2/2 local Playwright page/API contracts passed on 2026-07-24
+- Focused developer verification: 156/156 Panorama/shared-Web/classifier tests, 104/104 concurrent-main crowding/command/data-source tests, and 2/2 local Playwright page/API contracts passed on 2026-07-24
 - Cloud Playwright evidence: pending deployment; local desktop and 390px screenshots are `/private/tmp/ai-industry-panorama-task5-desktop.png` and `/private/tmp/ai-industry-panorama-task5-mobile-390.png`
 - Independent tester and date: pending independent L3 cloud dispatch
 - Safety scan: local contracts passed for a public allow-listed API, HTTPS credential-free source URLs, inference premise citations, keyboard focus, responsive containment, and zero Panorama mutation requests
-- Unresolved exceptions: (1) this candidate branch's repository-wide `scripts/smoke_test.py` stops at a pre-existing Weekly renderer assertion that current `origin/main` already corrects to inspect `render_weekly_review_script()`; (2) queue IDs and state documents conflict with rows added on authoritative main, so the Coordinator must preserve both feature histories during reconciliation. No Panorama-focused test failed, but Task 5 remains incomplete until both exceptions are reconciled and the full merged candidate is reverified
+- Unresolved exceptions: repository-wide `scripts/smoke_test.py` cannot start because the existing local PostgreSQL target at `localhost:55432` and Docker daemon are not running. The prior Weekly assertion drift and queue/state conflicts are reconciled; no focused, shared-boundary, classifier, architecture-P0, or browser gate failed.
 - User acceptance: `pending`
 
 ## Plan Self-Review
