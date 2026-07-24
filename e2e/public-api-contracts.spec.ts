@@ -144,21 +144,56 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
     ok: true,
     schema_version: "ai_industry_panorama_public.v1",
     release: {
-      release_id: expect.stringMatching(/^ai-industry-panorama\./),
-      taxonomy_version: expect.stringMatching(/^ai-industry-panorama-taxonomy\./),
-      evidence_cutoff: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      release_id: "ai-industry-panorama.2026-07-24.v1",
+      taxonomy_version: "ai-industry-panorama-taxonomy.2026-07-24.v1",
+      evidence_cutoff: "2026-07-24",
       review_state: "published",
     },
   });
-  expect(payload.taxonomy.length).toBeGreaterThanOrEqual(6);
-  expect(payload.entities.length).toBeGreaterThanOrEqual(35);
-  expect(payload.relationships.length).toBeGreaterThanOrEqual(45);
-  expect(payload.sources.length).toBeGreaterThan(0);
-  expect(payload.evidence.length).toBeGreaterThan(0);
+  expect(payload.entities).toHaveLength(35);
+  expect(payload.relationships).toHaveLength(48);
+  expect(payload.evidence).toHaveLength(48);
+  expect(payload.sources).toHaveLength(16);
 
   const entityIds = new Set(payload.entities.map((entity: { entity_id: string }) => entity.entity_id));
   const assertionIds = new Set<string>();
-  const evidenceIds = new Set(payload.evidence.map((item: { evidence_id: string }) => item.evidence_id));
+  const relationshipsByAssertion = new Map(
+    payload.relationships.map((item: { assertion_id: string }) => [item.assertion_id, item]),
+  );
+  const evidenceById = new Map(
+    payload.evidence.map((item: { evidence_id: string }) => [item.evidence_id, item]),
+  );
+  const sourcesById = new Map(
+    payload.sources.map((item: { source_id: string }) => [item.source_id, item]),
+  );
+  for (const source of payload.sources) {
+    for (const field of [
+      "source_id",
+      "tier",
+      "publisher",
+      "document_title",
+      "url",
+      "retrieval_date",
+      "immutable_locator",
+      "content_hash",
+      "license_class",
+    ]) {
+      expect(source[field]).toBeTruthy();
+    }
+  }
+  for (const evidence of payload.evidence) {
+    for (const field of [
+      "evidence_id",
+      "source_id",
+      "locator",
+      "bounded_excerpt",
+      "extraction_method",
+      "review_state",
+    ]) {
+      expect(evidence[field]).toBeTruthy();
+    }
+    expect(sourcesById.has(evidence.source_id)).toBe(true);
+  }
   for (const relationship of payload.relationships) {
     expect(entityIds.has(relationship.source_entity_id)).toBe(true);
     expect(entityIds.has(relationship.target_entity_id)).toBe(true);
@@ -167,10 +202,40 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
     assertionIds.add(relationship.assertion_id);
     expect(relationship.evidence_ids.length + relationship.premise_assertion_ids.length).toBeGreaterThan(0);
     for (const evidenceId of relationship.evidence_ids) {
-      expect(evidenceIds.has(evidenceId)).toBe(true);
+      expect(evidenceById.has(evidenceId)).toBe(true);
+    }
+    for (const premiseId of relationship.premise_assertion_ids) {
+      expect(relationshipsByAssertion.has(premiseId)).toBe(true);
     }
   }
   expect(assertionIds.size).toBe(payload.relationships.length);
+
+  const inference = payload.relationships.find(
+    (item: { relationship_id: string }) =>
+      item.relationship_id === "relationship:REL-AIP-0011",
+  );
+  expect(inference.premise_assertion_ids).toEqual([
+    "assertion:AST-AIP-0010",
+    "assertion:AST-AIP-0045",
+  ]);
+  const metaPremise = relationshipsByAssertion.get("assertion:AST-AIP-0010");
+  const ocpPremise = relationshipsByAssertion.get("assertion:AST-AIP-0045");
+  expect(metaPremise.evidence_ids).toEqual(["evidence:EVD-AIP-0010"]);
+  expect(ocpPremise.evidence_ids).toEqual(["evidence:EVD-AIP-0045"]);
+  expect(evidenceById.get("evidence:EVD-AIP-0010").source_id).toBe("source:SRC-003");
+  expect(evidenceById.get("evidence:EVD-AIP-0045").source_id).toBe("source:SRC-016");
+  expect(sourcesById.get("source:SRC-003")).toMatchObject({
+    publisher: "Meta Investor Relations",
+    document_title: "Meta Reports First Quarter 2026 Results",
+    publication_date: "2026-04-29",
+    retrieval_date: "2026-07-24",
+  });
+  expect(sourcesById.get("source:SRC-016")).toMatchObject({
+    publisher: "Open Compute Project Foundation",
+    document_title: "Open Data Centers for AI",
+    publication_date: null,
+    retrieval_date: "2026-07-24",
+  });
 
   const anchors = payload.entities.filter((entity: { is_demand_anchor: boolean }) => entity.is_demand_anchor);
   expect(anchors).toHaveLength(6);

@@ -1,6 +1,6 @@
 # AI Industry Panorama V1 Implementation Plan
 
-**Status:** `locally_implemented` release candidate as of `2026-07-24`; deployment, independent L3 acceptance, and Owner acceptance remain pending.
+**Status:** `implementation_in_progress`; Task 5 is returned and incomplete pending authoritative-main reconciliation as of `2026-07-24`.
 
 **Independent gates:** Plan Reviewer `/root/panorama_plan_review` found all 12 PRD acceptance criteria compliant and no remaining plan findings at commit `f14136b`. Source Reviewer `/root/panorama_source_review` accepted all 48 relationship/assertion/evidence rows and all six canonical two-hop paths at manifest commit `4069321`; the Coordinator then marked the manifest `reviewed_for_implementation`. Publication, deployment, independent L3 acceptance, and Owner acceptance remain separate later gates.
 
@@ -415,7 +415,7 @@ git commit -m "ops: classify AI panorama release"
 
 The test must verify page heading/navigation/release metadata, no horizontal overflow at desktop and 390px mobile, nonblank graph and table, search for a demand anchor, one-hop and two-hop focus, disclosed-only filtering, geography/time/lifecycle filters, entity drawer, relationship evidence drawer, source link, visible inference label/derivation, keyboard focus, and zero panorama mutation requests.
 
-- [x] **Step 2: Run local developer verification**
+- [ ] **Step 2: Run local developer verification**
 
 Run the focused Python suite:
 
@@ -439,7 +439,7 @@ python3 scripts/audit_delivery_state.py --feature "AI Industry Panorama"
 
 Expected: all focused tests, local public browser journey, smoke checks, and delivery audit pass.
 
-- [x] **Step 3: Update implementation traceability and release-candidate state**
+- [ ] **Step 3: Update implementation traceability and release-candidate state**
 
 Record exact commits, test counts, selected `L3` route, planned URL, deploy mode `targeted_quick`, target `weekly-review-web`, and one Acceptance Queue row. Keep user acceptance `pending`.
 
@@ -489,7 +489,7 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 | 2. Public page, script, filters, and drawers | accepted | Head `962e1a0`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 113/113 focused-plus-preserved tests | None; inherited real-browser gate passed in Task 3 |
 | 3. Gateway routes and shared navigation | accepted | Head `251a146`; Spec `PASS`; Quality `APPROVED`; 117/117 focused and 103/103 additional preserved tests; real Chrome desktop/mobile evidence under `/private/tmp/panorama-task3-browser-evidence` | None |
 | 4. Deploy classification and release verification | accepted | Head `51072c1`; Spec `PASS`; Quality `APPROVED`; Coordinator verified 184/184 tests and cumulative weekly-review-web-only classification with exact-SHA control-plane gate | None |
-| 5. Cloud journey, release evidence, and state reconciliation | development_returned | Task 5 candidate is the commit produced from this development return; 156/156 focused Python tests and 2/2 local Playwright page/API contracts passed; desktop and 390px evidence are `/private/tmp/ai-industry-panorama-task5-desktop.png` and `/private/tmp/ai-industry-panorama-task5-mobile-390.png` | Coordinator full-candidate review and exact-SHA reconciliation; push; exact-SHA Ops install; same-SHA targeted quick deploy; independent L3 cloud acceptance |
+| 5. Cloud journey, release evidence, and state reconciliation | development_returned_pending_main_reconciliation | Strengthened local contracts pin 35 entities, 48 relationships, 48 evidence records, 16 sources, exact filter/focus sets, exact inference premises, fresh desktop/mobile documents, and all-same-origin read-only requests; 156/156 focused Python tests and 2/2 local Playwright page/API contracts passed | Reconcile current main's Weekly smoke fix and non-Panorama queue/state rows; rerun smoke/full/E2E/classifier; then Coordinator review, exact candidate SHA, push, deploy, and independent L3 acceptance |
 
 ## PRD Acceptance Traceability
 
@@ -510,7 +510,7 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 
 ## Release-Verification Manifest Template
 
-- Candidate ref: Task 5 development-return commit on `codex/ai-industry-panorama-discovery` (Coordinator records the exact SHA after accepting this commit)
+- Candidate ref: none yet; the Task 5 corrective commit on `codex/ai-industry-panorama-discovery` remains a Development return until authoritative-main reconciliation and Coordinator acceptance
 - Quality route: `L3`
 - Deployed service: `weekly-review-web`
 - Deploy mode/event: planned `targeted_quick` / workflow-compatible `quick`; not deployed
@@ -521,7 +521,7 @@ The Quality & Acceptance Lead captures desktop/mobile screenshots, API response,
 - Cloud Playwright evidence: pending deployment; local desktop and 390px screenshots are `/private/tmp/ai-industry-panorama-task5-desktop.png` and `/private/tmp/ai-industry-panorama-task5-mobile-390.png`
 - Independent tester and date: pending independent L3 cloud dispatch
 - Safety scan: local contracts passed for a public allow-listed API, HTTPS credential-free source URLs, inference premise citations, keyboard focus, responsive containment, and zero Panorama mutation requests
-- Unresolved exceptions: this candidate branch's repository-wide `scripts/smoke_test.py` stops at a pre-existing Weekly renderer assertion that expects `/api/weekly-review` in HTML after that script moved to `/assets/weekly-review.js`; current `origin/main` already corrects the assertion to inspect `render_weekly_review_script()`, so the Coordinator must reconcile authoritative main before final verification; no Panorama-focused test failed
+- Unresolved exceptions: (1) this candidate branch's repository-wide `scripts/smoke_test.py` stops at a pre-existing Weekly renderer assertion that current `origin/main` already corrects to inspect `render_weekly_review_script()`; (2) queue IDs and state documents conflict with rows added on authoritative main, so the Coordinator must preserve both feature histories during reconciliation. No Panorama-focused test failed, but Task 5 remains incomplete until both exceptions are reconciled and the full merged candidate is reverified
 - User acceptance: `pending`
 
 ## Plan Self-Review

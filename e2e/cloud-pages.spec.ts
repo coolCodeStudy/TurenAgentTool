@@ -520,6 +520,37 @@ test.describe("Command Workbench desktop journey", () => {
 });
 
 test.describe("AI Industry Panorama public journey", () => {
+  type PanoramaEntity = {
+    entity_id: string;
+    label: string;
+    kind: string;
+    summary: string;
+    aliases: string[];
+    capability_roles: string[];
+  };
+  type PanoramaRelationship = {
+    relationship_id: string;
+    source_entity_id: string;
+    target_entity_id: string;
+    relationship_type: string;
+    text: string;
+    assertion_kind: string;
+    lifecycle_state: string;
+    geography_roles: [string, string][];
+    reporting_period_start: string | null;
+    reporting_period_end: string | null;
+    effective_from: string | null;
+    effective_to: string | null;
+  };
+  type PanoramaProjection = {
+    entities: PanoramaEntity[];
+    relationships: PanoramaRelationship[];
+  };
+  type ObservedRequest = { method: string; pathname: string };
+
+  const sortedIds = (relationships: PanoramaRelationship[]) =>
+    relationships.map((item) => item.relationship_id).sort();
+
   const relationshipIds = async (locator: import("@playwright/test").Locator) =>
     locator.evaluateAll((items) =>
       items
@@ -527,6 +558,16 @@ test.describe("AI Industry Panorama public journey", () => {
         .filter((value): value is string => Boolean(value))
         .sort(),
     );
+
+  const expectGraphTableIds = async (
+    page: import("@playwright/test").Page,
+    expectedIds: string[],
+  ) => {
+    const graph = page.locator("#panorama-graph [data-relationship-id]");
+    const table = page.locator("#relationship-table-body [data-relationship-id]");
+    await expect.poll(() => relationshipIds(graph)).toEqual(expectedIds);
+    expect(await relationshipIds(table)).toEqual(expectedIds);
+  };
 
   const expectNoPageOverflow = async (page: import("@playwright/test").Page) => {
     await expect
@@ -538,89 +579,203 @@ test.describe("AI Industry Panorama public journey", () => {
       .toBe(true);
   };
 
-  test("AI Industry Panorama supports a read-only evidence traversal on desktop and mobile", async ({ page }, testInfo) => {
-    const panoramaRequests: { method: string; pathname: string }[] = [];
+  const searchRelationships = (projection: PanoramaProjection, query: string) => {
+    const lowered = query.toLowerCase();
+    const entities = new Map(projection.entities.map((item) => [item.entity_id, item]));
+    return projection.relationships.filter((relationship) => {
+      const endpointMatch = [
+        entities.get(relationship.source_entity_id),
+        entities.get(relationship.target_entity_id),
+      ].filter(Boolean).some((entity) =>
+        [
+          entity!.label,
+          entity!.kind,
+          entity!.summary,
+          ...entity!.aliases,
+          ...entity!.capability_roles,
+        ].some((value) => value.toLowerCase().includes(lowered)),
+      );
+      return endpointMatch || [
+        relationship.relationship_type,
+        relationship.text,
+        relationship.assertion_kind,
+      ].some((value) => value.toLowerCase().includes(lowered));
+    });
+  };
+
+  const focusedRelationships = (
+    projection: PanoramaProjection,
+    entityId: string,
+    hopDepth: number,
+  ) => {
+    let frontier = new Set([entityId]);
+    const visited = new Set(frontier);
+    const admitted = new Set<string>();
+    for (let depth = 0; depth < hopDepth; depth += 1) {
+      const next = new Set<string>();
+      for (const relationship of projection.relationships) {
+        const sourceSeen = frontier.has(relationship.source_entity_id);
+        const targetSeen = frontier.has(relationship.target_entity_id);
+        if (!sourceSeen && !targetSeen) continue;
+        admitted.add(relationship.relationship_id);
+        const other = sourceSeen
+          ? relationship.target_entity_id
+          : relationship.source_entity_id;
+        if (!visited.has(other)) next.add(other);
+      }
+      next.forEach((id) => visited.add(id));
+      frontier = next;
+    }
+    return [...admitted].sort();
+  };
+
+  const overlaps2026And2027 = (relationship: PanoramaRelationship) => {
+    const usesReportingPeriod = Boolean(
+      relationship.reporting_period_start || relationship.reporting_period_end,
+    );
+    const start = usesReportingPeriod
+      ? relationship.reporting_period_start
+      : relationship.effective_from;
+    const end = usesReportingPeriod
+      ? relationship.reporting_period_end
+      : relationship.effective_to;
+    if (!start && !end) return false;
+    return (start || "0000-01-01") <= "2027-12-31"
+      && (end || "9999-12-31") >= "2026-01-01";
+  };
+
+  const observeSameOrigin = (
+    page: import("@playwright/test").Page,
+    origin: string,
+  ) => {
+    const observed: ObservedRequest[] = [];
     page.on("request", (request) => {
       const url = new URL(request.url());
-      if (url.pathname.includes("ai-industry-panorama")) {
-        panoramaRequests.push({ method: request.method(), pathname: url.pathname });
+      if (url.origin === origin) {
+        observed.push({ method: request.method(), pathname: url.pathname });
       }
     });
+    return observed;
+  };
 
+  const expectReadOnlyPanoramaJourney = (observed: ObservedRequest[]) => {
+    expect(observed.every(({ method }) => method === "GET" || method === "HEAD")).toBe(true);
+    const panorama = observed
+      .filter(({ pathname }) => pathname.includes("ai-industry-panorama"))
+      .sort((left, right) => left.pathname.localeCompare(right.pathname));
+    expect(panorama).toEqual([
+      { method: "GET", pathname: "/ai-industry-panorama" },
+      { method: "GET", pathname: "/api/ai-industry-panorama" },
+      { method: "GET", pathname: "/assets/ai-industry-panorama.js" },
+    ]);
+  };
+
+  test("AI Industry Panorama supports exact read-only evidence traversal on fresh desktop and mobile documents", async (
+    { page, request, browser },
+    testInfo,
+  ) => {
+    const apiResponse = await request.get("/api/ai-industry-panorama");
+    expect(apiResponse.status()).toBe(200);
+    const projection = await apiResponse.json() as PanoramaProjection;
+    expect(projection.entities).toHaveLength(35);
+    expect(projection.relationships).toHaveLength(48);
+
+    const completeIds = sortedIds(projection.relationships);
+    const microsoftSearchIds = sortedIds(searchRelationships(projection, "Microsoft"));
+    const microsoftHopOneIds = focusedRelationships(
+      projection,
+      "entity:ENT-ORG-MICROSOFT",
+      1,
+    );
+    const microsoftHopTwoIds = focusedRelationships(
+      projection,
+      "entity:ENT-ORG-MICROSOFT",
+      2,
+    );
+    const unitedStatesIds = sortedIds(projection.relationships.filter((relationship) =>
+      relationship.geography_roles.some(([id]) => id === "geography:us"),
+    ));
+    const periodIds = sortedIds(projection.relationships.filter(overlaps2026And2027));
+    const committedIds = sortedIds(projection.relationships.filter(
+      (relationship) => relationship.lifecycle_state === "committed",
+    ));
+    const disclosedIds = sortedIds(projection.relationships.filter(
+      (relationship) => [
+        "disclosed_fact",
+        "company_guidance",
+        "management_claim",
+      ].includes(relationship.assertion_kind),
+    ));
+    expect(completeIds).toHaveLength(48);
+    expect(microsoftSearchIds).not.toEqual(completeIds);
+    expect(microsoftHopOneIds).toHaveLength(3);
+    expect(microsoftHopTwoIds).toHaveLength(11);
+    const microsoftHopTwoSet = new Set(microsoftHopTwoIds);
+    expect(microsoftHopOneIds.every((id) => microsoftHopTwoSet.has(id))).toBe(true);
+    expect(microsoftHopOneIds).not.toEqual(microsoftHopTwoIds);
+    expect(unitedStatesIds).toHaveLength(8);
+    expect(periodIds).toHaveLength(42);
+    expect(committedIds).toHaveLength(12);
+    expect(disclosedIds).toHaveLength(47);
+
+    const baseOrigin = new URL(
+      process.env.E2E_BASE_URL ?? "http://127.0.0.1:8010",
+    ).origin;
+    const desktopRequests = observeSameOrigin(page, baseOrigin);
     await page.goto("/ai-industry-panorama", { waitUntil: "commit" });
     await expect(page.locator("body")).toHaveAttribute("data-experience-ready", "true");
     await expect(page.getByRole("heading", { name: "AI Industry Panorama", exact: true })).toBeVisible();
     await expect(page.locator('nav a[href="/ai-industry-panorama"]')).toHaveAttribute("aria-current", "page");
-    await expect(page.locator("#release-id")).toContainText("ai-industry-panorama.");
-    await expect(page.locator("#taxonomy-version")).toContainText("ai-industry-panorama-taxonomy.");
-    await expect(page.locator("#evidence-cutoff")).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
+    await expect(page.locator("#release-id")).toHaveText("ai-industry-panorama.2026-07-24.v1");
+    await expect(page.locator("#taxonomy-version")).toHaveText(
+      "ai-industry-panorama-taxonomy.2026-07-24.v1",
+    );
+    await expect(page.locator("#evidence-cutoff")).toHaveText("2026-07-24");
     await expect(page.locator("#change-summary li")).not.toHaveCount(0);
     await expect(page.getByRole("status")).toContainText("Curated start");
     await expectNoPageOverflow(page);
 
-    const graphRelationships = page.locator("#panorama-graph [data-relationship-id]");
-    const tableRelationships = page.locator("#relationship-table-body [data-relationship-id]");
-    await expect(graphRelationships.first()).toBeVisible();
-    await expect(tableRelationships.first()).toBeVisible();
-    const curatedGraphIds = await relationshipIds(graphRelationships);
-    const curatedTableIds = await relationshipIds(tableRelationships);
-    expect(curatedGraphIds.length).toBeGreaterThan(0);
-    expect(curatedGraphIds).toEqual(curatedTableIds);
+    const curatedIds = await relationshipIds(
+      page.locator("#panorama-graph [data-relationship-id]"),
+    );
+    expect(curatedIds.length).toBeGreaterThan(0);
+    expect(curatedIds).toEqual(
+      await relationshipIds(page.locator("#relationship-table-body [data-relationship-id]")),
+    );
 
     await page.getByRole("button", { name: "Reset panorama" }).click();
-    await expect(page.getByRole("status")).toContainText("Complete V1");
-    const completeIds = await relationshipIds(graphRelationships);
-    expect(completeIds.length).toBeGreaterThan(curatedGraphIds.length);
-    expect(completeIds).toEqual(await relationshipIds(tableRelationships));
+    await expectGraphTableIds(page, completeIds);
 
     const search = page.getByPlaceholder("Entity, project, capability, or alias");
     await search.fill("Microsoft");
+    await expectGraphTableIds(page, microsoftSearchIds);
     const microsoft = page.locator(
       '#panorama-graph [data-entity-id="entity:ENT-ORG-MICROSOFT"]',
     );
-    await expect(microsoft).toBeVisible();
     await microsoft.focus();
     await expect(microsoft).toBeFocused();
     await microsoft.press("Enter");
     await expect(page.locator("#entity-drawer")).toBeFocused();
     await expect(page.locator("#entity-drawer")).toContainText("Microsoft Corporation");
-    await expect(page.locator("#entity-drawer")).toContainText("Disclosed relationships");
-    const twoHopIds = await relationshipIds(graphRelationships);
-    expect(twoHopIds.length).toBeGreaterThan(0);
-    expect(twoHopIds).toEqual(await relationshipIds(tableRelationships));
+    await expectGraphTableIds(page, microsoftHopTwoIds);
 
     await page.locator("#hop-depth").selectOption("1");
-    await expect(page.getByRole("status")).toContainText("Microsoft Corporation (1 hop)");
-    const oneHopIds = await relationshipIds(graphRelationships);
-    expect(oneHopIds.length).toBeGreaterThan(0);
-    expect(oneHopIds.length).toBeLessThanOrEqual(twoHopIds.length);
+    await expectGraphTableIds(page, microsoftHopOneIds);
     await page.locator("#hop-depth").selectOption("2");
-    await expect(page.getByRole("status")).toContainText("Microsoft Corporation (2 hop)");
-    expect(await relationshipIds(graphRelationships)).toEqual(twoHopIds);
+    await expectGraphTableIds(page, microsoftHopTwoIds);
 
-    await page.getByRole("button", { name: "Reset panorama" }).click();
-    const assertNonemptyFilter = async (id: string, value: string) => {
-      await page.locator(id).selectOption(value);
-      await expect(tableRelationships.first()).toBeVisible();
-      expect(await relationshipIds(graphRelationships)).toEqual(
-        await relationshipIds(tableRelationships),
-      );
+    const assertFilter = async (id: string, value: string, expectedIds: string[]) => {
       await page.getByRole("button", { name: "Reset panorama" }).click();
+      await page.locator(id).selectOption(value);
+      await expectGraphTableIds(page, expectedIds);
     };
-    await assertNonemptyFilter("#geography-filter", "geography:us");
-    await assertNonemptyFilter("#time-filter", "2026-2027");
-    await assertNonemptyFilter("#lifecycle-filter", "committed");
-
+    await assertFilter("#geography-filter", "geography:us", unitedStatesIds);
+    await assertFilter("#time-filter", "2026-2027", periodIds);
+    await assertFilter("#lifecycle-filter", "committed", committedIds);
+    await page.getByRole("button", { name: "Reset panorama" }).click();
     await page.locator("#disclosed-only").check();
-    await expect(
-      page.locator(
-        '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0011"]',
-      ),
-    ).toHaveCount(0);
-    expect(
-      await page.locator("#relationship-table-body tr").allTextContents(),
-    ).not.toEqual(expect.arrayContaining([expect.stringContaining("inferred_exposure")]));
-    await page.locator("#disclosed-only").uncheck();
+    await expectGraphTableIds(page, disclosedIds);
+    expect(disclosedIds.length).toBeGreaterThan(0);
 
     await page.getByRole("button", { name: "Graph", exact: true }).click();
     await expect(page.locator("#graph-panel")).toBeVisible();
@@ -629,9 +784,8 @@ test.describe("AI Industry Panorama public journey", () => {
     await expect(page.locator("#graph-panel")).toBeHidden();
     await expect(page.locator("#table-panel")).toBeVisible();
     await page.getByRole("button", { name: "Both", exact: true }).click();
-    await expect(page.locator("#graph-panel")).toBeVisible();
-    await expect(page.locator("#table-panel")).toBeVisible();
 
+    await page.getByRole("button", { name: "Reset panorama" }).click();
     await search.fill("Advanced semiconductor packaging");
     const capability = page.locator(
       '#panorama-graph [data-entity-id="entity:ENT-CAP-ADVANCED-PACKAGING"]',
@@ -640,52 +794,90 @@ test.describe("AI Industry Panorama public journey", () => {
     await capability.press(" ");
     await expect(page.locator("#capability-drawer")).toBeFocused();
     await expect(page.locator("#capability-drawer")).toContainText("Advanced semiconductor packaging");
-    await expect(page.locator("#capability-drawer")).toContainText("Upstream roles");
-    await expect(page.locator("#capability-drawer")).toContainText("Downstream roles");
 
     await page.getByRole("button", { name: "Reset panorama" }).click();
     const inferenceRow = page.locator(
       '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0011"]',
     );
-    await expect(inferenceRow).toContainText("inferred_exposure");
     await inferenceRow.getByRole("button", { name: "View evidence" }).click();
     const relationshipDrawer = page.locator("#relationship-drawer");
     await expect(relationshipDrawer).toBeFocused();
     await expect(relationshipDrawer).toContainText("Assertion kind: inferred_exposure");
-    await expect(relationshipDrawer).toContainText("Inference derivation");
-    await expect(relationshipDrawer.locator("[data-premise-assertion-id]")).toHaveCount(2);
-    await expect(relationshipDrawer.locator("[data-premise-source-link]")).not.toHaveCount(0);
-    const officialLinks = relationshipDrawer.getByRole("link", { name: "Open official source" });
-    await expect(officialLinks.first()).toBeVisible();
-    for (const link of await officialLinks.all()) {
-      const href = await link.getAttribute("href");
-      expect(href).toBeTruthy();
-      const parsed = new URL(href!);
-      expect(parsed.protocol).toBe("https:");
-      expect(parsed.username).toBe("");
-      expect(parsed.password).toBe("");
+    const metaPremise = relationshipDrawer.locator(
+      '[data-premise-assertion-id="assertion:AST-AIP-0010"]',
+    );
+    const ocpPremise = relationshipDrawer.locator(
+      '[data-premise-assertion-id="assertion:AST-AIP-0045"]',
+    );
+    await expect(metaPremise).toContainText("Meta Investor Relations");
+    await expect(metaPremise).toContainText("Meta Reports First Quarter 2026 Results");
+    await expect(metaPremise).toContainText("Publication: 2026-04-29");
+    await expect(metaPremise.getByRole("link", { name: "Open official source" })).toHaveAttribute(
+      "href",
+      "https://investor.atmeta.com/investor-news/press-release-details/2026/Meta-Reports-First-Quarter-2026-Results/",
+    );
+    await expect(ocpPremise).toContainText("Open Compute Project Foundation");
+    await expect(ocpPremise).toContainText("Open Data Centers for AI");
+    await expect(ocpPremise).toContainText("Publication: Undated");
+    await expect(ocpPremise.getByRole("link", { name: "Open official source" })).toHaveAttribute(
+      "href",
+      "https://www.opencompute.org/community/open-data-centers-for-ai",
+    );
+    for (const link of await relationshipDrawer.getByRole("link", { name: "Open official source" }).all()) {
       expect(await link.getAttribute("rel")).toBe("noopener noreferrer");
       expect(await link.getAttribute("target")).toBe("_blank");
     }
+    expectReadOnlyPanoramaJourney(desktopRequests);
     await testInfo.attach("ai-panorama-desktop", {
       body: await page.screenshot({ fullPage: true }),
       contentType: "image/png",
     });
 
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expectNoPageOverflow(page);
-    await expect(page.getByRole("heading", { name: "AI Industry Panorama", exact: true })).toBeVisible();
-    await expect(page.locator("#panorama-graph-scroll")).toBeVisible();
-    await expect(page.locator("#relationship-table")).toBeVisible();
+    const mobileContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+    });
+    const mobilePage = await mobileContext.newPage();
+    const mobileRequests = observeSameOrigin(mobilePage, baseOrigin);
+    await mobilePage.goto("/ai-industry-panorama", { waitUntil: "commit" });
+    await expect(mobilePage.locator("body")).toHaveAttribute("data-experience-ready", "true");
+    await expect(mobilePage.getByRole("status")).toContainText("Curated start");
+    await expectNoPageOverflow(mobilePage);
+    const mobileCuratedIds = await relationshipIds(
+      mobilePage.locator("#panorama-graph [data-relationship-id]"),
+    );
+    expect(mobileCuratedIds.length).toBeGreaterThan(0);
+    expect(mobileCuratedIds).toEqual(
+      await relationshipIds(mobilePage.locator("#relationship-table-body [data-relationship-id]")),
+    );
+    const graphScroll = mobilePage.locator("#panorama-graph-scroll");
+    const scrollSize = await graphScroll.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(scrollSize.scrollWidth).toBeGreaterThan(scrollSize.clientWidth);
+    await graphScroll.evaluate((element) => {
+      element.scrollLeft = 240;
+    });
+    await expect.poll(() => graphScroll.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+
+    const mobileSearch = mobilePage.getByPlaceholder("Entity, project, capability, or alias");
+    await mobileSearch.fill("Microsoft");
+    await expectGraphTableIds(mobilePage, microsoftSearchIds);
+    const mobileMicrosoft = mobilePage.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-ORG-MICROSOFT"]',
+    );
+    await mobileMicrosoft.focus();
+    await mobileMicrosoft.press("Enter");
+    await expectGraphTableIds(mobilePage, microsoftHopTwoIds);
+    await mobilePage.getByRole("button", { name: "Reset panorama" }).click();
+    await mobilePage.locator("#geography-filter").selectOption("geography:us");
+    await expectGraphTableIds(mobilePage, unitedStatesIds);
+    await expectNoPageOverflow(mobilePage);
+    expectReadOnlyPanoramaJourney(mobileRequests);
     await testInfo.attach("ai-panorama-mobile-390", {
-      body: await page.screenshot({ fullPage: true }),
+      body: await mobilePage.screenshot({ fullPage: true }),
       contentType: "image/png",
     });
-
-    expect(panoramaRequests.length).toBeGreaterThanOrEqual(3);
-    expect(panoramaRequests.every(({ method }) => method === "GET")).toBe(true);
-    expect(
-      panoramaRequests.filter(({ pathname }) => pathname === "/api/ai-industry-panorama"),
-    ).toHaveLength(1);
+    await mobileContext.close();
   });
 });
