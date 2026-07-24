@@ -24,6 +24,7 @@ from investment_knowledge_mcp.ai_industry_panorama.release import (
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "investment_knowledge_mcp" / "ai_industry_panorama"
 CANONICAL_RELEASE = PACKAGE / "releases" / "2026-07-24.v1.json"
+PANORAMA_PRD = ROOT / "docs" / "product" / "PRD-AI-Industry-Panorama.md"
 
 
 def canonical_payload() -> dict[str, object]:
@@ -152,6 +153,49 @@ def refresh_source_hash(payload: dict[str, object], source_id: str) -> None:
 
 
 class PanoramaReleaseTests(unittest.TestCase):
+    def test_relationship_type_contract_matches_prd_section_11_3(self) -> None:
+        prd = PANORAMA_PRD.read_text(encoding="utf-8")
+        controlled_list = prd.split(
+            "### 11.3 Relationship Types",
+            maxsplit=1,
+        )[1].split("## 12.", maxsplit=1)[0]
+        prd_relationship_types = set(
+            re.findall(r"^- `([^`]+)`$", controlled_list, flags=re.MULTILINE)
+        )
+
+        self.assertEqual(
+            prd_relationship_types,
+            set(panorama_release._RELATIONSHIP_TYPES),
+        )
+        self.assertNotIn(
+            "contract_manufactures_for",
+            panorama_release._RELATIONSHIP_TYPES,
+        )
+
+        payload = canonical_payload()
+        payload["relationships"][0]["relationship_type"] = (
+            "contract_manufactures_for"
+        )
+        with self.assertRaisesRegex(PanoramaReleaseError, "relationship type"):
+            validate_release(payload)
+
+    def test_canonical_contract_manufacturers_use_prd_relationship_type(self) -> None:
+        relationships = {
+            relationship.relationship_id: relationship
+            for relationship in load_release().relationships
+        }
+
+        for relationship_id in (
+            "relationship:REL-AIP-0046",
+            "relationship:REL-AIP-0047",
+            "relationship:REL-AIP-0048",
+        ):
+            with self.subTest(relationship_id=relationship_id):
+                self.assertEqual(
+                    "manufactures_for",
+                    relationships[relationship_id].relationship_type,
+                )
+
     def test_canonical_release_has_reviewed_manifest_counts(self) -> None:
         release = load_release()
         covered_entities = [

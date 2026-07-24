@@ -407,11 +407,13 @@ _RELATIONSHIP_TYPES = frozenset(
         "enables_capability",
         "partners_with",
         "supplies",
-        "contract_manufactures_for",
         "co_designs",
         "inferred_exposure_to",
         "leases_or_provides_capacity_to",
         "manufactures_for",
+        "packages_or_tests_for",
+        "adopts_or_supports_standard",
+        "competes_with",
     }
 )
 _PREFIXES = {

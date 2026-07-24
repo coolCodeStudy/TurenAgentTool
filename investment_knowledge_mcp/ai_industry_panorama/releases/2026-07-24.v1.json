@@ -2078,19 +2078,19 @@
       "relationship_id": "relationship:REL-AIP-0046",
       "source_entity_id": "entity:ENT-ORG-HONHAI",
       "target_entity_id": "entity:ENT-ORG-NVIDIA",
-      "relationship_type": "contract_manufactures_for"
+      "relationship_type": "manufactures_for"
     },
     {
       "relationship_id": "relationship:REL-AIP-0047",
       "source_entity_id": "entity:ENT-ORG-WISTRON",
       "target_entity_id": "entity:ENT-ORG-NVIDIA",
-      "relationship_type": "contract_manufactures_for"
+      "relationship_type": "manufactures_for"
     },
     {
       "relationship_id": "relationship:REL-AIP-0048",
       "source_entity_id": "entity:ENT-ORG-FABRINET",
       "target_entity_id": "entity:ENT-ORG-NVIDIA",
-      "relationship_type": "contract_manufactures_for"
+      "relationship_type": "manufactures_for"
     }
   ],
   "assertions": [
