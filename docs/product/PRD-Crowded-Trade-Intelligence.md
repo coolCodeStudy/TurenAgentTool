@@ -528,7 +528,7 @@ The recommended hybrid V1 can produce useful US/HK assessments and honest KR/CN 
 
 ## 19. V1 Implementation Traceability
 
-Local implementation is complete on `codex/crowded-trade-intelligence-discovery`. Deployment and independent acceptance remain separate gates.
+V1 is integrated through PR `#37` at `main@61ee36dca794ce7996e84644e0298aecd381aace` and deployed in fail-closed mode by workflow `30060363722` attempt 2. Independent degraded-mode acceptance passed; full live-source acceptance remains blocked on the source approval and entitlement gate.
 
 | Acceptance scope | V1 state | Evidence or boundary |
 |---|---|---|
@@ -543,4 +543,4 @@ Local implementation is complete on `codex/crowded-trade-intelligence-discovery`
 | Historical calibration | Deferred | V1 bands are deterministic heuristics and are explicitly labelled as not calibrated probabilities. No reversal or return prediction is made. |
 | Premium lending, fund flows, official KR/CN automation, and social attention | Deferred by approved scope | No credentials, scraping, contract, or storage surface was added. |
 | Local verification | Passed | Focused source, semantic, service, router, Workbench, and HTTP boundary suites pass; final consolidated verification is recorded in the linked implementation plan and registry. |
-| Cloud and independent acceptance | Pending | `AT-2026-07-24-001` covers deployed US/HK evidence, KR/CN evidence-only behavior, entitlement failure, insufficient evidence, provenance/safety, and Workbench execution. |
+| Cloud and independent acceptance | Degraded mode passed; live source blocked | Workflow `30060363722` attempt 2 / event `1784858995286` deployed `main@61ee36d` with stable health. Cloud page, catalog, exact/class-share preview, fail-closed execution, access recovery, and safety boundaries passed. `AT-2026-07-24-001` remains `blocked/major` only because the source register and deployed US/HK entitlements are incomplete. |

@@ -696,13 +696,13 @@ Compare every task and PRD acceptance criterion with the final diff. Complete st
 
 Check Product, Engineering, Testing, and Coordinator learning against `docs/lesson-capture-protocol.md`. Record only durable cross-task lessons; otherwise report `Role learning: none` with the reason.
 
-- [ ] **Step 6: Push the verified branch**
+- [x] **Step 6: Push the verified branch**
 
 ```bash
 git push origin codex/crowded-trade-intelligence-discovery
 ```
 
-- [ ] **Step 7: Make the deploy decision**
+- [x] **Step 7: Make the deploy decision**
 
 Classify the exact changed paths. If deployment is required, record Deploy Intent:
 
@@ -715,7 +715,7 @@ Classify the exact changed paths. If deployment is required, record Deploy Inten
 
 Use only the shared deployment path. Do not start local services or ad hoc SSH.
 
-- [ ] **Step 8: Verify cloud and route independent acceptance**
+- [x] **Step 8: Verify cloud and route independent acceptance**
 
 Verify:
 
@@ -738,5 +738,9 @@ Then update the acceptance row and route the same feature to independent accepta
 - Architecture audit: P0 `0`; the Futu provider size is a report-only P1 with a separately recorded extraction slice.
 - `git diff --check`: passed.
 - Independent re-review: no remaining Critical, Important, or Minor findings.
+- Integration: PR `#37`, authoritative `main@61ee36dca794ce7996e84644e0298aecd381aace`.
+- Deployment: workflow `30060363722` attempt 2, event `1784858995286`, `targeted_quick`, all five targets healthy for a 30-second stable window, no rollback.
+- Coordinator cloud evidence: `/health`, `/command`, both crowding catalog actions, tokenless structured access recovery, exact `US.BRK.B` preview, fail-closed single-symbol execution event `#537`, and read-only portfolio preview passed without advice, secret, raw exception, path, internal URL, or false crowding claim.
+- Independent acceptance: degraded mode passed; overall `blocked/major` because live US/HK source cases require an approved source register and deployed entitlements. No redeploy is required for that external blocker.
 - Plan review closed the point-in-time publication, signed-option, partial-price/option coverage, provider-session provenance, portfolio coverage display, class-share identity, and approval-register gaps.
 - Lessons recorded in `docs/techplans/crowded-trade-intelligence-feasibility.md`: bundled vendor collection requires all bundled capabilities to be approved; unknown publication time cannot support later-fetched historical replay; aggregate option OI remains non-directional; provider bars are the safe session provenance.
