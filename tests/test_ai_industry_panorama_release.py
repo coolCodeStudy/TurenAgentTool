@@ -1272,6 +1272,76 @@ class PanoramaReleaseTests(unittest.TestCase):
         )
         self.assertEqual(48, len(reviewed_rows))
 
+    def test_canonical_source_fields_equal_reviewed_manifest_table(self) -> None:
+        manifest = (
+            ROOT
+            / "docs"
+            / "changes"
+            / "ai-industry-panorama"
+            / "v1-source-manifest.md"
+        ).read_text(encoding="utf-8")
+        source_section = manifest.split("## Used source inventory", 1)[1].split(
+            "\n## ",
+            1,
+        )[0]
+        manifest_sources: dict[str, dict[str, object]] = {}
+        for line in source_section.splitlines():
+            if not re.match(r"^\| SRC-\d{3} \|", line):
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            self.assertEqual(10, len(cells), line)
+            (
+                source_id,
+                publisher,
+                title,
+                publication_display,
+                document_type,
+                url,
+                tier,
+                access_note,
+                locator,
+                retrieval_date,
+            ) = cells
+            publication_match = re.match(r"\d{4}-\d{2}-\d{2}", publication_display)
+            publication_date = (
+                publication_match.group(0) if publication_match else None
+            )
+            manifest_sources[source_id] = {
+                "publisher": publisher,
+                "document_title": title,
+                "publication_date": publication_date,
+                "document_type": document_type,
+                "url": url,
+                "tier": tier,
+                "access_note": access_note,
+                "immutable_locator": locator,
+                "retrieval_date": retrieval_date,
+            }
+
+        release_sources = {}
+        for source in load_release().sources:
+            document_type, access_note = source.license_class.split("; ", 1)
+            release_sources[source.source_id.split(":", 1)[1]] = {
+                "publisher": source.publisher,
+                "document_title": source.document_title,
+                "publication_date": source.publication_date,
+                "document_type": document_type,
+                "url": source.url,
+                "tier": source.tier,
+                "access_note": access_note,
+                "immutable_locator": source.immutable_locator,
+                "retrieval_date": source.retrieval_date,
+            }
+
+        self.assertEqual(16, len(manifest_sources))
+        self.assertEqual(set(manifest_sources), set(release_sources))
+        for source_id in sorted(manifest_sources):
+            with self.subTest(source_id=source_id):
+                self.assertEqual(
+                    manifest_sources[source_id],
+                    release_sources[source_id],
+                )
+
     def test_release_operations_do_not_touch_existing_domain_entrypoints(self) -> None:
         targets = [
             "investment_knowledge_mcp.repository.get_stock_context",
