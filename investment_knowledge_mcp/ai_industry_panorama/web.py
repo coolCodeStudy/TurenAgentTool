@@ -112,8 +112,9 @@ def render_panorama_html() -> str:
     <section aria-labelledby="legend-heading">
       <h2 id="legend-heading">Legend</h2>
       <div class="panorama-legend">
-        <span>Disclosed fact</span><span>Company guidance</span>
-        <span>Management claim</span><span>Inference</span>
+        <span>Disclosed fact, company guidance, or management claim — a sourced company assertion</span>
+        <span>Inference — derived from cited disclosed premises</span>
+        <span>Owner hypothesis — user-supplied thesis, not disclosed evidence</span>
       </div>
     </section>
 
@@ -519,11 +520,14 @@ def render_panorama_script() -> str:
         + `observed ${relationship.observed_at}.`;
     };
     const disclosed = related
-      .filter((item) => item.assertion_kind !== "inferred_exposure")
+      .filter((item) => DISCLOSED_ASSERTION_KINDS.has(item.assertion_kind))
       .map(sentence);
     const inferred = related
       .filter((item) => item.assertion_kind === "inferred_exposure")
       .map(sentence);
+    const hypotheses = related.filter(
+      (item) => item.assertion_kind === "user_hypothesis"
+    );
     const latestEvidenceDate = related
       .flatMap((item) => item.evidence_ids)
       .map((id) => state.indexes.evidence.get(id))
@@ -550,13 +554,29 @@ def render_panorama_script() -> str:
     fragments.push(identity);
     fragments.push(makeList("Disclosed relationships", disclosed));
     fragments.push(makeList("Inferred exposures", inferred));
+    const hypothesisSection = makeElement("section");
+    hypothesisSection.append(makeElement("h3", "Owner hypotheses"));
+    if (!hypotheses.length) {
+      hypothesisSection.append(makeElement("p", "No owner hypotheses."));
+    }
+    for (const hypothesis of hypotheses) {
+      const item = makeElement("article");
+      appendDetail(item, "Hypothesis", hypothesis.text);
+      appendDetail(item, "Limitations", hypothesis.limitations);
+      appendDetail(item, "Observed", hypothesis.observed_at);
+      appendDetail(item, "Reviewed", hypothesis.reviewed_at);
+      hypothesisSection.append(item);
+    }
+    fragments.push(hypothesisSection);
     fragments.push(
       makeList(
         "Dated facts and guidance",
-        related.map(
-          (item) => `${item.assertion_kind}: ${item.text} `
-            + `(observed ${item.observed_at}; reviewed ${item.reviewed_at})`
-        )
+        related
+          .filter((item) => DISCLOSED_ASSERTION_KINDS.has(item.assertion_kind))
+          .map(
+            (item) => `${item.assertion_kind}: ${item.text} `
+              + `(observed ${item.observed_at}; reviewed ${item.reviewed_at})`
+          )
       )
     );
     const links = makeElement("section");
@@ -807,24 +827,26 @@ def render_panorama_script() -> str:
         + `${target?.label || "Unknown"}`;
       const group = makeSvg("g", {
         "data-relationship-id": relationship.relationship_id,
+        "data-assertion-kind": relationship.assertion_kind,
         tabindex: "0",
         role: "button",
         "aria-label": label,
       });
+      const edgeStyle = relationship.assertion_kind === "user_hypothesis"
+        ? {stroke: "#7a3e9d", dash: "2 3"}
+        : relationship.assertion_kind === "inferred_exposure"
+          ? {stroke: "#a86600", dash: "6 5"}
+          : {stroke: "#617286", dash: "0"};
       group.append(
         makeSvg("line", {
           x1: sourcePosition?.x || 0,
           y1: sourcePosition?.y || 0,
           x2: targetPosition?.x || 0,
           y2: targetPosition?.y || 0,
-          stroke: relationship.assertion_kind === "inferred_exposure"
-            ? "#a86600"
-            : "#617286",
+          stroke: edgeStyle.stroke,
           "stroke-width": 2,
           "marker-end": "url(#panorama-arrow)",
-          "stroke-dasharray": relationship.assertion_kind === "inferred_exposure"
-            ? "6 5"
-            : "0",
+          "stroke-dasharray": edgeStyle.dash,
         })
       );
       activateWithKeyboard(group, () => renderRelationshipDrawer(relationship));

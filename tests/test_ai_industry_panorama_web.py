@@ -497,6 +497,98 @@ assert.ok(window.AIIndustryPanorama.state.visibleRelationships.every(
             projection=hypothesis_projection,
         )
 
+    def test_owner_hypothesis_is_distinct_from_disclosure_and_inference(self) -> None:
+        projection = copy.deepcopy(build_public_projection(load_release()))
+        hypothesis = next(
+            item
+            for item in projection["relationships"]
+            if item["relationship_id"] == "relationship:REL-AIP-0004"
+        )
+        hypothesis["assertion_kind"] = "user_hypothesis"
+        hypothesis["text"] = (
+            '<script>global.ownerAttack=1</script> OWNER-HYPOTHESIS-TEXT'
+        )
+        hypothesis["limitations"] = "OWNER-HYPOTHESIS-LIMITATIONS"
+
+        html = render_panorama_html()
+        self.assertIn("Owner hypothesis", html)
+        self.assertIn("user-supplied thesis, not disclosed evidence", html)
+
+        _run_panorama_script(
+            """
+trigger(nodes.get("reset-panorama"), "click");
+const graph = nodes.get("panorama-graph");
+const hypothesisEdge = findByAttribute(
+  graph,
+  "data-relationship-id",
+  "relationship:REL-AIP-0004",
+);
+const inferenceEdge = findByAttribute(
+  graph,
+  "data-relationship-id",
+  "relationship:REL-AIP-0011",
+);
+const disclosedEdge = findByAttribute(
+  graph,
+  "data-relationship-id",
+  "relationship:REL-AIP-0002",
+);
+assert.equal(hypothesisEdge.attributes["data-assertion-kind"], "user_hypothesis");
+assert.equal(inferenceEdge.attributes["data-assertion-kind"], "inferred_exposure");
+assert.equal(disclosedEdge.attributes["data-assertion-kind"], "disclosed_fact");
+const hypothesisLine = descendants(hypothesisEdge).find((node) => node.tagName === "line");
+const inferenceLine = descendants(inferenceEdge).find((node) => node.tagName === "line");
+const disclosedLine = descendants(disclosedEdge).find((node) => node.tagName === "line");
+assert.notEqual(hypothesisLine.attributes.stroke, inferenceLine.attributes.stroke);
+assert.notEqual(hypothesisLine.attributes.stroke, disclosedLine.attributes.stroke);
+assert.notEqual(
+  hypothesisLine.attributes["stroke-dasharray"],
+  inferenceLine.attributes["stroke-dasharray"],
+);
+assert.notEqual(
+  hypothesisLine.attributes["stroke-dasharray"],
+  disclosedLine.attributes["stroke-dasharray"],
+);
+
+const alphabet = findByAttribute(
+  graph,
+  "data-entity-id",
+  "entity:ENT-ORG-ALPHABET",
+);
+trigger(alphabet, "click");
+const drawer = nodes.get("entity-drawer");
+const sectionByHeading = (heading) => drawer.children.find(
+  (section) => section.children.some(
+    (node) => node.tagName === "h3" && node.textContent === heading
+  )
+);
+const disclosed = sectionByHeading("Disclosed relationships");
+const datedFacts = sectionByHeading("Dated facts and guidance");
+const ownerHypotheses = sectionByHeading("Owner hypotheses");
+assert.ok(disclosed);
+assert.ok(datedFacts);
+assert.ok(ownerHypotheses);
+assert.doesNotMatch(textTree(disclosed), /OWNER-HYPOTHESIS-TEXT/);
+assert.doesNotMatch(textTree(datedFacts), /OWNER-HYPOTHESIS-TEXT/);
+assert.match(textTree(ownerHypotheses), /OWNER-HYPOTHESIS-TEXT/);
+assert.match(textTree(ownerHypotheses), /OWNER-HYPOTHESIS-LIMITATIONS/);
+assert.equal(global.ownerAttack, undefined);
+
+trigger(nodes.get("reset-panorama"), "click");
+nodes.get("disclosed-only").checked = true;
+trigger(nodes.get("disclosed-only"), "change");
+const graphIds = relationshipIds(graph);
+const tableIds = relationshipIds(nodes.get("relationship-table-body"));
+assert.deepEqual(graphIds, tableIds);
+assert.ok(!graphIds.includes("relationship:REL-AIP-0004"));
+assert.ok(window.AIIndustryPanorama.state.visibleRelationships.every(
+  (item) => ["disclosed_fact", "company_guidance", "management_claim"]
+    .includes(item.assertion_kind)
+));
+""",
+            projection=projection,
+        )
+
     def test_keyboard_nodes_and_drawers_expose_entity_capability_and_evidence(self) -> None:
         _run_panorama_script(
             """
