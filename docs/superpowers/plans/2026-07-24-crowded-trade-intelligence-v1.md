@@ -48,8 +48,8 @@ def test_crowding_capabilities_are_explicit(self) -> None:
     self.assertEqual(SourceCapability.EVENT_CALENDAR.value, "event_calendar")
 
 def test_futu_approval_is_private_internal_and_non_redistributable(self) -> None:
-    self.assertTrue(source_is_approved("futu", "private_internal_research"))
-    self.assertFalse(source_is_approved("futu", "public_redistribution"))
+    self.assertTrue(source_is_approved("futu_crowding", "private_internal_research"))
+    self.assertFalse(source_is_approved("futu_crowding", "public_redistribution"))
     self.assertEqual(FUTU_CROWDING_APPROVAL.access_tier, "account_entitled")
 ```
 
@@ -82,7 +82,7 @@ class SourceApproval:
     enabled_markets: tuple[str, ...]
 
 FUTU_CROWDING_APPROVAL = SourceApproval(
-    source_id="futu",
+    source_id="futu_crowding",
     access_tier="account_entitled",
     permitted_uses=("private_internal_research",),
     redistribution_allowed=False,
@@ -120,7 +120,7 @@ git commit -m "feat: define crowding source capabilities"
 **Interfaces:**
 - Produces: `FutuCrowdingSnapshot`.
 - Produces: `get_futu_crowding_snapshot(codes, start, end) -> FutuCrowdingSnapshot`.
-- Produces: `FutuOwnershipSource`, `FutuShortInterestSource`, `FutuOptionsPositioningSource`, `FutuEventCalendarSource`, and `default_crowding_source_pool()`.
+- Produces: one multi-capability `FutuCrowdingSource` and `default_crowding_source_pool()`.
 - Normalized record key: `{"symbol", "metric", "value", "unit", "direction", "observed_at", "published_at", "cohort", "metadata"}`.
 
 - [ ] **Step 1: Write failing transport-normalization tests**
@@ -190,11 +190,21 @@ The transport must:
 
 ```python
 class FutuCrowdingSource:
-    def __init__(self, capability: SourceCapability, loader: Callable[..., FutuCrowdingSnapshot]) -> None:
+    def __init__(self, loader: Callable[..., FutuCrowdingSnapshot]) -> None:
         self.descriptor = ProviderDescriptor(
-            "futu", (capability,), ("US", "HK"), 8.0, 0, "crowding", 3600
+            "futu_crowding",
+            (
+                SourceCapability.OWNERSHIP_CONCENTRATION,
+                SourceCapability.SHORT_INTEREST,
+                SourceCapability.OPTIONS_POSITIONING,
+                SourceCapability.EVENT_CALENDAR,
+            ),
+            ("US", "HK"),
+            8.0,
+            0,
+            "crowding",
+            3600,
         )
-        self._capability = capability
         self._loader = loader
 
     def fetch(self, request: DataRequest) -> DataResult:
@@ -203,7 +213,7 @@ class FutuCrowdingSource:
         # Return typed unavailable/partial results with redacted failures.
 ```
 
-The default pool must register four adapters sharing one memoized bundle loader so one symbol investigation does not reconnect for each family.
+The default pool registers this provider once. Its shared memoized bundle loader switches normalization by `request.capability`, so the four capability requests reuse one symbol/date bundle without violating `DataSourcePool`'s unique `source_id` rule.
 
 - [ ] **Step 5: Run GREEN and existing Futu-adjacent tests**
 
@@ -421,8 +431,8 @@ Expected: FAIL because the service module is missing.
 def futu_only_plan(capability: SourceCapability) -> SourcePlan:
     return SourcePlan(
         capability,
-        preferred_sources=("futu",),
-        allowed_sources=("futu",),
+        preferred_sources=("futu_crowding",),
+        allowed_sources=("futu_crowding",),
         fallback_sources=(),
         required=False,
         partial_allowed=True,
