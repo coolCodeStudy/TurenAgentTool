@@ -51,6 +51,14 @@ class CrowdingWorkbenchTests(unittest.TestCase):
         self.assertTrue(all(item["action_id"] == "crowding_portfolio" for item in previews))
         self.assertEqual({"持仓拥挤度"}, {item["exact_command"] for item in previews})
 
+    def test_class_share_symbol_keeps_the_local_identifier_dot(self) -> None:
+        preview = parse_workbench_command("crowding US.BRK.B", allow_llm=False)
+
+        self.assertEqual("parsed", preview["status"])
+        self.assertEqual("crowding_symbol", preview["action_id"])
+        self.assertEqual("拥挤度 US.BRK.B", preview["exact_command"])
+        self.assertEqual("US.BRK.B", preview["target"]["canonical"])
+
     def test_unqualified_crowding_symbol_returns_bounded_recovery_not_bootstrap(self) -> None:
         with mock.patch(
             "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",

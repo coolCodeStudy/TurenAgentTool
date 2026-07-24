@@ -451,11 +451,11 @@ The linked implementation plan has been executed locally:
 
 | Layer | Implementation | Verification |
 |---|---|---|
-| Capability and approval control | Added explicit ownership, short-interest, options-positioning, and event-calendar capabilities plus immutable Futu private-internal approval metadata. | `tests/test_data_source_contracts.py`, `tests/test_data_source_crowding.py` |
-| Vendor transport | Added a bounded Futu bundle transport for US/HK holder, short-interest, option-chain/snapshot, and earnings-calendar evidence. One context is closed in `finally`; family failures are isolated and redacted. | `tests/test_futu_crowding_provider.py` |
+| Capability and approval control | Added explicit ownership, short-interest, options-positioning, and event-calendar capabilities plus an immutable Futu private-internal approval register. The register currently leaves environment, credential owner, display/derived/storage/retention rights, expiry, legal review reference, and per-capability approvals unverified; therefore `FUTU_CROWDING_PRIVATE_USE_APPROVED=approved` cannot bypass the gate and the loader returns `approval_required`. | `tests/test_data_source_contracts.py`, `tests/test_data_source_crowding.py` |
+| Vendor transport | Added a bounded Futu bundle transport for US/HK holder, short-interest, option-chain/snapshot, and earnings-calendar evidence. Aggregate residual holder rows such as `Other` are excluded from named-holder concentration, and option contract OI retains the chain lot-size multiplier for underlying-equivalent normalization. Large chains are selected deterministically from nearest expiries and report measured partial coverage when truncated. One context is closed in `finally`; family failures are isolated and redacted, with entitlement failures distinguished from generic provider failure. | `tests/test_futu_crowding_provider.py` |
 | Provider-neutral adapter | Registered one multi-capability `futu_crowding` provider with a memoized bundle loader and normalized semantic records. | `tests/test_data_source_crowding.py` |
-| Evidence and scoring | Added immutable evidence/family/assessment types, own-history price-volume features, direction-specific family gates, stale-data exclusion, and deterministic bands. | `tests/test_crowding_intelligence.py` |
-| Orchestration | Added Futu-only market-bar plans, separate evidence requests, CN provider-code mapping, bounded portfolio analysis, per-symbol isolation, and market grouping. | `tests/test_crowding_service.py` |
+| Evidence and scoring | Added immutable evidence/family/assessment types, own-history price-volume features, direction-specific family gates, stale-data exclusion, point-in-time publication checks, coverage retention, and deterministic bands. Unknown-publication evidence fetched after a historical `as_of` is excluded. Falling-price fragility is counterevidence. Aggregate option OI remains two-sided and cannot raise signed long/short scores; partial price or positioning coverage below 80% fails the current-family gate and remains visible in the explanation. | `tests/test_crowding_intelligence.py` |
+| Orchestration | Added Futu-only market-bar plans, separate evidence requests, provider-bar-backed latest-completed-session resolution, per-holding session display, CN provider-code mapping, class-share identifiers, bounded portfolio analysis, per-symbol isolation, and market grouping. | `tests/test_crowding_service.py` |
 | User surface | Added read-only single-symbol and portfolio commands plus Workbench actions that do not require profile bootstrap for exact symbols. | `tests/test_command_router.py`, `tests/test_command_workbench.py`, `tests/test_command_http.py` |
 
 No service, database table, dependency, social scraper, premium vendor, credential, trade action, alert, or formal-memory write was added.
@@ -463,6 +463,7 @@ No service, database table, dependency, social scraper, premium vendor, credenti
 ### 11.1 Deliberate V1 limits
 
 - US/HK bands depend on current entitled Futu responses and the direction-specific three-family gate.
+- Live Futu crowding calls remain disabled until the approval register records the deployed environment, credential owner, display/derived/storage/retention rights, retention policy, expiry, legal review reference, and all four bundled capabilities. V1 transport fetches those families together, so capability approval is deliberately all-or-nothing; a future per-capability transport split is required before narrower activation is safe. Runtime must also identify itself through `CROWDING_RUNTIME_ENVIRONMENT` as one of those approved environments. Only then may an operator set `FUTU_CROWDING_PRIVATE_USE_APPROVED=approved`; the flag is not a credential and cannot substitute for the register or quote entitlements.
 - KR/CN remain evidence-only.
 - Price/volume normalization is labelled against the instrument's own rolling history; V1 does not claim sector/liquidity peer percentiles.
 - Speculative attention remains insufficient because social/retail collection is excluded.
@@ -475,3 +476,7 @@ No service, database table, dependency, social scraper, premium vendor, credenti
 3. Verify the deployed action catalog, preview, execution, redaction, and Futu entitlement behavior.
 4. Complete independent acceptance item `AT-2026-07-24-001`.
 5. Keep user acceptance pending until the Owner explicitly accepts the deployed surface.
+
+### 11.3 Architecture audit disposition
+
+The repository architecture audit reports `investment_knowledge_mcp.futu_provider` at 1,247 lines. This is a report-only P1 under `docs/architecture/architecture-contract.md`, not an admitted release gate. The smallest safe follow-up is to extract the independently tested crowded-trade transport and snapshot types into `futu_crowding_provider.py` while preserving adapter contracts; verification is the Futu transport/source suite plus a repeated architecture audit. That refactor is deliberately separate from this release so a late structural move does not add product risk.

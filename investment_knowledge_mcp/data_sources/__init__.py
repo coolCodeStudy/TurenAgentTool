@@ -23,6 +23,7 @@ from .crowding import (
     SourceApproval,
     default_crowding_source_pool,
     source_is_approved,
+    source_runtime_is_enabled,
 )
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "SOURCE_APPROVALS",
     "default_crowding_source_pool",
     "source_is_approved",
+    "source_runtime_is_enabled",
 ]

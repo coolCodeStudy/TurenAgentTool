@@ -2020,7 +2020,7 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
                 )
             else:
                 confidence = min(confidence, float(target.get("confidence") or confidence))
-        elif action.id in DIRECT_SYMBOL_ACTIONS and re.fullmatch(r"[A-Za-z0-9_-]+", stock_query):
+        elif action.id in DIRECT_SYMBOL_ACTIONS and re.fullmatch(r"[A-Za-z0-9._-]+", stock_query):
             status = "needs_entity"
             recovery_message = (
                 "Enter a market-qualified symbol such as US.NVDA, HK.00700, 000660 KR, or CN.600519."
@@ -2497,12 +2497,12 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
 def _market_qualified_symbol_candidate(value: str) -> dict[str, Any] | None:
     cleaned = _clean_stock_text(value)
     market_symbol_match = re.fullmatch(
-        r"(US|HK|KR|CN|SH|SZ)\.([A-Za-z0-9_-]+)",
+        r"(US|HK|KR|CN|SH|SZ)\.([A-Za-z0-9._-]+)",
         cleaned,
         flags=re.IGNORECASE,
     )
     symbol_market_match = re.fullmatch(
-        r"([A-Za-z0-9_-]+)\s+(US|HK|KR|CN|SH|SZ)",
+        r"([A-Za-z0-9._-]+)\s+(US|HK|KR|CN|SH|SZ)",
         cleaned,
         flags=re.IGNORECASE,
     )

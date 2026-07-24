@@ -837,7 +837,7 @@ def is_query_command(command: str) -> bool:
         )
         or (
             re.fullmatch(
-                r"(?:拥挤度|拥挤交易|crowding)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9_-]+|[A-Za-z0-9_-]+\s+[A-Za-z]{1,5})",
+                r"(?:拥挤度|拥挤交易|crowding)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\s+[A-Za-z]{1,5})",
                 normalized,
                 flags=re.IGNORECASE,
             )
@@ -2326,12 +2326,12 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
 def _parse_crowding_target(value: str) -> tuple[str, str] | None:
     cleaned = value.strip()
     market_symbol_match = re.fullmatch(
-        r"(US|HK|KR|CN|SH|SZ)\.([A-Za-z0-9_-]+)",
+        r"(US|HK|KR|CN|SH|SZ)\.([A-Za-z0-9._-]+)",
         cleaned,
         flags=re.IGNORECASE,
     )
     symbol_market_match = re.fullmatch(
-        r"([A-Za-z0-9_-]+)\s+(US|HK|KR|CN|SH|SZ)",
+        r"([A-Za-z0-9._-]+)\s+(US|HK|KR|CN|SH|SZ)",
         cleaned,
         flags=re.IGNORECASE,
     )

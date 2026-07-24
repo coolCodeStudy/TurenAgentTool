@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import math
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from investment_knowledge_mcp.crowding_intelligence import (
     CrowdingAssessment,
@@ -33,7 +34,13 @@ _EVIDENCE_CAPABILITIES = (
     SourceCapability.OPTIONS_POSITIONING,
     SourceCapability.EVENT_CALENDAR,
 )
-_SAFE_SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9_-]*")
+_SAFE_SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9._-]*")
+_MARKET_SESSION_RULES = {
+    "US": (ZoneInfo("America/New_York"), time(16, 30)),
+    "HK": (ZoneInfo("Asia/Hong_Kong"), time(16, 30)),
+    "CN": (ZoneInfo("Asia/Shanghai"), time(15, 30)),
+    "KR": (ZoneInfo("Asia/Seoul"), time(15, 45)),
+}
 
 
 @dataclass(frozen=True)
@@ -66,7 +73,7 @@ class PortfolioCrowdingReport:
 def normalize_crowding_target(symbol: str, market: str) -> CrowdingTarget:
     raw_market = _clean_text(market, "market").upper()
     raw_symbol = _clean_text(symbol, "symbol").upper()
-    if "." in raw_symbol:
+    if "." in raw_symbol and raw_symbol.split(".", 1)[0] in {"US", "HK", "KR", "CN", "SH", "SZ"}:
         prefix, unqualified = raw_symbol.split(".", 1)
         if raw_market in {"CN", "SH", "SZ"} and prefix in {"CN", "SH", "SZ"}:
             raw_market = prefix if prefix in {"SH", "SZ"} else raw_market
@@ -121,8 +128,8 @@ def investigate_symbol_crowding(
     bars_pool: DataSourcePool | None = None,
     evidence_pool: DataSourcePool | None = None,
 ) -> CrowdingAssessment:
-    effective_date = as_of or date.today()
-    if not isinstance(effective_date, date):
+    request_end = as_of or resolve_latest_crowding_session_date(market)
+    if not isinstance(request_end, date):
         raise ValueError("as_of must be a date")
     target = normalize_crowding_target(symbol, market)
     bars_registry = bars_pool or default_market_bar_pool(cache=MemoryResultCache())
@@ -132,8 +139,8 @@ def investigate_symbol_crowding(
         SourceCapability.MARKET_BARS,
         target.market,
         (target.provider_code,),
-        effective_date - timedelta(days=400),
-        effective_date,
+        request_end - timedelta(days=400),
+        request_end,
         "end_of_day",
         ("date", "close", "volume"),
     )
@@ -143,10 +150,17 @@ def investigate_symbol_crowding(
     )
     if target.provider_code != target.canonical:
         bars_result = _remap_result_symbol(bars_result, target.provider_code, target.canonical)
+    effective_date = (
+        as_of
+        or resolve_latest_crowding_session_date(
+            target.market,
+            available_sessions=_bar_session_dates(bars_result, target.canonical),
+        )
+    )
 
     family_results: dict[SourceCapability, DataResult] = {}
     if target.market in _SCORABLE_MARKETS:
-        evidence_start = effective_date - timedelta(days=45)
+        evidence_start = effective_date
         evidence_end = effective_date + timedelta(days=14)
         for capability in _EVIDENCE_CAPABILITIES:
             request = DataRequest(
@@ -179,7 +193,7 @@ def investigate_portfolio_crowding(
     max_positions: int = 8,
     analyzer: Callable[..., CrowdingAssessment] | None = None,
 ) -> PortfolioCrowdingReport:
-    effective_date = as_of or date.today()
+    effective_date = as_of or datetime.now(timezone.utc).date()
     if not isinstance(max_positions, int) or isinstance(max_positions, bool) or max_positions <= 0:
         raise ValueError("max_positions must be a positive integer")
     analyze = analyzer or investigate_symbol_crowding
@@ -201,7 +215,11 @@ def investigate_portfolio_crowding(
     entries: list[PortfolioCrowdingEntry] = []
     for item in ordered:
         try:
-            assessment = analyze(item["symbol"], item["market"], as_of=effective_date)
+            assessment = analyze(
+                item["symbol"],
+                item["market"],
+                as_of=as_of,
+            )
         except Exception:
             failures.append(f"analysis_failed:{item['canonical']}")
             continue
@@ -234,7 +252,7 @@ def investigate_portfolio_crowding(
 def render_portfolio_crowding(report: PortfolioCrowdingReport) -> str:
     lines = [
         "## 持仓拥挤交易情报",
-        f"- 截止日期：{report.as_of.isoformat()}",
+        f"- 报告日期：{report.as_of.isoformat()}",
         "- 结果按市场分组；不同市场的数据覆盖和口径不可直接比较。",
     ]
     if not report.by_market:
@@ -249,14 +267,27 @@ def render_portfolio_crowding(report: PortfolioCrowdingReport) -> str:
                 or assessment.short_squeeze.contributors
                 or assessment.speculative_attention.contributors
             )
+            current_families = tuple(
+                family.name
+                for family in assessment.families
+                if family.current
+            )
+            minimum_coverage = min(
+                (family.coverage for family in assessment.families),
+                default=0.0,
+            )
             lines.append(
                 f"- {entry.name}（{entry.canonical}）："
                 f"多头={assessment.long_crowding.band.value}；"
                 f"空头/挤压={assessment.short_squeeze.band.value}；"
                 f"关注={assessment.speculative_attention.band.value}；"
                 f"证据质量={assessment.evidence_quality.value}；"
+                f"市场交易日={assessment.as_of.isoformat()}；"
+                f"覆盖率下限={minimum_coverage:.2f}；"
+                f"当前families={','.join(current_families) or 'none'}；"
                 f"主要证据={(contributors[0] if contributors else '无')}；"
-                f"缺失={','.join(assessment.missing_families) or 'none'}"
+                f"缺失={','.join(assessment.missing_families) or 'none'}；"
+                f"数据源状态={','.join(assessment.provider_failures) or 'ok'}"
             )
     if report.omitted_count:
         lines.extend(["", f"- 受单次最多 8 个持仓限制，另有 {report.omitted_count} 个有效持仓未分析。"])
@@ -346,6 +377,55 @@ def _infer_cn_exchange(symbol: str) -> str:
     if not symbol.isdigit():
         raise ValueError("CN symbols require an SH or SZ exchange prefix")
     return "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
+
+
+def resolve_latest_crowding_session_date(
+    market: str,
+    *,
+    now: datetime | None = None,
+    available_sessions: Sequence[date] = (),
+) -> date:
+    normalized_market = "CN" if market.strip().upper() in {"SH", "SZ"} else market.strip().upper()
+    if normalized_market not in _MARKET_SESSION_RULES:
+        raise ValueError("unsupported market")
+    market_timezone, close_time = _MARKET_SESSION_RULES[normalized_market]
+    current = (now or datetime.now(timezone.utc)).astimezone(market_timezone)
+    session_date = current.date()
+    if current.time() < close_time:
+        session_date -= timedelta(days=1)
+    while session_date.weekday() >= 5:
+        session_date -= timedelta(days=1)
+    eligible_sessions = tuple(
+        item
+        for item in available_sessions
+        if isinstance(item, date)
+        and not isinstance(item, datetime)
+        and item <= session_date
+    )
+    if eligible_sessions:
+        return max(eligible_sessions)
+    return session_date
+
+
+def _bar_session_dates(result: DataResult, canonical: str) -> tuple[date, ...]:
+    sessions: set[date] = set()
+    for record in result.records:
+        if (
+            not isinstance(record, Mapping)
+            or str(record.get("symbol") or "").upper() != canonical
+        ):
+            continue
+        bars = record.get("bars")
+        if not isinstance(bars, tuple):
+            continue
+        for bar in bars:
+            if not isinstance(bar, Mapping):
+                continue
+            try:
+                sessions.add(date.fromisoformat(str(bar.get("date"))[:10]))
+            except ValueError:
+                continue
+    return tuple(sorted(sessions))
 
 
 def _clean_text(value: object, field: str) -> str:

@@ -74,6 +74,7 @@ class FutuCrowdingSnapshot:
     failures_by_code: dict[str, dict[str, str]]
     fetched_at: datetime
     source: str = "futu"
+    coverage_by_code: dict[str, dict[str, float]] | None = None
 
 
 _CACHE: PositionSnapshot | None = None
@@ -512,13 +513,14 @@ def _fetch_futu_crowding_snapshot(
     options: dict[str, list[dict[str, Any]]] = {}
     events: dict[str, list[dict[str, Any]]] = {}
     failures: dict[str, dict[str, str]] = {}
+    coverage: dict[str, dict[str, float]] = {}
     try:
         for code in cleaned_codes:
             code_failures: dict[str, str] = {}
             try:
                 ret, payload = quote_context.get_shareholders_overview(code, period_id=0)
                 if ret != ft.RET_OK:
-                    raise FutuProviderError("ownership provider unavailable")
+                    _raise_crowding_provider_error(payload)
                 main_holders = payload.get("main_holder") if isinstance(payload, dict) else None
                 rows = _table_records(main_holders)
                 ownership[code] = [
@@ -529,14 +531,15 @@ def _fetch_futu_crowding_snapshot(
                     }
                     for row in rows
                     if _optional_number(row.get("holder_pct")) is not None
+                    and not _is_residual_holder(row)
                 ]
-            except Exception:
-                code_failures["ownership"] = "provider_unavailable"
+            except Exception as exc:
+                code_failures["ownership"] = _crowding_exception_code(exc)
 
             try:
                 ret, us_data, hk_data = quote_context.get_short_interest(code)
                 if ret != ft.RET_OK:
-                    raise FutuProviderError("short-interest provider unavailable")
+                    _raise_crowding_provider_error(us_data)
                 selected = us_data if code.startswith("US.") else hk_data
                 shorts[code] = [
                     {
@@ -552,14 +555,20 @@ def _fetch_futu_crowding_snapshot(
                     }
                     for row in _table_records(selected)
                 ]
-            except Exception:
-                code_failures["short_interest"] = "provider_unavailable"
+            except Exception as exc:
+                code_failures["short_interest"] = _crowding_exception_code(exc)
 
             try:
                 ret, chain = quote_context.get_option_chain(code, start=start, end=end)
                 if ret != ft.RET_OK:
-                    raise FutuProviderError("option-chain provider unavailable")
-                chain_rows = _table_records(chain)[:200]
+                    _raise_crowding_provider_error(chain)
+                all_chain_rows = _table_records(chain)
+                chain_rows = _select_option_chain_rows(all_chain_rows, limit=200)
+                if len(chain_rows) < len(all_chain_rows):
+                    code_failures["options"] = "option_chain_truncated"
+                    coverage.setdefault(code, {})["options"] = (
+                        len(chain_rows) / len(all_chain_rows)
+                    )
                 option_codes = [
                     str(row.get("code") or "").strip().upper()
                     for row in chain_rows
@@ -570,7 +579,7 @@ def _fetch_futu_crowding_snapshot(
                     chunk = option_codes[offset : offset + 100]
                     ret, snapshot_table = quote_context.get_market_snapshot(chunk)
                     if ret != ft.RET_OK:
-                        raise FutuProviderError("option-snapshot provider unavailable")
+                        _raise_crowding_provider_error(snapshot_table)
                     for item in _table_records(snapshot_table):
                         snapshot_code = str(item.get("code") or "").strip().upper()
                         if snapshot_code:
@@ -589,19 +598,24 @@ def _fetch_futu_crowding_snapshot(
                             ).upper(),
                             "expiry_date": _clean_empty(row.get("strike_time")),
                             "strike_price": _optional_number(row.get("strike_price")),
+                            "contract_multiplier": _optional_number(row.get("lot_size")) or 1.0,
                             "volume": _optional_number(snapshot_row.get("volume")) or 0.0,
                             "open_interest": _optional_number(
                                 snapshot_row.get("option_open_interest")
                             )
                             or 0.0,
+                            "observed_at": _clean_empty(
+                                snapshot_row.get("data_date")
+                                or snapshot_row.get("update_time")
+                            ),
                             "implied_volatility": _optional_number(
                                 snapshot_row.get("option_implied_volatility")
                             ),
                         }
                     )
                 options[code] = normalized_options
-            except Exception:
-                code_failures["options"] = "provider_unavailable"
+            except Exception as exc:
+                code_failures["options"] = _crowding_exception_code(exc)
 
             if code_failures:
                 failures[code] = code_failures
@@ -624,10 +638,11 @@ def _fetch_futu_crowding_snapshot(
                         end_date=window_end.isoformat(),
                     )
                     if ret != ft.RET_OK:
-                        raise FutuProviderError("earnings-calendar provider unavailable")
+                        _raise_crowding_provider_error(table)
                     market_events.extend(_table_records(table))
-                except Exception:
+                except Exception as exc:
                     event_failed = True
+                    event_failure_code = _crowding_exception_code(exc)
                     break
             for code in market_codes:
                 matching: list[dict[str, Any]] = []
@@ -650,7 +665,7 @@ def _fetch_futu_crowding_snapshot(
                     )
                 events[code] = matching
                 if event_failed:
-                    failures.setdefault(code, {})["events"] = "provider_unavailable"
+                    failures.setdefault(code, {})["events"] = event_failure_code
 
         return FutuCrowdingSnapshot(
             ownership_by_code=ownership,
@@ -659,6 +674,7 @@ def _fetch_futu_crowding_snapshot(
             events_by_code=events,
             failures_by_code=failures,
             fetched_at=(now or (lambda: datetime.now(timezone.utc)))(),
+            coverage_by_code=coverage,
         )
     finally:
         quote_context.close()
@@ -674,6 +690,98 @@ def _table_records(value: Any) -> list[dict[str, Any]]:
     else:
         return []
     return [dict(item) for item in records if isinstance(item, dict)]
+
+
+def _raise_crowding_provider_error(value: object) -> None:
+    text = str(value or "").casefold()
+    if any(
+        marker in text
+        for marker in (
+            "permission",
+            "entitlement",
+            "no right",
+            "no authority",
+            "not authorized",
+            "无权限",
+            "权限不足",
+            "未开通",
+        )
+    ):
+        raise PermissionError("crowding entitlement unavailable")
+    raise FutuProviderError("crowding provider unavailable")
+
+
+def _crowding_exception_code(exc: Exception) -> str:
+    return "entitlement_required" if isinstance(exc, PermissionError) else "provider_unavailable"
+
+
+def _is_residual_holder(row: dict[str, Any]) -> bool:
+    name = str(row.get("name") or "").strip().casefold()
+    compact = re.sub(r"[\s._-]+", "", name)
+    return compact in {"other", "others", "其他", "其它", "その他"}
+
+
+def _select_option_chain_rows(
+    rows: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if len(rows) <= limit:
+        return sorted(rows, key=_option_chain_sort_key)
+    by_expiry: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_expiry.setdefault(str(row.get("strike_time") or "9999-12-31"), []).append(row)
+    selected: list[dict[str, Any]] = []
+    for expiry in sorted(by_expiry):
+        remaining = limit - len(selected)
+        if remaining <= 0:
+            break
+        expiry_rows = sorted(by_expiry[expiry], key=_option_chain_sort_key)
+        if len(expiry_rows) <= remaining:
+            selected.extend(expiry_rows)
+            continue
+        calls = [row for row in expiry_rows if str(row.get("option_type") or "").upper() == "CALL"]
+        puts = [row for row in expiry_rows if str(row.get("option_type") or "").upper() == "PUT"]
+        others = [row for row in expiry_rows if row not in calls and row not in puts]
+        call_limit = round(remaining * len(calls) / len(expiry_rows))
+        put_limit = round(remaining * len(puts) / len(expiry_rows))
+        other_limit = max(0, remaining - call_limit - put_limit)
+        sampled = [
+            *_sample_evenly(calls, call_limit),
+            *_sample_evenly(puts, put_limit),
+            *_sample_evenly(others, other_limit),
+        ]
+        if len(sampled) < remaining:
+            sampled_codes = {str(row.get("code") or "") for row in sampled}
+            sampled.extend(
+                row
+                for row in expiry_rows
+                if str(row.get("code") or "") not in sampled_codes
+            )
+        selected.extend(sorted(sampled[:remaining], key=_option_chain_sort_key))
+    return selected
+
+
+def _sample_evenly(rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    if count <= 0 or not rows:
+        return []
+    if count >= len(rows):
+        return list(rows)
+    if count == 1:
+        return [rows[len(rows) // 2]]
+    return [
+        rows[round(index * (len(rows) - 1) / (count - 1))]
+        for index in range(count)
+    ]
+
+
+def _option_chain_sort_key(row: dict[str, Any]) -> tuple[str, float, str, str]:
+    return (
+        str(row.get("strike_time") or "9999-12-31"),
+        _optional_number(row.get("strike_price")) or 0.0,
+        str(row.get("option_type") or ""),
+        str(row.get("code") or ""),
+    )
 
 
 def _bounded_date_windows(start: date, end: date, max_days: int) -> list[tuple[date, date]]:

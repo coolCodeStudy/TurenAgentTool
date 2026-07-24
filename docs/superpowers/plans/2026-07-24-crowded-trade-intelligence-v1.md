@@ -659,7 +659,7 @@ git commit -m "docs: record crowded trade V1 implementation evidence"
 **Interfaces:**
 - Produces: immutable branch commit, deployment decision, cloud verification evidence, and independent acceptance routing.
 
-- [ ] **Step 1: Run focused verification**
+- [x] **Step 1: Run focused verification**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -675,7 +675,7 @@ git commit -m "docs: record crowded trade V1 implementation evidence"
   tests/test_command_http.py -q
 ```
 
-- [ ] **Step 2: Run project-level smoke and architecture checks**
+- [x] **Step 2: Run project-level smoke and architecture checks**
 
 ```bash
 .venv/bin/python scripts/smoke_test.py
@@ -684,15 +684,15 @@ python3 scripts/audit_delivery_state.py --feature "Crowded Trade Intelligence"
 git diff --check
 ```
 
-- [ ] **Step 3: Perform independent code review**
+- [x] **Step 3: Perform independent code review**
 
 Use `superpowers:requesting-code-review`. Resolve every critical/major finding and rerun affected tests.
 
-- [ ] **Step 4: Review the plan for misses**
+- [x] **Step 4: Review the plan for misses**
 
 Compare every task and PRD acceptance criterion with the final diff. Complete straightforward misses immediately and record only genuine entitlement, deployment, or accepted-scope gaps.
 
-- [ ] **Step 5: Close role learning**
+- [x] **Step 5: Close role learning**
 
 Check Product, Engineering, Testing, and Coordinator learning against `docs/lesson-capture-protocol.md`. Record only durable cross-task lessons; otherwise report `Role learning: none` with the reason.
 
@@ -727,3 +727,16 @@ Verify:
 - no provider exception, token, path, advice, or false cross-market ranking leaks.
 
 Then update the acceptance row and route the same feature to independent acceptance. The coordinator closure state is `ready_for_user_acceptance` only after independent acceptance passes; otherwise continue through `reject_and_return` or `blocked_with_owner` with an exact owner and condition.
+
+#### Local verification evidence
+
+- Focused suite: `147 passed, 77 subtests passed`.
+- Frontend renderer smoke: passed (`weekly=36046`, `command=19355`, `daily=11359` rendered characters).
+- Full `scripts/smoke_test.py`: reached the database setup and stopped because the isolated worktree has no permitted PostgreSQL listener at `localhost:55432`; no service was started because this task did not authorize local service startup.
+- Delivery audit: only independent acceptance remains.
+- PRD audit: no unregistered or not-started PRD.
+- Architecture audit: P0 `0`; the Futu provider size is a report-only P1 with a separately recorded extraction slice.
+- `git diff --check`: passed.
+- Independent re-review: no remaining Critical, Important, or Minor findings.
+- Plan review closed the point-in-time publication, signed-option, partial-price/option coverage, provider-session provenance, portfolio coverage display, class-share identity, and approval-register gaps.
+- Lessons recorded in `docs/techplans/crowded-trade-intelligence-feasibility.md`: bundled vendor collection requires all bundled capabilities to be approved; unknown publication time cannot support later-fetched historical replay; aggregate option OI remains non-directional; provider bars are the safe session provenance.

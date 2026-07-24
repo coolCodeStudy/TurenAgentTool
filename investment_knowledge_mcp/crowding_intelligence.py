@@ -53,7 +53,7 @@ class CrowdingEvidence:
     normalized_value: float | None
     cohort: str
     observed_at: datetime
-    published_at: datetime
+    published_at: datetime | None
     fetched_at: datetime
     source_id: str
     access_tier: str
@@ -68,6 +68,7 @@ class FamilyAssessment:
     score: float | None
     current: bool
     evidence: tuple[CrowdingEvidence, ...]
+    coverage: float
     quality_flags: tuple[str, ...] = ()
 
 
@@ -118,6 +119,8 @@ _STALE_AFTER_DAYS = {
     "events": 7,
 }
 
+_MIN_PARTIAL_COVERAGE = 0.8
+
 _CAPABILITY_FAMILY = {
     SourceCapability.OWNERSHIP_CONCENTRATION: "ownership",
     SourceCapability.SHORT_INTEREST: "short_interest",
@@ -139,14 +142,27 @@ def evidence_from_record(record: Mapping[str, Any], as_of: date) -> CrowdingEvid
     if not symbol.startswith(f"{market}."):
         raise ValueError("evidence identity mismatch")
     observed_at = _aware_timestamp(record.get("observed_at"), "observed_at")
-    published_at = _aware_timestamp(
-        record.get("published_at") or record.get("observed_at"),
-        "published_at",
+    published_raw = record.get("published_at")
+    published_at = (
+        _aware_timestamp(published_raw, "published_at")
+        if published_raw not in (None, "")
+        else None
     )
     fetched_at = _aware_timestamp(record.get("fetched_at"), "fetched_at")
     as_of_end = datetime.combine(as_of, time.max, tzinfo=timezone.utc)
-    if observed_at > as_of_end or published_at > as_of_end or fetched_at > as_of_end:
-        raise ValueError("evidence timestamp cannot be in the future")
+    if observed_at > as_of_end or (
+        published_at is not None and published_at > as_of_end
+    ):
+        raise ValueError("evidence was not observable by the assessment date")
+    if published_at is None and fetched_at > as_of_end:
+        raise ValueError(
+            "evidence with unknown publication time was fetched after the assessment date"
+        )
+    quality_flags = []
+    if published_at is None:
+        quality_flags.append("publication_time_unknown")
+    if fetched_at > as_of_end:
+        quality_flags.append("fetched_after_as_of")
     raw_value = record.get("value")
     if family == "events":
         value: float | str = _text(raw_value, "value")
@@ -172,6 +188,7 @@ def evidence_from_record(record: Mapping[str, Any], as_of: date) -> CrowdingEvid
         access_tier=_text(record.get("access_tier"), "access_tier").casefold(),
         freshness=_text(record.get("freshness"), "freshness"),
         metadata=dict(metadata),
+        quality_flags=tuple(quality_flags),
     )
 
 
@@ -194,17 +211,16 @@ def build_crowding_assessment(
     provider_failures: list[str] = []
 
     price_family = _price_volume_family(canonical, normalized_market, bars_result, as_of)
+    provider_failures.extend(_result_failure_codes("price_volume", bars_result))
     if price_family is not None:
         families.append(price_family)
-    else:
-        provider_failures.extend(_result_failure_codes("price_volume", bars_result))
 
     for capability, expected_family in _CAPABILITY_FAMILY.items():
         result = family_results.get(capability)
         if result is None:
             continue
+        provider_failures.extend(_result_failure_codes(expected_family, result))
         if result.status is DataStatus.UNAVAILABLE:
-            provider_failures.extend(_result_failure_codes(expected_family, result))
             continue
         accepted: list[CrowdingEvidence] = []
         for raw_record in result.records:
@@ -219,7 +235,13 @@ def build_crowding_assessment(
             accepted.append(evidence)
         if not accepted:
             continue
-        family = _positioning_family(expected_family, tuple(accepted), price_family, as_of)
+        family = _positioning_family(
+            expected_family,
+            tuple(accepted),
+            price_family,
+            as_of,
+            coverage=result.coverage,
+        )
         if family is not None:
             families.append(family)
 
@@ -249,7 +271,7 @@ def build_crowding_assessment(
     current_names = {name for name, family in by_name.items() if family.current}
     missing = tuple(sorted(expected - current_names))
     current_positioning = current_names & {"ownership", "short_interest", "options"}
-    if not current_positioning:
+    if "price_volume" not in current_names or not current_positioning:
         quality = EvidenceQuality.INSUFFICIENT
     elif len(current_positioning) == 1:
         quality = EvidenceQuality.LOW
@@ -293,13 +315,18 @@ def render_crowding_assessment(assessment: CrowdingAssessment) -> str:
             flags = f"，质量标记：{', '.join(family.quality_flags)}" if family.quality_flags else ""
             score = "未知" if family.score is None else f"{family.score:.2f}"
             lines.append(
-                f"- {family.name}：family_score={score}，current={'yes' if family.current else 'no'}{flags}"
+                f"- {family.name}：family_score={score}，"
+                f"coverage={family.coverage:.2f}，"
+                f"current={'yes' if family.current else 'no'}{flags}"
             )
             for evidence in family.evidence:
                 lines.append(
                     f"  - {evidence.metric}={_format_value(evidence.value, evidence.unit)}；"
-                    f"source={evidence.source_id}；observed={evidence.observed_at.date().isoformat()}；"
-                    f"fetched={evidence.fetched_at.date().isoformat()}；cohort={evidence.cohort}；"
+                    f"market={evidence.market}；source={evidence.source_id}；"
+                    f"observed={evidence.observed_at.date().isoformat()}；"
+                    f"published={evidence.published_at.date().isoformat() if evidence.published_at else 'unknown'}；"
+                    f"fetched={evidence.fetched_at.date().isoformat()}；"
+                    f"use_tier={evidence.access_tier}；cohort={evidence.cohort}；"
                     f"freshness={evidence.freshness}"
                 )
     else:
@@ -382,8 +409,18 @@ def _price_volume_family(
     momentum_score = return_percentile if current_return >= 0 else 1.0 - return_percentile
     score = _clamp(statistics.fmean((momentum_score, volatility_percentile, volume_score)))
     observed = datetime.combine(cleaned[-1][0], time.min, tzinfo=timezone.utc)
-    current = (as_of - cleaned[-1][0]).days <= _STALE_AFTER_DAYS["price_volume"]
-    flags = () if current else ("stale",)
+    fresh = (as_of - cleaned[-1][0]).days <= _STALE_AFTER_DAYS["price_volume"]
+    coverage_sufficient = result.coverage >= _MIN_PARTIAL_COVERAGE
+    current = fresh and coverage_sufficient
+    flags = tuple(
+        flag
+        for flag, present in (
+            ("stale", not fresh),
+            (f"partial_coverage:{result.coverage:.2f}", result.coverage < 1.0),
+            ("coverage_below_threshold", not coverage_sufficient),
+        )
+        if present
+    )
     evidence = CrowdingEvidence(
         symbol=canonical,
         market=market,
@@ -408,7 +445,7 @@ def _price_volume_family(
         },
         quality_flags=flags,
     )
-    return FamilyAssessment("price_volume", score, current, (evidence,), flags)
+    return FamilyAssessment("price_volume", score, current, (evidence,), result.coverage, flags)
 
 
 def _positioning_family(
@@ -416,11 +453,23 @@ def _positioning_family(
     evidence: tuple[CrowdingEvidence, ...],
     price_family: FamilyAssessment | None,
     as_of: date,
+    *,
+    coverage: float,
 ) -> FamilyAssessment | None:
     first = evidence[0]
     age_days = (as_of - first.observed_at.date()).days
-    current = age_days <= _STALE_AFTER_DAYS[name]
-    flags = () if current else ("stale",)
+    fresh = age_days <= _STALE_AFTER_DAYS[name]
+    coverage_sufficient = coverage >= _MIN_PARTIAL_COVERAGE
+    current = fresh and coverage_sufficient
+    flags = tuple(
+        flag
+        for flag, present in (
+            ("stale", not fresh),
+            (f"partial_coverage:{coverage:.2f}", coverage < 1.0),
+            ("coverage_below_threshold", not coverage_sufficient),
+        )
+        if present
+    )
     if name == "ownership":
         score = _clamp(float(first.value) / 80.0)
     elif name == "short_interest":
@@ -428,7 +477,11 @@ def _positioning_family(
         score = _clamp((_clamp(float(first.value) / 20.0) * 0.6) + (_clamp(days / 5.0) * 0.4))
     elif name == "options":
         average_volume = _price_average_volume(price_family)
-        oi_ratio = float(first.value) / average_volume if average_volume else 0.0
+        equivalent_oi = _optional_number(
+            first.metadata.get("underlying_equivalent_open_interest")
+        )
+        option_exposure = equivalent_oi if equivalent_oi is not None else float(first.value)
+        oi_ratio = option_exposure / average_volume if average_volume else 0.0
         call_oi = _optional_number(first.metadata.get("call_open_interest_ratio"))
         expiry = _optional_number(first.metadata.get("expiry_concentration")) or 0.0
         score = _clamp(
@@ -441,7 +494,7 @@ def _positioning_family(
                 first,
                 normalized_value=score,
                 metadata={**dict(first.metadata), "open_interest_to_underlying_volume": oi_ratio},
-                quality_flags=flags,
+                quality_flags=tuple(dict.fromkeys((*first.quality_flags, *flags))),
             ),
         )
     elif name == "events":
@@ -449,8 +502,15 @@ def _positioning_family(
     else:
         return None
     if name != "options":
-        evidence = tuple(replace(item, normalized_value=score, quality_flags=flags) for item in evidence)
-    return FamilyAssessment(name, score, current, evidence, flags)
+        evidence = tuple(
+            replace(
+                item,
+                normalized_value=score,
+                quality_flags=tuple(dict.fromkeys((*item.quality_flags, *flags))),
+            )
+            for item in evidence
+        )
+    return FamilyAssessment(name, score, current, evidence, coverage, flags)
 
 
 def _price_average_volume(family: FamilyAssessment | None) -> float | None:
@@ -472,26 +532,33 @@ def _directional_result(
 ) -> DirectionalAssessment:
     missing = tuple(name for name in required if name not in by_name or not by_name[name].current)
     eligible = market in {"US", "HK"} and not missing
-    scored = [
-        by_name[name]
-        for name in required
-        if name in by_name and by_name[name].current and by_name[name].score is not None
-    ]
-    if not eligible or len(scored) < 3:
+    scored = []
+    for name in required:
+        family = by_name.get(name)
+        if family is None or not family.current or family.score is None:
+            continue
+        directional_score = _directional_family_score(family, label)
+        if directional_score is not None:
+            scored.append((family, directional_score))
+    minimum_scored = 2 if label in {"long", "short"} else 3
+    if not eligible or len(scored) < minimum_scored:
         return DirectionalAssessment(
             CrowdingBand.INSUFFICIENT,
             None,
-            tuple(item.name for item in sorted(scored, key=lambda item: item.score or 0.0, reverse=True)[:3]),
-            tuple(item.name for item in scored if (item.score or 0.0) < 0.35),
+            tuple(
+                item.name
+                for item, _ in sorted(scored, key=lambda pair: pair[1], reverse=True)[:3]
+            ),
+            tuple(item.name for item, score in scored if score < 0.35),
             missing,
             "证据 family 或市场覆盖门槛未满足，不能把缺失数据解释为低拥挤。",
         )
-    score = _clamp(statistics.fmean(float(item.score) for item in scored))
+    score = _clamp(statistics.fmean(effective_score for _, effective_score in scored))
     contributors = tuple(
         item.name
-        for item in sorted(scored, key=lambda item: item.score or 0.0, reverse=True)[:3]
+        for item, _ in sorted(scored, key=lambda pair: pair[1], reverse=True)[:3]
     )
-    counter = tuple(item.name for item in scored if (item.score or 0.0) < 0.35)
+    counter = tuple(item.name for item, effective_score in scored if effective_score < 0.35)
     return DirectionalAssessment(
         _band(score),
         score,
@@ -500,6 +567,25 @@ def _directional_result(
         (),
         f"{label} 等级来自确定性 family 规则，尚未经过历史概率校准。",
     )
+
+
+def _directional_family_score(
+    family: FamilyAssessment,
+    label: str,
+) -> float | None:
+    score = _clamp(family.score)
+    if (
+        label in {"long", "short"}
+        and family.evidence
+        and family.evidence[0].direction is EvidenceDirection.TWO_SIDED
+    ):
+        return None
+    if family.name != "price_volume" or not family.evidence:
+        return score
+    direction = family.evidence[0].direction
+    if label in {"long", "short"} and direction is EvidenceDirection.FRAGILITY:
+        return min(score, 0.2)
+    return score
 
 
 def _band(score: float) -> CrowdingBand:

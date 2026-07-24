@@ -29,6 +29,7 @@ class CrowdingCommandTests(unittest.TestCase):
         investigate.assert_called_once_with("NVDA", "US")
         self.assertTrue(command_router.is_query_command("拥挤度 US.NVDA"))
         self.assertTrue(command_router.is_query_command("crowding NVDA US"))
+        self.assertTrue(command_router.is_query_command("crowding US.BRK.B"))
         self.assertFalse(command_router.is_query_command("拥挤度 NVDA"))
 
     def test_invalid_or_unsupported_single_symbol_is_rejected_before_fetch(self) -> None:
