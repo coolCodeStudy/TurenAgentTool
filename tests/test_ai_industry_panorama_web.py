@@ -589,6 +589,36 @@ assert.ok(window.AIIndustryPanorama.state.visibleRelationships.every(
             projection=projection,
         )
 
+    def test_management_claim_is_disclosed_but_not_a_dated_fact_or_guidance(
+        self,
+    ) -> None:
+        _run_panorama_script(
+            """
+trigger(nodes.get("reset-panorama"), "click");
+const graph = nodes.get("panorama-graph");
+const alphabet = findByAttribute(
+  graph,
+  "data-entity-id",
+  "entity:ENT-ORG-ALPHABET",
+);
+trigger(alphabet, "click");
+const drawer = nodes.get("entity-drawer");
+const sectionByHeading = (heading) => drawer.children.find(
+  (section) => section.children.some(
+    (node) => node.tagName === "h3" && node.textContent === heading
+  )
+);
+const disclosed = sectionByHeading("Disclosed relationships");
+const datedFacts = sectionByHeading("Dated facts and guidance");
+assert.match(
+  textTree(disclosed),
+  /Alphabet Inc\\. depends_on NVIDIA Corporation — management_claim;/
+);
+assert.doesNotMatch(textTree(datedFacts), /management_claim/);
+assert.doesNotMatch(textTree(datedFacts), /infrastructure uses GPUs from NVIDIA/);
+"""
+        )
+
     def test_keyboard_nodes_and_drawers_expose_entity_capability_and_evidence(self) -> None:
         _run_panorama_script(
             """

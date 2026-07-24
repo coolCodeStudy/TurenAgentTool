@@ -168,6 +168,10 @@ def render_panorama_script() -> str:
     "company_guidance",
     "management_claim",
   ]);
+  const DATED_FACT_ASSERTION_KINDS = new Set([
+    "disclosed_fact",
+    "company_guidance",
+  ]);
   const ASSERTION_KIND_PRIORITY = {
     disclosed_fact: 0,
     company_guidance: 1,
@@ -572,7 +576,7 @@ def render_panorama_script() -> str:
       makeList(
         "Dated facts and guidance",
         related
-          .filter((item) => DISCLOSED_ASSERTION_KINDS.has(item.assertion_kind))
+          .filter((item) => DATED_FACT_ASSERTION_KINDS.has(item.assertion_kind))
           .map(
             (item) => `${item.assertion_kind}: ${item.text} `
               + `(observed ${item.observed_at}; reviewed ${item.reviewed_at})`
