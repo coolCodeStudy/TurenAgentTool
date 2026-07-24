@@ -1,0 +1,1078 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, fields, is_dataclass
+from datetime import date, datetime
+import json
+from pathlib import Path
+import re
+from types import MappingProxyType
+from typing import Any, Mapping, TypeVar
+from urllib.parse import urlparse
+
+
+class PanoramaReleaseError(ValueError):
+    """Raised when a panorama release violates its public data contract."""
+
+
+@dataclass(frozen=True)
+class PanoramaTaxonomyNode:
+    taxonomy_id: str
+    parent_id: str | None
+    label: str
+    definition: str
+    standards_context: str
+    coverage_gaps: str
+    layer: str
+    sort_order: int
+
+
+@dataclass(frozen=True)
+class PanoramaGeography:
+    geography_id: str
+    label: str
+    country_code: str | None
+    region: str
+
+
+@dataclass(frozen=True)
+class PanoramaResearchLink:
+    kind: str
+    label: str
+    canonical_stock_id: str
+    internal_path: str
+    command_hint: str
+
+
+@dataclass(frozen=True)
+class PanoramaEntity:
+    entity_id: str
+    kind: str
+    label: str
+    aliases: tuple[str, ...]
+    summary: str
+    taxonomy_ids: tuple[str, ...]
+    geography_ids: tuple[str, ...]
+    capability_roles: tuple[str, ...]
+    coverage_gaps: str
+    freshness_state: str
+    last_reviewed_at: str
+    is_demand_anchor: bool
+    research_links: tuple[PanoramaResearchLink, ...]
+
+
+@dataclass(frozen=True)
+class PanoramaRelationship:
+    relationship_id: str
+    source_entity_id: str
+    target_entity_id: str
+    relationship_type: str
+
+
+@dataclass(frozen=True)
+class PanoramaAssertion:
+    assertion_id: str
+    relationship_id: str
+    text: str
+    assertion_kind: str
+    lifecycle_state: str
+    effective_from: str | None
+    effective_to: str | None
+    time_precision: str
+    observed_at: str
+    reporting_period_start: str | None
+    reporting_period_end: str | None
+    reviewed_at: str
+    freshness_state: str
+    geography_roles: tuple[tuple[str, str], ...]
+    confidence_inputs: tuple[tuple[str, str], ...]
+    confidence_rationale: str
+    confidence_label: str
+    limitations: str
+    evidence_ids: tuple[str, ...]
+    premise_assertion_ids: tuple[str, ...]
+    review_state: str
+    supersedes_assertion_id: str | None
+
+
+@dataclass(frozen=True)
+class PanoramaSourceSnapshot:
+    source_id: str
+    tier: str
+    publisher: str
+    document_title: str
+    url: str
+    publication_date: str | None
+    retrieval_date: str
+    immutable_locator: str
+    content_hash: str
+    license_class: str
+
+
+@dataclass(frozen=True)
+class PanoramaEvidence:
+    evidence_id: str
+    source_id: str
+    locator: str
+    bounded_excerpt: str
+    extraction_method: str
+    review_state: str
+
+
+@dataclass(frozen=True)
+class PanoramaReleaseDiff:
+    added: tuple[str, ...]
+    changed: tuple[str, ...]
+    expired: tuple[str, ...]
+    removed: tuple[str, ...]
+    reasons: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class PanoramaRelease:
+    schema_version: str
+    release_id: str
+    prior_release_id: str | None
+    taxonomy_version: str
+    published_at: str
+    evidence_cutoff: str
+    review_state: str
+    change_summary: tuple[str, ...]
+    release_diff: PanoramaReleaseDiff
+    curator: str
+    reviewer: str
+    taxonomy: tuple[PanoramaTaxonomyNode, ...]
+    geographies: tuple[PanoramaGeography, ...]
+    entities: tuple[PanoramaEntity, ...]
+    sources: tuple[PanoramaSourceSnapshot, ...]
+    evidence: tuple[PanoramaEvidence, ...]
+    relationships: tuple[PanoramaRelationship, ...]
+    assertions: tuple[PanoramaAssertion, ...]
+
+
+_RELEASE_PATH = Path(__file__).parent / "releases" / "2026-07-24.v1.json"
+_SCHEMA_VERSION = "ai_industry_panorama_release.v1"
+_PUBLIC_SCHEMA_VERSION = "ai_industry_panorama_public.v1"
+_MAX_PROJECTION_BYTES = 2 * 1024 * 1024
+
+_ENTITY_KINDS = frozenset({"organization", "project", "capability"})
+_ASSERTION_KINDS = frozenset(
+    {
+        "disclosed_fact",
+        "company_guidance",
+        "management_claim",
+        "inferred_exposure",
+        "user_hypothesis",
+    }
+)
+_LIFECYCLE_STATES = frozenset(
+    {
+        "operating",
+        "committed",
+        "under_development",
+        "sampling",
+        "mass_production",
+        "qualification",
+        "unknown",
+    }
+)
+_REVIEW_STATES = frozenset(
+    {
+        "curated_pending_review",
+        "reviewed_for_implementation",
+        "published",
+        "superseded",
+    }
+)
+_SOURCE_TIERS = frozenset({"T1", "T2", "T3"})
+_RELATIONSHIP_TYPES = frozenset(
+    {
+        "buys_from",
+        "invests_in",
+        "depends_on",
+        "develops_or_operates",
+        "enables_capability",
+        "partners_with",
+        "supplies",
+        "contract_manufactures_for",
+        "co_designs",
+        "inferred_exposure_to",
+        "leases_or_provides_capacity_to",
+        "manufactures_for",
+    }
+)
+_PREFIXES = {
+    "taxonomy": "taxonomy:",
+    "geography": "geography:",
+    "entity": "entity:",
+    "source": "source:",
+    "evidence": "evidence:",
+    "relationship": "relationship:",
+    "assertion": "assertion:",
+}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ENGLISH_RE = re.compile(r"[A-Za-z]")
+_T = TypeVar("_T")
+
+
+def load_release(
+    path: Path | None = None,
+    *,
+    prior_path: Path | None = None,
+) -> PanoramaRelease:
+    release_path = path or _RELEASE_PATH
+    payload = _read_json(release_path)
+    previous = validate_release(_read_json(prior_path)) if prior_path else None
+    return validate_release(payload, previous=previous)
+
+
+def validate_release(
+    payload: Mapping[str, object],
+    *,
+    previous: PanoramaRelease | None = None,
+) -> PanoramaRelease:
+    if not isinstance(payload, Mapping):
+        raise PanoramaReleaseError("release payload must be a JSON object")
+    _reject_unsafe_tree(payload)
+    _require_exact_keys(payload, PanoramaRelease, "release")
+
+    release = PanoramaRelease(
+        schema_version=_string(payload["schema_version"], "schema_version"),
+        release_id=_string(payload["release_id"], "release_id"),
+        prior_release_id=_optional_string(payload["prior_release_id"], "prior_release_id"),
+        taxonomy_version=_string(payload["taxonomy_version"], "taxonomy_version"),
+        published_at=_string(payload["published_at"], "published_at"),
+        evidence_cutoff=_string(payload["evidence_cutoff"], "evidence_cutoff"),
+        review_state=_string(payload["review_state"], "review_state"),
+        change_summary=_string_tuple(payload["change_summary"], "change_summary"),
+        release_diff=_parse_release_diff(payload["release_diff"]),
+        curator=_string(payload["curator"], "curator"),
+        reviewer=_string(payload["reviewer"], "reviewer"),
+        taxonomy=_records(payload["taxonomy"], PanoramaTaxonomyNode, _parse_taxonomy),
+        geographies=_records(
+            payload["geographies"], PanoramaGeography, _parse_geography
+        ),
+        entities=_records(payload["entities"], PanoramaEntity, _parse_entity),
+        sources=_records(
+            payload["sources"], PanoramaSourceSnapshot, _parse_source
+        ),
+        evidence=_records(payload["evidence"], PanoramaEvidence, _parse_evidence),
+        relationships=_records(
+            payload["relationships"], PanoramaRelationship, _parse_relationship
+        ),
+        assertions=_records(
+            payload["assertions"], PanoramaAssertion, _parse_assertion
+        ),
+    )
+
+    if release.schema_version != _SCHEMA_VERSION:
+        raise PanoramaReleaseError("unsupported schema_version")
+    _validate_date(release.published_at, "published_at", timestamp=True)
+    _validate_date(release.evidence_cutoff, "evidence_cutoff")
+    if release.review_state not in _REVIEW_STATES:
+        raise PanoramaReleaseError("unsupported review state")
+    if not release.change_summary or any(not item.strip() for item in release.change_summary):
+        raise PanoramaReleaseError("change_summary must be nonempty")
+
+    if previous is not None and release.release_id == previous.release_id:
+        if _plain(release) != _plain(previous):
+            raise PanoramaReleaseError(
+                "release ID reuse with byte-significant content change"
+            )
+        return release
+    if release.prior_release_id is None:
+        if previous is not None:
+            raise PanoramaReleaseError("prior release must be null for first release")
+    elif previous is None or previous.release_id != release.prior_release_id:
+        raise PanoramaReleaseError("prior release is required and must match")
+
+    _validate_release_graph(release)
+    expected_diff = _compute_diff(previous, release)
+    stored_diff = _diff_to_dict(release.release_diff)
+    if expected_diff != stored_diff:
+        raise PanoramaReleaseError("stored release diff does not match computed diff")
+    _validate_diff_reasons(release.release_diff)
+
+    if release.review_state == "published":
+        if release.curator == release.reviewer:
+            raise PanoramaReleaseError("published release requires distinct reviewers")
+        if any(
+            item.review_state != "reviewed_for_implementation"
+            for item in release.assertions
+        ):
+            raise PanoramaReleaseError(
+                "published release requires independently reviewed assertions"
+            )
+
+    projection = _build_public_projection(release, enforce_size=False)
+    if len(_compact_json(projection)) > _MAX_PROJECTION_BYTES:
+        raise PanoramaReleaseError("public projection exceeds 2 MiB")
+    return release
+
+
+def diff_releases(
+    previous: PanoramaRelease | None,
+    current: PanoramaRelease,
+) -> dict[str, object]:
+    return _compute_diff(previous, current)
+
+
+def build_public_projection(release: PanoramaRelease) -> dict[str, object]:
+    projection = _build_public_projection(release, enforce_size=True)
+    return projection
+
+
+def _build_public_projection(
+    release: PanoramaRelease,
+    *,
+    enforce_size: bool,
+) -> dict[str, object]:
+    active_by_relationship: dict[str, PanoramaAssertion] = {}
+    for assertion in release.assertions:
+        if assertion.review_state == "superseded":
+            continue
+        if assertion.relationship_id in active_by_relationship:
+            raise PanoramaReleaseError("relationship has multiple active assertions")
+        active_by_relationship[assertion.relationship_id] = assertion
+    if set(active_by_relationship) != {
+        item.relationship_id for item in release.relationships
+    }:
+        raise PanoramaReleaseError("relationship has zero active assertion")
+
+    assertions = {
+        assertion.relationship_id: assertion
+        for assertion in active_by_relationship.values()
+    }
+    relationship_items: list[dict[str, object]] = []
+    for relationship in release.relationships:
+        assertion = assertions[relationship.relationship_id]
+        item = _record_dict(relationship)
+        assertion_dict = _record_dict(assertion)
+        for excluded in {
+            "relationship_id",
+            "review_state",
+            "supersedes_assertion_id",
+        }:
+            assertion_dict.pop(excluded)
+        item.update(assertion_dict)
+        relationship_items.append(item)
+
+    projection: dict[str, object] = {
+        "ok": True,
+        "schema_version": _PUBLIC_SCHEMA_VERSION,
+        "release": {
+            key: getattr(release, key)
+            for key in (
+                "release_id",
+                "prior_release_id",
+                "taxonomy_version",
+                "published_at",
+                "evidence_cutoff",
+                "change_summary",
+                "review_state",
+            )
+        },
+        "taxonomy": [_record_dict(item) for item in release.taxonomy],
+        "entities": [_record_dict(item) for item in release.entities],
+        "relationships": relationship_items,
+        "evidence": [_record_dict(item) for item in release.evidence],
+        "sources": [_record_dict(item) for item in release.sources],
+        "facets": {
+            "layer": _facet(
+                (item.layer, item.label) for item in release.taxonomy
+            ),
+            "geography": _facet(
+                (item.geography_id, item.label) for item in release.geographies
+            ),
+            "time_horizon": _facet(
+                (item.time_precision, item.time_precision)
+                for item in active_by_relationship.values()
+            ),
+            "lifecycle": _facet(
+                (item.lifecycle_state, item.lifecycle_state)
+                for item in active_by_relationship.values()
+            ),
+            "evidence_tier": _facet(
+                (item.tier, item.tier) for item in release.sources
+            ),
+            "confidence": _facet(
+                (item.confidence_label, item.confidence_label)
+                for item in active_by_relationship.values()
+            ),
+        },
+    }
+    projection = _plain(projection)
+    if enforce_size and len(_compact_json(projection)) > _MAX_PROJECTION_BYTES:
+        raise PanoramaReleaseError("public projection exceeds 2 MiB")
+    return projection
+
+
+def _validate_release_graph(release: PanoramaRelease) -> None:
+    _unique_ids(release.taxonomy, "taxonomy_id")
+    _unique_ids(release.geographies, "geography_id")
+    _unique_ids(release.entities, "entity_id")
+    _unique_ids(release.sources, "source_id")
+    _unique_ids(release.evidence, "evidence_id")
+    _unique_ids(release.relationships, "relationship_id")
+    _unique_ids(release.assertions, "assertion_id")
+
+    taxonomy_ids = {item.taxonomy_id for item in release.taxonomy}
+    geography_ids = {item.geography_id for item in release.geographies}
+    entity_ids = {item.entity_id for item in release.entities}
+    source_ids = {item.source_id for item in release.sources}
+    evidence_ids = {item.evidence_id for item in release.evidence}
+    relationship_ids = {item.relationship_id for item in release.relationships}
+    assertion_ids = {item.assertion_id for item in release.assertions}
+
+    _prefixes(release.taxonomy, "taxonomy_id", _PREFIXES["taxonomy"])
+    _prefixes(release.geographies, "geography_id", _PREFIXES["geography"])
+    _prefixes(release.entities, "entity_id", _PREFIXES["entity"])
+    _prefixes(release.sources, "source_id", _PREFIXES["source"])
+    _prefixes(release.evidence, "evidence_id", _PREFIXES["evidence"])
+    _prefixes(release.relationships, "relationship_id", _PREFIXES["relationship"])
+    _prefixes(release.assertions, "assertion_id", _PREFIXES["assertion"])
+
+    if len(release.taxonomy) != 6:
+        raise PanoramaReleaseError("release requires exactly six taxonomy layers")
+    covered = [item for item in release.entities if item.kind in {"organization", "project"}]
+    if not 25 <= len(covered) <= 35:
+        raise PanoramaReleaseError("organization/project count must be between 25 and 35")
+    if not 45 <= len(release.relationships) <= 70:
+        raise PanoramaReleaseError("relationship count must be between 45 and 70")
+    anchors = [item for item in release.entities if item.is_demand_anchor]
+    if len(anchors) != 6:
+        raise PanoramaReleaseError("release requires exactly six demand anchors")
+
+    for item in release.taxonomy:
+        if item.parent_id is not None and item.parent_id not in taxonomy_ids:
+            raise PanoramaReleaseError("taxonomy foreign key is invalid")
+        _bounded_english(item.label, 120, "taxonomy label")
+        _bounded_english(item.definition, 800, "taxonomy definition")
+    for item in release.geographies:
+        _bounded_english(item.label, 120, "geography label")
+    for item in release.entities:
+        if item.kind not in _ENTITY_KINDS:
+            raise PanoramaReleaseError("unsupported entity kind")
+        _bounded_english(item.label, 120, "entity label")
+        _bounded_english(item.summary, 800, "entity summary")
+        if not item.taxonomy_ids or not set(item.taxonomy_ids) <= taxonomy_ids:
+            raise PanoramaReleaseError("entity taxonomy foreign key is invalid")
+        if not item.geography_ids or not set(item.geography_ids) <= geography_ids:
+            raise PanoramaReleaseError("entity geography foreign key is invalid")
+        _validate_date(item.last_reviewed_at, "entity last_reviewed_at")
+        for link in item.research_links:
+            _validate_research_link(link)
+
+    for item in release.sources:
+        if item.tier not in _SOURCE_TIERS:
+            raise PanoramaReleaseError("unsupported source tier")
+        parsed = urlparse(item.url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise PanoramaReleaseError("source URL must use HTTPS")
+        if item.publication_date is not None:
+            _validate_date(item.publication_date, "source publication_date")
+        _validate_date(item.retrieval_date, "source retrieval_date")
+        _bounded_english(item.publisher, 120, "source publisher")
+        _bounded_english(item.document_title, 800, "source title")
+        if not item.immutable_locator.strip():
+            raise PanoramaReleaseError("source immutable locator is required")
+        if not _HASH_RE.fullmatch(item.content_hash):
+            raise PanoramaReleaseError("source content_hash must be sha256")
+
+    evidence_by_id = {item.evidence_id: item for item in release.evidence}
+    source_by_id = {item.source_id: item for item in release.sources}
+    for item in release.evidence:
+        if item.source_id not in source_ids:
+            raise PanoramaReleaseError("evidence source foreign key is invalid")
+        if item.review_state not in _REVIEW_STATES:
+            raise PanoramaReleaseError("unsupported evidence review state")
+        if not item.locator.strip():
+            raise PanoramaReleaseError("evidence locator is required")
+        _bounded_english(item.bounded_excerpt, 600, "evidence excerpt")
+        source = source_by_id[item.source_id]
+        if not source.publisher or not source.retrieval_date:
+            raise PanoramaReleaseError("source metadata is incomplete")
+
+    for item in release.relationships:
+        if (
+            item.source_entity_id not in entity_ids
+            or item.target_entity_id not in entity_ids
+        ):
+            raise PanoramaReleaseError("relationship entity foreign key is invalid")
+        if item.relationship_type not in _RELATIONSHIP_TYPES:
+            raise PanoramaReleaseError("unsupported relationship type")
+
+    assertion_by_id = {item.assertion_id: item for item in release.assertions}
+    active_counts = {item.relationship_id: 0 for item in release.relationships}
+    for item in release.assertions:
+        if item.relationship_id not in relationship_ids:
+            raise PanoramaReleaseError("assertion relationship foreign key is invalid")
+        if item.assertion_kind not in _ASSERTION_KINDS:
+            raise PanoramaReleaseError("unsupported assertion kind")
+        if item.lifecycle_state not in _LIFECYCLE_STATES:
+            raise PanoramaReleaseError("unsupported lifecycle state")
+        if item.review_state not in _REVIEW_STATES:
+            raise PanoramaReleaseError("unsupported assertion review state")
+        _bounded_english(item.text, 800, "assertion text")
+        _bounded_english(item.limitations, 500, "assertion limitations")
+        _validate_temporal_fields(item)
+        if not item.evidence_ids or not set(item.evidence_ids) <= evidence_ids:
+            raise PanoramaReleaseError("assertion evidence foreign key is invalid")
+        if item.review_state != "superseded":
+            active_counts[item.relationship_id] += 1
+            if any(
+                evidence_by_id[evidence_id].review_state
+                != "reviewed_for_implementation"
+                for evidence_id in item.evidence_ids
+            ):
+                raise PanoramaReleaseError(
+                    "published assertion requires reviewed evidence"
+                )
+        expected_confidence = (
+            "inference" if item.assertion_kind == "inferred_exposure" else "medium"
+        )
+        if item.confidence_label != expected_confidence:
+            raise PanoramaReleaseError(
+                "confidence label does not match structured inputs"
+            )
+        if tuple(sorted(item.confidence_inputs)) != item.confidence_inputs:
+            raise PanoramaReleaseError("confidence inputs must be sorted")
+        if tuple(sorted(item.geography_roles)) != item.geography_roles:
+            raise PanoramaReleaseError("geography roles must be sorted")
+        if any(key not in geography_ids for key, _ in item.geography_roles):
+            raise PanoramaReleaseError("assertion geography foreign key is invalid")
+        if item.assertion_kind == "inferred_exposure":
+            _validate_inference(item, assertion_by_id)
+        elif item.premise_assertion_ids:
+            raise PanoramaReleaseError(
+                "only inference assertions may have inference derivation"
+            )
+    if any(count != 1 for count in active_counts.values()):
+        raise PanoramaReleaseError("relationship must have exactly one active assertion")
+
+    outgoing: dict[str, set[str]] = {}
+    for item in release.relationships:
+        outgoing.setdefault(item.source_entity_id, set()).add(item.target_entity_id)
+    for anchor in anchors:
+        if not any(
+            outgoing.get(intermediate)
+            for intermediate in outgoing.get(anchor.entity_id, set())
+        ):
+            raise PanoramaReleaseError(
+                "demand anchor lacks a supported two-hop path"
+            )
+
+
+def _validate_inference(
+    item: PanoramaAssertion,
+    assertion_by_id: Mapping[str, PanoramaAssertion],
+) -> None:
+    if not item.premise_assertion_ids:
+        raise PanoramaReleaseError("inference derivation is required")
+    for premise_id in item.premise_assertion_ids:
+        premise = assertion_by_id.get(premise_id)
+        if (
+            premise is None
+            or premise.assertion_kind
+            not in {"disclosed_fact", "company_guidance", "management_claim"}
+            or premise.review_state not in {"reviewed_for_implementation", "published"}
+        ):
+            raise PanoramaReleaseError("inference derivation is invalid")
+
+
+def _validate_temporal_fields(item: PanoramaAssertion) -> None:
+    _validate_date(item.observed_at, "assertion observed_at")
+    _validate_date(item.reviewed_at, "assertion reviewed_at")
+    for name in (
+        "effective_from",
+        "effective_to",
+        "reporting_period_start",
+        "reporting_period_end",
+    ):
+        value = getattr(item, name)
+        if value is not None:
+            _validate_date(
+                value,
+                f"assertion {name}",
+                allow_month=name in {"effective_from", "effective_to"},
+            )
+    if (
+        item.effective_from
+        and item.effective_to
+        and _date_sort_key(item.effective_from) > _date_sort_key(item.effective_to)
+    ):
+        raise PanoramaReleaseError("assertion effective_from exceeds effective_to")
+
+
+def _validate_research_link(link: PanoramaResearchLink) -> None:
+    if (
+        not link.canonical_stock_id.strip()
+        or not link.internal_path.startswith("/command")
+        or "\n" in link.command_hint
+        or link.command_hint.lower().startswith(("execute", "run ", "/"))
+    ):
+        raise PanoramaReleaseError("research link is unsafe")
+    _bounded_english(link.label, 120, "research link label")
+
+
+def _compute_diff(
+    previous: PanoramaRelease | None,
+    current: PanoramaRelease,
+) -> dict[str, object]:
+    current_records = _stable_records(current)
+    if previous is None:
+        return {
+            "added": sorted(current_records),
+            "changed": [],
+            "expired": [],
+            "removed": [],
+            "reasons": {},
+        }
+    previous_records = _stable_records(previous)
+    added = sorted(set(current_records) - set(previous_records))
+    removed = sorted(set(previous_records) - set(current_records))
+    changed = sorted(
+        stable_id
+        for stable_id in set(current_records) & set(previous_records)
+        if current_records[stable_id] != previous_records[stable_id]
+    )
+    expired: list[str] = []
+    for stable_id in list(changed):
+        before = previous_records[stable_id]
+        after = current_records[stable_id]
+        if (
+            stable_id.startswith(_PREFIXES["assertion"])
+            and before.get("effective_to") is None
+            and after.get("effective_to") is not None
+        ):
+            expired.append(stable_id)
+            changed.remove(stable_id)
+    reasons = current.release_diff.reasons
+    return {
+        "added": added,
+        "changed": changed,
+        "expired": sorted(expired),
+        "removed": removed,
+        "reasons": {
+            stable_id: reasons[stable_id]
+            for stable_id in sorted(changed + expired + removed)
+            if stable_id in reasons
+        },
+    }
+
+
+def _stable_records(release: PanoramaRelease) -> dict[str, dict[str, object]]:
+    records: dict[str, dict[str, object]] = {}
+    for collection, id_field in (
+        (release.taxonomy, "taxonomy_id"),
+        (release.geographies, "geography_id"),
+        (release.entities, "entity_id"),
+        (release.sources, "source_id"),
+        (release.evidence, "evidence_id"),
+        (release.relationships, "relationship_id"),
+        (release.assertions, "assertion_id"),
+    ):
+        for item in collection:
+            records[getattr(item, id_field)] = _record_dict(item)
+    return records
+
+
+def _validate_diff_reasons(diff: PanoramaReleaseDiff) -> None:
+    expected = set(diff.changed) | set(diff.expired) | set(diff.removed)
+    reasons = diff.reasons
+    if set(reasons) != expected or any(not value.strip() for value in reasons.values()):
+        raise PanoramaReleaseError(
+            "release diff reasons must cover changed, expired, and removed IDs"
+        )
+
+
+def _parse_taxonomy(value: Mapping[str, object]) -> PanoramaTaxonomyNode:
+    return PanoramaTaxonomyNode(
+        taxonomy_id=_string(value["taxonomy_id"], "taxonomy_id"),
+        parent_id=_optional_string(value["parent_id"], "parent_id"),
+        label=_string(value["label"], "taxonomy label"),
+        definition=_string(value["definition"], "taxonomy definition"),
+        standards_context=_string(value["standards_context"], "standards_context"),
+        coverage_gaps=_string(value["coverage_gaps"], "coverage_gaps"),
+        layer=_string(value["layer"], "taxonomy layer"),
+        sort_order=_integer(value["sort_order"], "sort_order"),
+    )
+
+
+def _parse_geography(value: Mapping[str, object]) -> PanoramaGeography:
+    return PanoramaGeography(
+        geography_id=_string(value["geography_id"], "geography_id"),
+        label=_string(value["label"], "geography label"),
+        country_code=_optional_string(value["country_code"], "country_code"),
+        region=_string(value["region"], "geography region"),
+    )
+
+
+def _parse_research_link(value: Mapping[str, object]) -> PanoramaResearchLink:
+    _require_exact_keys(value, PanoramaResearchLink, "research link")
+    return PanoramaResearchLink(
+        kind=_string(value["kind"], "research link kind"),
+        label=_string(value["label"], "research link label"),
+        canonical_stock_id=_string(
+            value["canonical_stock_id"], "canonical_stock_id"
+        ),
+        internal_path=_string(value["internal_path"], "internal_path"),
+        command_hint=_string(value["command_hint"], "command_hint"),
+    )
+
+
+def _parse_entity(value: Mapping[str, object]) -> PanoramaEntity:
+    return PanoramaEntity(
+        entity_id=_string(value["entity_id"], "entity_id"),
+        kind=_string(value["kind"], "entity kind"),
+        label=_string(value["label"], "entity label"),
+        aliases=_string_tuple(value["aliases"], "aliases"),
+        summary=_string(value["summary"], "entity summary"),
+        taxonomy_ids=_string_tuple(value["taxonomy_ids"], "taxonomy_ids"),
+        geography_ids=_string_tuple(value["geography_ids"], "geography_ids"),
+        capability_roles=_string_tuple(
+            value["capability_roles"], "capability_roles"
+        ),
+        coverage_gaps=_string(value["coverage_gaps"], "coverage_gaps"),
+        freshness_state=_string(value["freshness_state"], "freshness_state"),
+        last_reviewed_at=_string(value["last_reviewed_at"], "last_reviewed_at"),
+        is_demand_anchor=_boolean(value["is_demand_anchor"], "is_demand_anchor"),
+        research_links=_mapping_records(
+            value["research_links"], PanoramaResearchLink, _parse_research_link
+        ),
+    )
+
+
+def _parse_relationship(value: Mapping[str, object]) -> PanoramaRelationship:
+    return PanoramaRelationship(
+        relationship_id=_string(value["relationship_id"], "relationship_id"),
+        source_entity_id=_string(
+            value["source_entity_id"], "source_entity_id"
+        ),
+        target_entity_id=_string(
+            value["target_entity_id"], "target_entity_id"
+        ),
+        relationship_type=_string(
+            value["relationship_type"], "relationship_type"
+        ),
+    )
+
+
+def _parse_assertion(value: Mapping[str, object]) -> PanoramaAssertion:
+    return PanoramaAssertion(
+        assertion_id=_string(value["assertion_id"], "assertion_id"),
+        relationship_id=_string(value["relationship_id"], "relationship_id"),
+        text=_string(value["text"], "assertion text"),
+        assertion_kind=_string(value["assertion_kind"], "assertion_kind"),
+        lifecycle_state=_string(value["lifecycle_state"], "lifecycle_state"),
+        effective_from=_optional_string(
+            value["effective_from"], "effective_from"
+        ),
+        effective_to=_optional_string(value["effective_to"], "effective_to"),
+        time_precision=_string(value["time_precision"], "time_precision"),
+        observed_at=_string(value["observed_at"], "observed_at"),
+        reporting_period_start=_optional_string(
+            value["reporting_period_start"], "reporting_period_start"
+        ),
+        reporting_period_end=_optional_string(
+            value["reporting_period_end"], "reporting_period_end"
+        ),
+        reviewed_at=_string(value["reviewed_at"], "reviewed_at"),
+        freshness_state=_string(value["freshness_state"], "freshness_state"),
+        geography_roles=_pair_tuple(value["geography_roles"], "geography_roles"),
+        confidence_inputs=_pair_tuple(
+            value["confidence_inputs"], "confidence_inputs"
+        ),
+        confidence_rationale=_string(
+            value["confidence_rationale"], "confidence_rationale"
+        ),
+        confidence_label=_string(value["confidence_label"], "confidence_label"),
+        limitations=_string(value["limitations"], "limitations"),
+        evidence_ids=_string_tuple(value["evidence_ids"], "evidence_ids"),
+        premise_assertion_ids=_string_tuple(
+            value["premise_assertion_ids"], "premise_assertion_ids"
+        ),
+        review_state=_string(value["review_state"], "review_state"),
+        supersedes_assertion_id=_optional_string(
+            value["supersedes_assertion_id"], "supersedes_assertion_id"
+        ),
+    )
+
+
+def _parse_source(value: Mapping[str, object]) -> PanoramaSourceSnapshot:
+    return PanoramaSourceSnapshot(
+        source_id=_string(value["source_id"], "source_id"),
+        tier=_string(value["tier"], "source tier"),
+        publisher=_string(value["publisher"], "source publisher"),
+        document_title=_string(value["document_title"], "document_title"),
+        url=_string(value["url"], "source url"),
+        publication_date=_optional_string(
+            value["publication_date"], "publication_date"
+        ),
+        retrieval_date=_string(value["retrieval_date"], "retrieval_date"),
+        immutable_locator=_string(
+            value["immutable_locator"], "immutable_locator"
+        ),
+        content_hash=_string(value["content_hash"], "content_hash"),
+        license_class=_string(value["license_class"], "license_class"),
+    )
+
+
+def _parse_evidence(value: Mapping[str, object]) -> PanoramaEvidence:
+    return PanoramaEvidence(
+        evidence_id=_string(value["evidence_id"], "evidence_id"),
+        source_id=_string(value["source_id"], "source_id"),
+        locator=_string(value["locator"], "evidence locator"),
+        bounded_excerpt=_string(value["bounded_excerpt"], "bounded_excerpt"),
+        extraction_method=_string(
+            value["extraction_method"], "extraction_method"
+        ),
+        review_state=_string(value["review_state"], "review_state"),
+    )
+
+
+def _parse_release_diff(value: object) -> PanoramaReleaseDiff:
+    mapping = _mapping(value, "release_diff")
+    _require_exact_keys(mapping, PanoramaReleaseDiff, "release_diff")
+    reasons = _mapping(mapping["reasons"], "release_diff reasons")
+    return PanoramaReleaseDiff(
+        added=_string_tuple(mapping["added"], "release_diff added"),
+        changed=_string_tuple(mapping["changed"], "release_diff changed"),
+        expired=_string_tuple(mapping["expired"], "release_diff expired"),
+        removed=_string_tuple(mapping["removed"], "release_diff removed"),
+        reasons=MappingProxyType(
+            dict(
+                sorted(
+                    (
+                        _string(key, "release_diff reason ID"),
+                        _string(reason, "release_diff reason"),
+                    )
+                    for key, reason in reasons.items()
+                )
+            )
+        ),
+    )
+
+
+def _records(
+    value: object,
+    record_type: type[_T],
+    parser: Any,
+) -> tuple[_T, ...]:
+    return _mapping_records(value, record_type, parser)
+
+
+def _mapping_records(
+    value: object,
+    record_type: type[_T],
+    parser: Any,
+) -> tuple[_T, ...]:
+    if not isinstance(value, list):
+        raise PanoramaReleaseError(f"{record_type.__name__} collection must be a list")
+    result: list[_T] = []
+    for raw in value:
+        mapping = _mapping(raw, record_type.__name__)
+        _require_exact_keys(mapping, record_type, record_type.__name__)
+        result.append(parser(mapping))
+    return tuple(result)
+
+
+def _require_exact_keys(
+    value: Mapping[str, object],
+    record_type: type[object],
+    label: str,
+) -> None:
+    expected = {field.name for field in fields(record_type)}
+    actual = set(value)
+    if actual != expected:
+        raise PanoramaReleaseError(
+            f"{label} has unknown keys or missing required keys"
+        )
+
+
+def _read_json(path: Path) -> Mapping[str, object]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle, object_pairs_hook=_unique_object)
+    except PanoramaReleaseError:
+        raise
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PanoramaReleaseError("release JSON could not be read") from exc
+    return _mapping(value, "release")
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PanoramaReleaseError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_unsafe_tree(value: object) -> None:
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _reject_unsafe_tree(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_unsafe_tree(item)
+    elif isinstance(value, str):
+        lowered = value.lower()
+        if (
+            "file://" in lowered
+            or "/users/" in lowered
+            or "/home/" in lowered
+            or "\\users\\" in lowered
+        ):
+            raise PanoramaReleaseError("local filesystem path is forbidden")
+
+
+def _unique_ids(collection: tuple[object, ...], attribute: str) -> None:
+    values = [getattr(item, attribute) for item in collection]
+    if len(values) != len(set(values)):
+        raise PanoramaReleaseError(f"duplicate stable ID in {attribute}")
+
+
+def _prefixes(
+    collection: tuple[object, ...],
+    attribute: str,
+    prefix: str,
+) -> None:
+    if any(not getattr(item, attribute).startswith(prefix) for item in collection):
+        raise PanoramaReleaseError(f"invalid stable ID prefix for {attribute}")
+
+
+def _validate_date(
+    value: str,
+    label: str,
+    *,
+    timestamp: bool = False,
+    allow_month: bool = False,
+) -> None:
+    try:
+        if timestamp:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        elif allow_month and _MONTH_RE.fullmatch(value):
+            date.fromisoformat(f"{value}-01")
+        elif _DATE_RE.fullmatch(value):
+            date.fromisoformat(value)
+        else:
+            raise ValueError
+    except ValueError as exc:
+        raise PanoramaReleaseError(f"{label} must be ISO-8601") from exc
+
+
+def _date_sort_key(value: str) -> str:
+    return f"{value}-01" if _MONTH_RE.fullmatch(value) else value
+
+
+def _bounded_english(value: str, maximum: int, label: str) -> None:
+    if not value.strip() or len(value) > maximum or not _ENGLISH_RE.search(value):
+        raise PanoramaReleaseError(
+            f"{label} must be nonempty English text of at most {maximum} characters"
+        )
+
+
+def _string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise PanoramaReleaseError(f"{label} must be a string")
+    return value
+
+
+def _optional_string(value: object, label: str) -> str | None:
+    if value is None:
+        return None
+    return _string(value, label)
+
+
+def _integer(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PanoramaReleaseError(f"{label} must be an integer")
+    return value
+
+
+def _boolean(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise PanoramaReleaseError(f"{label} must be a boolean")
+    return value
+
+
+def _mapping(value: object, label: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or any(
+        not isinstance(key, str) for key in value
+    ):
+        raise PanoramaReleaseError(f"{label} must be an object")
+    return value
+
+
+def _string_tuple(value: object, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise PanoramaReleaseError(f"{label} must be a string list")
+    return tuple(value)
+
+
+def _pair_tuple(value: object, label: str) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, list):
+        raise PanoramaReleaseError(f"{label} must be a pair list")
+    result: list[tuple[str, str]] = []
+    for item in value:
+        if (
+            not isinstance(item, list)
+            or len(item) != 2
+            or not all(isinstance(part, str) for part in item)
+        ):
+            raise PanoramaReleaseError(f"{label} must contain string pairs")
+        result.append((item[0], item[1]))
+    return tuple(result)
+
+
+def _record_dict(value: object) -> dict[str, object]:
+    if not is_dataclass(value):
+        raise PanoramaReleaseError("internal record projection failure")
+    return {
+        field.name: _plain(getattr(value, field.name))
+        for field in fields(value)
+    }
+
+
+def _plain(value: Any) -> Any:
+    if is_dataclass(value):
+        return {
+            field.name: _plain(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain(item) for item in value]
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _diff_to_dict(value: PanoramaReleaseDiff) -> dict[str, object]:
+    return {
+        "added": list(value.added),
+        "changed": list(value.changed),
+        "expired": list(value.expired),
+        "removed": list(value.removed),
+        "reasons": dict(value.reasons),
+    }
+
+
+def _facet(items: Any) -> list[dict[str, str]]:
+    return [
+        {"id": identifier, "label": label}
+        for identifier, label in sorted(set(items))
+    ]
+
+
+def _compact_json(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")

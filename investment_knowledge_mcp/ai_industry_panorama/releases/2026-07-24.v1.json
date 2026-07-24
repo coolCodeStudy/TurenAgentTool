@@ -1,0 +1,4974 @@
+{
+  "schema_version": "ai_industry_panorama_release.v1",
+  "release_id": "ai-industry-panorama.2026-07-24.v1",
+  "prior_release_id": null,
+  "taxonomy_version": "ai-industry-panorama-taxonomy.2026-07-24.v1",
+  "published_at": "2026-07-24T00:00:00Z",
+  "evidence_cutoff": "2026-07-24",
+  "review_state": "published",
+  "change_summary": [
+    "Initial bounded release transcribed from the independently reviewed V1 source manifest."
+  ],
+  "release_diff": {
+    "added": [
+      "assertion:AST-AIP-0001",
+      "assertion:AST-AIP-0002",
+      "assertion:AST-AIP-0003",
+      "assertion:AST-AIP-0004",
+      "assertion:AST-AIP-0005",
+      "assertion:AST-AIP-0006",
+      "assertion:AST-AIP-0007",
+      "assertion:AST-AIP-0008",
+      "assertion:AST-AIP-0009",
+      "assertion:AST-AIP-0010",
+      "assertion:AST-AIP-0011",
+      "assertion:AST-AIP-0012",
+      "assertion:AST-AIP-0013",
+      "assertion:AST-AIP-0014",
+      "assertion:AST-AIP-0015",
+      "assertion:AST-AIP-0016",
+      "assertion:AST-AIP-0017",
+      "assertion:AST-AIP-0018",
+      "assertion:AST-AIP-0019",
+      "assertion:AST-AIP-0020",
+      "assertion:AST-AIP-0021",
+      "assertion:AST-AIP-0022",
+      "assertion:AST-AIP-0023",
+      "assertion:AST-AIP-0024",
+      "assertion:AST-AIP-0025",
+      "assertion:AST-AIP-0026",
+      "assertion:AST-AIP-0027",
+      "assertion:AST-AIP-0028",
+      "assertion:AST-AIP-0029",
+      "assertion:AST-AIP-0030",
+      "assertion:AST-AIP-0031",
+      "assertion:AST-AIP-0032",
+      "assertion:AST-AIP-0033",
+      "assertion:AST-AIP-0034",
+      "assertion:AST-AIP-0035",
+      "assertion:AST-AIP-0036",
+      "assertion:AST-AIP-0037",
+      "assertion:AST-AIP-0038",
+      "assertion:AST-AIP-0039",
+      "assertion:AST-AIP-0040",
+      "assertion:AST-AIP-0041",
+      "assertion:AST-AIP-0042",
+      "assertion:AST-AIP-0043",
+      "assertion:AST-AIP-0044",
+      "assertion:AST-AIP-0045",
+      "assertion:AST-AIP-0046",
+      "assertion:AST-AIP-0047",
+      "assertion:AST-AIP-0048",
+      "entity:ENT-CAP-ADVANCED-PACKAGING",
+      "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "entity:ENT-CAP-COWOS",
+      "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "entity:ENT-CAP-DEMAND-CAPITAL",
+      "entity:ENT-CAP-HBM",
+      "entity:ENT-CAP-MANUFACTURING",
+      "entity:ENT-CAP-MEMORY-STORAGE",
+      "entity:ENT-CAP-OPTICAL-CONNECTIVITY",
+      "entity:ENT-CAP-POWER-COOLING",
+      "entity:ENT-ORG-ALPHABET",
+      "entity:ENT-ORG-AMAZON",
+      "entity:ENT-ORG-ANTHROPIC",
+      "entity:ENT-ORG-ASML",
+      "entity:ENT-ORG-BROADCOM",
+      "entity:ENT-ORG-CORNING",
+      "entity:ENT-ORG-FABRINET",
+      "entity:ENT-ORG-GOOGLE-CLOUD",
+      "entity:ENT-ORG-HONHAI",
+      "entity:ENT-ORG-META",
+      "entity:ENT-ORG-MICRON",
+      "entity:ENT-ORG-MICROSOFT",
+      "entity:ENT-ORG-NVIDIA",
+      "entity:ENT-ORG-OPENAI",
+      "entity:ENT-ORG-ORACLE",
+      "entity:ENT-ORG-SAMSUNG",
+      "entity:ENT-ORG-SCHNEIDER",
+      "entity:ENT-ORG-SKHYNIX",
+      "entity:ENT-ORG-SOFTBANK",
+      "entity:ENT-ORG-TSMC",
+      "entity:ENT-ORG-WISTRON",
+      "entity:ENT-PROJ-FAIRWATER",
+      "entity:ENT-PROJ-STARGATE",
+      "entity:ENT-PROJ-STARGATE-I",
+      "entity:ENT-STD-OCP-ODCAI",
+      "evidence:EVD-AIP-0001",
+      "evidence:EVD-AIP-0002",
+      "evidence:EVD-AIP-0003",
+      "evidence:EVD-AIP-0004",
+      "evidence:EVD-AIP-0005",
+      "evidence:EVD-AIP-0006",
+      "evidence:EVD-AIP-0007",
+      "evidence:EVD-AIP-0008",
+      "evidence:EVD-AIP-0009",
+      "evidence:EVD-AIP-0010",
+      "evidence:EVD-AIP-0011",
+      "evidence:EVD-AIP-0012",
+      "evidence:EVD-AIP-0013",
+      "evidence:EVD-AIP-0014",
+      "evidence:EVD-AIP-0015",
+      "evidence:EVD-AIP-0016",
+      "evidence:EVD-AIP-0017",
+      "evidence:EVD-AIP-0018",
+      "evidence:EVD-AIP-0019",
+      "evidence:EVD-AIP-0020",
+      "evidence:EVD-AIP-0021",
+      "evidence:EVD-AIP-0022",
+      "evidence:EVD-AIP-0023",
+      "evidence:EVD-AIP-0024",
+      "evidence:EVD-AIP-0025",
+      "evidence:EVD-AIP-0026",
+      "evidence:EVD-AIP-0027",
+      "evidence:EVD-AIP-0028",
+      "evidence:EVD-AIP-0029",
+      "evidence:EVD-AIP-0030",
+      "evidence:EVD-AIP-0031",
+      "evidence:EVD-AIP-0032",
+      "evidence:EVD-AIP-0033",
+      "evidence:EVD-AIP-0034",
+      "evidence:EVD-AIP-0035",
+      "evidence:EVD-AIP-0036",
+      "evidence:EVD-AIP-0037",
+      "evidence:EVD-AIP-0038",
+      "evidence:EVD-AIP-0039",
+      "evidence:EVD-AIP-0040",
+      "evidence:EVD-AIP-0041",
+      "evidence:EVD-AIP-0042",
+      "evidence:EVD-AIP-0043",
+      "evidence:EVD-AIP-0044",
+      "evidence:EVD-AIP-0045",
+      "evidence:EVD-AIP-0046",
+      "evidence:EVD-AIP-0047",
+      "evidence:EVD-AIP-0048",
+      "geography:asia",
+      "geography:france",
+      "geography:global",
+      "geography:japan",
+      "geography:netherlands",
+      "geography:south-korea",
+      "geography:taiwan",
+      "geography:us",
+      "geography:us-texas",
+      "geography:us-wisconsin",
+      "relationship:REL-AIP-0001",
+      "relationship:REL-AIP-0002",
+      "relationship:REL-AIP-0003",
+      "relationship:REL-AIP-0004",
+      "relationship:REL-AIP-0005",
+      "relationship:REL-AIP-0006",
+      "relationship:REL-AIP-0007",
+      "relationship:REL-AIP-0008",
+      "relationship:REL-AIP-0009",
+      "relationship:REL-AIP-0010",
+      "relationship:REL-AIP-0011",
+      "relationship:REL-AIP-0012",
+      "relationship:REL-AIP-0013",
+      "relationship:REL-AIP-0014",
+      "relationship:REL-AIP-0015",
+      "relationship:REL-AIP-0016",
+      "relationship:REL-AIP-0017",
+      "relationship:REL-AIP-0018",
+      "relationship:REL-AIP-0019",
+      "relationship:REL-AIP-0020",
+      "relationship:REL-AIP-0021",
+      "relationship:REL-AIP-0022",
+      "relationship:REL-AIP-0023",
+      "relationship:REL-AIP-0024",
+      "relationship:REL-AIP-0025",
+      "relationship:REL-AIP-0026",
+      "relationship:REL-AIP-0027",
+      "relationship:REL-AIP-0028",
+      "relationship:REL-AIP-0029",
+      "relationship:REL-AIP-0030",
+      "relationship:REL-AIP-0031",
+      "relationship:REL-AIP-0032",
+      "relationship:REL-AIP-0033",
+      "relationship:REL-AIP-0034",
+      "relationship:REL-AIP-0035",
+      "relationship:REL-AIP-0036",
+      "relationship:REL-AIP-0037",
+      "relationship:REL-AIP-0038",
+      "relationship:REL-AIP-0039",
+      "relationship:REL-AIP-0040",
+      "relationship:REL-AIP-0041",
+      "relationship:REL-AIP-0042",
+      "relationship:REL-AIP-0043",
+      "relationship:REL-AIP-0044",
+      "relationship:REL-AIP-0045",
+      "relationship:REL-AIP-0046",
+      "relationship:REL-AIP-0047",
+      "relationship:REL-AIP-0048",
+      "source:SRC-001",
+      "source:SRC-002",
+      "source:SRC-003",
+      "source:SRC-004",
+      "source:SRC-005",
+      "source:SRC-006",
+      "source:SRC-007",
+      "source:SRC-008",
+      "source:SRC-009",
+      "source:SRC-010",
+      "source:SRC-011",
+      "source:SRC-012",
+      "source:SRC-013",
+      "source:SRC-014",
+      "source:SRC-015",
+      "source:SRC-016",
+      "taxonomy:TAX-01",
+      "taxonomy:TAX-02",
+      "taxonomy:TAX-03",
+      "taxonomy:TAX-04",
+      "taxonomy:TAX-05",
+      "taxonomy:TAX-06"
+    ],
+    "changed": [],
+    "expired": [],
+    "removed": [],
+    "reasons": {}
+  },
+  "curator": "/root/panorama_manifest_curator",
+  "reviewer": "/root/panorama_source_review",
+  "taxonomy": [
+    {
+      "taxonomy_id": "taxonomy:TAX-01",
+      "parent_id": null,
+      "label": "Demand and capital formation",
+      "definition": "Named demand anchors, disclosed infrastructure investment, or explicit capacity commitments.",
+      "standards_context": "Official standards and program context is evidence-scoped; membership alone does not establish adoption.",
+      "coverage_gaps": "V1 includes only relationships accepted by independent source review.",
+      "layer": "layer-01",
+      "sort_order": 1
+    },
+    {
+      "taxonomy_id": "taxonomy:TAX-02",
+      "parent_id": null,
+      "label": "Data-center capacity",
+      "definition": "Data-center sites, cloud capacity, and facility-scale operating or development claims.",
+      "standards_context": "Official standards and program context is evidence-scoped; membership alone does not establish adoption.",
+      "coverage_gaps": "V1 includes only relationships accepted by independent source review.",
+      "layer": "layer-02",
+      "sort_order": 2
+    },
+    {
+      "taxonomy_id": "taxonomy:TAX-03",
+      "parent_id": null,
+      "label": "Compute and interconnect",
+      "definition": "Accelerators, CPUs, custom silicon, networking, and optical connectivity.",
+      "standards_context": "Official standards and program context is evidence-scoped; membership alone does not establish adoption.",
+      "coverage_gaps": "V1 includes only relationships accepted by independent source review.",
+      "layer": "layer-03",
+      "sort_order": 3
+    },
+    {
+      "taxonomy_id": "taxonomy:TAX-04",
+      "parent_id": null,
+      "label": "Memory and storage",
+      "definition": "HBM, server memory, and infrastructure storage capacity; exact product scope stays in the assertion.",
+      "standards_context": "Official standards and program context is evidence-scoped; membership alone does not establish adoption.",
+      "coverage_gaps": "V1 includes only relationships accepted by independent source review.",
+      "layer": "layer-04",
+      "sort_order": 4
+    },
+    {
+      "taxonomy_id": "taxonomy:TAX-05",
+      "parent_id": null,
+      "label": "Manufacturing",
+      "definition": "Foundry, semiconductor equipment, assembly, test, and advanced packaging.",
+      "standards_context": "Official standards and program context is evidence-scoped; membership alone does not establish adoption.",
+      "coverage_gaps": "V1 includes only relationships accepted by independent source review.",
+      "layer": "layer-05",
+      "sort_order": 5
+    },
+    {
+      "taxonomy_id": "taxonomy:TAX-06",
+      "parent_id": null,
+      "label": "Physical infrastructure",
+      "definition": "Data-center power, cooling, facility design, and related physical enablement.",
+      "standards_context": "Official standards and program context is evidence-scoped; membership alone does not establish adoption.",
+      "coverage_gaps": "V1 includes only relationships accepted by independent source review.",
+      "layer": "layer-06",
+      "sort_order": 6
+    }
+  ],
+  "geographies": [
+    {
+      "geography_id": "geography:global",
+      "label": "Global",
+      "country_code": null,
+      "region": "global"
+    },
+    {
+      "geography_id": "geography:us",
+      "label": "United States",
+      "country_code": "US",
+      "region": "North America"
+    },
+    {
+      "geography_id": "geography:us-wisconsin",
+      "label": "Wisconsin, United States",
+      "country_code": "US",
+      "region": "North America"
+    },
+    {
+      "geography_id": "geography:us-texas",
+      "label": "Texas, United States",
+      "country_code": "US",
+      "region": "North America"
+    },
+    {
+      "geography_id": "geography:south-korea",
+      "label": "South Korea",
+      "country_code": "KR",
+      "region": "Asia"
+    },
+    {
+      "geography_id": "geography:taiwan",
+      "label": "Taiwan",
+      "country_code": "TW",
+      "region": "Asia"
+    },
+    {
+      "geography_id": "geography:asia",
+      "label": "Asia and global supply chain",
+      "country_code": null,
+      "region": "Asia"
+    },
+    {
+      "geography_id": "geography:netherlands",
+      "label": "Netherlands",
+      "country_code": "NL",
+      "region": "Europe"
+    },
+    {
+      "geography_id": "geography:france",
+      "label": "France",
+      "country_code": "FR",
+      "region": "Europe"
+    },
+    {
+      "geography_id": "geography:japan",
+      "label": "Japan",
+      "country_code": "JP",
+      "region": "Asia"
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "entity:ENT-ORG-ALPHABET",
+      "kind": "organization",
+      "label": "Alphabet Inc.",
+      "aliases": [
+        "Alphabet",
+        "Google parent"
+      ],
+      "summary": "demand anchor; infrastructure operator. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand anchor",
+        "infrastructure operator"
+      ],
+      "coverage_gaps": "Google product references are normalized to the listed parent only where the cited Alphabet source speaks for consolidated infrastructure.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": true,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-MICROSOFT",
+      "kind": "organization",
+      "label": "Microsoft Corporation",
+      "aliases": [
+        "Microsoft"
+      ],
+      "summary": "demand anchor; cloud and data-center operator. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand anchor",
+        "cloud and data-center operator"
+      ],
+      "coverage_gaps": "No subsidiary-level Azure entity is created in this bounded V1.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": true,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-META",
+      "kind": "organization",
+      "label": "Meta Platforms, Inc.",
+      "aliases": [
+        "Meta"
+      ],
+      "summary": "demand anchor; data-center operator. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-06"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand anchor",
+        "data-center operator"
+      ],
+      "coverage_gaps": "Supplier identities are not inferred from Meta's aggregate infrastructure guidance.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": true,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-AMAZON",
+      "kind": "organization",
+      "label": "Amazon.com, Inc.",
+      "aliases": [
+        "Amazon",
+        "AWS parent"
+      ],
+      "summary": "demand anchor; cloud and infrastructure operator. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand anchor",
+        "cloud and infrastructure operator"
+      ],
+      "coverage_gaps": "AWS is represented by the listed parent because both used disclosures are Amazon issuer records.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": true,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-OPENAI",
+      "kind": "organization",
+      "label": "OpenAI",
+      "aliases": [
+        "OpenAI Group"
+      ],
+      "summary": "demand anchor; model developer; capacity buyer and project operator. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand anchor",
+        "model developer",
+        "capacity buyer and project operator"
+      ],
+      "coverage_gaps": "No legal-subsidiary inference is made.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": true,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "kind": "organization",
+      "label": "Anthropic PBC",
+      "aliases": [
+        "Anthropic"
+      ],
+      "summary": "demand anchor; model developer; capacity buyer. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand anchor",
+        "model developer",
+        "capacity buyer"
+      ],
+      "coverage_gaps": "Customer and investor relationships not explicit in used sources are excluded.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": true,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-NVIDIA",
+      "kind": "organization",
+      "label": "NVIDIA Corporation",
+      "aliases": [
+        "NVIDIA"
+      ],
+      "summary": "accelerated-compute and networking platform supplier. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "accelerated-compute and networking platform supplier"
+      ],
+      "coverage_gaps": "No end-customer revenue allocation or supplier share is asserted.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-HONHAI",
+      "kind": "organization",
+      "label": "Hon Hai Precision Industry Co., Ltd.",
+      "aliases": [
+        "Hon Hai",
+        "Foxconn"
+      ],
+      "summary": "independent subcontractor and contract manufacturer named by NVIDIA. current as of 2026-02-25.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:taiwan"
+      ],
+      "capability_roles": [
+        "independent subcontractor and contract manufacturer named by NVIDIA"
+      ],
+      "coverage_gaps": "NVIDIA's group disclosure does not allocate assembly, testing, or packaging tasks, volumes, products, or revenue among named contractors.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-WISTRON",
+      "kind": "organization",
+      "label": "Wistron Corporation",
+      "aliases": [
+        "Wistron"
+      ],
+      "summary": "independent subcontractor and contract manufacturer named by NVIDIA. current as of 2026-02-25.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:taiwan"
+      ],
+      "capability_roles": [
+        "independent subcontractor and contract manufacturer named by NVIDIA"
+      ],
+      "coverage_gaps": "NVIDIA's group disclosure does not allocate assembly, testing, or packaging tasks, volumes, products, or revenue among named contractors.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-FABRINET",
+      "kind": "organization",
+      "label": "Fabrinet",
+      "aliases": [
+        "Fabrinet"
+      ],
+      "summary": "independent subcontractor and contract manufacturer named by NVIDIA. current as of 2026-02-25.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "independent subcontractor and contract manufacturer named by NVIDIA"
+      ],
+      "coverage_gaps": "NVIDIA's group disclosure does not allocate assembly, testing, or packaging tasks, volumes, products, or revenue among named contractors.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-TSMC",
+      "kind": "organization",
+      "label": "Taiwan Semiconductor Manufacturing Company Limited",
+      "aliases": [
+        "TSMC"
+      ],
+      "summary": "semiconductor foundry; advanced-packaging developer. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:taiwan"
+      ],
+      "capability_roles": [
+        "semiconductor foundry",
+        "advanced-packaging developer"
+      ],
+      "coverage_gaps": "Named-customer manufacturing is included only where the customer's filing names TSMC.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-SAMSUNG",
+      "kind": "organization",
+      "label": "Samsung Electronics Co., Ltd.",
+      "aliases": [
+        "Samsung Electronics",
+        "Samsung"
+      ],
+      "summary": "foundry and memory supplier. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-04",
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:south-korea"
+      ],
+      "capability_roles": [
+        "foundry and memory supplier"
+      ],
+      "coverage_gaps": "The manifest does not allocate NVIDIA supply between Samsung's foundry and memory businesses beyond each exact assertion.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-SKHYNIX",
+      "kind": "organization",
+      "label": "SK hynix Inc.",
+      "aliases": [
+        "SK hynix",
+        "SK Hynix"
+      ],
+      "summary": "memory supplier. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-04"
+      ],
+      "geography_ids": [
+        "geography:south-korea"
+      ],
+      "capability_roles": [
+        "memory supplier"
+      ],
+      "coverage_gaps": "HBM4 and HBM4E customers remain unnamed unless a source names them.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-MICRON",
+      "kind": "organization",
+      "label": "Micron Technology, Inc.",
+      "aliases": [
+        "Micron"
+      ],
+      "summary": "memory supplier. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-04"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "memory supplier"
+      ],
+      "coverage_gaps": "Product generation and supply share are not inferred from NVIDIA's generic memory-purchase disclosure.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-ASML",
+      "kind": "organization",
+      "label": "ASML Holding N.V.",
+      "aliases": [
+        "ASML"
+      ],
+      "summary": "semiconductor lithography, metrology, and packaging-equipment supplier. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:netherlands"
+      ],
+      "capability_roles": [
+        "semiconductor lithography, metrology, and packaging-equipment supplier"
+      ],
+      "coverage_gaps": "No direct hyperscaler or chip-customer relationship is asserted.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-BROADCOM",
+      "kind": "organization",
+      "label": "Broadcom Inc.",
+      "aliases": [
+        "Broadcom"
+      ],
+      "summary": "custom-accelerator technology partner. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "custom-accelerator technology partner"
+      ],
+      "coverage_gaps": "The Anthropic source supports a partnership, not foundry manufacture or product revenue.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-CORNING",
+      "kind": "organization",
+      "label": "Corning Incorporated",
+      "aliases": [
+        "Corning"
+      ],
+      "summary": "optical fiber, cable, and connectivity supplier. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "optical fiber, cable, and connectivity supplier"
+      ],
+      "coverage_gaps": "Agreement value, volumes, and delivery schedule are not modeled.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-ORACLE",
+      "kind": "organization",
+      "label": "Oracle Corporation",
+      "aliases": [
+        "Oracle",
+        "OCI"
+      ],
+      "summary": "cloud capacity and Stargate site operator. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "cloud capacity and Stargate site operator"
+      ],
+      "coverage_gaps": "OCI is normalized to Oracle; no undisclosed site ownership is inferred.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-SCHNEIDER",
+      "kind": "organization",
+      "label": "Schneider Electric SE",
+      "aliases": [
+        "Schneider Electric"
+      ],
+      "summary": "power and cooling design provider. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-06"
+      ],
+      "geography_ids": [
+        "geography:france"
+      ],
+      "capability_roles": [
+        "power and cooling design provider"
+      ],
+      "coverage_gaps": "The NVIDIA relationship is co-design, not a disclosed purchase.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-SOFTBANK",
+      "kind": "organization",
+      "label": "SoftBank Group Corp.",
+      "aliases": [
+        "SoftBank Group",
+        "SoftBank"
+      ],
+      "summary": "Stargate financing and site-development partner. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02"
+      ],
+      "geography_ids": [
+        "geography:japan"
+      ],
+      "capability_roles": [
+        "Stargate financing and site-development partner"
+      ],
+      "coverage_gaps": "No project-level ownership percentage is asserted.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-ORG-GOOGLE-CLOUD",
+      "kind": "organization",
+      "label": "Google / Google Cloud",
+      "aliases": [
+        "Google",
+        "Google Cloud"
+      ],
+      "summary": "TPU compute-capacity and cloud partner. current as of 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "TPU compute-capacity and cloud partner"
+      ],
+      "coverage_gaps": "This entity preserves the counterparty identity named by Anthropic; it must not be normalized to parent Alphabet for third-party relationship assertions.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-PROJ-STARGATE",
+      "kind": "project",
+      "label": "Stargate",
+      "aliases": [
+        "Stargate platform"
+      ],
+      "summary": "overarching AI-infrastructure platform. announced 2025; under development/operation as disclosed.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01",
+        "taxonomy:TAX-02"
+      ],
+      "geography_ids": [
+        "geography:us"
+      ],
+      "capability_roles": [
+        "overarching AI-infrastructure platform"
+      ],
+      "coverage_gaps": "This entity is the overall platform, distinct from the Abilene flagship site.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-PROJ-STARGATE-I",
+      "kind": "project",
+      "label": "Stargate I",
+      "aliases": [
+        "Abilene flagship site",
+        "Abilene site"
+      ],
+      "summary": "flagship data-center site. partly operating as of 2025-09-23.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:us-texas"
+      ],
+      "capability_roles": [
+        "flagship data-center site"
+      ],
+      "coverage_gaps": "Only the disclosed operating portions and early workloads are represented.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-PROJ-FAIRWATER",
+      "kind": "project",
+      "label": "Fairwater Wisconsin",
+      "aliases": [
+        "Fairwater",
+        "Fairwater AI data center"
+      ],
+      "summary": "Microsoft AI data-center site. online as of 2026-04-29.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:us-wisconsin"
+      ],
+      "capability_roles": [
+        "Microsoft AI data-center site"
+      ],
+      "coverage_gaps": "Source does not establish full-campus completion or utilization.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-STD-OCP-ODCAI",
+      "kind": "project",
+      "label": "OCP Open Data Centers for AI",
+      "aliases": [
+        "ODCAI",
+        "Open Data Centers for AI"
+      ],
+      "summary": "open facility-design and operations program. current page retrieved 2026-07-24; start/end unknown.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-02",
+        "taxonomy:TAX-06"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "open facility-design and operations program"
+      ],
+      "coverage_gaps": "Program scope is not evidence that any named company adopted it.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-DEMAND-CAPITAL",
+      "kind": "capability",
+      "label": "AI infrastructure demand and capital formation",
+      "aliases": [
+        "infrastructure investment demand"
+      ],
+      "summary": "demand/capital capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-01"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "demand/capital capability node"
+      ],
+      "coverage_gaps": "Aggregate capability; not revenue, procurement, or installed capacity.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "kind": "capability",
+      "label": "AI data-center capacity",
+      "aliases": [
+        "data-center capacity",
+        "cloud facility capacity"
+      ],
+      "summary": "facility and cloud-capacity capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-02"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "facility and cloud-capacity capability node"
+      ],
+      "coverage_gaps": "A relationship to this node must state whether capacity is operating, committed, or unknown.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "kind": "capability",
+      "label": "AI compute and interconnect",
+      "aliases": [
+        "accelerators",
+        "CPUs",
+        "custom silicon",
+        "networking"
+      ],
+      "summary": "compute/network capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "compute/network capability node"
+      ],
+      "coverage_gaps": "Optical connectivity is separated into its own capability node.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-OPTICAL-CONNECTIVITY",
+      "kind": "capability",
+      "label": "Optical data-center connectivity",
+      "aliases": [
+        "optical fiber",
+        "optical cable",
+        "optical connectivity"
+      ],
+      "summary": "optical-connectivity capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-03"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "optical-connectivity capability node"
+      ],
+      "coverage_gaps": "Does not imply a specific transceiver, standard, or bandwidth.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-MEMORY-STORAGE",
+      "kind": "capability",
+      "label": "AI memory and infrastructure storage",
+      "aliases": [
+        "HBM",
+        "server DRAM",
+        "infrastructure storage"
+      ],
+      "summary": "memory/storage capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-04"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "memory/storage capability node"
+      ],
+      "coverage_gaps": "HBM and storage must not be treated as interchangeable; each relationship controls exact scope.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-MANUFACTURING",
+      "kind": "capability",
+      "label": "Semiconductor manufacturing and equipment",
+      "aliases": [
+        "foundry",
+        "lithography",
+        "semiconductor equipment"
+      ],
+      "summary": "manufacturing capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "manufacturing capability node"
+      ],
+      "coverage_gaps": "Does not itself identify a manufacturer-customer pair.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-ADVANCED-PACKAGING",
+      "kind": "capability",
+      "label": "Advanced semiconductor packaging",
+      "aliases": [
+        "CoWoS",
+        "advanced packaging",
+        "3D integration"
+      ],
+      "summary": "packaging capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "packaging capability node"
+      ],
+      "coverage_gaps": "Supplier identity is only explicit where named by a cited source.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-COWOS",
+      "kind": "capability",
+      "label": "TSMC CoWoS advanced packaging",
+      "aliases": [
+        "CoWoS",
+        "CoWoS-S",
+        "CoWoS-R",
+        "CoWoS-L"
+      ],
+      "summary": "CoWoS-specific advanced-packaging capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-05"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "CoWoS-specific advanced-packaging capability node"
+      ],
+      "coverage_gaps": "Variant lifecycle must be stated explicitly; this node does not imply that every CoWoS configuration has the same production status.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-HBM",
+      "kind": "capability",
+      "label": "High-bandwidth memory",
+      "aliases": [
+        "HBM",
+        "HBM stacks"
+      ],
+      "summary": "HBM-specific memory capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-04"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "HBM-specific memory capability node"
+      ],
+      "coverage_gaps": "This node excludes non-HBM memory and storage. Supplier and generation require relationship-level evidence.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    },
+    {
+      "entity_id": "entity:ENT-CAP-POWER-COOLING",
+      "kind": "capability",
+      "label": "Data-center power and cooling",
+      "aliases": [
+        "power infrastructure",
+        "cooling infrastructure"
+      ],
+      "summary": "physical-infrastructure capability node. V1 abstraction current 2026-07-24.",
+      "taxonomy_ids": [
+        "taxonomy:TAX-06"
+      ],
+      "geography_ids": [
+        "geography:global"
+      ],
+      "capability_roles": [
+        "physical-infrastructure capability node"
+      ],
+      "coverage_gaps": "Does not imply a named supplier, power source, or deployed design.",
+      "freshness_state": "current",
+      "last_reviewed_at": "2026-07-24",
+      "is_demand_anchor": false,
+      "research_links": []
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "source:SRC-001",
+      "tier": "T2",
+      "publisher": "Alphabet Investor Relations",
+      "document_title": "2025 Q4 Earnings Call",
+      "url": "https://abc.xyz/investor/events/event-details/2026/2025-Q4-Earnings-Call-2026-Dr_C033hS6/default.aspx",
+      "publication_date": "2026-02-04",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "prepared remarks by Sundar Pichai, AI infrastructure paragraphs; prepared remarks and Q&A by Anat Ashkenazi, technical-infrastructure investment mix",
+      "content_hash": "sha256:7277d56256b642f0526092d58da223673cc1914f29c9fa228a1ecf8a8ce4e3d5",
+      "license_class": "official earnings-call transcript; public HTML; quote only short excerpts and retain attribution"
+    },
+    {
+      "source_id": "source:SRC-002",
+      "tier": "T2",
+      "publisher": "Microsoft Investor Relations",
+      "document_title": "Microsoft Fiscal Year 2026 Third Quarter Earnings Conference Call",
+      "url": "https://www.microsoft.com/en-us/investor/events/fy-2026/earnings-fy-2026-q3",
+      "publication_date": "2026-04-29",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "Satya Nadella prepared remarks, AI infrastructure/Fairwater paragraphs; Amy Hood prepared remarks and Q4 outlook, capital expenditures paragraphs",
+      "content_hash": "sha256:42576a40a3481c26d900dfe49d6b4f4947e9adc7d278e1f176b920ff2a052f5a",
+      "license_class": "official earnings-call transcript; public HTML; quote only short excerpts and retain attribution"
+    },
+    {
+      "source_id": "source:SRC-003",
+      "tier": "T2",
+      "publisher": "Meta Investor Relations",
+      "document_title": "Meta Reports First Quarter 2026 Results",
+      "url": "https://investor.atmeta.com/investor-news/press-release-details/2026/Meta-Reports-First-Quarter-2026-Results/",
+      "publication_date": "2026-04-29",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "“First Quarter 2026 Operational and Other Financial Highlights,” capital expenditures bullet; “CFO Outlook Commentary,” 2026 expense and capital-expenditure paragraph",
+      "content_hash": "sha256:59453692962ec0f00caeb323463697e316c623e6297725c161b157721c80690e",
+      "license_class": "official results release; public HTML; retain attribution"
+    },
+    {
+      "source_id": "source:SRC-004",
+      "tier": "T1",
+      "publisher": "U.S. Securities and Exchange Commission / Amazon.com, Inc.",
+      "document_title": "Amazon.com, Inc. 2025 Form 10-K, accession 0001018724-26-000004",
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/amzn-20251231.htm",
+      "publication_date": "2026-02-06",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "Item 7, “Liquidity and Capital Resources,” p. 25; Item 7, “Operating Expenses,” Technology and infrastructure, p. 26",
+      "content_hash": "sha256:84fb80ec80bcb11546d7092af68daeabe691094557a29005ff11c3f59517923a",
+      "license_class": "regulator-hosted issuer filing; public filing; retain accession and page/item locator"
+    },
+    {
+      "source_id": "source:SRC-005",
+      "tier": "T2",
+      "publisher": "Amazon Investor Relations",
+      "document_title": "Amazon.com Announces First Quarter Results",
+      "url": "https://ir.aboutamazon.com/news-release/news-release-details/2026/Amazon-com-Announces-First-Quarter-Results/default.aspx",
+      "publication_date": "2026-04-29",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "“Some other highlights,” “Continued growing custom silicon business” bullets, especially OpenAI, Anthropic, and Trainium statements",
+      "content_hash": "sha256:ba4df7076b0200847aeb9d8921de2e525a7cedc7c27942e08b3ddb56c31f36f0",
+      "license_class": "official results release; public HTML; retain attribution"
+    },
+    {
+      "source_id": "source:SRC-006",
+      "tier": "T2",
+      "publisher": "Corning Incorporated",
+      "document_title": "Amazon Announces Agreement with Corning to Boost U.S. Fiber Optics Manufacturing, Creating 1,000 Advanced Manufacturing Jobs in North Carolina",
+      "url": "https://www.corning.com/worldwide/en/about-us/news-events/news-releases/2026/06/amazon-announces-agreement-with-corning-to-boost-us-fiber-optics-manufacturing-creating-1000-advanced-manufacturing-jobs-in-north-carolina.html",
+      "publication_date": "2026-06-08",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "“Key Takeaways” and opening paragraphs describing agreement scope and optical products",
+      "content_hash": "sha256:4fba96092d38d8c41419ff76709798a43cb20cecbb47e495cba418d6e554496b",
+      "license_class": "official company announcement; public HTML; one-party announcement, retain attribution"
+    },
+    {
+      "source_id": "source:SRC-007",
+      "tier": "T2",
+      "publisher": "OpenAI",
+      "document_title": "OpenAI, Oracle, and SoftBank expand Stargate with five new AI data center sites",
+      "url": "https://openai.com/index/five-new-stargate-sites/",
+      "publication_date": "2025-09-23",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "October 22 update; lead paragraphs identifying five U.S. sites and Stargate as the overarching platform; paragraphs describing SoftBank/OpenAI sites and the Abilene flagship on OCI",
+      "content_hash": "sha256:94c73138d84246d0f1c6d5984f3ce9f4851ff5f05820aa16333b07f61441c251",
+      "license_class": "official company announcement; public mutable HTML; one-party announcement, retain attribution and capture a content fingerprint"
+    },
+    {
+      "source_id": "source:SRC-008",
+      "tier": "T2",
+      "publisher": "OpenAI",
+      "document_title": "Stargate advances with 4.5 GW partnership with Oracle",
+      "url": "https://openai.com/index/stargate-advances-with-partnership-with-oracle/",
+      "publication_date": "2025-07-22",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "opening paragraphs describing the 4.5 GW agreement, Stargate I status, rack deliveries, and early workloads",
+      "content_hash": "sha256:15b101fd5c91887a3351f1f6a96f3648ecb3c5f0b1aaaa0e1e4210349faa7bdb",
+      "license_class": "official company announcement; public HTML; one-party announcement, retain attribution"
+    },
+    {
+      "source_id": "source:SRC-009",
+      "tier": "T2",
+      "publisher": "Anthropic",
+      "document_title": "Anthropic expands partnership with Google and Broadcom for multiple gigawatts of next-generation compute",
+      "url": "https://www.anthropic.com/news/google-broadcom-partnership-compute",
+      "publication_date": "2026-04-06",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "opening four paragraphs describing signed TPU capacity, expected 2027 availability, and AWS/TPU/NVIDIA hardware mix",
+      "content_hash": "sha256:77e07569de0bea8a756007c019354809385512d8382f136f46b9a8664b28b98a",
+      "license_class": "official company announcement; public HTML; one-party announcement, retain attribution"
+    },
+    {
+      "source_id": "source:SRC-010",
+      "tier": "T1",
+      "publisher": "U.S. Securities and Exchange Commission / NVIDIA Corporation",
+      "document_title": "NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021",
+      "url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm",
+      "publication_date": "2026-02-25",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "Item 1, “Our Company,” pp. 3-4; Item 1, “Manufacturing,” p. 8",
+      "content_hash": "sha256:62125b6a6186123e076863e1176cd4bf84042fc9db77cd0a4c128fdc53c2fda9",
+      "license_class": "regulator-hosted issuer filing; public filing; retain accession and page/item locator"
+    },
+    {
+      "source_id": "source:SRC-011",
+      "tier": "T2",
+      "publisher": "Taiwan Semiconductor Manufacturing Company Limited",
+      "document_title": "TSMC 2025 Annual Report, Chapter 5, Technology Leadership",
+      "url": "https://investor.tsmc.com/static/annualReports/2025/english/pdf/2025_tsmc_ar_e_ch5.pdf",
+      "publication_date": "2026-04-17",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "Chapter 5, pp. 102-104, “3DFabric,” CoWoS, system integration, and interconnect paragraphs",
+      "content_hash": "sha256:885e405d54108330e2682ddce5988f7a0630fb67719e80f3e50c9c15f4be0c4b",
+      "license_class": "official annual-report chapter; public PDF; retain page locator"
+    },
+    {
+      "source_id": "source:SRC-012",
+      "tier": "T2",
+      "publisher": "SK hynix Newsroom",
+      "document_title": "SK hynix Announces FY25 Financial Results",
+      "url": "https://news.skhynix.com/en/sk-hynix-announces-fy25-financial-results/",
+      "publication_date": "2026-01-28",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "opening result summary and paragraphs beginning “The company also highlighted its efforts” and “In the HBM business”",
+      "content_hash": "sha256:52a94641983e676a4872cba394ed60b6cb303d39ea6d8022915e844ce4a6ab87",
+      "license_class": "official results announcement; public HTML; one-party technical and financial claims, retain attribution"
+    },
+    {
+      "source_id": "source:SRC-013",
+      "tier": "T2",
+      "publisher": "SK hynix Newsroom",
+      "document_title": "SK hynix Ships Samples of 12-Layer Next-Gen ‘HBM4E’",
+      "url": "https://news.skhynix.com/en/12-layer-hbm4e-sample-1/",
+      "publication_date": "2026-06-18",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "page label “IMAGE & VIDEO,” displayed title, and displayed date",
+      "content_hash": "sha256:ecac12e891a9b942cce955579b5a8fee288969b1b43778de357d6cd1bdcf560c",
+      "license_class": "official image/video media entry; public HTML media entry; no text description is displayed, so use title-level evidence only"
+    },
+    {
+      "source_id": "source:SRC-014",
+      "tier": "T2",
+      "publisher": "ASML",
+      "document_title": "Financials, ASML 2025 Annual Report",
+      "url": "https://www.asml.com/en/investors/annual-report/2025/financials",
+      "publication_date": "2026-02-25",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "“2025 performance,” Total net sales paragraphs; “Research and development,” complete bullet list",
+      "content_hash": "sha256:0028d2f8e7fdee26bfca3cba8a6ec4d1990373738b69b73c3214af2e870317e8",
+      "license_class": "official annual-report web section; public HTML; retain annual-report attribution"
+    },
+    {
+      "source_id": "source:SRC-015",
+      "tier": "T2",
+      "publisher": "Schneider Electric",
+      "document_title": "Schneider Electric teams with NVIDIA to develop validated blueprints to design, simulate, build, operate and maintain gigawatt-scale AI Factories",
+      "url": "https://www.se.com/ww/en/about-us/newsroom/news/press-releases/schneider-electric-teams-with-nvidia-to-develop-validated-blueprints-to-design-simulate-build-operate-and-maintain-gigawattscale-ai-factories-69b82397e7fa28870e0cd5a3/",
+      "publication_date": "2026-03-16",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "opening bullets and “New NVIDIA Vera Rubin Reference Design” section",
+      "content_hash": "sha256:07e9344d6a6c580fd16ba2ee799ad2a5f440a2018fc1751e3085a69bf1c3d608",
+      "license_class": "official company announcement; public HTML; joint-work claim is from Schneider's announcement, retain attribution"
+    },
+    {
+      "source_id": "source:SRC-016",
+      "tier": "T3",
+      "publisher": "Open Compute Project Foundation",
+      "document_title": "Open Data Centers for AI",
+      "url": "https://www.opencompute.org/community/open-data-centers-for-ai",
+      "publication_date": "2026-07-24",
+      "retrieval_date": "2026-07-24",
+      "immutable_locator": "“Scope” bullets covering reference designs, advanced power/cooling, energy bottlenecks, open SLAs, telemetry/management, and power estimation methodologies",
+      "content_hash": "sha256:9941f2409c1e6ea3c006cebdb75cb591aed15fb53163eeedf1031451fb9a45a8",
+      "license_class": "official program page; public HTML; no publication date displayed; scope is current-page state only"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "evidence:EVD-AIP-0001",
+      "source_id": "source:SRC-001",
+      "locator": "Alphabet Investor Relations; “2025 Q4 Earnings Call”; 2026-02-04; Sundar Pichai prepared remarks, AI infrastructure and 2026 CapEx paragraph",
+      "bounded_excerpt": "Alphabet guided 2026 capital expenditures of $175 billion to $185 billion and characterized the investment as expanding AI compute capacity.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0002",
+      "source_id": "source:SRC-001",
+      "locator": "Alphabet Investor Relations; “2025 Q4 Earnings Call”; 2026-02-04; Anat Ashkenazi Q&A response on 2025 technical-infrastructure investment mix",
+      "bounded_excerpt": "Alphabet said approximately 60% of its 2025 technical-infrastructure investment was in machines and servers.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0003",
+      "source_id": "source:SRC-001",
+      "locator": "Alphabet Investor Relations; “2025 Q4 Earnings Call”; 2026-02-04; Anat Ashkenazi Q&A response on 2025 technical-infrastructure investment mix",
+      "bounded_excerpt": "Alphabet said approximately 40% of its 2025 technical-infrastructure investment was in data centers and networking equipment.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0004",
+      "source_id": "source:SRC-001",
+      "locator": "Alphabet Investor Relations; “2025 Q4 Earnings Call”; 2026-02-04; Sundar Pichai prepared remarks, paragraph naming partner NVIDIA GPUs and Google TPUs",
+      "bounded_excerpt": "Alphabet said its infrastructure uses GPUs from NVIDIA as a partner, alongside Alphabet's own TPUs.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0005",
+      "source_id": "source:SRC-002",
+      "locator": "Microsoft Investor Relations; “Microsoft Fiscal Year 2026 Third Quarter Earnings Conference Call”; 2026-04-29; Amy Hood Q4 outlook, Capital Expenditures paragraph",
+      "bounded_excerpt": "Microsoft guided calendar-year 2026 capital expenditures to approximately $190 billion.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0006",
+      "source_id": "source:SRC-002",
+      "locator": "Microsoft Investor Relations; “Microsoft Fiscal Year 2026 Third Quarter Earnings Conference Call”; 2026-04-29; Satya Nadella prepared remarks, Fairwater Wisconsin paragraph",
+      "bounded_excerpt": "Microsoft said its Fairwater AI data center in Wisconsin came online earlier in April 2026.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0007",
+      "source_id": "source:SRC-002",
+      "locator": "Microsoft Investor Relations; “Microsoft Fiscal Year 2026 Third Quarter Earnings Conference Call”; 2026-04-29; Satya Nadella prepared remarks, Fairwater Wisconsin paragraph",
+      "bounded_excerpt": "Fairwater is an online Microsoft AI data-center site and therefore contributes disclosed operating data-center capacity at the site level.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0008",
+      "source_id": "source:SRC-002",
+      "locator": "Microsoft Investor Relations; “Microsoft Fiscal Year 2026 Third Quarter Earnings Conference Call”; 2026-04-29; Amy Hood prepared remarks, capital-expenditure asset-mix paragraph",
+      "bounded_excerpt": "Microsoft said roughly two-thirds of Q3 fiscal-2026 capital expenditures were for short-lived assets, primarily GPUs and CPUs.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0009",
+      "source_id": "source:SRC-003",
+      "locator": "Meta Investor Relations; “Meta Reports First Quarter 2026 Results”; 2026-04-29; “First Quarter 2026 Operational and Other Financial Highlights,” capital expenditures bullet",
+      "bounded_excerpt": "Meta guided 2026 capital expenditures to $125 billion to $145 billion.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0010",
+      "source_id": "source:SRC-003",
+      "locator": "Meta Investor Relations; “Meta Reports First Quarter 2026 Results”; 2026-04-29; “CFO Outlook Commentary,” 2026 capital-expenditure paragraph",
+      "bounded_excerpt": "Meta said its 2026 CapEx outlook reflects additional data-center costs supporting future capacity.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0011",
+      "source_id": "source:SRC-003",
+      "locator": "Inference provenance resolves through premise assertions AST-AIP-0010 and AST-AIP-0045; the inference row cites SRC-003 directly and SRC-016 through AST-AIP-0045.",
+      "bounded_excerpt": "Curator inference: Meta's disclosed additional data-center costs supporting future capacity create exposure to data-center power and cooling requirements because the OCP program scope identifies advanced power and cooling as facility design requirements and power as a primary AI-infrastructure bottleneck.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0012",
+      "source_id": "source:SRC-004",
+      "locator": "U.S. SEC / Amazon.com, Inc.; “Amazon.com, Inc. 2025 Form 10-K, accession 0001018724-26-000004”; 2026-02-06; Item 7, “Liquidity and Capital Resources,” p. 25",
+      "bounded_excerpt": "Amazon reported $128.3 billion of 2025 cash capital expenditures and said technology-infrastructure investment was the majority, primarily supporting AWS business growth.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0013",
+      "source_id": "source:SRC-004",
+      "locator": "U.S. SEC / Amazon.com, Inc.; “Amazon.com, Inc. 2025 Form 10-K, accession 0001018724-26-000004”; 2026-02-06; Item 7, “Operating Expenses,” Technology and infrastructure, p. 26",
+      "bounded_excerpt": "Amazon said its technology-infrastructure cost base includes servers, networking equipment, and data-center depreciation, rent, utilities, and support costs used across AWS and other Amazon businesses.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0014",
+      "source_id": "source:SRC-005",
+      "locator": "Amazon Investor Relations; “Amazon.com Announces First Quarter Results”; 2026-04-29; “Some other highlights,” custom-silicon opening bullets",
+      "bounded_excerpt": "Amazon said its custom-silicon business includes Graviton, Trainium, and Nitro and continues to expand compute options.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0015",
+      "source_id": "source:SRC-005",
+      "locator": "Amazon Investor Relations; “Amazon.com Announces First Quarter Results”; 2026-04-29; “Some other highlights,” custom-silicon bullet naming OpenAI and approximately 2 GW",
+      "bounded_excerpt": "Amazon said it secured a commitment from OpenAI to consume approximately 2 GW of Trainium capacity through AWS infrastructure, beginning to ramp in 2027.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0016",
+      "source_id": "source:SRC-005",
+      "locator": "Amazon Investor Relations; “Amazon.com Announces First Quarter Results”; 2026-04-29; “Some other highlights,” custom-silicon bullet naming Anthropic and up to 5 GW",
+      "bounded_excerpt": "Amazon said Anthropic will secure up to 5 GW of current and future Trainium generations to train and run Anthropic models.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0017",
+      "source_id": "source:SRC-006",
+      "locator": "Corning Incorporated; “Amazon Announces Agreement with Corning to Boost U.S. Fiber Optics Manufacturing, Creating 1,000 Advanced Manufacturing Jobs in North Carolina”; 2026-06-08; “Key Takeaways” and opening agreement paragraphs",
+      "bounded_excerpt": "Corning announced a multi-year agreement to supply Amazon with optical fiber, cable, and connectivity products for Amazon's U.S. data-center network.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0018",
+      "source_id": "source:SRC-006",
+      "locator": "Corning Incorporated; “Amazon Announces Agreement with Corning to Boost U.S. Fiber Optics Manufacturing, Creating 1,000 Advanced Manufacturing Jobs in North Carolina”; 2026-06-08; opening paragraphs describing optical fiber, cable, and connectivity products",
+      "bounded_excerpt": "Corning said the agreement covers optical fiber, cable, and connectivity products for data-center network links.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0019",
+      "source_id": "source:SRC-007",
+      "locator": "OpenAI; “OpenAI, Oracle, and SoftBank expand Stargate with five new AI data center sites”; 2025-09-23, updated 2025-10-22; lead paragraphs identifying five U.S. sites and Stargate as the overarching platform, plus Oracle and SoftBank site-development paragraphs",
+      "bounded_excerpt": "OpenAI described Stargate as its overarching AI-infrastructure platform and announced five new U.S. data-center sites with Oracle and SoftBank site-development roles.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0020",
+      "source_id": "source:SRC-008",
+      "locator": "OpenAI; “Stargate advances with 4.5 GW partnership with Oracle”; 2025-07-22; opening paragraphs describing the additional 4.5 GW agreement",
+      "bounded_excerpt": "OpenAI announced an agreement with Oracle to develop an additional 4.5 GW of Stargate data-center capacity in the United States.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0021",
+      "source_id": "source:SRC-007",
+      "locator": "OpenAI; “OpenAI, Oracle, and SoftBank expand Stargate with five new AI data center sites”; 2025-09-23; opening update and SoftBank partnership/site paragraphs",
+      "bounded_excerpt": "OpenAI said it and SoftBank are developing multiple Stargate data-center sites under their partnership.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0022",
+      "source_id": "source:SRC-008",
+      "locator": "OpenAI; “Stargate advances with 4.5 GW partnership with Oracle”; 2025-07-22; paragraphs naming “Stargate I site in Abilene, Texas,” stating parts were up and running, and describing Stargate as OpenAI's overarching platform",
+      "bounded_excerpt": "OpenAI identified its Abilene, Texas, site as Stargate I, situated it within Stargate, and said parts of the facility were up and running.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0023",
+      "source_id": "source:SRC-008",
+      "locator": "OpenAI; “Stargate advances with 4.5 GW partnership with Oracle”; 2025-07-22; Stargate I paragraph stating Oracle began delivering the first NVIDIA GB200 racks",
+      "bounded_excerpt": "OpenAI said Oracle had begun delivering the first NVIDIA GB200 racks at Stargate I.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0024",
+      "source_id": "source:SRC-008",
+      "locator": "OpenAI; “Stargate advances with 4.5 GW partnership with Oracle”; 2025-07-22; Stargate I paragraph naming first NVIDIA GB200 rack deliveries",
+      "bounded_excerpt": "OpenAI said the first NVIDIA GB200 racks had begun arriving at Stargate I.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0025",
+      "source_id": "source:SRC-008",
+      "locator": "OpenAI; “Stargate advances with 4.5 GW partnership with Oracle”; 2025-07-22; Stargate I paragraphs describing parts running and early training and inference workloads",
+      "bounded_excerpt": "OpenAI said parts of Stargate I were running and early training and inference workloads were underway.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0026",
+      "source_id": "source:SRC-009",
+      "locator": "Anthropic; “Anthropic expands partnership with Google and Broadcom for multiple gigawatts of next-generation compute”; 2026-04-06; opening agreement paragraph and paragraph stating the partnership deepens existing work with Google Cloud",
+      "bounded_excerpt": "Anthropic announced a signed agreement with Google and Broadcom for next-generation TPU compute capacity expected to begin coming online in 2027, and described the work as deepening its existing relationship with Google Cloud.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0027",
+      "source_id": "source:SRC-009",
+      "locator": "Anthropic; “Anthropic expands partnership with Google and Broadcom for multiple gigawatts of next-generation compute”; 2026-04-06; opening paragraphs describing the signed Google/Broadcom TPU agreement and expected 2027 availability",
+      "bounded_excerpt": "Anthropic announced Broadcom as a partner in the signed agreement for next-generation TPU compute capacity expected to begin coming online in 2027.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0028",
+      "source_id": "source:SRC-009",
+      "locator": "Anthropic; “Anthropic expands partnership with Google and Broadcom for multiple gigawatts of next-generation compute”; 2026-04-06; opening paragraphs on next-generation TPU capacity and expected 2027 start",
+      "bounded_excerpt": "Anthropic said the Google/Broadcom agreement will provide multiple gigawatts of next-generation TPU compute capacity, expected to start becoming available in 2027.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0029",
+      "source_id": "source:SRC-009",
+      "locator": "Anthropic; “Anthropic expands partnership with Google and Broadcom for multiple gigawatts of next-generation compute”; 2026-04-06; paragraph describing AWS Trainium and Amazon as primary cloud and training partner",
+      "bounded_excerpt": "Anthropic described Amazon as its primary cloud and training partner and said Claude runs on Amazon Trainium.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0030",
+      "source_id": "source:SRC-009",
+      "locator": "Anthropic; “Anthropic expands partnership with Google and Broadcom for multiple gigawatts of next-generation compute”; 2026-04-06; paragraph listing AWS Trainium, Google TPUs, and NVIDIA GPUs",
+      "bounded_excerpt": "Anthropic said Claude runs on NVIDIA GPUs as part of its diversified hardware approach.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0031",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Our Company,” pp. 3-4, data-center-scale offerings and interconnected GPU paragraphs",
+      "bounded_excerpt": "NVIDIA describes its data-center-scale offerings as co-designed chips, networking, systems, software, and algorithms, with GPUs interconnected for AI training and inference.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0032",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming TSMC and Samsung foundries",
+      "bounded_excerpt": "NVIDIA disclosed that it uses TSMC as a foundry to produce NVIDIA semiconductor wafers.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0033",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming TSMC and Samsung foundries",
+      "bounded_excerpt": "NVIDIA disclosed that it uses Samsung as a foundry to produce NVIDIA semiconductor wafers.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0034",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming memory suppliers",
+      "bounded_excerpt": "NVIDIA disclosed that it purchases memory from SK hynix.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0035",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming memory suppliers",
+      "bounded_excerpt": "NVIDIA disclosed that it purchases memory from Micron.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0036",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, CoWoS sentence",
+      "bounded_excerpt": "NVIDIA disclosed that it uses CoWoS technology for semiconductor packaging.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0037",
+      "source_id": "source:SRC-011",
+      "locator": "Taiwan Semiconductor Manufacturing Company Limited; “TSMC 2025 Annual Report, Chapter 5, Technology Leadership”; 2026-04-17; Chapter 5, pp. 102-103, CoWoS integration paragraph and CoWoS-S, CoWoS-R, and CoWoS-L volume-production bullets",
+      "bounded_excerpt": "TSMC describes CoWoS as integrating multiple system-on-chip chips with HBM stacks; it says CoWoS-S had been in volume production for several years, CoWoS-R entered its third year of volume production in 2025, and CoWoS-L entered its second year of volume production in 2025.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0038",
+      "source_id": "source:SRC-011",
+      "locator": "Taiwan Semiconductor Manufacturing Company Limited; “TSMC 2025 Annual Report, Chapter 5, Technology Leadership”; 2026-04-17; Chapter 5, pp. 102-103, CoWoS paragraph describing multiple SoC chips and HBM-stack integration",
+      "bounded_excerpt": "TSMC describes its CoWoS advanced-packaging service as integrating multiple system-on-chip chips with HBM stacks, making HBM an input to that specific CoWoS configuration.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0039",
+      "source_id": "source:SRC-012",
+      "locator": "SK hynix Newsroom; “SK hynix Announces FY25 Financial Results”; 2026-01-28; paragraphs beginning “The company also highlighted its efforts” and “In the HBM business”",
+      "bounded_excerpt": "SK hynix said large-scale production of HBM4 was underway at the time of its FY2025 results announcement.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0040",
+      "source_id": "source:SRC-013",
+      "locator": "SK hynix Newsroom; “SK hynix Ships Samples of 12-Layer Next-Gen ‘HBM4E’”; 2026-06-18; page label “IMAGE & VIDEO,” displayed title, and displayed date",
+      "bounded_excerpt": "The title of SK hynix's official media entry states that SK hynix shipped samples of 12-layer HBM4E.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0041",
+      "source_id": "source:SRC-014",
+      "locator": "ASML; “Financials, ASML 2025 Annual Report”; 2026-02-25; “Research and development,” complete bullet list",
+      "bounded_excerpt": "ASML reports R&D on EUV and EXE lithography for future Logic and DRAM nodes, next-generation lithography, packaging equipment including XT:260, and inspection/metrology.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0042",
+      "source_id": "source:SRC-015",
+      "locator": "Schneider Electric; “Schneider Electric teams with NVIDIA to develop validated blueprints to design, simulate, build, operate and maintain gigawatt-scale AI Factories”; 2026-03-16; opening bullets and “New NVIDIA Vera Rubin Reference Design” section",
+      "bounded_excerpt": "Schneider Electric announced that it co-developed with NVIDIA a validated reference design for power and cooling infrastructure supporting NVIDIA Vera Rubin-based AI factories.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0043",
+      "source_id": "source:SRC-015",
+      "locator": "Schneider Electric; “Schneider Electric teams with NVIDIA to develop validated blueprints to design, simulate, build, operate and maintain gigawatt-scale AI Factories”; 2026-03-16; “New NVIDIA Vera Rubin Reference Design” section",
+      "bounded_excerpt": "Schneider Electric said the co-developed reference design covers power distribution and cooling infrastructure for Vera Rubin-based AI factories.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0044",
+      "source_id": "source:SRC-016",
+      "locator": "Open Compute Project Foundation; “Open Data Centers for AI”; undated current page; “Scope” bullets titled “Open Data Center Reference Designs,” “Open and Standard Service Level Agreements,” “Telemetry and Management Solutions,” and “Power Estimation Methodologies”",
+      "bounded_excerpt": "OCP's Open Data Centers for AI program scope includes open reference designs, open and standard SLAs, telemetry and management solutions, power estimation methodologies, and advanced power and cooling for AI data centers.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0045",
+      "source_id": "source:SRC-016",
+      "locator": "Open Compute Project Foundation; “Open Data Centers for AI”; undated current page; “Scope” bullets on advanced power/cooling and energy/grid bottlenecks",
+      "bounded_excerpt": "OCP's program scope treats advanced power and cooling as data-center reference-design requirements and identifies power availability as a primary AI-infrastructure bottleneck.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0046",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming Hon Hai, Wistron, and Fabrinet as independent subcontractors and contract manufacturers",
+      "bounded_excerpt": "NVIDIA identified Hon Hai as one of the independent subcontractors and contract manufacturers it engages; the named group collectively performs assembly, testing, and packaging of NVIDIA's final products.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0047",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming Hon Hai, Wistron, and Fabrinet as independent subcontractors and contract manufacturers",
+      "bounded_excerpt": "NVIDIA identified Wistron as one of the independent subcontractors and contract manufacturers it engages; the named group collectively performs assembly, testing, and packaging of NVIDIA's final products.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    },
+    {
+      "evidence_id": "evidence:EVD-AIP-0048",
+      "source_id": "source:SRC-010",
+      "locator": "U.S. SEC / NVIDIA Corporation; “NVIDIA Corporation 2026 Form 10-K, accession 0001045810-26-000021”; 2026-02-25; Item 1, “Manufacturing,” p. 8, sentence naming Hon Hai, Wistron, and Fabrinet as independent subcontractors and contract manufacturers",
+      "bounded_excerpt": "NVIDIA identified Fabrinet as one of the independent subcontractors and contract manufacturers it engages; the named group collectively performs assembly, testing, and packaging of NVIDIA's final products.",
+      "extraction_method": "manual_independent_review",
+      "review_state": "reviewed_for_implementation"
+    }
+  ],
+  "relationships": [
+    {
+      "relationship_id": "relationship:REL-AIP-0001",
+      "source_entity_id": "entity:ENT-ORG-ALPHABET",
+      "target_entity_id": "entity:ENT-CAP-DEMAND-CAPITAL",
+      "relationship_type": "invests_in"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0002",
+      "source_entity_id": "entity:ENT-ORG-ALPHABET",
+      "target_entity_id": "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0003",
+      "source_entity_id": "entity:ENT-ORG-ALPHABET",
+      "target_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0004",
+      "source_entity_id": "entity:ENT-ORG-ALPHABET",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0005",
+      "source_entity_id": "entity:ENT-ORG-MICROSOFT",
+      "target_entity_id": "entity:ENT-CAP-DEMAND-CAPITAL",
+      "relationship_type": "invests_in"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0006",
+      "source_entity_id": "entity:ENT-ORG-MICROSOFT",
+      "target_entity_id": "entity:ENT-PROJ-FAIRWATER",
+      "relationship_type": "develops_or_operates"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0007",
+      "source_entity_id": "entity:ENT-PROJ-FAIRWATER",
+      "target_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0008",
+      "source_entity_id": "entity:ENT-ORG-MICROSOFT",
+      "target_entity_id": "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0009",
+      "source_entity_id": "entity:ENT-ORG-META",
+      "target_entity_id": "entity:ENT-CAP-DEMAND-CAPITAL",
+      "relationship_type": "invests_in"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0010",
+      "source_entity_id": "entity:ENT-ORG-META",
+      "target_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0011",
+      "source_entity_id": "entity:ENT-ORG-META",
+      "target_entity_id": "entity:ENT-CAP-POWER-COOLING",
+      "relationship_type": "inferred_exposure_to"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0012",
+      "source_entity_id": "entity:ENT-ORG-AMAZON",
+      "target_entity_id": "entity:ENT-CAP-DEMAND-CAPITAL",
+      "relationship_type": "invests_in"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0013",
+      "source_entity_id": "entity:ENT-ORG-AMAZON",
+      "target_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0014",
+      "source_entity_id": "entity:ENT-ORG-AMAZON",
+      "target_entity_id": "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "relationship_type": "develops_or_operates"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0015",
+      "source_entity_id": "entity:ENT-ORG-AMAZON",
+      "target_entity_id": "entity:ENT-ORG-OPENAI",
+      "relationship_type": "leases_or_provides_capacity_to"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0016",
+      "source_entity_id": "entity:ENT-ORG-AMAZON",
+      "target_entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "relationship_type": "leases_or_provides_capacity_to"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0017",
+      "source_entity_id": "entity:ENT-ORG-AMAZON",
+      "target_entity_id": "entity:ENT-ORG-CORNING",
+      "relationship_type": "buys_from"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0018",
+      "source_entity_id": "entity:ENT-ORG-CORNING",
+      "target_entity_id": "entity:ENT-CAP-OPTICAL-CONNECTIVITY",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0019",
+      "source_entity_id": "entity:ENT-ORG-OPENAI",
+      "target_entity_id": "entity:ENT-PROJ-STARGATE",
+      "relationship_type": "develops_or_operates"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0020",
+      "source_entity_id": "entity:ENT-ORG-OPENAI",
+      "target_entity_id": "entity:ENT-ORG-ORACLE",
+      "relationship_type": "partners_with"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0021",
+      "source_entity_id": "entity:ENT-ORG-OPENAI",
+      "target_entity_id": "entity:ENT-ORG-SOFTBANK",
+      "relationship_type": "partners_with"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0022",
+      "source_entity_id": "entity:ENT-PROJ-STARGATE",
+      "target_entity_id": "entity:ENT-PROJ-STARGATE-I",
+      "relationship_type": "develops_or_operates"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0023",
+      "source_entity_id": "entity:ENT-ORG-ORACLE",
+      "target_entity_id": "entity:ENT-PROJ-STARGATE-I",
+      "relationship_type": "supplies"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0024",
+      "source_entity_id": "entity:ENT-PROJ-STARGATE-I",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0025",
+      "source_entity_id": "entity:ENT-PROJ-STARGATE-I",
+      "target_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0026",
+      "source_entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "target_entity_id": "entity:ENT-ORG-GOOGLE-CLOUD",
+      "relationship_type": "partners_with"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0027",
+      "source_entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "target_entity_id": "entity:ENT-ORG-BROADCOM",
+      "relationship_type": "partners_with"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0028",
+      "source_entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "target_entity_id": "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0029",
+      "source_entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "target_entity_id": "entity:ENT-ORG-AMAZON",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0030",
+      "source_entity_id": "entity:ENT-ORG-ANTHROPIC",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0031",
+      "source_entity_id": "entity:ENT-ORG-NVIDIA",
+      "target_entity_id": "entity:ENT-CAP-COMPUTE-INTERCONNECT",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0032",
+      "source_entity_id": "entity:ENT-ORG-TSMC",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "manufactures_for"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0033",
+      "source_entity_id": "entity:ENT-ORG-SAMSUNG",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "manufactures_for"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0034",
+      "source_entity_id": "entity:ENT-ORG-SKHYNIX",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "supplies"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0035",
+      "source_entity_id": "entity:ENT-ORG-MICRON",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "supplies"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0036",
+      "source_entity_id": "entity:ENT-ORG-NVIDIA",
+      "target_entity_id": "entity:ENT-CAP-ADVANCED-PACKAGING",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0037",
+      "source_entity_id": "entity:ENT-ORG-TSMC",
+      "target_entity_id": "entity:ENT-CAP-COWOS",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0038",
+      "source_entity_id": "entity:ENT-CAP-COWOS",
+      "target_entity_id": "entity:ENT-CAP-HBM",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0039",
+      "source_entity_id": "entity:ENT-ORG-SKHYNIX",
+      "target_entity_id": "entity:ENT-CAP-MEMORY-STORAGE",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0040",
+      "source_entity_id": "entity:ENT-ORG-SKHYNIX",
+      "target_entity_id": "entity:ENT-CAP-MEMORY-STORAGE",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0041",
+      "source_entity_id": "entity:ENT-ORG-ASML",
+      "target_entity_id": "entity:ENT-CAP-MANUFACTURING",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0042",
+      "source_entity_id": "entity:ENT-ORG-SCHNEIDER",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "co_designs"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0043",
+      "source_entity_id": "entity:ENT-ORG-SCHNEIDER",
+      "target_entity_id": "entity:ENT-CAP-POWER-COOLING",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0044",
+      "source_entity_id": "entity:ENT-STD-OCP-ODCAI",
+      "target_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "relationship_type": "enables_capability"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0045",
+      "source_entity_id": "entity:ENT-CAP-DATACENTER-CAPACITY",
+      "target_entity_id": "entity:ENT-CAP-POWER-COOLING",
+      "relationship_type": "depends_on"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0046",
+      "source_entity_id": "entity:ENT-ORG-HONHAI",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "contract_manufactures_for"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0047",
+      "source_entity_id": "entity:ENT-ORG-WISTRON",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "contract_manufactures_for"
+    },
+    {
+      "relationship_id": "relationship:REL-AIP-0048",
+      "source_entity_id": "entity:ENT-ORG-FABRINET",
+      "target_entity_id": "entity:ENT-ORG-NVIDIA",
+      "relationship_type": "contract_manufactures_for"
+    }
+  ],
+  "assertions": [
+    {
+      "assertion_id": "assertion:AST-AIP-0001",
+      "relationship_id": "relationship:REL-AIP-0001",
+      "text": "Alphabet guided 2026 capital expenditures of $175 billion to $185 billion and characterized the investment as expanding AI compute capacity.",
+      "assertion_kind": "company_guidance",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-01-01",
+      "effective_to": "2026-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-02-04",
+      "reporting_period_start": "2026-01-01",
+      "reporting_period_end": "2026-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor capital formation"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named amount and period"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named amount and period; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Guidance is not actual spend, supplier revenue, or installed capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0001"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0002",
+      "relationship_id": "relationship:REL-AIP-0002",
+      "text": "Alphabet said approximately 60% of its 2025 technical-infrastructure investment was in machines and servers.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "unknown",
+      "effective_from": "2025-01-01",
+      "effective_to": "2025-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-02-04",
+      "reporting_period_start": "2025-01-01",
+      "reporting_period_end": "2025-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor compute input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "category share"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "recent period"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=category share; corr=single primary; time=recent period; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This is a realized investment mix, but the source does not establish an operating lifecycle; “machines and servers” is not disaggregated into chips, vendors, or units.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0002"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0003",
+      "relationship_id": "relationship:REL-AIP-0003",
+      "text": "Alphabet said approximately 40% of its 2025 technical-infrastructure investment was in data centers and networking equipment.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "unknown",
+      "effective_from": "2025-01-01",
+      "effective_to": "2025-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-02-04",
+      "reporting_period_start": "2025-01-01",
+      "reporting_period_end": "2025-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor facility and network input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "category share"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "recent period"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=category share; corr=single primary; time=recent period; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This is a realized investment mix, but the source does not establish an operating lifecycle; it combines data centers and networking and gives no installed capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0003"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0004",
+      "relationship_id": "relationship:REL-AIP-0004",
+      "text": "Alphabet said its infrastructure uses GPUs from NVIDIA as a partner, alongside Alphabet's own TPUs.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-04",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-04",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand anchor to accelerator partner"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named partner and product class"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named partner and product class; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No procurement amount, GPU model, supplier share, or exclusive relationship is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0004"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0005",
+      "relationship_id": "relationship:REL-AIP-0005",
+      "text": "Microsoft guided calendar-year 2026 capital expenditures to approximately $190 billion.",
+      "assertion_kind": "company_guidance",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-01-01",
+      "effective_to": "2026-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": "2026-01-01",
+      "reporting_period_end": "2026-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor capital formation"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named amount and calendar period"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named amount and calendar period; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Guidance is not actual spend, supplier revenue, or installed capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0005"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0006",
+      "relationship_id": "relationship:REL-AIP-0006",
+      "text": "Microsoft said its Fairwater AI data center in Wisconsin came online earlier in April 2026.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-04",
+      "effective_to": null,
+      "time_precision": "month",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us-wisconsin",
+          "site operator"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named site and operating milestone"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current with month precision"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named site and operating milestone; corr=single primary; time=current with month precision; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The exact day in April is undisclosed; “came online” does not establish full-campus completion, utilization, or capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0006"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0007",
+      "relationship_id": "relationship:REL-AIP-0007",
+      "text": "Fairwater is an online Microsoft AI data-center site and therefore contributes disclosed operating data-center capacity at the site level.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-04",
+      "effective_to": null,
+      "time_precision": "month",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us-wisconsin",
+          "facility-capacity enablement"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "site online"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current with month precision"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=site online; corr=single primary; time=current with month precision; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The exact day in April is undisclosed; the source does not quantify power, GPU count, usable capacity, utilization, or campus completion.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0007"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0008",
+      "relationship_id": "relationship:REL-AIP-0008",
+      "text": "Microsoft said roughly two-thirds of Q3 fiscal-2026 capital expenditures were for short-lived assets, primarily GPUs and CPUs.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "unknown",
+      "effective_from": "2026-01-01",
+      "effective_to": "2026-03-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": "2026-01-01",
+      "reporting_period_end": "2026-03-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor compute input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "asset classes and period"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=asset classes and period; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This is a realized CapEx mix, not an operating-capacity statement; no vendor, unit count, or storage allocation is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0008"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0009",
+      "relationship_id": "relationship:REL-AIP-0009",
+      "text": "Meta guided 2026 capital expenditures to $125 billion to $145 billion.",
+      "assertion_kind": "company_guidance",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-01-01",
+      "effective_to": "2026-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": "2026-01-01",
+      "reporting_period_end": "2026-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor capital formation"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named range and period"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named range and period; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Guidance is not actual spend, supplier revenue, or installed capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0009"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0010",
+      "relationship_id": "relationship:REL-AIP-0010",
+      "text": "Meta said its 2026 CapEx outlook reflects additional data-center costs supporting future capacity.",
+      "assertion_kind": "company_guidance",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-01-01",
+      "effective_to": "2026-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": "2026-01-01",
+      "reporting_period_end": "2026-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor facility input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "facility category and future-capacity role"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=facility category and future-capacity role; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No site, supplier, megawatt capacity, or operating date is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0010"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0011",
+      "relationship_id": "relationship:REL-AIP-0011",
+      "text": "Curator inference: Meta's disclosed additional data-center costs supporting future capacity create exposure to data-center power and cooling requirements because the OCP program scope identifies advanced power and cooling as facility design requirements and power as a primary AI-infrastructure bottleneck.",
+      "assertion_kind": "inferred_exposure",
+      "lifecycle_state": "unknown",
+      "effective_from": "2026-04-29",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-07-24",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "inferred physical-infrastructure exposure"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer plus T3 official-program premises"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "two non-bilateral premises"
+        ],
+        [
+          "explicit",
+          "derived"
+        ],
+        [
+          "extraction",
+          "manual derivation unreviewed"
+        ],
+        [
+          "geo",
+          "global only"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer plus T3 official-program premises; explicit=derived; corr=two non-bilateral premises; time=current; geo=global only; extraction=manual derivation unreviewed; conflict=none",
+      "confidence_label": "inference",
+      "limitations": "No Meta site, supplier, contract, design adoption, energy source, cost allocation, or capacity quantity is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0011"
+      ],
+      "premise_assertion_ids": [
+        "assertion:AST-AIP-0010",
+        "assertion:AST-AIP-0045"
+      ],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0012",
+      "relationship_id": "relationship:REL-AIP-0012",
+      "text": "Amazon reported $128.3 billion of 2025 cash capital expenditures and said technology-infrastructure investment was the majority, primarily supporting AWS business growth.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "unknown",
+      "effective_from": "2025-01-01",
+      "effective_to": "2025-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-02-06",
+      "reporting_period_start": "2025-01-01",
+      "reporting_period_end": "2025-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand-anchor capital formation"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "amount, period, and primary business purpose"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "recent period"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=amount, period, and primary business purpose; corr=single primary; time=recent period; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This is realized capital expenditure, but the investment relationship has no evidenced asset lifecycle; “majority” is not a precise AWS allocation, supplier revenue, or capacity figure.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0012"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0013",
+      "relationship_id": "relationship:REL-AIP-0013",
+      "text": "Amazon said its technology-infrastructure cost base includes servers, networking equipment, and data-center depreciation, rent, utilities, and support costs used across AWS and other Amazon businesses.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2025-01-01",
+      "effective_to": "2025-12-31",
+      "time_precision": "reporting_period",
+      "observed_at": "2026-02-06",
+      "reporting_period_start": "2025-01-01",
+      "reporting_period_end": "2025-12-31",
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "cloud and facility infrastructure input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "cost categories and shared infrastructure role"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "recent period"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=cost categories and shared infrastructure role; corr=single primary; time=recent period; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This is a disclosed infrastructure-cost dependency, not direct evidence that Amazon develops a specific facility; the filing does not isolate AWS-only capacity, facility count, or utilization.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0013"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0014",
+      "relationship_id": "relationship:REL-AIP-0014",
+      "text": "Amazon said its custom-silicon business includes Graviton, Trainium, and Nitro and continues to expand compute options.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-04-29",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "custom-compute operator and supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named chip families and capability"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named chip families and capability; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The manifest does not carry the release's revenue-run-rate claim into downstream supplier attribution.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0014"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0015",
+      "relationship_id": "relationship:REL-AIP-0015",
+      "text": "Amazon said it secured a commitment from OpenAI to consume approximately 2 GW of Trainium capacity through AWS infrastructure, beginning to ramp in 2027.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "committed",
+      "effective_from": null,
+      "effective_to": null,
+      "time_precision": "unknown",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "cloud-capacity provider to demand anchor"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named counterpart, approximate capacity, platform, and start year"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "unknown"
+        ],
+        [
+          "time",
+          "forward with year precision"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named counterpart, approximate capacity, platform, and start year; corr=single primary; time=forward with year precision; geo=unknown; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This is a future commitment; the exact 2027 start date and geography are undisclosed, and the statement is not operating capacity, recognized revenue, or a complete contract schedule.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0015"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0016",
+      "relationship_id": "relationship:REL-AIP-0016",
+      "text": "Amazon said Anthropic will secure up to 5 GW of current and future Trainium generations to train and run Anthropic models.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-04-29",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-29",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "cloud-capacity provider to demand anchor"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer IR"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named counterpart, upper-bound capacity, and platform"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "unknown"
+        ],
+        [
+          "time",
+          "current/forward"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer IR; explicit=named counterpart, upper-bound capacity, and platform; corr=single primary; time=current/forward; geo=unknown; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Geography is undisclosed; “up to” is a ceiling, not operating capacity, utilization, recognized revenue, or a delivery schedule.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0016"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0017",
+      "relationship_id": "relationship:REL-AIP-0017",
+      "text": "Corning announced a multi-year agreement to supply Amazon with optical fiber, cable, and connectivity products for Amazon's U.S. data-center network.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-06-08",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-06-08",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "buyer to optical supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 supplier announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named parties and product scope"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current/forward"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 supplier announcement; explicit=named parties and product scope; corr=single primary; time=current/forward; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "One-party announcement; commercial value, product volumes, delivery schedule, and Amazon confirmation are not modeled.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0017"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0018",
+      "relationship_id": "relationship:REL-AIP-0018",
+      "text": "Corning said the agreement covers optical fiber, cable, and connectivity products for data-center network links.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-06-08",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-06-08",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "optical supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 supplier announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "product classes and use"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current/forward"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 supplier announcement; explicit=product classes and use; corr=single primary; time=current/forward; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No transceiver standard, bandwidth, quantity, or delivery timing is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0018"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0019",
+      "relationship_id": "relationship:REL-AIP-0019",
+      "text": "OpenAI described Stargate as its overarching AI-infrastructure platform and announced five new U.S. data-center sites with Oracle and SoftBank site-development roles.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "under_development",
+      "effective_from": "2025-09-23",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-09-23",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "platform operator and demand anchor"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named platform, parties, and development roles"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named platform, parties, and development roles; corr=single primary; time=current; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The live page was updated on 2025-10-22; platform-level development does not mean every site is operating or fully funded.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0019"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0020",
+      "relationship_id": "relationship:REL-AIP-0020",
+      "text": "OpenAI announced an agreement with Oracle to develop an additional 4.5 GW of Stargate data-center capacity in the United States.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "committed",
+      "effective_from": "2025-07-22",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-07-22",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "demand anchor to cloud/site partner"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named parties, capacity, project, and geography"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current/forward"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named parties, capacity, project, and geography; corr=single primary; time=current/forward; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The agreement is not evidence that all 4.5 GW is operating, nor does it establish economics or site allocation.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0020"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0021",
+      "relationship_id": "relationship:REL-AIP-0021",
+      "text": "OpenAI said it and SoftBank are developing multiple Stargate data-center sites under their partnership.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "under_development",
+      "effective_from": "2025-09-23",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-09-23",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "demand anchor to financing/site-development partner"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named parties and role"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named parties and role; corr=single primary; time=current; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No ownership percentage, project-level capital allocation, or operating date is asserted.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0021"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0022",
+      "relationship_id": "relationship:REL-AIP-0022",
+      "text": "OpenAI identified its Abilene, Texas, site as Stargate I, situated it within Stargate, and said parts of the facility were up and running.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2025-07-22",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-07-22",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us-texas",
+          "platform-to-site hierarchy"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named platform, site, and partial operating status"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named platform, site, and partial operating status; corr=single primary; time=current; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Only parts of the facility were reported running; full build completion and utilization are not established.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0022"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0023",
+      "relationship_id": "relationship:REL-AIP-0023",
+      "text": "OpenAI said Oracle had begun delivering the first NVIDIA GB200 racks at Stargate I.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "unknown",
+      "effective_from": "2025-07-22",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-07-22",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us-texas",
+          "rack-delivery supplier to site"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named company, site, and delivery milestone"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named company, site, and delivery milestone; corr=single primary; time=current; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "OpenAI is the announcing party; this row is limited to the disclosed rack-delivery milestone and does not establish that Oracle develops or operates the site, that the site runs on OCI, or any rack count, utilization, ownership, or full-site completion.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0023"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0024",
+      "relationship_id": "relationship:REL-AIP-0024",
+      "text": "OpenAI said the first NVIDIA GB200 racks had begun arriving at Stargate I.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2025-07-22",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-07-22",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us-texas",
+          "site to compute-platform supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named site, vendor, and product family"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named site, vendor, and product family; corr=single primary; time=current; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Delivery does not establish rack count, purchase terms, capacity, utilization, or NVIDIA revenue attribution.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0024"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0025",
+      "relationship_id": "relationship:REL-AIP-0025",
+      "text": "OpenAI said parts of Stargate I were running and early training and inference workloads were underway.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2025-07-22",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2025-07-22",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us-texas",
+          "operating facility capacity"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "partial operating status and workload type"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=partial operating status and workload type; corr=single primary; time=current; geo=specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Partial operation and early workloads do not establish full-site completion, capacity, utilization, or production service levels.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0025"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0026",
+      "relationship_id": "relationship:REL-AIP-0026",
+      "text": "Anthropic announced a signed agreement with Google and Broadcom for next-generation TPU compute capacity expected to begin coming online in 2027, and described the work as deepening its existing relationship with Google Cloud.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-04-06",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-06",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "demand anchor to TPU/cloud partner"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named parties, Google Cloud context, technology, and expected start"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "mostly specific"
+        ],
+        [
+          "time",
+          "forward"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named parties, Google Cloud context, technology, and expected start; corr=single primary; time=forward; geo=mostly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Counterparty identity is preserved as Google / Google Cloud and is not normalized to Alphabet; commercial terms, exact capacity allocation, and operating status are undisclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0026"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0027",
+      "relationship_id": "relationship:REL-AIP-0027",
+      "text": "Anthropic announced Broadcom as a partner in the signed agreement for next-generation TPU compute capacity expected to begin coming online in 2027.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "committed",
+      "effective_from": "2026-04-06",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-06",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "demand anchor to custom-compute technology partner"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named party, technology, and expected start"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "mostly specific"
+        ],
+        [
+          "time",
+          "forward"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named party, technology, and expected start; corr=single primary; time=forward; geo=mostly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Partnership does not establish Broadcom's manufacturing role, chip volumes, revenue, or capacity share.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0027"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0028",
+      "relationship_id": "relationship:REL-AIP-0028",
+      "text": "Anthropic said the Google/Broadcom agreement will provide multiple gigawatts of next-generation TPU compute capacity, expected to start becoming available in 2027.",
+      "assertion_kind": "company_guidance",
+      "lifecycle_state": "committed",
+      "effective_from": null,
+      "effective_to": null,
+      "time_precision": "unknown",
+      "observed_at": "2026-04-06",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:us",
+          "demand-anchor compute input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "technology, scale class, and expected start year"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "mostly specific"
+        ],
+        [
+          "time",
+          "forward with year precision"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=technology, scale class, and expected start year; corr=single primary; time=forward with year precision; geo=mostly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The exact 2027 start date is undisclosed; “multiple gigawatts” is not a precise value, operating capacity, delivered chips, or utilization.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0028"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0029",
+      "relationship_id": "relationship:REL-AIP-0029",
+      "text": "Anthropic described Amazon as its primary cloud and training partner and said Claude runs on Amazon Trainium.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-04-06",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-06",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand anchor to primary cloud/training partner"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named partner and hardware family"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named partner and hardware family; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "“Primary” is Anthropic's characterization; no share, spend, model allocation, or capacity quantity is disclosed in this assertion.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0029"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0030",
+      "relationship_id": "relationship:REL-AIP-0030",
+      "text": "Anthropic said Claude runs on NVIDIA GPUs as part of its diversified hardware approach.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-04-06",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-06",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "demand anchor to accelerator supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named vendor and hardware class"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named vendor and hardware class; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No GPU generation, quantity, cloud route, spend, or workload share is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0030"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0031",
+      "relationship_id": "relationship:REL-AIP-0031",
+      "text": "NVIDIA describes its data-center-scale offerings as co-designed chips, networking, systems, software, and algorithms, with GPUs interconnected for AI training and inference.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "accelerated-compute and networking supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "issuer capability description"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=issuer capability description; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This capability claim does not identify a customer, unit volume, revenue allocation, or comparative performance.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0031"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0032",
+      "relationship_id": "relationship:REL-AIP-0032",
+      "text": "NVIDIA disclosed that it uses TSMC as a foundry to produce NVIDIA semiconductor wafers.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:asia",
+          "foundry to fabless chip company"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named foundry and activity"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named foundry and activity; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No process node, product, wafer volume, revenue, capacity allocation, or supplier share is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0032"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0033",
+      "relationship_id": "relationship:REL-AIP-0033",
+      "text": "NVIDIA disclosed that it uses Samsung as a foundry to produce NVIDIA semiconductor wafers.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:asia",
+          "foundry to fabless chip company"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named foundry and activity"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named foundry and activity; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No process node, product, wafer volume, revenue, capacity allocation, or supplier share is disclosed.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0033"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0034",
+      "relationship_id": "relationship:REL-AIP-0034",
+      "text": "NVIDIA disclosed that it purchases memory from SK hynix.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "memory supplier to compute-platform company"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named supplier and component class"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named supplier and component class; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The disclosure does not specify HBM, generation, quantity, price, revenue, customer product, or supplier share.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0034"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0035",
+      "relationship_id": "relationship:REL-AIP-0035",
+      "text": "NVIDIA disclosed that it purchases memory from Micron.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "memory supplier to compute-platform company"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named supplier and component class"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named supplier and component class; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The disclosure does not specify HBM, generation, quantity, price, revenue, customer product, or supplier share.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0035"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0036",
+      "relationship_id": "relationship:REL-AIP-0036",
+      "text": "NVIDIA disclosed that it uses CoWoS technology for semiconductor packaging.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:asia",
+          "packaging input"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named packaging technology"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named packaging technology; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "NVIDIA does not name the CoWoS provider in this sentence or disclose product, volume, revenue, or capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0036"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0037",
+      "relationship_id": "relationship:REL-AIP-0037",
+      "text": "TSMC describes CoWoS as integrating multiple system-on-chip chips with HBM stacks; it says CoWoS-S had been in volume production for several years, CoWoS-R entered its third year of volume production in 2025, and CoWoS-L entered its second year of volume production in 2025.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "mass_production",
+      "effective_from": "2025-01-01",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-17",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:taiwan",
+          "CoWoS developer and producer"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer annual report"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named variants, function, and variant lifecycles"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "recent period"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer annual report; explicit=named variants, function, and variant lifecycles; corr=single primary; time=recent period; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Lifecycle is variant-specific and does not imply every CoWoS configuration has the same status; the annual report names no customer or customer-level capacity.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0037"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0038",
+      "relationship_id": "relationship:REL-AIP-0038",
+      "text": "TSMC describes its CoWoS advanced-packaging service as integrating multiple system-on-chip chips with HBM stacks, making HBM an input to that specific CoWoS configuration.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "operating",
+      "effective_from": "2025-01-01",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-04-17",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "CoWoS-specific capability dependency"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer annual report"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "CoWoS/HBM composition"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "recent period"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer annual report; explicit=CoWoS/HBM composition; corr=single primary; time=recent period; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "This edge is CoWoS-specific and HBM-specific; it does not apply to all advanced packaging, non-HBM memory, or storage and names no memory supplier.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0038"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0039",
+      "relationship_id": "relationship:REL-AIP-0039",
+      "text": "SK hynix said large-scale production of HBM4 was underway at the time of its FY2025 results announcement.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "mass_production",
+      "effective_from": "2026-01-28",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-01-28",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:south-korea",
+          "HBM producer"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer newsroom"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named product generation and lifecycle"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer newsroom; explicit=named product generation and lifecycle; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "No customer, shipment volume, qualified system, revenue, or capacity allocation is disclosed in this assertion.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0039"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0040",
+      "relationship_id": "relationship:REL-AIP-0040",
+      "text": "The title of SK hynix's official media entry states that SK hynix shipped samples of 12-layer HBM4E.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "sampling",
+      "effective_from": "2026-06-18",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-06-18",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:south-korea",
+          "HBM sample supplier"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer newsroom"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "title-level product and sample-shipment claim"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer newsroom; explicit=title-level product and sample-shipment claim; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Evidence is title-level only because the listed page has no text description; no customer identity, qualification, volume, revenue, design win, or mass-production status is supported.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0040"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0041",
+      "relationship_id": "relationship:REL-AIP-0041",
+      "text": "ASML reports R&D on EUV and EXE lithography for future Logic and DRAM nodes, next-generation lithography, packaging equipment including XT:260, and inspection/metrology.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "under_development",
+      "effective_from": "2025-01-01",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "semiconductor equipment and process enablement"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 issuer annual report"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "technology portfolio and development scope"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "recent/current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 issuer annual report; explicit=technology portfolio and development scope; corr=single primary; time=recent/current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The source does not name a hyperscaler, foundry customer, shipment allocation, or AI-attributable equipment revenue for these R&D items.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0041"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0042",
+      "relationship_id": "relationship:REL-AIP-0042",
+      "text": "Schneider Electric announced that it co-developed with NVIDIA a validated reference design for power and cooling infrastructure supporting NVIDIA Vera Rubin-based AI factories.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "qualification",
+      "effective_from": "2026-03-16",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-03-16",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "physical-infrastructure co-designer to compute-platform company"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named parties, co-development, and design scope"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=named parties, co-development, and design scope; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Schneider is the announcing party; co-design is not a disclosed purchase, deployment, customer contract, or equipment volume.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0042"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0043",
+      "relationship_id": "relationship:REL-AIP-0043",
+      "text": "Schneider Electric said the co-developed reference design covers power distribution and cooling infrastructure for Vera Rubin-based AI factories.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "qualification",
+      "effective_from": "2026-03-16",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-03-16",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "power/cooling design provider"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T2 company announcement"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "power and cooling scope"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T2 company announcement; explicit=power and cooling scope; corr=single primary; time=current; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The listed page does not specify liquid cooling; a validated reference design is not evidence of deployment, purchase, site adoption, operating performance, or equipment volume.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0043"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0044",
+      "relationship_id": "relationship:REL-AIP-0044",
+      "text": "OCP's Open Data Centers for AI program scope includes open reference designs, open and standard SLAs, telemetry and management solutions, power estimation methodologies, and advanced power and cooling for AI data centers.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "unknown",
+      "effective_from": null,
+      "effective_to": null,
+      "time_precision": "unknown",
+      "observed_at": "2026-07-24",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "open facility-design and operations program"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T3 official program"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "scope bullets"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current-page state"
+        ]
+      ],
+      "confidence_rationale": "auth=T3 official program; explicit=scope bullets; corr=single primary; time=current-page state; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Page is undated; program scope does not establish adoption, deployment, certification, or support by any named demand anchor.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0044"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0045",
+      "relationship_id": "relationship:REL-AIP-0045",
+      "text": "OCP's program scope treats advanced power and cooling as data-center reference-design requirements and identifies power availability as a primary AI-infrastructure bottleneck.",
+      "assertion_kind": "management_claim",
+      "lifecycle_state": "unknown",
+      "effective_from": null,
+      "effective_to": null,
+      "time_precision": "unknown",
+      "observed_at": "2026-07-24",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:global",
+          "facility-capability dependency"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T3 official program"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "scope and bottleneck statements"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "global"
+        ],
+        [
+          "time",
+          "current-page state"
+        ]
+      ],
+      "confidence_rationale": "auth=T3 official program; explicit=scope and bottleneck statements; corr=single primary; time=current-page state; geo=global; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "Page is undated and generic; it does not quantify a site, technology, supplier, energy source, or operating requirement for a named company.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0045"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0046",
+      "relationship_id": "relationship:REL-AIP-0046",
+      "text": "NVIDIA identified Hon Hai as one of the independent subcontractors and contract manufacturers it engages; the named group collectively performs assembly, testing, and packaging of NVIDIA's final products.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:asia",
+          "named member of contract-manufacturing group"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named contractor within stated activity group"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named contractor within stated activity group; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The group disclosure does not establish which listed contractor performs which task, nor any product, volume, revenue, capacity, or supplier share.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0046"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0047",
+      "relationship_id": "relationship:REL-AIP-0047",
+      "text": "NVIDIA identified Wistron as one of the independent subcontractors and contract manufacturers it engages; the named group collectively performs assembly, testing, and packaging of NVIDIA's final products.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:asia",
+          "named member of contract-manufacturing group"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named contractor within stated activity group"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named contractor within stated activity group; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The group disclosure does not establish which listed contractor performs which task, nor any product, volume, revenue, capacity, or supplier share.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0047"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    },
+    {
+      "assertion_id": "assertion:AST-AIP-0048",
+      "relationship_id": "relationship:REL-AIP-0048",
+      "text": "NVIDIA identified Fabrinet as one of the independent subcontractors and contract manufacturers it engages; the named group collectively performs assembly, testing, and packaging of NVIDIA's final products.",
+      "assertion_kind": "disclosed_fact",
+      "lifecycle_state": "operating",
+      "effective_from": "2026-02-25",
+      "effective_to": null,
+      "time_precision": "day",
+      "observed_at": "2026-02-25",
+      "reporting_period_start": null,
+      "reporting_period_end": null,
+      "reviewed_at": "2026-07-24",
+      "freshness_state": "current",
+      "geography_roles": [
+        [
+          "geography:asia",
+          "named member of contract-manufacturing group"
+        ]
+      ],
+      "confidence_inputs": [
+        [
+          "auth",
+          "T1 regulator filing"
+        ],
+        [
+          "conflict",
+          "none"
+        ],
+        [
+          "corr",
+          "single primary"
+        ],
+        [
+          "explicit",
+          "named contractor within stated activity group"
+        ],
+        [
+          "extraction",
+          "manual unreviewed"
+        ],
+        [
+          "geo",
+          "partly specific"
+        ],
+        [
+          "time",
+          "current"
+        ]
+      ],
+      "confidence_rationale": "auth=T1 regulator filing; explicit=named contractor within stated activity group; corr=single primary; time=current; geo=partly specific; extraction=manual unreviewed; conflict=none",
+      "confidence_label": "medium",
+      "limitations": "The group disclosure does not establish which listed contractor performs which task, nor any product, volume, revenue, capacity, or supplier share.",
+      "evidence_ids": [
+        "evidence:EVD-AIP-0048"
+      ],
+      "premise_assertion_ids": [],
+      "review_state": "reviewed_for_implementation",
+      "supersedes_assertion_id": null
+    }
+  ]
+}
