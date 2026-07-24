@@ -387,6 +387,8 @@ _PUBLIC_STOCK_IDS_BY_LINK_KIND = {
         "entity:ENT-ORG-NVIDIA": frozenset({"US.NVDA"}),
         "entity:ENT-ORG-FABRINET": frozenset({"US.FN"}),
         "entity:ENT-ORG-TSMC": frozenset({"US.TSM"}),
+        "entity:ENT-ORG-SAMSUNG": frozenset({"KR.005930"}),
+        "entity:ENT-ORG-SKHYNIX": frozenset({"KR.000660"}),
         "entity:ENT-ORG-MICRON": frozenset({"US.MU"}),
         "entity:ENT-ORG-ASML": frozenset({"US.ASML"}),
         "entity:ENT-ORG-BROADCOM": frozenset({"US.AVGO"}),
@@ -411,7 +413,7 @@ _PUBLIC_STOCK_IDS_BY_LINK_KIND = {
     },
 }
 _PUBLIC_STOCK_MARKETS_BY_LINK_KIND = {
-    "research": frozenset({"US", "HK"}),
+    "research": frozenset({"US", "HK", "KR"}),
     "valuation": frozenset({"US", "HK", "KR"}),
 }
 _T = TypeVar("_T")

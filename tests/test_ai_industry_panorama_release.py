@@ -773,25 +773,34 @@ class PanoramaReleaseTests(unittest.TestCase):
                 ):
                     validate_release(payload)
 
-    def test_research_links_use_research_specific_market_boundary(self) -> None:
-        payload = canonical_payload()
-        sk_hynix = next(
-            item
-            for item in payload["entities"]
-            if item["entity_id"] == "entity:ENT-ORG-SKHYNIX"
+    def test_research_links_admit_reviewed_korean_public_ids(self) -> None:
+        reviewed_links = (
+            ("entity:ENT-ORG-SKHYNIX", "KR.000660"),
+            ("entity:ENT-ORG-SAMSUNG", "KR.005930"),
         )
-        sk_hynix["research_links"] = [
-            {
-                "kind": "research",
-                "label": "SK hynix research workspace",
-                "canonical_stock_id": "KR.000660",
-                "internal_path": "/command",
-                "command_hint": "Open the workspace and formulate a stock question.",
-            }
-        ]
+        for entity_id, stock_id in reviewed_links:
+            with self.subTest(stock_id=stock_id):
+                payload = canonical_payload()
+                entity = next(
+                    item
+                    for item in payload["entities"]
+                    if item["entity_id"] == entity_id
+                )
+                entity["research_links"] = [
+                    {
+                        "kind": "research",
+                        "label": f"{entity['label']} research workspace",
+                        "canonical_stock_id": stock_id,
+                        "internal_path": "/command",
+                        "command_hint": "Open the workspace and formulate a stock question.",
+                    }
+                ]
 
-        with self.assertRaisesRegex(PanoramaReleaseError, "research link"):
-            validate_release(payload)
+                try:
+                    release = validate_release(payload)
+                except PanoramaReleaseError as error:
+                    self.fail(f"reviewed Korean research link was rejected: {error}")
+                self.assertEqual("published", release.review_state)
 
     def test_domain_has_no_forbidden_imports_or_calls(self) -> None:
         forbidden = {
