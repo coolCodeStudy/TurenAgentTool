@@ -218,6 +218,19 @@ The current Ops API already has an in-process mutex and file lock for `/ops/depl
 
 ## Deploy Decision Gate
 
+## Standing Owner Delivery Authority
+
+When an Owner has explicitly directed a Feature Coordinator to autonomously close a feature (for example, "do not ask routine questions" or "carry this through deployment and acceptance"), the coordinator must treat normal, project-approved delivery mechanics as already authorized for that feature flow. This includes pushing a verified non-force branch through the repository's approved credential mechanism and triggering the documented serialized deployment path.
+
+The coordinator must not interrupt the Owner for a second confirmation for each routine push, merge, or standard deploy. It must still escalate before acting when any of the following is true:
+
+- a new secret type, storage location, external recipient, or credential scope is required;
+- the approved credential mechanism fails, is ambiguous, or would expose a secret value;
+- a force-push, history rewrite, destructive data operation, permission change, or non-standard production access is proposed;
+- a live cross-feature release conflict or an explicit Owner pause exists.
+
+This authority never permits printing, committing, logging, or transmitting a credential value. The coordinator records only the ref, deploy intent, outcome, and non-secret evidence.
+
 Every coordinator return involving a cloud-served or browser-tested feature must make a concrete deploy decision before the coordinator stops.
 
 Allowed deploy decisions:
