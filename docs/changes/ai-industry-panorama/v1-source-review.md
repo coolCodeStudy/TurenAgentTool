@@ -219,3 +219,57 @@ Additional graph result:
 `correction_required`
 
 Commit `718c2bd` must not be marked `reviewed_for_implementation`. Four relationship rows and two demand-anchor path declarations require the repairs above, followed by another independent re-review. This result does not publish data, authorize implementation transcription, mark user acceptance, or mark feature completion.
+
+## Final narrow re-review
+
+### Final re-review status
+
+- Artifact re-reviewed: `docs/changes/ai-industry-panorama/v1-source-manifest.md` at commit `4069321`
+- Reviewer: `/root/panorama_source_review`
+- Re-review date: `2026-07-24`
+- Scope: `REL-AIP-0023`, `REL-AIP-0046` through `REL-AIP-0048`, the Alphabet and Anthropic two-hop declarations, and deterministic manifest invariants
+- Final re-review verdict: `reviewed_for_implementation`
+- Boundary: this source-review verdict does not publish the manifest or any relationship, authorize deployment, mark user acceptance, or mark feature completion.
+
+### Corrected row verdicts
+
+| Row ID | Verdict | Final finding |
+| --- | --- | --- |
+| REL-AIP-0023 | accepted | `supplies` and lifecycle `unknown` now limit the Oracle-to-Stargate-I edge to the first NVIDIA GB200 rack-delivery milestone stated by `SRC-008`. The assertion and limitation expressly exclude site development, site operation, OCI operation, rack quantity, utilization, ownership, and completion. |
+| REL-AIP-0046 | accepted | `contract_manufactures_for` identifies Hon Hai as a named member of NVIDIA's subcontractor and contract-manufacturer group. The assertion attributes assembly, testing, and packaging only to the group collectively, and the limitation prevents individual task allocation. |
+| REL-AIP-0047 | accepted | `contract_manufactures_for` identifies Wistron as a named member of the same group without assigning an individual assembly, testing, or packaging task. |
+| REL-AIP-0048 | accepted | `contract_manufactures_for` identifies Fabrinet as a named member of the same group without assigning an individual assembly, testing, or packaging task. |
+
+The two direct official URLs used by these rows were reachable at final review. The OpenAI locator displays Oracle's first-rack delivery to Stargate I, and the NVIDIA Form 10-K locator names Hon Hai, Wistron, and Fabrinet as examples of the collectively described subcontractor and contract-manufacturer group.
+
+### Corrected path verdicts
+
+| Demand anchor | Verdict | Final finding |
+| --- | --- | --- |
+| ENT-ORG-ALPHABET | accepted | `REL-AIP-0004` runs Alphabet to NVIDIA and `REL-AIP-0036` runs NVIDIA to the advanced-packaging capability. Both hops follow their stored canonical directions. |
+| ENT-ORG-ANTHROPIC | accepted | `REL-AIP-0030` runs Anthropic to NVIDIA and `REL-AIP-0036` runs NVIDIA to the advanced-packaging capability. Both hops follow their stored canonical directions, and the boundary does not infer an Anthropic allocation to a packaging provider. |
+
+All six demand-anchor paths now contain two forward canonical hops.
+
+### Final deterministic verification
+
+- The other 44 relationship rows are byte-identical between commits `718c2bd` and `4069321`.
+- Counts remain exact: six taxonomy groups, 35 entity/capability records, 25 organizations/projects/programs, 10 capability nodes, six demand anchors, 48 relationships, 48 assertions, 48 evidence records, 16 official sources, and one inference.
+- Relationship, assertion, evidence, and source IDs remain unique, sequential, and complete.
+- All required relationship fields are populated; endpoint, evidence, source, and premise references resolve.
+- All 48 rows remain `curated_pending_review`, and zero rows are marked `published`.
+
+### Final count summary
+
+| Verdict | Count |
+| --- | ---: |
+| accepted | 48 |
+| correction_required | 0 |
+| rejected | 0 |
+| total | 48 |
+
+### Final verdict after narrow re-review
+
+`reviewed_for_implementation`
+
+All 48 relationship/assertion/evidence rows at commit `4069321` have passed independent source review, and all six declared demand-anchor paths follow canonical directions. This verdict authorizes implementation transcription under the technical plan's separate controls; it does not publish the data or mark deployment, user acceptance, or feature completion.
