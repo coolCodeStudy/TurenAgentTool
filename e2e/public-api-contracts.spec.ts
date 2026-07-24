@@ -156,6 +156,11 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
   expect(payload.sources).toHaveLength(16);
 
   const entityIds = new Set(payload.entities.map((entity: { entity_id: string }) => entity.entity_id));
+  const relationshipIds = new Set(
+    payload.relationships.map(
+      (relationship: { relationship_id: string }) => relationship.relationship_id,
+    ),
+  );
   const assertionIds = new Set<string>();
   const relationshipsByAssertion = new Map(
     payload.relationships.map((item: { assertion_id: string }) => [item.assertion_id, item]),
@@ -166,6 +171,11 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
   const sourcesById = new Map(
     payload.sources.map((item: { source_id: string }) => [item.source_id, item]),
   );
+  expect(entityIds.size).toBe(payload.entities.length);
+  expect(relationshipIds.size).toBe(payload.relationships.length);
+  expect(relationshipsByAssertion.size).toBe(payload.relationships.length);
+  expect(evidenceById.size).toBe(payload.evidence.length);
+  expect(sourcesById.size).toBe(payload.sources.length);
   for (const source of payload.sources) {
     for (const field of [
       "source_id",
