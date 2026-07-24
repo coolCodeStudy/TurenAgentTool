@@ -6,29 +6,29 @@
 - Operating model source: `docs/product/Agent-Operating-Model.md`
 - Feature protocol source: `docs/product/Delivery-Coordinator-Protocol.md`
 - Product doc / PRD: `docs/product/PRD-AI-Industry-Panorama.md`
-- Technical plan: `docs/techplans/ai-industry-panorama-v1.md` is independently accepted and `ready`; discovery rationale remains in `docs/techplans/ai-industry-panorama-feasibility.md`.
+- Technical plan: `docs/techplans/ai-industry-panorama-v1.md` is independently accepted and now records a `locally_implemented` candidate; discovery rationale remains in `docs/techplans/ai-industry-panorama-feasibility.md`.
 - Feature Registry row: `AI Industry Panorama`
-- Acceptance Queue row: `AT-2026-07-24-001` is `pending`; user acceptance remains `pending`.
-- Delivery Queue rows: `DQ-2026-07-24-001` through `DQ-2026-07-24-006` are closed through accepted Task 4; Development Task 5 is active as `DQ-2026-07-24-007`.
-- Current authoritative branch/ref: `origin/main@82f742526f81b1a05b22677624cdb8c230dde46e`
-- Related coordinator branch/ref: `codex/ai-industry-panorama-discovery@51072c1` before this Task 4 state reconciliation commit.
-- Current deployed ref or deploy event: None; discovery documents only.
+- Acceptance Queue row: `AT-2026-07-24-001` is `pending`; the local candidate is ready for Coordinator review, while deployment, independent L3 acceptance, and user acceptance remain pending.
+- Delivery Queue rows: `DQ-2026-07-24-001` through `DQ-2026-07-24-006` are closed through accepted Task 4; Development Task 5 has returned for the Coordinator Return Gate as `DQ-2026-07-24-007`.
+- Current authoritative branch/ref: `origin/main@565be76386bf33e8fed53cf30430334a291b97ab`
+- Related coordinator branch/ref: `codex/ai-industry-panorama-discovery`; exact Task 5 candidate SHA is the commit produced from this Development return and must be reconciled by the Coordinator.
+- Current deployed ref or deploy event: None for AI Industry Panorama; the feature remains a local release candidate.
 - User-facing surface: Planned public read-only `/ai-industry-panorama` page, `/api/ai-industry-panorama` API, and `/assets/ai-industry-panorama.js` asset on existing `weekly-review-web`.
 - Quality route: `L3`
 - Route rationale: V1 is a new cloud-served browser product with a versioned evidence graph, external primary-source provenance, inference boundaries, geography/time filters, and a real-surface user journey. It requires independent deployed-surface acceptance.
-- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Pending implementation candidate. Route is `L3`; ref, exact route, deploy event, evidence bundle, and exceptions must be filled before acceptance dispatch.
-- Current state: PRD is `ready`, technical implementation is `in_progress`, Tasks 1-4 are accepted through `51072c1`, and user acceptance is `pending`. Task 4 Spec returned `PASS`, Quality returned `APPROVED`, the Coordinator independently verified 184/184 tests, and the real cumulative candidate targets only `weekly-review-web` with an exact-SHA control-plane update gate. The reviewed release remains unpublished.
-- Known blockers: No credential, paid-source, budget, product, plan, or source-review blocker for V1. Deployment and acceptance gates apply only after a verified implementation candidate exists.
-- Active child threads or role sessions: Product, technical-plan, curator, source-review, and Tasks 1-4 are closed and accepted. Development Task 5 is the next bounded dispatch.
+- Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Route is `L3`; the Task 5 development-return commit is the candidate ref pending Coordinator reconciliation. Local evidence is 156/156 focused Python tests, 2/2 Playwright page/API contracts, and desktop/390px screenshots under `/private/tmp`. Cloud deploy event and independent result remain empty by design. The only local exception is a pre-existing Weekly smoke assertion expecting an API path in HTML after external script extraction; current `origin/main` already contains the correction, so authoritative-main reconciliation is the exact resume action.
+- Current state: PRD is `ready`; all five implementation tasks exist as a locally verified candidate; Tasks 1-4 are Coordinator-accepted through `51072c1`; Task 5 awaits the Return Gate; user acceptance is `pending`. The candidate targets only `weekly-review-web` with an exact-SHA control-plane update gate. The reviewed release is not deployed or independently accepted.
+- Known blockers: No credential, paid-source, budget, product, plan, or source-review blocker for V1. The Coordinator must decide the unrelated Weekly smoke assertion during candidate review; deployment and independent acceptance remain required gates.
+- Active child threads or role sessions: Product, technical-plan, curator, source-review, and Tasks 1-4 are closed and accepted. Development Task 5 has returned to the Feature Coordinator.
 - Watch contract:
-  - Watched item: Development Task 5 L3 contracts, traceability, and release-candidate state commit.
-  - Wake event or cadence: This Feature Coordinator actively waits on the bounded Development agent and applies the Return Gate immediately on return.
-  - Expected return artifact: One Task 5 commit with public page/API L3 tests, final implementation traceability, exact planned deploy intent, reconciled Acceptance/Delivery/Registry/context candidate state, local RED/GREEN evidence, and no deployment.
-  - Coordinator action on wake: Inspect and review the complete candidate; accept and push/deploy or reject and return exact findings.
-- Next owner: Development Agent for Task 5.
-- Next handoff: `accept_and_route` using `DQ-2026-07-24-007`.
-- Deploy needed: Not yet; deployment becomes required after a verified browser release candidate exists.
-- Deploy decision: `not_required` before implementation because no runtime code or cloud surface has changed yet.
+  - Watched item: Coordinator review of the Task 5 commit and complete release candidate.
+  - Wake event or cadence: This Feature Coordinator receives the Development return, inspects it immediately, and selects `accept_and_route` or `reject_and_return`.
+  - Expected return artifact: Exact Task 5 commit, RED/GREEN and screenshot evidence, reconciled local candidate state, and no false deployment evidence.
+  - Coordinator action on wake: Review the exact commit and full candidate; if accepted, push and run the serialized exact-SHA deployment path, otherwise return concrete corrections.
+- Next owner: AI Industry Panorama Feature Coordinator for the Task 5 Return Gate.
+- Next handoff: Inspect `DQ-2026-07-24-007`; then `accept_and_route` to serialized deployment or `reject_and_return`.
+- Deploy needed: Yes after Coordinator acceptance of the exact candidate; affected service is only `weekly-review-web`, with `/ai-industry-panorama` and `/api/ai-industry-panorama` as verification routes.
+- Deploy decision: `dispatch_deploy_owner` to the Feature Coordinator after Return Gate acceptance, because Development must not deploy its own unreviewed return.
 - Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.
 - User decision needed: None during implementation. Explicit final Owner acceptance remains required after independent acceptance passes.
 - Completion gate: Reach `waiting_for_user_acceptance` only after ready PRD and technical plan, verified implementation, deployed cloud surface, passed L3 independent acceptance, reconciled Registry/Acceptance/Delivery state, and role-learning review.

@@ -518,3 +518,174 @@ test.describe("Command Workbench desktop journey", () => {
   });
 
 });
+
+test.describe("AI Industry Panorama public journey", () => {
+  const relationshipIds = async (locator: import("@playwright/test").Locator) =>
+    locator.evaluateAll((items) =>
+      items
+        .map((item) => item.getAttribute("data-relationship-id"))
+        .filter((value): value is string => Boolean(value))
+        .sort(),
+    );
+
+  const expectNoPageOverflow = async (page: import("@playwright/test").Page) => {
+    await expect
+      .poll(() =>
+        page
+          .locator("html")
+          .evaluate((documentElement) => documentElement.scrollWidth <= documentElement.clientWidth),
+      )
+      .toBe(true);
+  };
+
+  test("AI Industry Panorama supports a read-only evidence traversal on desktop and mobile", async ({ page }, testInfo) => {
+    const panoramaRequests: { method: string; pathname: string }[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.includes("ai-industry-panorama")) {
+        panoramaRequests.push({ method: request.method(), pathname: url.pathname });
+      }
+    });
+
+    await page.goto("/ai-industry-panorama", { waitUntil: "commit" });
+    await expect(page.locator("body")).toHaveAttribute("data-experience-ready", "true");
+    await expect(page.getByRole("heading", { name: "AI Industry Panorama", exact: true })).toBeVisible();
+    await expect(page.locator('nav a[href="/ai-industry-panorama"]')).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("#release-id")).toContainText("ai-industry-panorama.");
+    await expect(page.locator("#taxonomy-version")).toContainText("ai-industry-panorama-taxonomy.");
+    await expect(page.locator("#evidence-cutoff")).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
+    await expect(page.locator("#change-summary li")).not.toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText("Curated start");
+    await expectNoPageOverflow(page);
+
+    const graphRelationships = page.locator("#panorama-graph [data-relationship-id]");
+    const tableRelationships = page.locator("#relationship-table-body [data-relationship-id]");
+    await expect(graphRelationships.first()).toBeVisible();
+    await expect(tableRelationships.first()).toBeVisible();
+    const curatedGraphIds = await relationshipIds(graphRelationships);
+    const curatedTableIds = await relationshipIds(tableRelationships);
+    expect(curatedGraphIds.length).toBeGreaterThan(0);
+    expect(curatedGraphIds).toEqual(curatedTableIds);
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    await expect(page.getByRole("status")).toContainText("Complete V1");
+    const completeIds = await relationshipIds(graphRelationships);
+    expect(completeIds.length).toBeGreaterThan(curatedGraphIds.length);
+    expect(completeIds).toEqual(await relationshipIds(tableRelationships));
+
+    const search = page.getByPlaceholder("Entity, project, capability, or alias");
+    await search.fill("Microsoft");
+    const microsoft = page.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-ORG-MICROSOFT"]',
+    );
+    await expect(microsoft).toBeVisible();
+    await microsoft.focus();
+    await expect(microsoft).toBeFocused();
+    await microsoft.press("Enter");
+    await expect(page.locator("#entity-drawer")).toBeFocused();
+    await expect(page.locator("#entity-drawer")).toContainText("Microsoft Corporation");
+    await expect(page.locator("#entity-drawer")).toContainText("Disclosed relationships");
+    const twoHopIds = await relationshipIds(graphRelationships);
+    expect(twoHopIds.length).toBeGreaterThan(0);
+    expect(twoHopIds).toEqual(await relationshipIds(tableRelationships));
+
+    await page.locator("#hop-depth").selectOption("1");
+    await expect(page.getByRole("status")).toContainText("Microsoft Corporation (1 hop)");
+    const oneHopIds = await relationshipIds(graphRelationships);
+    expect(oneHopIds.length).toBeGreaterThan(0);
+    expect(oneHopIds.length).toBeLessThanOrEqual(twoHopIds.length);
+    await page.locator("#hop-depth").selectOption("2");
+    await expect(page.getByRole("status")).toContainText("Microsoft Corporation (2 hop)");
+    expect(await relationshipIds(graphRelationships)).toEqual(twoHopIds);
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    const assertNonemptyFilter = async (id: string, value: string) => {
+      await page.locator(id).selectOption(value);
+      await expect(tableRelationships.first()).toBeVisible();
+      expect(await relationshipIds(graphRelationships)).toEqual(
+        await relationshipIds(tableRelationships),
+      );
+      await page.getByRole("button", { name: "Reset panorama" }).click();
+    };
+    await assertNonemptyFilter("#geography-filter", "geography:us");
+    await assertNonemptyFilter("#time-filter", "2026-2027");
+    await assertNonemptyFilter("#lifecycle-filter", "committed");
+
+    await page.locator("#disclosed-only").check();
+    await expect(
+      page.locator(
+        '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0011"]',
+      ),
+    ).toHaveCount(0);
+    expect(
+      await page.locator("#relationship-table-body tr").allTextContents(),
+    ).not.toEqual(expect.arrayContaining([expect.stringContaining("inferred_exposure")]));
+    await page.locator("#disclosed-only").uncheck();
+
+    await page.getByRole("button", { name: "Graph", exact: true }).click();
+    await expect(page.locator("#graph-panel")).toBeVisible();
+    await expect(page.locator("#table-panel")).toBeHidden();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    await expect(page.locator("#graph-panel")).toBeHidden();
+    await expect(page.locator("#table-panel")).toBeVisible();
+    await page.getByRole("button", { name: "Both", exact: true }).click();
+    await expect(page.locator("#graph-panel")).toBeVisible();
+    await expect(page.locator("#table-panel")).toBeVisible();
+
+    await search.fill("Advanced semiconductor packaging");
+    const capability = page.locator(
+      '#panorama-graph [data-entity-id="entity:ENT-CAP-ADVANCED-PACKAGING"]',
+    );
+    await capability.focus();
+    await capability.press(" ");
+    await expect(page.locator("#capability-drawer")).toBeFocused();
+    await expect(page.locator("#capability-drawer")).toContainText("Advanced semiconductor packaging");
+    await expect(page.locator("#capability-drawer")).toContainText("Upstream roles");
+    await expect(page.locator("#capability-drawer")).toContainText("Downstream roles");
+
+    await page.getByRole("button", { name: "Reset panorama" }).click();
+    const inferenceRow = page.locator(
+      '#relationship-table-body tr[data-relationship-id="relationship:REL-AIP-0011"]',
+    );
+    await expect(inferenceRow).toContainText("inferred_exposure");
+    await inferenceRow.getByRole("button", { name: "View evidence" }).click();
+    const relationshipDrawer = page.locator("#relationship-drawer");
+    await expect(relationshipDrawer).toBeFocused();
+    await expect(relationshipDrawer).toContainText("Assertion kind: inferred_exposure");
+    await expect(relationshipDrawer).toContainText("Inference derivation");
+    await expect(relationshipDrawer.locator("[data-premise-assertion-id]")).toHaveCount(2);
+    await expect(relationshipDrawer.locator("[data-premise-source-link]")).not.toHaveCount(0);
+    const officialLinks = relationshipDrawer.getByRole("link", { name: "Open official source" });
+    await expect(officialLinks.first()).toBeVisible();
+    for (const link of await officialLinks.all()) {
+      const href = await link.getAttribute("href");
+      expect(href).toBeTruthy();
+      const parsed = new URL(href!);
+      expect(parsed.protocol).toBe("https:");
+      expect(parsed.username).toBe("");
+      expect(parsed.password).toBe("");
+      expect(await link.getAttribute("rel")).toBe("noopener noreferrer");
+      expect(await link.getAttribute("target")).toBe("_blank");
+    }
+    await testInfo.attach("ai-panorama-desktop", {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectNoPageOverflow(page);
+    await expect(page.getByRole("heading", { name: "AI Industry Panorama", exact: true })).toBeVisible();
+    await expect(page.locator("#panorama-graph-scroll")).toBeVisible();
+    await expect(page.locator("#relationship-table")).toBeVisible();
+    await testInfo.attach("ai-panorama-mobile-390", {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+
+    expect(panoramaRequests.length).toBeGreaterThanOrEqual(3);
+    expect(panoramaRequests.every(({ method }) => method === "GET")).toBe(true);
+    expect(
+      panoramaRequests.filter(({ pathname }) => pathname === "/api/ai-industry-panorama"),
+    ).toHaveLength(1);
+  });
+});

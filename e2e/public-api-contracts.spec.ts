@@ -19,6 +19,9 @@ const publicGetContracts: PublicGetContract[] = [
   { path: "/api/daily-market-brief", contentType: /application\/json/, json: true },
   { path: "/api/daily-market-brief/dates", contentType: /application\/json/, json: true },
   { path: "/api/daily-market-brief/history-jobs", contentType: /application\/json/, json: true },
+  { path: "/ai-industry-panorama", contentType: /text\/html/ },
+  { path: "/assets/ai-industry-panorama.js", contentType: /(?:text|application)\/javascript/ },
+  { path: "/api/ai-industry-panorama", contentType: /application\/json/, json: true },
 ];
 
 for (const contract of publicGetContracts) {
@@ -118,4 +121,126 @@ test("Daily history job creation rejects an invalid shape before mutation", asyn
     error: "历史简报任务只接受 market 和 date。",
   });
   expect(await readDailyMutationState(request)).toEqual(stateBefore);
+});
+
+test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release", async ({ request }) => {
+  const response = await request.get("/api/ai-industry-panorama");
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toMatch(/application\/json/);
+  const payload = await response.json();
+
+  expect(Object.keys(payload).sort()).toEqual([
+    "entities",
+    "evidence",
+    "facets",
+    "ok",
+    "relationships",
+    "release",
+    "schema_version",
+    "sources",
+    "taxonomy",
+  ]);
+  expect(payload).toMatchObject({
+    ok: true,
+    schema_version: "ai_industry_panorama_public.v1",
+    release: {
+      release_id: expect.stringMatching(/^ai-industry-panorama\./),
+      taxonomy_version: expect.stringMatching(/^ai-industry-panorama-taxonomy\./),
+      evidence_cutoff: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      review_state: "published",
+    },
+  });
+  expect(payload.taxonomy.length).toBeGreaterThanOrEqual(6);
+  expect(payload.entities.length).toBeGreaterThanOrEqual(35);
+  expect(payload.relationships.length).toBeGreaterThanOrEqual(45);
+  expect(payload.sources.length).toBeGreaterThan(0);
+  expect(payload.evidence.length).toBeGreaterThan(0);
+
+  const entityIds = new Set(payload.entities.map((entity: { entity_id: string }) => entity.entity_id));
+  const assertionIds = new Set<string>();
+  const evidenceIds = new Set(payload.evidence.map((item: { evidence_id: string }) => item.evidence_id));
+  for (const relationship of payload.relationships) {
+    expect(entityIds.has(relationship.source_entity_id)).toBe(true);
+    expect(entityIds.has(relationship.target_entity_id)).toBe(true);
+    expect(relationship.assertion_id).toBeTruthy();
+    expect(assertionIds.has(relationship.assertion_id)).toBe(false);
+    assertionIds.add(relationship.assertion_id);
+    expect(relationship.evidence_ids.length + relationship.premise_assertion_ids.length).toBeGreaterThan(0);
+    for (const evidenceId of relationship.evidence_ids) {
+      expect(evidenceIds.has(evidenceId)).toBe(true);
+    }
+  }
+  expect(assertionIds.size).toBe(payload.relationships.length);
+
+  const anchors = payload.entities.filter((entity: { is_demand_anchor: boolean }) => entity.is_demand_anchor);
+  expect(anchors).toHaveLength(6);
+  const forward = new Map<string, Set<string>>();
+  for (const relationship of payload.relationships) {
+    if (!forward.has(relationship.source_entity_id)) {
+      forward.set(relationship.source_entity_id, new Set());
+    }
+    forward.get(relationship.source_entity_id)!.add(relationship.target_entity_id);
+  }
+  for (const anchor of anchors) {
+    const firstHop = forward.get(anchor.entity_id) ?? new Set<string>();
+    expect(firstHop.size).toBeGreaterThan(0);
+    const secondHop = new Set(
+      [...firstHop].flatMap((entityId) => [...(forward.get(entityId) ?? [])]),
+    );
+    expect(secondHop.size).toBeGreaterThan(0);
+  }
+
+  const forbiddenKeys = new Set([
+    "api_key",
+    "authorization",
+    "credential",
+    "curator",
+    "database_url",
+    "internal_notes",
+    "order",
+    "password",
+    "portfolio",
+    "position",
+    "private_key",
+    "raw_source",
+    "reviewer",
+    "secret",
+    "token",
+    "user_insight",
+  ]);
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      expect(forbiddenKeys.has(key.toLowerCase())).toBe(false);
+      visit(nested);
+    }
+  };
+  visit(payload);
+
+  const sensitiveQueryNames = new Set([
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "client_secret",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "signature",
+    "token",
+  ]);
+  for (const source of payload.sources) {
+    const parsed = new URL(source.url);
+    expect(parsed.protocol).toBe("https:");
+    expect(parsed.username).toBe("");
+    expect(parsed.password).toBe("");
+    for (const name of parsed.searchParams.keys()) {
+      expect(sensitiveQueryNames.has(name.toLowerCase())).toBe(false);
+    }
+  }
 });
