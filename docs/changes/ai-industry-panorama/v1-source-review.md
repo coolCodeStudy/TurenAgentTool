@@ -312,3 +312,33 @@ The admitted geography-role vocabulary is `headquarters`, `demand_region`, `depl
 `reviewed_for_implementation`
 
 The prior source-semantics findings against commit `1d5fbc6` are resolved at exact commit `251e15bf596c4d2ba173fd655628916b16ce7149`. No residual source-semantics blocker remains within this bounded corrective scope.
+
+## Final relationship-enum re-review
+
+- Artifact re-reviewed: source manifest, frozen release, validator contract, and
+  focused tests at exact commit
+  `82f496701ffbe85badedfb8477ca8983a89f8bb9`
+- Prior full-candidate review: exact commit
+  `95ff8fce1c50e0c13f5e5626c39484135a0c605e`, verdict `PASS`
+- Reviewer: `/root/panorama_task1_spec_review`
+- Re-review date: `2026-07-24`
+- Scope: the relationship-type enum correction for `REL-AIP-0046` through
+  `REL-AIP-0048`
+- Verdict: `reviewed_for_implementation`
+
+The three relationships now use the PRD-controlled `manufactures_for` type.
+Their endpoints, assertions, group-level limitations, lifecycle, valid time,
+`equipment_component_manufacturing` geography roles, evidence, and source
+records are unchanged from the prior approved candidate. Assertions, evidence,
+sources, geographies, entities, and taxonomy are byte-equivalent across the two
+frozen release payloads, and all 16 stored source content hashes are unchanged.
+
+The runtime relationship-type allowlist now equals the complete controlled set
+in PRD section 11.3. The prior non-PRD
+`contract_manufactures_for` value is rejected. All 57 focused release tests
+passed, including the exact PRD-set equality, old-value rejection, canonical
+row-type, source-hash, geography, provenance, version, and diff contracts.
+
+This narrow approval preserves the prior source-semantics and full-candidate
+review conclusions. It does not authorize deployment, mark user acceptance, or
+change project-management state.
