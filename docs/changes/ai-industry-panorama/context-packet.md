@@ -19,14 +19,14 @@
 - Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Pending implementation candidate. Route is `L3`; ref, exact route, deploy event, evidence bundle, and exceptions must be filled before acceptance dispatch.
 - Current state: Discovery PRD and feasibility note are committed and pushed. On 2026-07-24 the Owner instructed this Feature Coordinator to continue the recommended bounded V1 through user acceptance. Product return `117a9ae` was inspected and accepted: the PRD is `ready`, the feasibility note remains discovery-only, implementation is `not_started`, and user acceptance remains `pending`.
 - Known blockers: No credential, paid-source, budget, or product blocker for the recommended V1. Exact persistence, route, module, curated-release ownership, and verification commands remain technical-planning decisions.
-- Active child threads or role sessions: Product readiness agent `/root/panorama_product_ready` returned and is closed. Technical Planning / Development Agent `/root/panorama_technical_plan` is active.
+- Active child threads or role sessions: Product readiness agent `/root/panorama_product_ready` returned and is closed. Technical-planning agents `/root/panorama_technical_plan` and `/root/panorama_plan_recovery` were stopped after exceeding their active-watch windows without persisting an artifact. This Coordinator recovered plan `f9758dd`; independent review rejected it with two Critical and three Important findings, all corrected in `3d7d6fb`. Curated manifest `9162248` is now under independent Source Reviewer `/root/panorama_source_review`.
 - Watch contract:
-  - Watched item: Exact technical implementation plan for the approved bounded V1.
-  - Wake event or cadence: This Feature Coordinator will actively wait on the dispatched Technical Planning / Development Agent and apply the Return Gate immediately when it returns.
-  - Expected return artifact: One exact implementation plan with persistence, curated-release ownership, modules, routes, tests, L3 evidence, deploy ownership, and PRD traceability; commit/ref and verification evidence.
-  - Coordinator action on wake: Inspect the plan against every PRD criterion, accept or reject the return, update delivery state, and dispatch implementation only after plan acceptance.
-- Next owner: Technical Planning / Development Agent `/root/panorama_technical_plan`.
-- Next handoff: `accept_and_route`: Product return `117a9ae` is accepted; `DQ-2026-07-24-002` is producing one exact implementation plan before product-code changes.
+  - Watched item: Independent assertion/evidence review of manifest `9162248`.
+  - Wake event or cadence: This Feature Coordinator actively waits on `/root/panorama_source_review` and applies the Return Gate immediately when it returns.
+  - Expected return artifact: A 45-row source verdict, official-link/locator checks, concrete corrections, and final `reviewed_for_implementation` or `correction_required`.
+  - Coordinator action on wake: Correct and re-review rejected rows; after a clean source verdict, re-review plan `3d7d6fb` with the accepted manifest, then mark technical state `ready` and dispatch Development implementation task by task.
+- Next owner: Independent Source Reviewer `/root/panorama_source_review`.
+- Next handoff: `reject_and_return` on the first plan review was resolved in `3d7d6fb`; `accept_and_route` is pending source review of manifest `9162248`.
 - Deploy needed: No for the Product readiness return; deployment will be required for the later browser release candidate.
 - Deploy decision: `not_required` for this Product-only phase because no runtime code or cloud surface changes.
 - Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.
