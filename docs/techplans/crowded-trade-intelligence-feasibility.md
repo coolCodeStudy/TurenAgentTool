@@ -1,9 +1,9 @@
 # Technical Feasibility Note: Crowded Trade Intelligence
 
-Status: feasibility ready; product direction approved, bounded implementation plan not yet created
+Status: bounded V1 implemented and locally verified; live entitlement and cloud acceptance pending
 Linked PRD: [`../product/PRD-Crowded-Trade-Intelligence.md`](../product/PRD-Crowded-Trade-Intelligence.md)
 Linked implementation plan: [`../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md`](../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md)
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## 1. Feasibility Conclusion
 
@@ -443,18 +443,35 @@ The Owner delegated the discovery choices and approved the recommended defaults 
 7. OpenDART, KRX automation, and CN automated positioning access are deferred.
 8. Premium securities finance, fund flows, granular options flow, and social/community data are excluded from V1.
 
-These defaults unblock one bounded implementation plan. They do not authorize production adapters: current Futu entitlements and terms must be verified before activation, and every deferred official/licensed source remains disabled until its access gate is satisfied.
+These defaults authorized the linked bounded implementation plan. The Futu adapter is present but remains response- and entitlement-gated: unsuccessful live calls degrade to typed unavailable evidence. Every deferred official/licensed source remains disabled until its access gate is satisfied.
 
-## 11. Implementation Planning Boundary
+## 11. Implemented V1 Architecture
 
-The next coordinator should create one bounded technical implementation plan for the approved V1. It should include:
+The linked implementation plan has been executed locally:
 
-- source approval register and new capability contracts;
-- source-semantic fixtures and adapters for the approved markets;
-- evidence orchestration and normalization;
-- deterministic coverage/scoring rules;
-- portfolio and single-symbol report surfaces;
-- source/failure observability;
-- acceptance and deployment traceability.
+| Layer | Implementation | Verification |
+|---|---|---|
+| Capability and approval control | Added explicit ownership, short-interest, options-positioning, and event-calendar capabilities plus immutable Futu private-internal approval metadata. | `tests/test_data_source_contracts.py`, `tests/test_data_source_crowding.py` |
+| Vendor transport | Added a bounded Futu bundle transport for US/HK holder, short-interest, option-chain/snapshot, and earnings-calendar evidence. One context is closed in `finally`; family failures are isolated and redacted. | `tests/test_futu_crowding_provider.py` |
+| Provider-neutral adapter | Registered one multi-capability `futu_crowding` provider with a memoized bundle loader and normalized semantic records. | `tests/test_data_source_crowding.py` |
+| Evidence and scoring | Added immutable evidence/family/assessment types, own-history price-volume features, direction-specific family gates, stale-data exclusion, and deterministic bands. | `tests/test_crowding_intelligence.py` |
+| Orchestration | Added Futu-only market-bar plans, separate evidence requests, CN provider-code mapping, bounded portfolio analysis, per-symbol isolation, and market grouping. | `tests/test_crowding_service.py` |
+| User surface | Added read-only single-symbol and portfolio commands plus Workbench actions that do not require profile bootstrap for exact symbols. | `tests/test_command_router.py`, `tests/test_command_workbench.py`, `tests/test_command_http.py` |
 
-This discovery note does not authorize product code, services, credentials, vendor contracts, or deployment.
+No service, database table, dependency, social scraper, premium vendor, credential, trade action, alert, or formal-memory write was added.
+
+### 11.1 Deliberate V1 limits
+
+- US/HK bands depend on current entitled Futu responses and the direction-specific three-family gate.
+- KR/CN remain evidence-only.
+- Price/volume normalization is labelled against the instrument's own rolling history; V1 does not claim sector/liquidity peer percentiles.
+- Speculative attention remains insufficient because social/retail collection is excluded.
+- Bands are uncalibrated deterministic heuristics, not reversal probabilities.
+
+### 11.2 Remaining release gates
+
+1. Push and integrate the verified branch.
+2. Classify and deploy the command surface through the shared release path.
+3. Verify the deployed action catalog, preview, execution, redaction, and Futu entitlement behavior.
+4. Complete independent acceptance item `AT-2026-07-24-001`.
+5. Keep user acceptance pending until the Owner explicitly accepts the deployed surface.

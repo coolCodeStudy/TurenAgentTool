@@ -38,7 +38,7 @@
 - Produces: immutable `SourceApproval`, `FUTU_CROWDING_APPROVAL`, and `source_is_approved(source_id, use_case)`.
 - Consumers: Futu adapter and the crowding orchestrator.
 
-- [ ] **Step 1: Write failing capability and approval tests**
+- [x] **Step 1: Write failing capability and approval tests**
 
 ```python
 def test_crowding_capabilities_are_explicit(self) -> None:
@@ -53,7 +53,7 @@ def test_futu_approval_is_private_internal_and_non_redistributable(self) -> None
     self.assertEqual(FUTU_CROWDING_APPROVAL.access_tier, "account_entitled")
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -63,7 +63,7 @@ Run:
 
 Expected: FAIL because the capabilities and crowding source module do not exist.
 
-- [ ] **Step 3: Add the minimal immutable approval contract**
+- [x] **Step 3: Add the minimal immutable approval contract**
 
 ```python
 class SourceCapability(str, Enum):
@@ -92,7 +92,7 @@ FUTU_CROWDING_APPROVAL = SourceApproval(
 
 `source_is_approved` must normalize the source/use strings and return `False` for unknown providers or uses.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run:
 
@@ -102,7 +102,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add investment_knowledge_mcp/data_sources tests/test_data_source_contracts.py tests/test_data_source_crowding.py
@@ -123,7 +123,7 @@ git commit -m "feat: define crowding source capabilities"
 - Produces: one multi-capability `FutuCrowdingSource` and `default_crowding_source_pool()`.
 - Normalized record key: `{"symbol", "metric", "value", "unit", "direction", "observed_at", "published_at", "cohort", "metadata"}`.
 
-- [ ] **Step 1: Write failing transport-normalization tests**
+- [x] **Step 1: Write failing transport-normalization tests**
 
 Use a fake quote context whose methods return small DataFrame-compatible rows:
 
@@ -151,7 +151,7 @@ Add failures for:
 - secret-bearing provider error redacted to a typed code;
 - quote context always closed.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -161,7 +161,7 @@ Run:
 
 Expected: FAIL because transport and adapters are missing.
 
-- [ ] **Step 3: Implement the bounded Futu transport**
+- [x] **Step 3: Implement the bounded Futu transport**
 
 ```python
 @dataclass(frozen=True)
@@ -186,7 +186,7 @@ The transport must:
 - bound option rows to the nearest expiries and cap snapshot codes;
 - record family-level error codes without raw exception text.
 
-- [ ] **Step 4: Implement capability-specific adapters over one shared bundle loader**
+- [x] **Step 4: Implement capability-specific adapters over one shared bundle loader**
 
 ```python
 class FutuCrowdingSource:
@@ -215,7 +215,7 @@ class FutuCrowdingSource:
 
 The default pool registers this provider once. Its shared memoized bundle loader switches normalization by `request.capability`, so the four capability requests reuse one symbol/date bundle without violating `DataSourcePool`'s unique `source_id` rule.
 
-- [ ] **Step 5: Run GREEN and existing Futu-adjacent tests**
+- [x] **Step 5: Run GREEN and existing Futu-adjacent tests**
 
 Run:
 
@@ -225,7 +225,7 @@ Run:
 
 Expected: all tests pass; no local OpenD is started or contacted by tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add investment_knowledge_mcp/futu_provider.py investment_knowledge_mcp/data_sources/crowding.py tests/test_futu_crowding_provider.py tests/test_data_source_crowding.py
@@ -243,7 +243,7 @@ git commit -m "feat: add Futu crowding evidence adapter"
 - Produces: `build_crowding_assessment(symbol, market, bars_result, family_results, as_of)`.
 - Produces: `render_crowding_assessment(assessment) -> str`.
 
-- [ ] **Step 1: Write failing invariants and adversarial fixtures**
+- [x] **Step 1: Write failing invariants and adversarial fixtures**
 
 ```python
 def test_missing_family_is_unknown_and_suppresses_band(self) -> None:
@@ -268,7 +268,7 @@ def test_long_short_and_attention_are_separate(self) -> None:
 
 Also cover stale ownership, opposing evidence, own-history cohorts, KR/CN evidence-only, future-date rejection, identity mismatch, family caps, and no-advice rendering.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -278,7 +278,7 @@ Run:
 
 Expected: FAIL because the domain module is missing.
 
-- [ ] **Step 3: Implement immutable evidence and assessment types**
+- [x] **Step 3: Implement immutable evidence and assessment types**
 
 ```python
 class CrowdingBand(str, Enum):
@@ -309,7 +309,7 @@ class CrowdingEvidence:
 
 Validation rejects naive/ future timestamps, unsupported semantic-family combinations, values outside normalized `[0, 1]`, and identity mismatch.
 
-- [ ] **Step 4: Implement deterministic family features**
+- [x] **Step 4: Implement deterministic family features**
 
 Price/volume uses at least 120 daily bars and calculates:
 
@@ -325,7 +325,7 @@ Options uses call/put volume and OI, total OI relative to average underlying vol
 
 Events produce context and freshness only; they do not add score points.
 
-- [ ] **Step 5: Implement coverage and direction-specific bands**
+- [x] **Step 5: Implement coverage and direction-specific bands**
 
 ```python
 def _eligible(families: tuple[FamilyAssessment, ...], market: str) -> bool:
@@ -348,7 +348,7 @@ Use family-capped deterministic thresholds:
 
 If the gate fails, omit the numeric score and return `insufficient_evidence`. Record contributors, counterevidence, missing families, oldest evidence date, and evidence quality.
 
-- [ ] **Step 6: Implement Chinese-first evidence rendering**
+- [x] **Step 6: Implement Chinese-first evidence rendering**
 
 The output must include:
 
@@ -361,7 +361,7 @@ The output must include:
 - next known event;
 - the exact no-investment-advice boundary from the PRD.
 
-- [ ] **Step 7: Run GREEN**
+- [x] **Step 7: Run GREEN**
 
 Run:
 
@@ -371,7 +371,7 @@ Run:
 
 Expected: all invariants and rendering tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add investment_knowledge_mcp/crowding_intelligence.py tests/test_crowding_intelligence.py
@@ -389,7 +389,7 @@ git commit -m "feat: add explainable crowding assessment engine"
 - Produces: `investigate_portfolio_crowding(positions, *, as_of=None, max_positions=8, analyzer=None)`.
 - Consumes: existing market-bar pool, new crowding pool, and assessment engine.
 
-- [ ] **Step 1: Write failing orchestration tests**
+- [x] **Step 1: Write failing orchestration tests**
 
 ```python
 def test_single_symbol_requests_each_semantic_capability(self) -> None:
@@ -415,7 +415,7 @@ def test_portfolio_is_bounded_and_grouped_by_market(self) -> None:
 
 Add tests for malformed positions, duplicate symbols, unsupported markets, partial provider results, deterministic ordering, per-symbol failure isolation, and no false global ranking.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -425,7 +425,7 @@ Run:
 
 Expected: FAIL because the service module is missing.
 
-- [ ] **Step 3: Implement explicit source plans**
+- [x] **Step 3: Implement explicit source plans**
 
 ```python
 def futu_only_plan(capability: SourceCapability) -> SourcePlan:
@@ -441,7 +441,7 @@ def futu_only_plan(capability: SourceCapability) -> SourcePlan:
 
 Market bars use the existing Futu adapter only for this feature. Do not add Yahoo as a crowding fallback.
 
-- [ ] **Step 4: Implement bounded orchestration**
+- [x] **Step 4: Implement bounded orchestration**
 
 The single-symbol path:
 
@@ -461,7 +461,7 @@ The portfolio path:
 - groups results by market and coverage mode;
 - never emits one cross-market leaderboard.
 
-- [ ] **Step 5: Implement portfolio rendering**
+- [x] **Step 5: Implement portfolio rendering**
 
 Render a compact summary per holding with:
 
@@ -474,7 +474,7 @@ Render a compact summary per holding with:
 
 Append omitted-count and no-advice language.
 
-- [ ] **Step 6: Run GREEN**
+- [x] **Step 6: Run GREEN**
 
 Run:
 
@@ -484,7 +484,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add investment_knowledge_mcp/crowding_service.py tests/test_crowding_service.py
@@ -504,7 +504,7 @@ git commit -m "feat: orchestrate symbol and portfolio crowding reports"
 - Portfolio: `持仓拥挤度`, `拥挤交易`, `portfolio crowding`.
 - Workbench actions: `crowding_symbol`, `crowding_portfolio`.
 
-- [ ] **Step 1: Write failing router tests**
+- [x] **Step 1: Write failing router tests**
 
 ```python
 def test_single_symbol_crowding_is_read_only_query(self) -> None:
@@ -526,7 +526,7 @@ def test_portfolio_crowding_reads_positions_and_isolates_provider_failure(self) 
 
 Also test invalid/unqualified symbols, unsupported market evidence-only behavior, redacted provider failures, and help text.
 
-- [ ] **Step 2: Write failing Workbench tests**
+- [x] **Step 2: Write failing Workbench tests**
 
 ```python
 def test_crowding_actions_are_registered_read_only(self) -> None:
@@ -541,7 +541,7 @@ def test_exact_crowding_symbol_does_not_require_stock_profile_bootstrap(self) ->
     self.assertEqual("拥挤度 US.NVDA", preview["exact_command"])
 ```
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run:
 
@@ -551,7 +551,7 @@ Run:
 
 Expected: new tests fail because routes and actions are absent.
 
-- [ ] **Step 4: Add read-only router handlers**
+- [x] **Step 4: Add read-only router handlers**
 
 ```python
 symbol_match = re.fullmatch(r"(?:拥挤度|拥挤交易|crowding)\s+(.+)", cleaned, re.IGNORECASE)
@@ -566,11 +566,11 @@ if symbol_match:
 
 Portfolio handler reads current positions and returns safe bounded recovery if Futu positions are unavailable.
 
-- [ ] **Step 5: Register Workbench actions and parser rules**
+- [x] **Step 5: Register Workbench actions and parser rules**
 
 `crowding_symbol` accepts exact market-qualified symbols without requiring a stock profile. Named aliases may still resolve through existing profiles/holdings. `crowding_portfolio` has no fields and is pinned. Both are read-only and require no confirmation.
 
-- [ ] **Step 6: Run GREEN and HTTP boundary regression**
+- [x] **Step 6: Run GREEN and HTTP boundary regression**
 
 Run:
 
@@ -580,7 +580,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add investment_knowledge_mcp/command_router.py investment_knowledge_mcp/command_workbench.py tests/test_command_router.py tests/test_command_workbench.py
@@ -599,7 +599,7 @@ git commit -m "feat: expose crowded trade intelligence commands"
 **Interfaces:**
 - Produces: one traceability matrix and one independent acceptance item.
 
-- [ ] **Step 1: Add implementation traceability**
+- [x] **Step 1: Add implementation traceability**
 
 Record each PRD acceptance criterion as:
 
@@ -610,7 +610,7 @@ Record each PRD acceptance criterion as:
 
 Do not claim KR/CN full scoring, social attention, premium sources, or calibration.
 
-- [ ] **Step 2: Update delivery state**
+- [x] **Step 2: Update delivery state**
 
 Set:
 
@@ -629,7 +629,7 @@ Create an Acceptance Queue row covering:
 - high-price/no-positioning insufficient evidence;
 - real cloud Workbench preview/execution after deployment.
 
-- [ ] **Step 3: Run documentation audits**
+- [x] **Step 3: Run documentation audits**
 
 Run:
 
@@ -641,7 +641,7 @@ git diff --check
 
 Expected: no missing delivery link; acceptance remains pending until independent cloud testing.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/product/PRD-Crowded-Trade-Intelligence.md docs/techplans/crowded-trade-intelligence-feasibility.md docs/superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md docs/project-management/Feature-Registry.md docs/project-management/Acceptance-Queue.md

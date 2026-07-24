@@ -1,11 +1,11 @@
 # PRD: Crowded Trade Intelligence
 
-Status: product direction approved; ready for bounded technical implementation planning, not runtime implementation
-Owner: Product Discovery Coordinator
+Status: V1 implemented and locally verified; pending integration, cloud deployment, and independent acceptance
+Owner: Crowded Trade Intelligence Feature Coordinator
 Feature Registry row: Crowded Trade Intelligence
 Linked technical feasibility note: [`../techplans/crowded-trade-intelligence-feasibility.md`](../techplans/crowded-trade-intelligence-feasibility.md)
 Linked implementation plan: [`../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md`](../superpowers/plans/2026-07-24-crowded-trade-intelligence-v1.md)
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## 1. Decision Summary
 
@@ -26,7 +26,7 @@ Recommended V1:
 - Keep social/retail attention optional and non-blocking. Do not scrape Reddit, X, Xueqiu, broker communities, or search pages.
 - Surface a likelihood band and evidence quality, not a trading recommendation or a falsely precise probability.
 
-The Owner approved the recommended discovery defaults on 2026-07-24. The feature is ready for a bounded technical implementation plan, but runtime implementation remains gated by that plan and by source entitlement/licence verification.
+The Owner approved the recommended defaults on 2026-07-24. The bounded V1 is implemented behind the existing provider-neutral source contracts and is locally verified. Live US/HK likelihood bands remain conditional on successful deployed Futu entitlement responses; absent entitlement produces an evidence-first `insufficient_evidence` result.
 
 ## 2. User Problem
 
@@ -446,7 +446,7 @@ The Owner delegated the final discovery choices to the Product Discovery Coordin
 9. CN automated positioning collection is deferred until SSE/SZSE/CNInfo programmatic access and data-use terms are approved.
 10. Premium data and social/community sources are excluded from V1. If later justified by adoption, evaluate securities finance first, global fund flows second, and granular options participant/open-close data third.
 
-These decisions unblock technical implementation planning, not product code. The implementation plan must define the source approval register, entitlement verification, source-semantic fixtures, and acceptance evidence before it can be marked ready. Market adapters requiring credentials, licences, or spend cannot enter runtime implementation until their corresponding access gate is satisfied.
+These decisions authorized the bounded V1 now recorded in the linked implementation plan. Market adapters requiring new credentials, licences, or spend remain disabled until their corresponding access gate is satisfied.
 
 ## 16. Proposed Acceptance Criteria
 
@@ -494,7 +494,7 @@ These decisions unblock technical implementation planning, not product code. The
 
 ### Gate 0 — product direction and data defaults
 
-Completed on 2026-07-24. Record licence/access owners when a deferred source is proposed. No runtime code starts before a bounded implementation plan is ready.
+Completed on 2026-07-24. Record licence/access owners when a deferred source is proposed.
 
 ### Gate 1 — contract and evidence slice
 
@@ -525,3 +525,22 @@ After independent acceptance, consider weekly-review and decision-card integrati
 The capability is credible if it is built as an explainable, direction-specific evidence system with strict source semantics and honest coverage gates. It is not credible as a universal public-data score across US/HK/KR/CN.
 
 The recommended hybrid V1 can produce useful US/HK assessments and honest KR/CN evidence gaps while preserving a clear path to institutional-grade lending and fund-flow data. The most important product promise is not that every holding receives a score; it is that the system refuses to manufacture one when the evidence does not support it.
+
+## 19. V1 Implementation Traceability
+
+Local implementation is complete on `codex/crowded-trade-intelligence-discovery`. Deployment and independent acceptance remain separate gates.
+
+| Acceptance scope | V1 state | Evidence or boundary |
+|---|---|---|
+| Multi-signal semantics; valuation and short-sale-volume exclusions | Implemented | `tests/test_crowding_intelligence.py` verifies high valuation is ignored, short-sale volume cannot masquerade as short interest, stale evidence is excluded, and missing families suppress only affected bands. |
+| Separate long, short-squeeze, and speculative-attention results | Implemented | `crowding_intelligence.py` produces three direction-specific results. Attention remains `insufficient_evidence` because social/retail sources are intentionally excluded from V1. |
+| Provenance, observation/fetch dates, freshness, cohort, and uncertainty | Implemented | Immutable normalized evidence records and Chinese-first rendering preserve these fields; source failures are typed and redacted. |
+| Shared provider contracts and equivalent-semantic source plans | Implemented | Explicit crowding capabilities, approval metadata, one Futu adapter, and Futu-only source plans reuse `DataSourcePool`; no scraping or Yahoo crowding fallback was added. |
+| US/HK likelihood eligibility | Implemented, entitlement-gated | A band requires current price/volume plus the required direction-specific positioning families. Live coverage must still pass deployed Futu entitlement checks. |
+| KR/CN coverage | Intentionally degraded | V1 always returns evidence mode with no aggregate likelihood band. CN exchange/provider identity is preserved for market bars; KR/CN positioning adapters remain deferred. |
+| Portfolio and single-symbol surfaces | Implemented | Portfolio analysis is bounded to eight deduplicated holdings, isolates symbol failures, groups by market/currency-safe order, and has no cross-market leaderboard. Exact single-symbol commands do not require a stock profile. |
+| Cohort normalization | Intentionally degraded | V1 price/volume features use a labelled own-history rolling cohort. Sector/industry/liquidity peer percentiles are not claimed and remain a later data-quality upgrade. |
+| Historical calibration | Deferred | V1 bands are deterministic heuristics and are explicitly labelled as not calibrated probabilities. No reversal or return prediction is made. |
+| Premium lending, fund flows, official KR/CN automation, and social attention | Deferred by approved scope | No credentials, scraping, contract, or storage surface was added. |
+| Local verification | Passed | Focused source, semantic, service, router, Workbench, and HTTP boundary suites pass; final consolidated verification is recorded in the linked implementation plan and registry. |
+| Cloud and independent acceptance | Pending | `AT-2026-07-24-001` covers deployed US/HK evidence, KR/CN evidence-only behavior, entitlement failure, insufficient evidence, provenance/safety, and Workbench execution. |
