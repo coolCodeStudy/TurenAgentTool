@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Implement only the approved bounded V1: six demand anchors, 25-35 entities/projects, and 45-70 reviewed relationships.
+- Implement only the approved bounded V1: six demand anchors, 25-35 reviewed organizations/projects (plus bounded capability/standard nodes), and 45-70 reviewed relationships.
 - Use a committed immutable release artifact; do not add a database migration, graph database, runtime crawler, scheduled ingestion, or mutable browser authoring.
 - Keep `disclosed_fact`, `company_guidance`, `management_claim`, `inferred_exposure`, and `user_hypothesis` distinct in storage and display.
 - Every published relationship must have stable identity, time, geography, lifecycle, confidence inputs, and at least one reviewed evidence reference.
@@ -84,12 +84,12 @@ class PanoramaRelease:
 
 Every nested JSON record uses exactly these fields:
 
-- `PanoramaTaxonomyNode`: `taxonomy_id`, `parent_id`, `label`, `layer`, `sort_order`.
+- `PanoramaTaxonomyNode`: `taxonomy_id`, `parent_id`, `label`, `definition`, `standards_context`, `coverage_gaps`, `layer`, `sort_order`.
 - `PanoramaGeography`: `geography_id`, `label`, `country_code`, `region`.
 - `PanoramaResearchLink`: `kind`, `label`, `canonical_stock_id`, `internal_path`, `command_hint`.
-- `PanoramaEntity`: `entity_id`, `kind`, `label`, `aliases`, `summary`, `taxonomy_ids`, `geography_ids`, `capability_roles`, `is_demand_anchor`, `research_links`.
+- `PanoramaEntity`: `entity_id`, `kind`, `label`, `aliases`, `summary`, `taxonomy_ids`, `geography_ids`, `capability_roles`, `coverage_gaps`, `freshness_state`, `last_reviewed_at`, `is_demand_anchor`, `research_links`.
 - `PanoramaRelationship`: `relationship_id`, `source_entity_id`, `target_entity_id`, `relationship_type`.
-- `PanoramaAssertion`: `assertion_id`, `relationship_id`, `text`, `assertion_kind`, `lifecycle_state`, `effective_from`, `effective_to`, `geography_roles`, `confidence_inputs`, `confidence_label`, `limitations`, `evidence_ids`, `premise_assertion_ids`, `review_state`, `supersedes_assertion_id`.
+- `PanoramaAssertion`: `assertion_id`, `relationship_id`, `text`, `assertion_kind`, `lifecycle_state`, `effective_from`, `effective_to`, `time_precision`, `observed_at`, `reporting_period_start`, `reporting_period_end`, `reviewed_at`, `freshness_state`, `geography_roles`, `confidence_inputs`, `confidence_rationale`, `confidence_label`, `limitations`, `evidence_ids`, `premise_assertion_ids`, `review_state`, `supersedes_assertion_id`.
 - `PanoramaSourceSnapshot`: `source_id`, `tier`, `publisher`, `document_title`, `url`, `publication_date`, `retrieval_date`, `immutable_locator`, `content_hash`, `license_class`.
 - `PanoramaEvidence`: `evidence_id`, `source_id`, `locator`, `bounded_excerpt`, `extraction_method`, `review_state`.
 - `PanoramaReleaseDiff`: `added`, `changed`, `expired`, `removed`, `reasons`.
@@ -100,13 +100,13 @@ Every nested JSON record uses exactly these fields:
 
 The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable IDs use the prefixes `taxonomy:`, `geography:`, `entity:`, `source:`, `evidence:`, `relationship:`, and `assertion:`. The loader accepts an optional `Path` only for tests; production uses `Path(__file__).parent / "releases" / "2026-07-24.v1.json"`.
 
-`validate_release(payload)` returns the frozen release or raises `PanoramaReleaseError` with a sanitized deterministic message. It validates:
+`validate_release(payload, *, previous: PanoramaRelease | None = None)` returns the frozen release or raises `PanoramaReleaseError` with a sanitized deterministic message. `previous` is mandatory when `prior_release_id` is non-null and must have that exact release ID. A first release has `prior_release_id=null`; its stored diff lists every admitted stable ID under `added`, leaves `changed`, `expired`, `removed`, and `reasons` empty, and is recomputed without a resolver. It validates:
 
 - exact top-level and record keys;
 - ISO-8601 dates/timestamps and `effective_from <= effective_to`;
 - unique stable IDs and valid foreign keys;
 - exactly six demand-anchor IDs;
-- 25-35 entities and 45-70 relationships;
+- 25-35 organization/project records (capability/standard nodes are additional) and 45-70 relationships;
 - a traversable path of at least two supported hops from every demand anchor;
 - nonempty English labels and bounded summaries/excerpts;
 - admitted taxonomy layers, entity kinds, relationship types, assertion kinds, lifecycle states, geography roles, source tiers, and review states;
@@ -115,7 +115,8 @@ The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable 
 - inference derivation references only existing disclosed/guidance/claim premise assertion IDs;
 - confidence labels derived from evidence attributes rather than accepted from prose;
 - admitted optional research/valuation links with a canonical stock ID, safe internal path, and non-executing command hint;
-- computed release diffs exactly matching stored added/changed/expired/removed IDs and reasons, with stable prior identities preserved;
+- computed release diffs exactly matching stored added/changed/expired/removed IDs and reasons against `previous`, with stable prior identities preserved;
+- rejection when a payload reuses `previous.release_id` with any byte-significant content change, or names a missing/mismatched prior release;
 - `review_state == "published"` only when curator and reviewer are distinct and every assertion is independently reviewed;
 - HTTPS-only external source URLs, internal research paths beginning with `/command`, labels of at most 120 characters, summaries/assertions of at most 800 characters, excerpts of at most 600 characters, limitations of at most 500 characters, and a UTF-8 public projection no larger than 2 MiB;
 - no credential-looking fields, local filesystem paths, raw source documents, or unsupported keys.
@@ -138,6 +139,17 @@ The only accepted `schema_version` is `ai_industry_panorama_release.v1`. Stable 
 
 No other release object is serialized by the gateway.
 
+The projection is an exact allow-list:
+
+- `release`: `release_id`, `prior_release_id`, `taxonomy_version`, `published_at`, `evidence_cutoff`, `change_summary`, `review_state`;
+- each `taxonomy` item: `taxonomy_id`, `parent_id`, `label`, `definition`, `standards_context`, `coverage_gaps`, `layer`, `sort_order`;
+- each `entity` item: the admitted `PanoramaEntity` fields, with research links limited to safe internal paths and non-executing hints;
+- each projected `relationship`: its four identity fields plus exactly one active joined assertion with `assertion_id`, `text`, `assertion_kind`, `lifecycle_state`, all time/precision/freshness fields, `geography_roles`, `confidence_inputs`, `confidence_rationale`, `confidence_label`, `limitations`, `evidence_ids`, and `premise_assertion_ids`;
+- each `evidence` and `source` item: the admitted record fields above, except `bounded_excerpt` remains length-capped;
+- `facets`: deterministic sorted IDs/labels for layer, geography, time horizon, lifecycle, evidence tier, and confidence.
+
+The join fails validation if a relationship has zero or more than one active assertion in the release. Superseded assertions remain in the immutable release history but are not joined into the active relationship projection; their IDs remain discoverable through release-diff and supersession metadata.
+
 ## Curated Release And Update Contract
 
 - Product owns taxonomy meaning, V1 scope, non-goals, user journeys, and acceptance criteria.
@@ -149,7 +161,7 @@ No other release object is serialized by the gateway.
 - Official issuer, regulator, filing, standards-body, grid/operator, and consortium sources are Tier 1. Named technical or partner announcements are Tier 2. Secondary context is Tier 3 and cannot independently support `disclosed_fact`.
 - V1 contains no automatic fetch. A later acquisition adapter may create review-required candidates but may not publish relationships.
 
-Implementation Task 1 is blocked until `docs/changes/ai-industry-panorama/v1-source-manifest.md` names the Research Curator and a distinct Source Reviewer, contains every stable entity/relationship/assertion/evidence/source ID, has 25-35 entities and 45-70 relationships, records an exact official locator for every evidence item, and is marked `reviewed_for_implementation`. Development transcribes that reviewed manifest; it does not invent or reclassify supply-chain facts.
+Implementation Task 1 is blocked until `docs/changes/ai-industry-panorama/v1-source-manifest.md` names the Research Curator and a distinct Source Reviewer, contains every stable entity/relationship/assertion/evidence/source ID, has 25-35 reviewed organizations/projects and 45-70 relationships, records an exact official locator for every evidence item, and is marked `reviewed_for_implementation`. Development transcribes that reviewed manifest; it does not invent or reclassify supply-chain facts.
 
 ## Task 1: Release Domain, Validator, And Reviewed V1 Artifact
 
@@ -162,7 +174,7 @@ Implementation Task 1 is blocked until `docs/changes/ai-industry-panorama/v1-sou
 
 **Interfaces:**
 
-- Produces: `PanoramaReleaseError`, `load_release(path: Path | None = None) -> PanoramaRelease`, `validate_release(payload: Mapping[str, object]) -> PanoramaRelease`, `diff_releases(previous: PanoramaRelease, current: PanoramaRelease) -> dict[str, object]`, and `build_public_projection(release: PanoramaRelease) -> dict[str, object]`.
+- Produces: `PanoramaReleaseError`, `load_release(path: Path | None = None, *, prior_path: Path | None = None) -> PanoramaRelease`, `validate_release(payload: Mapping[str, object], *, previous: PanoramaRelease | None = None) -> PanoramaRelease`, `diff_releases(previous: PanoramaRelease | None, current: PanoramaRelease) -> dict[str, object]`, and `build_public_projection(release: PanoramaRelease) -> dict[str, object]`.
 - Consumes: Python standard library only.
 
 - [ ] **Step 1: Write failing validator and public-projection tests**
@@ -171,8 +183,12 @@ Implementation Task 1 is blocked until `docs/changes/ai-industry-panorama/v1-sou
 class PanoramaReleaseTests(unittest.TestCase):
     def test_canonical_release_has_bounded_counts_and_six_demand_anchors(self) -> None:
         release = load_release()
-        self.assertLessEqual(25, len(release.entities))
-        self.assertLessEqual(len(release.entities), 35)
+        covered_entities = [
+            entity for entity in release.entities
+            if entity.kind in {"organization", "project"}
+        ]
+        self.assertLessEqual(25, len(covered_entities))
+        self.assertLessEqual(len(covered_entities), 35)
         self.assertLessEqual(45, len(release.relationships))
         self.assertLessEqual(len(release.relationships), 70)
         self.assertEqual(6, sum(entity.is_demand_anchor for entity in release.entities))
@@ -187,11 +203,18 @@ class PanoramaReleaseTests(unittest.TestCase):
     def test_second_fixture_produces_diff_without_mutating_history(self) -> None:
         previous_bytes = canonical_release_path().read_bytes()
         previous = load_release()
-        current = validate_release(next_release_payload(previous))
+        current = validate_release(next_release_payload(previous), previous=previous)
         change = diff_releases(previous, current)
         self.assertEqual(["assertion:example:v2"], change["changed"])
         self.assertEqual([], change["removed"])
         self.assertEqual(previous_bytes, canonical_release_path().read_bytes())
+
+    def test_same_release_id_cannot_be_reused_with_changed_content(self) -> None:
+        previous = load_release()
+        payload = payload_from_release(previous)
+        payload["change_summary"] = ["mutated under the same release ID"]
+        with self.assertRaisesRegex(PanoramaReleaseError, "release ID reuse"):
+            validate_release(payload, previous=previous)
 ```
 
 The same test module parses the panorama package AST and rejects imports of `repository`, `portfolio_graph`, `stock_valuation`, `candidate_insights`, order modules, and job-creation modules. Patch those existing modules' public read/write entrypoints to raise during `load_release()` and `build_public_projection()`; the projection must still succeed, proving the domain neither reads nor writes them.
@@ -324,11 +347,12 @@ git commit -m "feat: expose AI panorama routes"
 - Modify: `scripts/deploy_contract.py`
 - Modify: `tests/test_deploy_change_classifier.py`
 - Modify: `docs/architecture/architecture-contract.md`
+- Modify: `docs/project-management/Deploy-Classification.md`
 
 **Interfaces:**
 
 - Produces: targeted-quick classification with only `weekly-review-web`.
-- Produces: declared route ownership/access/test inventory.
+- Produces: declared route ownership/access/test inventory and an explicit control-plane classification for the classifier change.
 - Consumes: the existing `feature_routes` request field for deployment HTTP success checks; the L3 API suite, not the independent Ops control plane, verifies JSON semantics.
 
 - [ ] **Step 1: Add failing deploy-contract tests**
@@ -351,7 +375,7 @@ Expected: the assertion fails because the fallback `investment_knowledge_mcp/**`
 
 - [ ] **Step 3: Add the exact package rule and route inventory**
 
-Add one prefix rule for `investment_knowledge_mcp/ai_industry_panorama/**`. Do not broaden shared-service targets. Register `/ai-industry-panorama` with owner `investment_knowledge_mcp.ai_industry_panorama`, access `public_read`, and its contract tests in the architecture inventory. Leave `scripts/deploy_release.py` unchanged: pass page and API paths through the already-supported `feature_routes` deploy request, and verify `ok`, schema version, release ID, and nonempty entities/relationships in `e2e/public-api-contracts.spec.ts`.
+Add one prefix rule for `investment_knowledge_mcp/ai_industry_panorama/**`. Do not broaden shared-service targets. Register `/ai-industry-panorama` with owner `investment_knowledge_mcp.ai_industry_panorama.controller`, access `public_read`, and its contract tests in the architecture inventory. Update `Deploy-Classification.md` to record that this package is targeted-quick for `weekly-review-web`, while a change to `scripts/deploy_contract.py` is itself an independent Ops control-plane change that requires the exact target SHA to be installed before the business deploy. Leave `scripts/deploy_release.py` unchanged: pass page and API paths through the already-supported `feature_routes` deploy request, and verify `ok`, schema version, release ID, and nonempty entities/relationships in `e2e/public-api-contracts.spec.ts`.
 
 - [ ] **Step 4: Run tests and verify GREEN**
 
@@ -362,7 +386,7 @@ Expected: all deploy-classification tests pass, including exact `weekly-review-w
 - [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/deploy_contract.py tests/test_deploy_change_classifier.py docs/architecture/architecture-contract.md
+git add scripts/deploy_contract.py tests/test_deploy_change_classifier.py docs/architecture/architecture-contract.md docs/project-management/Deploy-Classification.md
 git commit -m "ops: classify AI panorama release"
 ```
 
@@ -436,7 +460,12 @@ Deploy Intent:
 - Verification URL: `http://47.84.190.191:8010/ai-industry-panorama`
 - Watch owner/path: this AI Industry Panorama Feature Coordinator polling the one serialized deploy
 
-Do not start another deploy channel if `production-deploy` is active.
+Because the candidate changes `scripts/deploy_contract.py`, serialize these two release operations for the same exact pushed target SHA:
+
+1. Run `.github/workflows/ops-api.yml` with `mode=install` from the exact target SHA. Wait for the workflow's private Ops API `/health` check and confirm that the reported control-plane ref equals the target SHA.
+2. Only after that install is healthy, run the one application deploy through `.github/workflows/deploy.yml` / the shared Ops API using the same target SHA and `quick` mode with the two `feature_routes`.
+
+Do not start another deploy channel if `production-deploy` or an Ops API install is active. A failed or mismatched control-plane identity is a deploy blocker; do not bypass it with SSH or an ad hoc restart.
 
 - [ ] **Step 6: Dispatch independent L3 acceptance**
 
