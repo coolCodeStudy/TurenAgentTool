@@ -16,6 +16,54 @@ from investment_knowledge_mcp.command_workbench import (
 )
 
 
+class CrowdingWorkbenchTests(unittest.TestCase):
+    def test_crowding_actions_are_registered_read_only_and_executable(self) -> None:
+        actions = {item["id"]: item for item in list_workbench_actions()}
+
+        self.assertEqual("read_only", actions["crowding_symbol"]["safety_level"])
+        self.assertEqual("read_only", actions["crowding_portfolio"]["safety_level"])
+        self.assertFalse(actions["crowding_symbol"]["confirmation_required"])
+        self.assertFalse(actions["crowding_portfolio"]["confirmation_required"])
+        self.assertTrue(actions["crowding_symbol"]["supports_execution"])
+        self.assertTrue(actions["crowding_portfolio"]["pinned"])
+
+    def test_exact_crowding_symbol_does_not_require_stock_profile_bootstrap(self) -> None:
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference"
+        ) as resolve:
+            preview = parse_workbench_command("拥挤度 US.NVDA", allow_llm=False)
+
+        self.assertEqual("parsed", preview["status"])
+        self.assertEqual("crowding_symbol", preview["action_id"])
+        self.assertEqual("拥挤度 US.NVDA", preview["exact_command"])
+        self.assertEqual("US.NVDA", preview["target"]["canonical"])
+        self.assertFalse(preview["confirmation_required"])
+        self.assertIsNone(execution_blocker(preview, confirmed=False))
+        resolve.assert_not_called()
+
+    def test_portfolio_crowding_aliases_emit_one_stable_command(self) -> None:
+        previews = [
+            parse_workbench_command(alias, allow_llm=False)
+            for alias in ("持仓拥挤度", "拥挤交易", "portfolio crowding")
+        ]
+
+        self.assertTrue(all(item["status"] == "parsed" for item in previews))
+        self.assertTrue(all(item["action_id"] == "crowding_portfolio" for item in previews))
+        self.assertEqual({"持仓拥挤度"}, {item["exact_command"] for item in previews})
+
+    def test_unqualified_crowding_symbol_returns_bounded_recovery_not_bootstrap(self) -> None:
+        with mock.patch(
+            "investment_knowledge_mcp.command_workbench.repository.resolve_stock_reference",
+            return_value=[],
+        ):
+            preview = parse_workbench_command("拥挤度 NVDA", allow_llm=False)
+
+        self.assertEqual("needs_entity", preview["status"])
+        self.assertEqual("crowding_symbol", preview["action_id"])
+        self.assertNotEqual("bootstrap_stock_profile", preview["action_id"])
+        self.assertIn("market-qualified", preview["recovery_message"])
+
+
 class DailyMarketBriefWorkbenchTests(unittest.TestCase):
     def test_approved_history_phrases_parse_to_executable_exact_commands(self) -> None:
         cases = (

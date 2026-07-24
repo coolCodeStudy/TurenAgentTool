@@ -9,6 +9,7 @@ from investment_knowledge_mcp import repository
 from investment_knowledge_mcp.analysis_provider import propose_command_workbench_parse_with_openai
 from investment_knowledge_mcp.command_router import (
     PORTFOLIO_ANALYSIS_COMMANDS,
+    PORTFOLIO_CROWDING_COMMANDS,
     PORTFOLIO_POSITION_COMMANDS,
     RECENT_ERRORS_COMMANDS,
     RESEARCH_JOB_CREATE_COMMANDS,
@@ -195,6 +196,40 @@ ACTIONS: dict[str, CommandAction] = {
         side_effects="Reads the static valuation method library.",
         data_sources=("valuation method library",),
         expected_output="Five core and three specialist-only valuation method definitions.",
+    ),
+    "crowding_symbol": CommandAction(
+        id="crowding_symbol",
+        action_family="Crowding intelligence",
+        label="Investigate symbol crowding",
+        description="Show explainable long, short-squeeze, and attention evidence for one market-qualified symbol.",
+        aliases=("拥挤度", "拥挤交易", "crowding"),
+        required_fields=STOCK_FIELD,
+        optional_fields=(),
+        template="拥挤度 {market}.{symbol}",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="crowding_assessment",
+        side_effects="No trade and no durable write. Reads bounded end-of-day market evidence.",
+        data_sources=("Futu market bars", "Futu account-entitled crowding evidence"),
+        expected_output="Direction-specific evidence bands, provenance, missing families, uncertainty, and a no-advice boundary.",
+        pinned=True,
+    ),
+    "crowding_portfolio": CommandAction(
+        id="crowding_portfolio",
+        action_family="Crowding intelligence",
+        label="Investigate portfolio crowding",
+        description="Analyze up to eight current holdings and group evidence by market.",
+        aliases=("持仓拥挤度", "拥挤交易", "portfolio crowding"),
+        required_fields=(),
+        optional_fields=(),
+        template="持仓拥挤度",
+        safety_level="read_only",
+        confirmation_required=False,
+        result_type="portfolio_crowding_report",
+        side_effects="No trade and no durable write. Reads current positions and bounded end-of-day evidence.",
+        data_sources=("Futu positions", "Futu market bars", "Futu account-entitled crowding evidence"),
+        expected_output="Market-grouped holding summaries with separate long, short-squeeze, and attention evidence.",
+        pinned=True,
     ),
     "decision_refresh": CommandAction(
         id="decision_refresh",
@@ -533,6 +568,10 @@ VALUATION_STOCK_ACTIONS = {
     "stock_valuation",
     "stock_valuation_latest",
     "stock_valuation_artifact_evidence",
+}
+
+DIRECT_SYMBOL_ACTIONS = {
+    "crowding_symbol",
 }
 
 SERVICE_ALIASES = {
@@ -1478,6 +1517,8 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
         return _preview_from_action(_action_context(context, "portfolio_positions", "deterministic_alias", 0.99))
     if text in PORTFOLIO_ANALYSIS_COMMANDS:
         return _preview_from_action(_action_context(context, "portfolio_analysis", "deterministic_alias", 0.99))
+    if text in PORTFOLIO_CROWDING_COMMANDS:
+        return _preview_from_action(_action_context(context, "crowding_portfolio", "deterministic_alias", 0.99))
     if text in RESEARCH_JOB_LIST_COMMANDS:
         return _preview_from_action(_action_context(context, "research_list_jobs", "deterministic_alias", 0.99))
     if text in RESEARCH_JOB_CREATE_COMMANDS:
@@ -1668,6 +1709,22 @@ def _parse_deterministic(context: ParseContext) -> dict[str, Any]:
 
 
 def _parse_exact_command(text: str) -> dict[str, Any] | None:
+    crowding_target = _match_first(
+        text,
+        [r"^(?:拥挤度|拥挤交易|crowding)\s+(.+)$"],
+        flags=re.IGNORECASE,
+    )
+    if crowding_target:
+        return _preview_from_action(
+            ParseContext(
+                raw_input=text,
+                action_id="crowding_symbol",
+                fields={"stock": crowding_target},
+                parse_source="exact_command",
+                confidence=1.0,
+            )
+        )
+
     valuation_evidence_exact = _match_first(
         text,
         [r"^(?:valuation artifact evidence|valuation evidence|估值artifact证据|估值证据)\s+(.+)$"],
@@ -1905,7 +1962,14 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
         if target is None and valuation_alias_target is not None:
             target = valuation_alias_target
             confidence = min(confidence, float(target["confidence"]))
-    if needs_stock and target is not None and action.id != "bootstrap_stock_profile":
+    if action.id in DIRECT_SYMBOL_ACTIONS and target is None:
+        target = _market_qualified_symbol_candidate(str(fields.get("stock") or ""))
+    if (
+        needs_stock
+        and target is not None
+        and action.id != "bootstrap_stock_profile"
+        and action.id not in DIRECT_SYMBOL_ACTIONS
+    ):
         if valuation_alias_target is None:
             resolved_target = _candidate_with_stock_profile(target)
             if resolved_target is None:
@@ -1956,13 +2020,22 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
                 )
             else:
                 confidence = min(confidence, float(target.get("confidence") or confidence))
+        elif action.id in DIRECT_SYMBOL_ACTIONS and re.fullmatch(r"[A-Za-z0-9_-]+", stock_query):
+            status = "needs_entity"
+            recovery_message = (
+                "Enter a market-qualified symbol such as US.NVDA, HK.00700, 000660 KR, or CN.600519."
+            )
         else:
             if valuation_alias_target is not None:
                 target = valuation_alias_target
             else:
                 candidates = resolve_stock_candidates(stock_query)
             if target is None and not candidates:
-                bootstrap_target = _symbol_candidate_from_query(stock_query)
+                bootstrap_target = (
+                    None
+                    if action.id in DIRECT_SYMBOL_ACTIONS
+                    else _symbol_candidate_from_query(stock_query)
+                )
                 if bootstrap_target is not None:
                     return _preview_from_action(
                         ParseContext(
@@ -1980,7 +2053,12 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
                         )
                     )
                 status = "needs_entity"
-                if action.id in VALUATION_STOCK_ACTIONS and _looks_path_like_query(stock_query):
+                if action.id in DIRECT_SYMBOL_ACTIONS:
+                    recovery_message = (
+                        f"I recognized {action.label}, but could not resolve the requested target. "
+                        "Enter a market-qualified symbol such as US.NVDA, HK.00700, 000660 KR, or CN.600519."
+                    )
+                elif action.id in VALUATION_STOCK_ACTIONS and _looks_path_like_query(stock_query):
                     recovery_message = (
                         f"I recognized {action.label}, but the target does not look like a stock symbol. "
                         "Enter a known stock or a market-qualified symbol such as US.MSTR or 000660 KR."
@@ -2018,6 +2096,7 @@ def _preview_from_action(context: ParseContext) -> dict[str, Any]:
         and needs_stock
         and target is not None
         and action.id != "bootstrap_stock_profile"
+        and action.id not in DIRECT_SYMBOL_ACTIONS
         and target.get("source") == "portfolio_holding"
     ):
         resolved_target = _candidate_with_stock_profile(target)
@@ -2413,6 +2492,39 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None
+
+
+def _market_qualified_symbol_candidate(value: str) -> dict[str, Any] | None:
+    cleaned = _clean_stock_text(value)
+    market_symbol_match = re.fullmatch(
+        r"(US|HK|KR|CN|SH|SZ)\.([A-Za-z0-9_-]+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    symbol_market_match = re.fullmatch(
+        r"([A-Za-z0-9_-]+)\s+(US|HK|KR|CN|SH|SZ)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if market_symbol_match:
+        market, symbol = market_symbol_match.groups()
+    elif symbol_market_match:
+        symbol, market = symbol_market_match.groups()
+    else:
+        return None
+    normalized_market = "CN" if market.upper() in {"SH", "SZ"} else market.upper()
+    normalized_symbol = symbol.upper()
+    if normalized_market == "HK" and normalized_symbol.isdigit():
+        normalized_symbol = normalized_symbol.zfill(5)
+    if normalized_market in {"KR", "CN"} and normalized_symbol.isdigit():
+        normalized_symbol = normalized_symbol.zfill(6)
+    return _candidate(
+        symbol=normalized_symbol,
+        market=normalized_market,
+        name=f"{normalized_market}.{normalized_symbol}",
+        confidence=1.0,
+        source="exact_symbol",
+    )
 
 
 def _clean_selected_target(value: dict[str, Any] | None) -> dict[str, Any] | None:
