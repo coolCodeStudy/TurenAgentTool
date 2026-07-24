@@ -1233,7 +1233,7 @@
       "publication_date": "2026-02-04",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "prepared remarks by Sundar Pichai, AI infrastructure paragraphs; prepared remarks and Q&A by Anat Ashkenazi, technical-infrastructure investment mix",
-      "content_hash": "sha256:7277d56256b642f0526092d58da223673cc1914f29c9fa228a1ecf8a8ce4e3d5",
+      "content_hash": "sha256:989e71eabb9c5482e99fa3fbc3a31381d36631d233e2e91dfa94c62ac873c803",
       "license_class": "official earnings-call transcript; public HTML; quote only short excerpts and retain attribution"
     },
     {
@@ -1245,7 +1245,7 @@
       "publication_date": "2026-04-29",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "Satya Nadella prepared remarks, AI infrastructure/Fairwater paragraphs; Amy Hood prepared remarks and Q4 outlook, capital expenditures paragraphs",
-      "content_hash": "sha256:42576a40a3481c26d900dfe49d6b4f4947e9adc7d278e1f176b920ff2a052f5a",
+      "content_hash": "sha256:22ca1e7b4fbe4e93b120e2c75cb1c0558c4ee12824120be16ec12e860da5c4b4",
       "license_class": "official earnings-call transcript; public HTML; quote only short excerpts and retain attribution"
     },
     {
@@ -1257,7 +1257,7 @@
       "publication_date": "2026-04-29",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "“First Quarter 2026 Operational and Other Financial Highlights,” capital expenditures bullet; “CFO Outlook Commentary,” 2026 expense and capital-expenditure paragraph",
-      "content_hash": "sha256:59453692962ec0f00caeb323463697e316c623e6297725c161b157721c80690e",
+      "content_hash": "sha256:8263a4c9c5a96e57d7c7f65b0af8e44d1e127ac25de468ee47f0844d9c4ecfbf",
       "license_class": "official results release; public HTML; retain attribution"
     },
     {
@@ -1269,7 +1269,7 @@
       "publication_date": "2026-02-06",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "Item 7, “Liquidity and Capital Resources,” p. 25; Item 7, “Operating Expenses,” Technology and infrastructure, p. 26",
-      "content_hash": "sha256:84fb80ec80bcb11546d7092af68daeabe691094557a29005ff11c3f59517923a",
+      "content_hash": "sha256:8a7eda21911b6f92608ec7ea0d588b72fc1aae6a66b2d0307b54979089465a31",
       "license_class": "regulator-hosted issuer filing; public filing; retain accession and page/item locator"
     },
     {
@@ -1281,7 +1281,7 @@
       "publication_date": "2026-04-29",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "“Some other highlights,” “Continued growing custom silicon business” bullets, especially OpenAI, Anthropic, and Trainium statements",
-      "content_hash": "sha256:ba4df7076b0200847aeb9d8921de2e525a7cedc7c27942e08b3ddb56c31f36f0",
+      "content_hash": "sha256:bd18ea7df78cd339257d3133b5767a88c9b7b8a33957f53522f31b4e15c27ad9",
       "license_class": "official results release; public HTML; retain attribution"
     },
     {
@@ -1293,7 +1293,7 @@
       "publication_date": "2026-06-08",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "“Key Takeaways” and opening paragraphs describing agreement scope and optical products",
-      "content_hash": "sha256:4fba96092d38d8c41419ff76709798a43cb20cecbb47e495cba418d6e554496b",
+      "content_hash": "sha256:eb064438021f61da86649d5cd7be21101f475cfba4c1941e12c1d42b19d601b1",
       "license_class": "official company announcement; public HTML; one-party announcement, retain attribution"
     },
     {
@@ -1305,7 +1305,7 @@
       "publication_date": "2025-09-23",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "October 22 update; lead paragraphs identifying five U.S. sites and Stargate as the overarching platform; paragraphs describing SoftBank/OpenAI sites and the Abilene flagship on OCI",
-      "content_hash": "sha256:94c73138d84246d0f1c6d5984f3ce9f4851ff5f05820aa16333b07f61441c251",
+      "content_hash": "sha256:0091d3e5ea2c20a4d75b7665a4e013a76baed56990995988890921234dca9237",
       "license_class": "official company announcement; public mutable HTML; one-party announcement, retain attribution and capture a content fingerprint"
     },
     {
@@ -1317,7 +1317,7 @@
       "publication_date": "2025-07-22",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "opening paragraphs describing the 4.5 GW agreement, Stargate I status, rack deliveries, and early workloads",
-      "content_hash": "sha256:15b101fd5c91887a3351f1f6a96f3648ecb3c5f0b1aaaa0e1e4210349faa7bdb",
+      "content_hash": "sha256:d4045007bc631b013f4d7108bd5a0028c4e6443b3b98d9b7f794e3e6431d5e6d",
       "license_class": "official company announcement; public HTML; one-party announcement, retain attribution"
     },
     {
@@ -1329,7 +1329,7 @@
       "publication_date": "2026-04-06",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "opening four paragraphs describing signed TPU capacity, expected 2027 availability, and AWS/TPU/NVIDIA hardware mix",
-      "content_hash": "sha256:77e07569de0bea8a756007c019354809385512d8382f136f46b9a8664b28b98a",
+      "content_hash": "sha256:c3f51137a922c6e87a1f0f42912cf782dbf645f25653f2538d2bafc63527d090",
       "license_class": "official company announcement; public HTML; one-party announcement, retain attribution"
     },
     {
@@ -1341,7 +1341,7 @@
       "publication_date": "2026-02-25",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "Item 1, “Our Company,” pp. 3-4; Item 1, “Manufacturing,” p. 8",
-      "content_hash": "sha256:62125b6a6186123e076863e1176cd4bf84042fc9db77cd0a4c128fdc53c2fda9",
+      "content_hash": "sha256:38bff654b37294e078f207c8889bf6b170ae29ab34f58ab19b9e55f9d646286c",
       "license_class": "regulator-hosted issuer filing; public filing; retain accession and page/item locator"
     },
     {
@@ -1353,7 +1353,7 @@
       "publication_date": "2026-04-17",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "Chapter 5, pp. 102-104, “3DFabric,” CoWoS, system integration, and interconnect paragraphs",
-      "content_hash": "sha256:885e405d54108330e2682ddce5988f7a0630fb67719e80f3e50c9c15f4be0c4b",
+      "content_hash": "sha256:cc1e3afb3f0e57f1ab7525037bdcf0f2ee560c07e12d1a78c53e630bced5b8c3",
       "license_class": "official annual-report chapter; public PDF; retain page locator"
     },
     {
@@ -1365,7 +1365,7 @@
       "publication_date": "2026-01-28",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "opening result summary and paragraphs beginning “The company also highlighted its efforts” and “In the HBM business”",
-      "content_hash": "sha256:52a94641983e676a4872cba394ed60b6cb303d39ea6d8022915e844ce4a6ab87",
+      "content_hash": "sha256:60f08af8941bddcea00ab313b39a577a71c58f324d61f54e11b102fbe93e9944",
       "license_class": "official results announcement; public HTML; one-party technical and financial claims, retain attribution"
     },
     {
@@ -1377,7 +1377,7 @@
       "publication_date": "2026-06-18",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "page label “IMAGE & VIDEO,” displayed title, and displayed date",
-      "content_hash": "sha256:ecac12e891a9b942cce955579b5a8fee288969b1b43778de357d6cd1bdcf560c",
+      "content_hash": "sha256:3bc839894b66fd4522b4a471f57905459ea7a4704b0b96876d3c24c793ca6f86",
       "license_class": "official image/video media entry; public HTML media entry; no text description is displayed, so use title-level evidence only"
     },
     {
@@ -1389,7 +1389,7 @@
       "publication_date": "2026-02-25",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "“2025 performance,” Total net sales paragraphs; “Research and development,” complete bullet list",
-      "content_hash": "sha256:0028d2f8e7fdee26bfca3cba8a6ec4d1990373738b69b73c3214af2e870317e8",
+      "content_hash": "sha256:ae592998a476494759f291bf727d299125d36fba7f3f06d4bc7e67bf625765b7",
       "license_class": "official annual-report web section; public HTML; retain annual-report attribution"
     },
     {
@@ -1401,7 +1401,7 @@
       "publication_date": "2026-03-16",
       "retrieval_date": "2026-07-24",
       "immutable_locator": "opening bullets and “New NVIDIA Vera Rubin Reference Design” section",
-      "content_hash": "sha256:07e9344d6a6c580fd16ba2ee799ad2a5f440a2018fc1751e3085a69bf1c3d608",
+      "content_hash": "sha256:26c242cde1f441d1de570d35f03ba5697f9dadae17b405cbe91083f299264403",
       "license_class": "official company announcement; public HTML; joint-work claim is from Schneider's announcement, retain attribution"
     },
     {
@@ -1413,7 +1413,7 @@
       "publication_date": null,
       "retrieval_date": "2026-07-24",
       "immutable_locator": "“Scope” bullets covering reference designs, advanced power/cooling, energy bottlenecks, open SLAs, telemetry/management, and power estimation methodologies",
-      "content_hash": "sha256:9941f2409c1e6ea3c006cebdb75cb591aed15fb53163eeedf1031451fb9a45a8",
+      "content_hash": "sha256:57a691e91f0b5162b02a9de62b9cfe69de7d2af6abd5144f62044e436edf38f1",
       "license_class": "official program page; public HTML; no publication date displayed; scope is current-page state only"
     }
   ],

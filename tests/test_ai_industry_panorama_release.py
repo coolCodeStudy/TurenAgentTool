@@ -11,6 +11,7 @@ from typing import Mapping
 import unittest
 from unittest import mock
 
+from investment_knowledge_mcp.ai_industry_panorama import release as panorama_release
 from investment_knowledge_mcp.ai_industry_panorama.release import (
     PanoramaReleaseError,
     build_public_projection,
@@ -84,6 +85,22 @@ def replace_confidence_input(
             "extraction",
             "conflict",
         )
+    )
+
+
+def refresh_source_hash(payload: dict[str, object], source_id: str) -> None:
+    source = next(
+        item for item in payload["sources"] if item["source_id"] == source_id
+    )
+    evidence = tuple(
+        panorama_release.PanoramaEvidence(**item)
+        for item in payload["evidence"]
+        if item["source_id"] == source_id
+    )
+    source_record = panorama_release.PanoramaSourceSnapshot(**source)
+    source["content_hash"] = panorama_release.compute_source_content_hash(
+        source_record,
+        evidence,
     )
 
 
@@ -348,7 +365,7 @@ class PanoramaReleaseTests(unittest.TestCase):
             if item["assertion_kind"] == "inferred_exposure"
         )
         inferred["premise_assertion_ids"] = [
-            "assertion:AST-AIP-0014",
+            "assertion:AST-AIP-0019",
             "assertion:AST-AIP-0045",
         ]
 
@@ -408,6 +425,18 @@ class PanoramaReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(PanoramaReleaseError, "duplicate JSON key"):
             load_release(path)
 
+    def test_duplicate_json_key_error_never_echoes_hostile_key(self) -> None:
+        hostile_key = "authorization=Bearer hostile-key-sentinel"
+        path = self._temp_file(
+            json.dumps({hostile_key: 1})[:-1]
+            + f', {json.dumps(hostile_key)}: 2}}'
+        )
+
+        with self.assertRaises(PanoramaReleaseError) as raised:
+            load_release(path)
+        self.assertEqual("duplicate JSON key", str(raised.exception))
+        self.assertNotIn(hostile_key, str(raised.exception))
+
     def test_second_fixture_produces_diff_without_mutating_history(self) -> None:
         previous_bytes = CANONICAL_RELEASE.read_bytes()
         previous = load_release()
@@ -417,6 +446,126 @@ class PanoramaReleaseTests(unittest.TestCase):
         self.assertEqual([previous.assertions[0].assertion_id], change["changed"])
         self.assertEqual([], change["removed"])
         self.assertEqual(previous_bytes, CANONICAL_RELEASE.read_bytes())
+
+    def test_published_v2_allows_superseded_history_and_projects_new_assertion(
+        self,
+    ) -> None:
+        previous = load_release()
+        payload = canonical_payload()
+        payload["release_id"] = "ai-industry-panorama.2026-07-25.v2"
+        payload["prior_release_id"] = previous.release_id
+        payload["published_at"] = "2026-07-25T00:00:00Z"
+        payload["evidence_cutoff"] = "2026-07-25"
+        payload["change_summary"] = [
+            "Test-only reviewed replacement of one active assertion."
+        ]
+        old_assertion = next(
+            item
+            for item in payload["assertions"]
+            if item["assertion_id"] == "assertion:AST-AIP-0015"
+        )
+        new_assertion = copy.deepcopy(old_assertion)
+        old_assertion["effective_to"] = "2027"
+        old_assertion["reviewed_at"] = "2026-07-25"
+        old_assertion["review_state"] = "superseded"
+        new_assertion["assertion_id"] = "assertion:AST-AIP-0049"
+        new_assertion["text"] = (
+            f'{new_assertion["text"]} This record supersedes the prior review.'
+        )
+        new_assertion["reviewed_at"] = "2026-07-25"
+        new_assertion["supersedes_assertion_id"] = old_assertion["assertion_id"]
+        payload["assertions"].append(new_assertion)
+        payload["release_diff"] = {
+            "added": [new_assertion["assertion_id"]],
+            "changed": [],
+            "expired": [old_assertion["assertion_id"]],
+            "removed": [],
+            "reasons": {
+                old_assertion["assertion_id"]: (
+                    "Test-only expiry after a reviewed replacement."
+                ),
+            },
+        }
+
+        try:
+            current = validate_release(payload, previous=previous)
+        except PanoramaReleaseError as error:
+            self.fail(f"valid superseded history was rejected: {error}")
+        self.assertEqual(
+            (old_assertion["assertion_id"],),
+            current.release_diff.expired,
+        )
+        projected = next(
+            item
+            for item in build_public_projection(current)["relationships"]
+            if item["relationship_id"] == old_assertion["relationship_id"]
+        )
+        self.assertEqual(new_assertion["assertion_id"], projected["assertion_id"])
+
+    def test_v2_admits_referenced_source_growth_of_reviewed_class(self) -> None:
+        previous = load_release()
+        payload = next_release_payload(previous)
+        source = {
+            "source_id": "source:SRC-017",
+            "tier": "T2",
+            "publisher": "Example Investor Relations",
+            "document_title": "Example Reports Second Quarter 2026 Results",
+            "url": "https://example.com/investor/results-2026-q2",
+            "publication_date": "2026-07-24",
+            "retrieval_date": "2026-07-25",
+            "immutable_locator": "Example IR results archive; 2026 Q2",
+            "content_hash": f"sha256:{'0' * 64}",
+            "license_class": (
+                "official results release; public HTML; retain attribution"
+            ),
+        }
+        evidence = {
+            "evidence_id": "evidence:EVD-AIP-0049",
+            "source_id": source["source_id"],
+            "locator": "Example IR results release; capital spending paragraph",
+            "bounded_excerpt": (
+                "Example described reviewed capital spending for AI infrastructure."
+            ),
+            "extraction_method": "manual_independent_review",
+            "review_state": "reviewed_for_implementation",
+        }
+        payload["sources"].append(source)
+        payload["evidence"].append(evidence)
+        assertion = payload["assertions"][0]
+        assertion["evidence_ids"].append(evidence["evidence_id"])
+        assertion["evidence_ids"].sort()
+        replace_confidence_input(
+            assertion,
+            "corr",
+            "two non-bilateral premises",
+        )
+        payload["release_diff"]["added"] = sorted(
+            [source["source_id"], evidence["evidence_id"]]
+        )
+        refresh_source_hash(payload, source["source_id"])
+
+        try:
+            current = validate_release(payload, previous=previous)
+        except PanoramaReleaseError as error:
+            self.fail(f"reviewed source growth was rejected: {error}")
+        self.assertIn(
+            source["source_id"],
+            {item.source_id for item in current.sources},
+        )
+
+    def test_unclassified_source_kind_is_rejected(self) -> None:
+        payload = canonical_payload()
+        source = payload["sources"][0]
+        source["license_class"] = (
+            "official social-media rumor; public HTML; retain attribution"
+        )
+        refresh_source_hash(payload, source["source_id"])
+
+        with self.assertRaisesRegex(
+            PanoramaReleaseError,
+            "source authority classification",
+        ):
+            validate_release(payload)
 
     def test_prior_release_is_required_and_must_match(self) -> None:
         previous = load_release()
@@ -613,6 +762,54 @@ class PanoramaReleaseTests(unittest.TestCase):
                 ):
                     validate_release(mutation)
 
+    def test_published_at_requires_time_and_timezone(self) -> None:
+        for published_at in (
+            "2026-07-24",
+            "2026-07-24T00:00:00",
+        ):
+            with self.subTest(published_at=published_at):
+                payload = canonical_payload()
+                payload["published_at"] = published_at
+                with self.assertRaisesRegex(PanoramaReleaseError, "published_at"):
+                    validate_release(payload)
+
+    def test_release_review_chronology_is_bounded_by_evidence_cutoff(self) -> None:
+        mutations = []
+
+        payload = canonical_payload()
+        payload["evidence_cutoff"] = "2026-07-25"
+        mutations.append(("cutoff after publication", payload, "evidence_cutoff"))
+
+        payload = canonical_payload()
+        payload["sources"][0]["publication_date"] = "2026-07-25"
+        refresh_source_hash(payload, payload["sources"][0]["source_id"])
+        mutations.append(("source publication", payload, "source publication"))
+
+        payload = canonical_payload()
+        payload["sources"][0]["retrieval_date"] = "2026-07-25"
+        refresh_source_hash(payload, payload["sources"][0]["source_id"])
+        mutations.append(("source retrieval", payload, "source retrieval"))
+
+        payload = canonical_payload()
+        payload["entities"][0]["last_reviewed_at"] = "2026-07-25"
+        mutations.append(("entity review", payload, "entity last_reviewed"))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["observed_at"] = "2026-07-25"
+        mutations.append(("assertion observation", payload, "assertion observed"))
+
+        payload = canonical_payload()
+        payload["assertions"][0]["reviewed_at"] = "2026-07-25"
+        mutations.append(("assertion review", payload, "assertion reviewed"))
+
+        for label, mutation, error_pattern in mutations:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    error_pattern,
+                ):
+                    validate_release(mutation)
+
     def test_supersession_reference_must_exist_be_nonself_and_same_relationship(
         self,
     ) -> None:
@@ -651,6 +848,64 @@ class PanoramaReleaseTests(unittest.TestCase):
         payload = canonical_payload()
         payload["sources"][0]["publication_date"] = None
         with self.assertRaisesRegex(PanoramaReleaseError, "publication date"):
+            validate_release(payload)
+
+    def test_source_hashes_recompute_from_reviewed_evidence_snapshots(self) -> None:
+        compute_hash = getattr(
+            panorama_release,
+            "compute_source_content_hash",
+            None,
+        )
+        self.assertTrue(
+            callable(compute_hash),
+            "reviewed evidence snapshot hash helper is missing",
+        )
+        release = load_release()
+        for source in release.sources:
+            with self.subTest(source_id=source.source_id):
+                associated = tuple(
+                    evidence
+                    for evidence in release.evidence
+                    if evidence.source_id == source.source_id
+                )
+                self.assertEqual(
+                    source.content_hash,
+                    compute_hash(source, associated),
+                )
+
+    def test_source_hash_detects_retained_evidence_mutation(self) -> None:
+        mutations = (
+            (
+                "source:SRC-007",
+                "evidence:EVD-AIP-0019",
+                "bounded_excerpt",
+            ),
+            (
+                "source:SRC-016",
+                "evidence:EVD-AIP-0045",
+                "locator",
+            ),
+        )
+        for source_id, evidence_id, field in mutations:
+            with self.subTest(source_id=source_id, field=field):
+                payload = canonical_payload()
+                evidence = next(
+                    item
+                    for item in payload["evidence"]
+                    if item["evidence_id"] == evidence_id
+                )
+                evidence[field] = f"{evidence[field]} Mutated after review."
+                with self.assertRaisesRegex(
+                    PanoramaReleaseError,
+                    "content_hash",
+                ):
+                    validate_release(payload)
+
+    def test_source_hash_rejects_zero_digest(self) -> None:
+        payload = canonical_payload()
+        payload["sources"][0]["content_hash"] = f"sha256:{'0' * 64}"
+
+        with self.assertRaisesRegex(PanoramaReleaseError, "content_hash"):
             validate_release(payload)
 
         payload = canonical_payload()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -147,6 +148,78 @@ class PanoramaRelease:
     evidence: tuple[PanoramaEvidence, ...]
     relationships: tuple[PanoramaRelationship, ...]
     assertions: tuple[PanoramaAssertion, ...]
+
+
+def compute_source_content_hash(
+    source: PanoramaSourceSnapshot,
+    evidence: tuple[PanoramaEvidence, ...],
+) -> str:
+    """Hash the canonical reviewed-evidence snapshot, not a remote page body.
+
+    V1 has no acquisition step. The digest therefore covers the retained source
+    metadata and reviewed evidence material that the release can reproduce.
+    """
+
+    source_material = {
+        field.name: getattr(source, field.name)
+        for field in fields(PanoramaSourceSnapshot)
+        if field.name != "content_hash"
+    }
+    evidence_material = sorted(
+        (
+            {
+                "evidence_id": item.evidence_id,
+                "locator": item.locator,
+                "bounded_excerpt": item.bounded_excerpt,
+                "extraction_method": item.extraction_method,
+                "review_state": item.review_state,
+            }
+            for item in evidence
+        ),
+        key=lambda item: item["evidence_id"],
+    )
+    digest = hashlib.sha256(
+        _compact_json(
+            {
+                "source": source_material,
+                "evidence": evidence_material,
+            }
+        )
+    ).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _source_authority_classification(
+    source: PanoramaSourceSnapshot,
+) -> str:
+    source_kind = source.license_class.partition(";")[0].strip().lower()
+    if source.tier == "T1" and source_kind == "regulator-hosted issuer filing":
+        return "T1 regulator filing"
+    if source.tier == "T3" and source_kind == "official program page":
+        return "T3 official program"
+    if source.tier == "T2":
+        if source_kind in {
+            "official earnings-call transcript",
+            "official results release",
+        }:
+            return "T2 issuer IR"
+        if source_kind in {
+            "official annual-report chapter",
+            "official annual-report web section",
+        }:
+            return "T2 issuer annual report"
+        if source_kind in {
+            "official results announcement",
+            "official image/video media entry",
+        }:
+            return "T2 issuer newsroom"
+        if source_kind == "official company announcement":
+            if source.publisher == "Corning Incorporated":
+                return "T2 supplier announcement"
+            return "T2 company announcement"
+    raise PanoramaReleaseError(
+        "source authority classification is not admitted"
+    )
 
 
 _RELEASE_PATH = Path(__file__).parent / "releases" / "2026-07-24.v1.json"
@@ -329,6 +402,10 @@ _PREFIXES = {
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _YEAR_RE = re.compile(r"^\d{4}$")
+_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"
+    r"(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _ENGLISH_RE = re.compile(r"[A-Za-z]")
 _STOCK_ID_RE = re.compile(r"^[A-Z]{2}\.[A-Z0-9]{1,10}$")
@@ -355,27 +432,9 @@ _SENSITIVE_QUERY_NAMES = frozenset(
         "token",
     }
 )
-_SOURCE_AUTHORITY_CLASSIFICATION = {
-    "source:SRC-001": "T2 issuer IR",
-    "source:SRC-002": "T2 issuer IR",
-    "source:SRC-003": "T2 issuer IR",
-    "source:SRC-004": "T1 regulator filing",
-    "source:SRC-005": "T2 issuer IR",
-    "source:SRC-006": "T2 supplier announcement",
-    "source:SRC-007": "T2 company announcement",
-    "source:SRC-008": "T2 company announcement",
-    "source:SRC-009": "T2 company announcement",
-    "source:SRC-010": "T1 regulator filing",
-    "source:SRC-011": "T2 issuer annual report",
-    "source:SRC-012": "T2 issuer newsroom",
-    "source:SRC-013": "T2 issuer newsroom",
-    "source:SRC-014": "T2 issuer annual report",
-    "source:SRC-015": "T2 company announcement",
-    "source:SRC-016": "T3 official program",
-}
-_COMBINED_AUTHORITY_BY_SOURCE_SET = {
+_COMBINED_AUTHORITY_BY_CLASSIFICATION_SET = {
     frozenset(
-        {"source:SRC-003", "source:SRC-016"}
+        {"T2 issuer IR", "T3 official program"}
     ): "T2 issuer plus T3 official-program premises",
 }
 _PUBLIC_STOCK_IDS_BY_LINK_KIND = {
@@ -494,6 +553,13 @@ def _validate_release(
         raise PanoramaReleaseError("unsupported schema_version")
     _validate_date(release.published_at, "published_at", timestamp=True)
     _validate_date(release.evidence_cutoff, "evidence_cutoff")
+    published_date = datetime.fromisoformat(
+        release.published_at.replace("Z", "+00:00")
+    ).date()
+    if date.fromisoformat(release.evidence_cutoff) > published_date:
+        raise PanoramaReleaseError(
+            "evidence_cutoff cannot be after published_at date"
+        )
     if release.review_state not in _REVIEW_STATES:
         raise PanoramaReleaseError("unsupported review state")
     if not release.change_summary or any(not item.strip() for item in release.change_summary):
@@ -535,6 +601,7 @@ def _validate_release(
         if any(
             item.review_state != "reviewed_for_implementation"
             for item in release.assertions
+            if item.review_state != "superseded"
         ):
             raise PanoramaReleaseError(
                 "published release requires independently reviewed assertions"
@@ -644,6 +711,7 @@ def _build_public_projection(
 
 
 def _validate_release_graph(release: PanoramaRelease) -> None:
+    evidence_cutoff = release.evidence_cutoff
     _unique_ids(release.taxonomy, "taxonomy_id")
     _unique_ids(release.geographies, "geography_id")
     _unique_ids(release.entities, "entity_id")
@@ -659,11 +727,6 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
     evidence_ids = {item.evidence_id for item in release.evidence}
     relationship_ids = {item.relationship_id for item in release.relationships}
     assertion_ids = {item.assertion_id for item in release.assertions}
-
-    if source_ids != set(_SOURCE_AUTHORITY_CLASSIFICATION):
-        raise PanoramaReleaseError(
-            "source authority classification is incomplete for reviewed V1 sources"
-        )
 
     _prefixes(release.taxonomy, "taxonomy_id", _PREFIXES["taxonomy"])
     _prefixes(release.geographies, "geography_id", _PREFIXES["geography"])
@@ -708,18 +771,17 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
         if not item.geography_ids or not set(item.geography_ids) <= geography_ids:
             raise PanoramaReleaseError("entity geography foreign key is invalid")
         _validate_date(item.last_reviewed_at, "entity last_reviewed_at")
+        if item.last_reviewed_at > evidence_cutoff:
+            raise PanoramaReleaseError(
+                "entity last_reviewed_at cannot be after evidence cutoff"
+            )
         for link in item.research_links:
             _validate_research_link(item, link)
 
     for item in release.sources:
         if item.tier not in _SOURCE_TIERS:
             raise PanoramaReleaseError("unsupported source tier")
-        if not _SOURCE_AUTHORITY_CLASSIFICATION[item.source_id].startswith(
-            f"{item.tier} "
-        ):
-            raise PanoramaReleaseError(
-                "source authority classification contradicts source tier"
-            )
+        _source_authority_classification(item)
         parsed = urlparse(item.url)
         if parsed.scheme != "https" or not parsed.netloc:
             raise PanoramaReleaseError("source URL must use HTTPS")
@@ -739,7 +801,15 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
             )
         if item.publication_date is not None:
             _validate_date(item.publication_date, "source publication_date")
+            if item.publication_date > evidence_cutoff:
+                raise PanoramaReleaseError(
+                    "source publication date cannot be after evidence cutoff"
+                )
         _validate_date(item.retrieval_date, "source retrieval_date")
+        if item.retrieval_date > evidence_cutoff:
+            raise PanoramaReleaseError(
+                "source retrieval date cannot be after evidence cutoff"
+            )
         _bounded_english(item.publisher, 120, "source publisher")
         _bounded_english(item.document_title, 800, "source title")
         if not item.immutable_locator.strip():
@@ -760,6 +830,19 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
         source = source_by_id[item.source_id]
         if not source.publisher or not source.retrieval_date:
             raise PanoramaReleaseError("source metadata is incomplete")
+    for source in release.sources:
+        associated_evidence = tuple(
+            item
+            for item in release.evidence
+            if item.source_id == source.source_id
+        )
+        if source.content_hash != compute_source_content_hash(
+            source,
+            associated_evidence,
+        ):
+            raise PanoramaReleaseError(
+                "source content_hash does not match reviewed evidence snapshot"
+            )
 
     for item in release.relationships:
         if (
@@ -786,6 +869,14 @@ def _validate_release_graph(release: PanoramaRelease) -> None:
         _bounded_english(item.text, 800, "assertion text")
         _bounded_english(item.limitations, 500, "assertion limitations")
         _validate_temporal_fields(item)
+        if item.observed_at > evidence_cutoff:
+            raise PanoramaReleaseError(
+                "assertion observed_at cannot be after evidence cutoff"
+            )
+        if item.reviewed_at > evidence_cutoff:
+            raise PanoramaReleaseError(
+                "assertion reviewed_at cannot be after evidence cutoff"
+            )
         if not item.evidence_ids or not set(item.evidence_ids) <= evidence_ids:
             raise PanoramaReleaseError("assertion evidence foreign key is invalid")
         if item.review_state != "superseded":
@@ -903,11 +994,13 @@ def _validate_confidence(
             "confidence source set contains an unresolved source"
         )
     source_authorities = {
-        _SOURCE_AUTHORITY_CLASSIFICATION[source_id]
+        _source_authority_classification(source_by_id[source_id])
         for source_id in source_ids
     }
     if item.assertion_kind == "inferred_exposure":
-        expected_authority = _COMBINED_AUTHORITY_BY_SOURCE_SET.get(source_ids)
+        expected_authority = _COMBINED_AUTHORITY_BY_CLASSIFICATION_SET.get(
+            frozenset(source_authorities)
+        )
     else:
         expected_authority = (
             next(iter(source_authorities))
@@ -1396,7 +1489,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
-            raise PanoramaReleaseError(f"duplicate JSON key: {key}")
+            raise PanoramaReleaseError("duplicate JSON key")
         result[key] = value
     return result
 
@@ -1446,7 +1539,11 @@ def _validate_date(
 ) -> None:
     try:
         if timestamp:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if not _TIMESTAMP_RE.fullmatch(value):
+                raise ValueError
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError
         elif allow_year and _YEAR_RE.fullmatch(value):
             date.fromisoformat(f"{value}-01-01")
         elif allow_month and _MONTH_RE.fullmatch(value):
