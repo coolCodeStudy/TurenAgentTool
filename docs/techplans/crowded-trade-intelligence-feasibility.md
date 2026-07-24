@@ -1,6 +1,6 @@
 # Technical Feasibility Note: Crowded Trade Intelligence
 
-Status: discovery draft; implementation is blocked on product and data decisions
+Status: feasibility ready; product direction approved, bounded implementation plan not yet created
 Linked PRD: [`../product/PRD-Crowded-Trade-Intelligence.md`](../product/PRD-Crowded-Trade-Intelligence.md)
 Last updated: 2026-07-23
 
@@ -429,26 +429,24 @@ Recommended purchase order:
 
 Request quotes and sample coverage against the actual portfolio universe before contracting. Evaluate retention, derived-data display, model-input, and redistribution rights, not price alone.
 
-## 10. Decisions Blocking An Implementation Plan
+## 10. Approved Defaults And Remaining Access Gates
 
-The Owner or delegated data owner must explicitly decide:
+The Owner delegated the discovery choices and approved the recommended defaults on 2026-07-24:
 
-1. whether V1 accepts full-band US/HK plus evidence-only KR/CN;
-2. whether single-symbol investigation is included with portfolio holdings;
-3. whether user-facing output exposes only bands or also an internal heuristic number;
-4. whether reports are ephemeral, cached, or stored in durable memory;
-5. whether the product is internal single-user analysis or may be redistributed/shared;
-6. whether current Futu entitlements and provider terms cover the proposed use;
-7. whether to obtain and manage an OpenDART key;
-8. whether KRX and CN official/licensed access will be funded and approved now or deferred;
-9. whether premium vendor evaluation has a budget and procurement owner;
-10. whether optional attention data is excluded, Google-Trends-only, or separately licensed.
+1. US/HK may earn full bands; KR/CN remain evidence-only.
+2. Portfolio holdings and explicit single-symbol investigation are both included.
+3. The user surface exposes bands and explanation, not a precise probability.
+4. Refresh is end of day; the implementation plan must choose only the minimum cache needed for reproducible evidence and approved source retention.
+5. The product is private, internal, and single-user; redistribution is out of scope.
+6. Futu is optional and entitlement-gated. Its absence produces degraded coverage.
+7. OpenDART, KRX automation, and CN automated positioning access are deferred.
+8. Premium securities finance, fund flows, granular options flow, and social/community data are excluded from V1.
 
-No production implementation should begin until decisions 1–6 are recorded. Decisions 7–10 may explicitly defer market/tier scope.
+These defaults unblock one bounded implementation plan. They do not authorize production adapters: current Futu entitlements and terms must be verified before activation, and every deferred official/licensed source remains disabled until its access gate is satisfied.
 
 ## 11. Implementation Planning Boundary
 
-After the blocking decisions, the next coordinator should create one bounded technical implementation plan for the approved V1. It should include:
+The next coordinator should create one bounded technical implementation plan for the approved V1. It should include:
 
 - source approval register and new capability contracts;
 - source-semantic fixtures and adapters for the approved markets;

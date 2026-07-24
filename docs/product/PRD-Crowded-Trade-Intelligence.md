@@ -1,6 +1,6 @@
 # PRD: Crowded Trade Intelligence
 
-Status: discovery draft; not ready for implementation
+Status: product direction approved; ready for bounded technical implementation planning, not runtime implementation
 Owner: Product Discovery Coordinator
 Feature Registry row: Crowded Trade Intelligence
 Linked technical feasibility note: [`../techplans/crowded-trade-intelligence-feasibility.md`](../techplans/crowded-trade-intelligence-feasibility.md)
@@ -25,7 +25,7 @@ Recommended V1:
 - Keep social/retail attention optional and non-blocking. Do not scrape Reddit, X, Xueqiu, broker communities, or search pages.
 - Surface a likelihood band and evidence quality, not a trading recommendation or a falsely precise probability.
 
-This feature is not ready for implementation. The product and data decisions in section 15 must be explicit first.
+The Owner approved the recommended discovery defaults on 2026-07-24. The feature is ready for a bounded technical implementation plan, but runtime implementation remains gated by that plan and by source entitlement/licence verification.
 
 ## 2. User Problem
 
@@ -428,28 +428,24 @@ The feature:
 - does not expose licensed raw data beyond permitted display fields;
 - does not store social usernames or user content in V1.
 
-## 15. Decisions Required Before Implementation
+## 15. Approved Decisions And Remaining Access Gates
 
-### Product decisions
+### Approved product decisions
 
-1. Approve the recommended asymmetric launch: US/HK can show a likelihood band; KR/CN remain evidence-only until their access gates pass.
-2. Approve the V1 output as a heuristic likelihood band rather than a calibrated numeric probability.
-3. Approve holdings-only plus explicit single-symbol scope; theme/sector screens and watchlists remain later.
-4. Approve end-of-day refresh; intraday alerts remain later.
+The Owner delegated the final discovery choices to the Product Discovery Coordinator and approved the recommended direction on 2026-07-24:
 
-### Data, credentials, and spending decisions
+1. V1 uses the asymmetric launch: US/HK can show a likelihood band when evidence gates pass; KR/CN remain evidence-only until their access gates pass.
+2. V1 displays heuristic likelihood bands, not calibrated numeric probabilities.
+3. V1 covers portfolio holdings plus an explicit single-symbol investigation. Theme/sector screens and watchlists remain later.
+4. V1 refreshes end of day. Intraday alerts remain later.
+5. V1 is a private, internal, single-user research surface. Redistribution and public/raw-data display are out of scope.
+6. Existing Futu OpenAPI data may be used only after the deployed account's entitlements and intended internal use are verified. Missing entitlement degrades coverage and does not trigger scraping or an improvised replacement.
+7. OpenDART key acquisition is deferred. KR remains evidence-only until a key owner and approved secret path exist.
+8. KRX automated collection is deferred until an official API/data-product enquiry and licence review are complete.
+9. CN automated positioning collection is deferred until SSE/SZSE/CNInfo programmatic access and data-use terms are approved.
+10. Premium data and social/community sources are excluded from V1. If later justified by adoption, evaluate securities finance first, global fund flows second, and granular options participant/open-close data third.
 
-5. Confirm whether this remains a private/internal personal research surface. This affects exchange and vendor display/redistribution terms.
-6. Confirm which deployed Futu account and quote entitlements may be used for US/HK option, short-interest, and earnings data. Do not record credential values in documentation.
-7. Approve obtaining an OpenDART API key and define its secret-management owner if KR remains in V1.
-8. Approve a KRX official API/data-product enquiry and licence review before automated KR collection.
-9. Approve an SSE/SZSE/CNInfo programmatic-access and data-use review before automated CN positioning collection.
-10. Decide whether to evaluate premium data now. The recommended order is:
-    1. global securities finance;
-    2. global fund flow;
-    3. granular options participant/open-close data.
-
-No Engineering implementation plan should be marked ready until decisions 1-6 are explicit. Market adapters requiring credentials or spend cannot enter implementation until their corresponding decision is explicit.
+These decisions unblock technical implementation planning, not product code. The implementation plan must define the source approval register, entitlement verification, source-semantic fixtures, and acceptance evidence before it can be marked ready. Market adapters requiring credentials, licences, or spend cannot enter runtime implementation until their corresponding access gate is satisfied.
 
 ## 16. Proposed Acceptance Criteria
 
@@ -495,9 +491,9 @@ No Engineering implementation plan should be marked ready until decisions 1-6 ar
 
 ## 17. Adoption Path
 
-### Gate 0 — product and data decisions
+### Gate 0 — product direction and data defaults
 
-Close section 15 and record licence/access owners. No runtime code starts before this gate.
+Completed on 2026-07-24. Record licence/access owners when a deferred source is proposed. No runtime code starts before a bounded implementation plan is ready.
 
 ### Gate 1 — contract and evidence slice
 
