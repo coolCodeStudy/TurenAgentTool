@@ -9,7 +9,7 @@
 - Technical plan: Discovery feasibility is in `docs/techplans/ai-industry-panorama-feasibility.md`; an exact implementation plan is still required before product-code changes.
 - Feature Registry row: `AI Industry Panorama`
 - Acceptance Queue row: Not created yet. Create one active release-candidate row before independent acceptance; user acceptance remains `pending`.
-- Delivery Queue rows: Product readiness dispatch `DQ-2026-07-24-001` is closed after accepted return `117a9ae`; exact technical planning is the next dispatch.
+- Delivery Queue rows: Product readiness dispatch `DQ-2026-07-24-001` is closed after accepted return `117a9ae`; exact technical planning `DQ-2026-07-24-002` is active.
 - Current authoritative branch/ref: `origin/main@82f742526f81b1a05b22677624cdb8c230dde46e`
 - Related coordinator branch/ref: `origin/codex/ai-industry-panorama-discovery@d0816ff4728818a10c41d8e11344478ed3f9719c`
 - Current deployed ref or deploy event: None; discovery documents only.
@@ -19,14 +19,14 @@
 - Release-verification manifest (ref, route, surface, evidence, unresolved exceptions): Pending implementation candidate. Route is `L3`; ref, exact route, deploy event, evidence bundle, and exceptions must be filled before acceptance dispatch.
 - Current state: Discovery PRD and feasibility note are committed and pushed. On 2026-07-24 the Owner instructed this Feature Coordinator to continue the recommended bounded V1 through user acceptance. Product return `117a9ae` was inspected and accepted: the PRD is `ready`, the feasibility note remains discovery-only, implementation is `not_started`, and user acceptance remains `pending`.
 - Known blockers: No credential, paid-source, budget, or product blocker for the recommended V1. Exact persistence, route, module, curated-release ownership, and verification commands remain technical-planning decisions.
-- Active child threads or role sessions: Product readiness agent `/root/panorama_product_ready` returned and is closed. Exact technical planning is ready to dispatch.
+- Active child threads or role sessions: Product readiness agent `/root/panorama_product_ready` returned and is closed. Technical Planning / Development Agent `/root/panorama_technical_plan` is active.
 - Watch contract:
   - Watched item: Exact technical implementation plan for the approved bounded V1.
   - Wake event or cadence: This Feature Coordinator will actively wait on the dispatched Technical Planning / Development Agent and apply the Return Gate immediately when it returns.
   - Expected return artifact: One exact implementation plan with persistence, curated-release ownership, modules, routes, tests, L3 evidence, deploy ownership, and PRD traceability; commit/ref and verification evidence.
   - Coordinator action on wake: Inspect the plan against every PRD criterion, accept or reject the return, update delivery state, and dispatch implementation only after plan acceptance.
-- Next owner: Technical Planning / Development Agent.
-- Next handoff: `accept_and_route`: Product return `117a9ae` is accepted; dispatch one exact implementation plan before product-code changes.
+- Next owner: Technical Planning / Development Agent `/root/panorama_technical_plan`.
+- Next handoff: `accept_and_route`: Product return `117a9ae` is accepted; `DQ-2026-07-24-002` is producing one exact implementation plan before product-code changes.
 - Deploy needed: No for the Product readiness return; deployment will be required for the later browser release candidate.
 - Deploy decision: `not_required` for this Product-only phase because no runtime code or cloud surface changes.
 - Escalation target: Not required for routine feature-local routing. Escalate only a credential, paid-source, scope tradeoff, or cross-feature release conflict.
