@@ -1,6 +1,6 @@
 # PRD: AI Industry Panorama
 
-Status: discovery proposal; bounded V1 recommended, not yet approved for implementation
+Status: ready for exact technical planning; bounded V1 approved on 2026-07-24; not approved for implementation
 
 Research snapshot: 2026-07-23
 
@@ -660,7 +660,10 @@ Strong later candidates, after V1 trust is demonstrated:
 
 ## 18. Product Decisions And Readiness
 
-Recommended decisions:
+### 18.1 Approved Bounded V1 Decision (2026-07-24)
+
+The Owner approved the following exact bounded V1 for continuation through the
+normal delivery flow:
 
 - Use a dedicated versioned panorama domain.
 - Adopt a US demand/global supply-chain V1.
@@ -669,11 +672,21 @@ Recommended decisions:
 - Use a layered map plus equivalent table view.
 - Keep portfolio, valuation synthesis, and autonomous ingestion out of V1.
 
-No credential, paid-data, or infrastructure approval is needed to approve this
-product scope.
+This approval authorizes the Feature Coordinator to route the feature to
+Technical Planning / Development for an exact implementation plan. It does not
+authorize product-code changes, deployment, paid data, automated acquisition,
+portfolio integration, valuation synthesis, or any other scope expansion.
 
-The feature is not implementation-ready until the Owner or Feature Coordinator
-accepts the bounded V1 scope and the Development Agent converts the linked
-feasibility note into an implementation plan with exact schema, routes, tests,
-and release ownership. Discovery does not authorize product-code changes or
-deployment.
+No credential, paid-data, or infrastructure approval is needed for this
+approved product scope.
+
+### 18.2 Readiness And Next Gate
+
+The PRD is ready for exact technical planning. The linked feasibility note
+remains discovery feasibility, not an implementation plan. Before any product
+code change, the Technical Planning / Development Agent must produce and obtain
+Coordinator acceptance of an exact implementation plan that names the schema or
+artifact persistence decision, curated-manifest and review ownership, modules,
+migrations, routes, access contract, test coverage, quality route, release
+ownership, and implementation traceability. Discovery and this product approval
+do not authorize product-code changes or deployment.
