@@ -26,6 +26,12 @@ class DataSourceContractTests(TestCase):
         self.assertEqual(SourceCapability.MARKET_SNAPSHOT.value, "market_snapshot")
         self.assertEqual(DataStatus.PARTIAL.value, "partial")
 
+    def test_crowding_capabilities_are_explicit(self) -> None:
+        self.assertEqual(SourceCapability.OWNERSHIP_CONCENTRATION.value, "ownership_concentration")
+        self.assertEqual(SourceCapability.SHORT_INTEREST.value, "short_interest")
+        self.assertEqual(SourceCapability.OPTIONS_POSITIONING.value, "options_positioning")
+        self.assertEqual(SourceCapability.EVENT_CALENDAR.value, "event_calendar")
+
     def test_valuation_source_normalizes_fact_metadata_and_coverage(self) -> None:
         calls: list[tuple[str, str]] = []
 

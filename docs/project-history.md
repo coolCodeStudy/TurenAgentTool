@@ -28,6 +28,7 @@ It is intentionally not a day-by-day log.
 - Portfolio display and analysis were adjusted for multi-currency holdings: HKD and USD should not be naively summed when FX conversion is unavailable.
 - The product direction shifted away from daily long reports toward lower-friction portfolio review, weekly review, account snapshots, cash-flow adjustment, and knowledge-assisted interpretation.
 - Account snapshots and trade records are the intended foundation for stricter monthly/weekly return attribution.
+- Crowded Trade Intelligence V1 was integrated and deployed on 2026-07-24 as a direction-specific, provenance-first research aid. Its fail-closed cloud mode passed independent acceptance; live US/HK positioning remains disabled until the source approval register and deployed entitlements are complete, while KR/CN remain evidence-only.
 
 ## Research Pipeline
 

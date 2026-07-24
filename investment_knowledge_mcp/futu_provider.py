@@ -6,7 +6,7 @@ import inspect
 import re
 import socket
 import time
-from typing import Any
+from typing import Any, Callable
 
 from investment_knowledge_mcp.config import AppConfig, get_config
 from investment_knowledge_mcp.serialization import to_jsonable
@@ -65,6 +65,18 @@ class CashFlowSnapshot:
     source: str = "futu"
 
 
+@dataclass(frozen=True)
+class FutuCrowdingSnapshot:
+    ownership_by_code: dict[str, list[dict[str, Any]]]
+    short_interest_by_code: dict[str, list[dict[str, Any]]]
+    options_by_code: dict[str, list[dict[str, Any]]]
+    events_by_code: dict[str, list[dict[str, Any]]]
+    failures_by_code: dict[str, dict[str, str]]
+    fetched_at: datetime
+    source: str = "futu"
+    coverage_by_code: dict[str, dict[str, float]] | None = None
+
+
 _CACHE: PositionSnapshot | None = None
 _CACHE_MONOTONIC: float = 0.0
 _IPO_CACHE: IpoSnapshot | None = None
@@ -120,6 +132,15 @@ def get_futu_market_bars(codes: list[str], start: str, end: str, config: AppConf
 def get_futu_cash_flows(start: str, end: str, config: AppConfig | None = None) -> CashFlowSnapshot:
     config = config or get_config()
     return _fetch_cash_flows(config=config, start=start, end=end)
+
+
+def get_futu_crowding_snapshot(
+    codes: list[str],
+    start: str,
+    end: str,
+    config: AppConfig | None = None,
+) -> FutuCrowdingSnapshot:
+    return _fetch_futu_crowding_snapshot(config or get_config(), codes, start, end)
 
 
 def _get_cached_snapshot(cache_seconds: int) -> PositionSnapshot | None:
@@ -452,6 +473,327 @@ def _fetch_market_bars(config: AppConfig, codes: list[str], start: str, end: str
         quote_context.close()
 
 
+def _fetch_futu_crowding_snapshot(
+    config: AppConfig,
+    codes: list[str],
+    start: str,
+    end: str,
+    *,
+    futu_module: Any | None = None,
+    context_factory: Callable[..., Any] | None = None,
+    now: Callable[[], datetime] | None = None,
+) -> FutuCrowdingSnapshot:
+    cleaned_codes = tuple(dict.fromkeys(code.strip().upper() for code in codes if code and code.strip()))
+    if not cleaned_codes or any(not code.startswith(("US.", "HK.")) for code in cleaned_codes):
+        raise ValueError("crowding data supports market-qualified US/HK symbols only")
+    start_date = _parse_iso_date(start)
+    end_date = _parse_iso_date(end)
+    if start_date > end_date:
+        raise ValueError("start cannot be after end")
+
+    ft = futu_module
+    factory = context_factory
+    if ft is None or factory is None:
+        _ensure_opend_reachable(host=config.futu_opend_host, port=config.futu_opend_port, family="拥挤交易证据")
+        try:
+            import futu as imported_futu
+        except ImportError as exc:
+            raise FutuProviderError("futu-api 未安装，无法读取拥挤交易证据。") from exc
+        except Exception as exc:
+            raise FutuProviderError("futu-api 初始化失败，无法读取拥挤交易证据。") from exc
+        ft = ft or imported_futu
+        factory = factory or ft.OpenQuoteContext
+
+    quote_context = _create_quote_context(
+        factory,
+        {"host": config.futu_opend_host, "port": config.futu_opend_port},
+    )
+    ownership: dict[str, list[dict[str, Any]]] = {}
+    shorts: dict[str, list[dict[str, Any]]] = {}
+    options: dict[str, list[dict[str, Any]]] = {}
+    events: dict[str, list[dict[str, Any]]] = {}
+    failures: dict[str, dict[str, str]] = {}
+    coverage: dict[str, dict[str, float]] = {}
+    try:
+        for code in cleaned_codes:
+            code_failures: dict[str, str] = {}
+            try:
+                ret, payload = quote_context.get_shareholders_overview(code, period_id=0)
+                if ret != ft.RET_OK:
+                    _raise_crowding_provider_error(payload)
+                main_holders = payload.get("main_holder") if isinstance(payload, dict) else None
+                rows = _table_records(main_holders)
+                ownership[code] = [
+                    {
+                        "name": _clean_empty(row.get("name")),
+                        "holder_pct": _optional_number(row.get("holder_pct")),
+                        "observed_at": _clean_empty(row.get("static_date_str")),
+                    }
+                    for row in rows
+                    if _optional_number(row.get("holder_pct")) is not None
+                    and not _is_residual_holder(row)
+                ]
+            except Exception as exc:
+                code_failures["ownership"] = _crowding_exception_code(exc)
+
+            try:
+                ret, us_data, hk_data = quote_context.get_short_interest(code)
+                if ret != ft.RET_OK:
+                    _raise_crowding_provider_error(us_data)
+                selected = us_data if code.startswith("US.") else hk_data
+                shorts[code] = [
+                    {
+                        "shares_short": _optional_number(row.get("shares_short")),
+                        "short_percent": _optional_number(
+                            row.get("short_percent")
+                            if code.startswith("US.")
+                            else row.get("aggregated_short_ratio")
+                        ),
+                        "days_to_cover": _optional_number(row.get("days_to_cover")),
+                        "aggregated_short": _optional_number(row.get("aggregated_short")),
+                        "observed_at": _clean_empty(row.get("timestamp_str")),
+                    }
+                    for row in _table_records(selected)
+                ]
+            except Exception as exc:
+                code_failures["short_interest"] = _crowding_exception_code(exc)
+
+            try:
+                ret, chain = quote_context.get_option_chain(code, start=start, end=end)
+                if ret != ft.RET_OK:
+                    _raise_crowding_provider_error(chain)
+                all_chain_rows = _table_records(chain)
+                chain_rows = _select_option_chain_rows(all_chain_rows, limit=200)
+                if len(chain_rows) < len(all_chain_rows):
+                    code_failures["options"] = "option_chain_truncated"
+                    coverage.setdefault(code, {})["options"] = (
+                        len(chain_rows) / len(all_chain_rows)
+                    )
+                option_codes = [
+                    str(row.get("code") or "").strip().upper()
+                    for row in chain_rows
+                    if str(row.get("code") or "").strip()
+                ]
+                snapshots: dict[str, dict[str, Any]] = {}
+                for offset in range(0, len(option_codes), 100):
+                    chunk = option_codes[offset : offset + 100]
+                    ret, snapshot_table = quote_context.get_market_snapshot(chunk)
+                    if ret != ft.RET_OK:
+                        _raise_crowding_provider_error(snapshot_table)
+                    for item in _table_records(snapshot_table):
+                        snapshot_code = str(item.get("code") or "").strip().upper()
+                        if snapshot_code:
+                            snapshots[snapshot_code] = item
+                normalized_options = []
+                for row in chain_rows:
+                    option_code = str(row.get("code") or "").strip().upper()
+                    snapshot_row = snapshots.get(option_code, {})
+                    normalized_options.append(
+                        {
+                            "code": option_code,
+                            "option_type": str(
+                                row.get("option_type")
+                                or snapshot_row.get("option_type")
+                                or ""
+                            ).upper(),
+                            "expiry_date": _clean_empty(row.get("strike_time")),
+                            "strike_price": _optional_number(row.get("strike_price")),
+                            "contract_multiplier": _optional_number(row.get("lot_size")) or 1.0,
+                            "volume": _optional_number(snapshot_row.get("volume")) or 0.0,
+                            "open_interest": _optional_number(
+                                snapshot_row.get("option_open_interest")
+                            )
+                            or 0.0,
+                            "observed_at": _clean_empty(
+                                snapshot_row.get("data_date")
+                                or snapshot_row.get("update_time")
+                            ),
+                            "implied_volatility": _optional_number(
+                                snapshot_row.get("option_implied_volatility")
+                            ),
+                        }
+                    )
+                options[code] = normalized_options
+            except Exception as exc:
+                code_failures["options"] = _crowding_exception_code(exc)
+
+            if code_failures:
+                failures[code] = code_failures
+
+        codes_by_market = {
+            market: tuple(code for code in cleaned_codes if code.startswith(f"{market}."))
+            for market in ("US", "HK")
+        }
+        for market, market_codes in codes_by_market.items():
+            if not market_codes:
+                continue
+            market_events: list[dict[str, Any]] = []
+            event_failed = False
+            for window_start, window_end in _bounded_date_windows(start_date, end_date, 7):
+                try:
+                    market_enum = _optional_enum_value(getattr(ft, "Market", None), market)
+                    ret, table = quote_context.get_earnings_calendar(
+                        market_enum or market,
+                        begin_date=window_start.isoformat(),
+                        end_date=window_end.isoformat(),
+                    )
+                    if ret != ft.RET_OK:
+                        _raise_crowding_provider_error(table)
+                    market_events.extend(_table_records(table))
+                except Exception as exc:
+                    event_failed = True
+                    event_failure_code = _crowding_exception_code(exc)
+                    break
+            for code in market_codes:
+                matching: list[dict[str, Any]] = []
+                seen: set[tuple[str, str]] = set()
+                for row in market_events:
+                    security = str(row.get("security") or "").strip().upper()
+                    event_date = str(row.get("earnings_date") or "").strip()
+                    if security != code or not event_date:
+                        continue
+                    key = (security, event_date)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matching.append(
+                        {
+                            "event_type": "earnings",
+                            "event_date": event_date,
+                            "date_status": _clean_empty(row.get("pub_type")) or "unknown",
+                        }
+                    )
+                events[code] = matching
+                if event_failed:
+                    failures.setdefault(code, {})["events"] = event_failure_code
+
+        return FutuCrowdingSnapshot(
+            ownership_by_code=ownership,
+            short_interest_by_code=shorts,
+            options_by_code=options,
+            events_by_code=events,
+            failures_by_code=failures,
+            fetched_at=(now or (lambda: datetime.now(timezone.utc)))(),
+            coverage_by_code=coverage,
+        )
+    finally:
+        quote_context.close()
+
+
+def _table_records(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if hasattr(value, "to_dict"):
+        records = value.to_dict("records")
+    elif isinstance(value, list):
+        records = value
+    else:
+        return []
+    return [dict(item) for item in records if isinstance(item, dict)]
+
+
+def _raise_crowding_provider_error(value: object) -> None:
+    text = str(value or "").casefold()
+    if any(
+        marker in text
+        for marker in (
+            "permission",
+            "entitlement",
+            "no right",
+            "no authority",
+            "not authorized",
+            "无权限",
+            "权限不足",
+            "未开通",
+        )
+    ):
+        raise PermissionError("crowding entitlement unavailable")
+    raise FutuProviderError("crowding provider unavailable")
+
+
+def _crowding_exception_code(exc: Exception) -> str:
+    return "entitlement_required" if isinstance(exc, PermissionError) else "provider_unavailable"
+
+
+def _is_residual_holder(row: dict[str, Any]) -> bool:
+    name = str(row.get("name") or "").strip().casefold()
+    compact = re.sub(r"[\s._-]+", "", name)
+    return compact in {"other", "others", "其他", "其它", "その他"}
+
+
+def _select_option_chain_rows(
+    rows: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if len(rows) <= limit:
+        return sorted(rows, key=_option_chain_sort_key)
+    by_expiry: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_expiry.setdefault(str(row.get("strike_time") or "9999-12-31"), []).append(row)
+    selected: list[dict[str, Any]] = []
+    for expiry in sorted(by_expiry):
+        remaining = limit - len(selected)
+        if remaining <= 0:
+            break
+        expiry_rows = sorted(by_expiry[expiry], key=_option_chain_sort_key)
+        if len(expiry_rows) <= remaining:
+            selected.extend(expiry_rows)
+            continue
+        calls = [row for row in expiry_rows if str(row.get("option_type") or "").upper() == "CALL"]
+        puts = [row for row in expiry_rows if str(row.get("option_type") or "").upper() == "PUT"]
+        others = [row for row in expiry_rows if row not in calls and row not in puts]
+        call_limit = round(remaining * len(calls) / len(expiry_rows))
+        put_limit = round(remaining * len(puts) / len(expiry_rows))
+        other_limit = max(0, remaining - call_limit - put_limit)
+        sampled = [
+            *_sample_evenly(calls, call_limit),
+            *_sample_evenly(puts, put_limit),
+            *_sample_evenly(others, other_limit),
+        ]
+        if len(sampled) < remaining:
+            sampled_codes = {str(row.get("code") or "") for row in sampled}
+            sampled.extend(
+                row
+                for row in expiry_rows
+                if str(row.get("code") or "") not in sampled_codes
+            )
+        selected.extend(sorted(sampled[:remaining], key=_option_chain_sort_key))
+    return selected
+
+
+def _sample_evenly(rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    if count <= 0 or not rows:
+        return []
+    if count >= len(rows):
+        return list(rows)
+    if count == 1:
+        return [rows[len(rows) // 2]]
+    return [
+        rows[round(index * (len(rows) - 1) / (count - 1))]
+        for index in range(count)
+    ]
+
+
+def _option_chain_sort_key(row: dict[str, Any]) -> tuple[str, float, str, str]:
+    return (
+        str(row.get("strike_time") or "9999-12-31"),
+        _optional_number(row.get("strike_price")) or 0.0,
+        str(row.get("option_type") or ""),
+        str(row.get("code") or ""),
+    )
+
+
+def _bounded_date_windows(start: date, end: date, max_days: int) -> list[tuple[date, date]]:
+    windows: list[tuple[date, date]] = []
+    current = start
+    while current <= end:
+        window_end = min(current + timedelta(days=max_days - 1), end)
+        windows.append((current, window_end))
+        current = window_end + timedelta(days=1)
+    return windows
+
+
 def _ensure_opend_reachable(host: str, port: int, family: str) -> None:
     try:
         with socket.create_connection((host, port), timeout=1.5):
@@ -662,6 +1004,17 @@ def _clean_empty(value: Any) -> Any:
     if isinstance(value, str) and value.strip().upper() in {"", "N/A", "NONE", "NULL"}:
         return None
     return value
+
+
+def _optional_number(value: Any) -> float | None:
+    cleaned = _clean_empty(value)
+    if cleaned is None or isinstance(cleaned, bool):
+        return None
+    try:
+        number = float(cleaned)
+    except (TypeError, ValueError):
+        return None
+    return number
 
 
 def _enum_value(enum_cls: Any, name: str) -> Any:

@@ -17,6 +17,13 @@ from investment_knowledge_mcp.analysis_provider import (
     route_command_intent_with_openai,
 )
 from investment_knowledge_mcp.display import build_stock_decision_card, render_stock_decision_card
+from investment_knowledge_mcp.crowding_intelligence import render_crowding_assessment
+from investment_knowledge_mcp.crowding_service import (
+    investigate_portfolio_crowding,
+    investigate_symbol_crowding,
+    normalize_crowding_target,
+    render_portfolio_crowding,
+)
 from investment_knowledge_mcp.daily_market_brief import (
     build_daily_market_brief,
     get_daily_market_brief_report,
@@ -184,6 +191,12 @@ PORTFOLIO_ANALYSIS_COMMANDS = {
     "我的组合怎么看",
     "帮我分析持仓",
     "portfolio analysis",
+}
+
+PORTFOLIO_CROWDING_COMMANDS = {
+    "持仓拥挤度",
+    "拥挤交易",
+    "portfolio crowding",
 }
 
 PORTFOLIO_GRAPH_COMMANDS = {
@@ -455,6 +468,29 @@ def handle_command(
         symbol, market = target
         return _handle_stock_decision_card(symbol=symbol, market=market)
 
+    crowding_match = re.fullmatch(
+        r"(?:拥挤度|拥挤交易|crowding)\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if crowding_match:
+        target_text = crowding_match.group(1)
+        target = _parse_crowding_target(target_text)
+        if target is None:
+            return CommandResult(
+                ok=False,
+                message=_crowding_target_error(target_text),
+            )
+        symbol, market = target
+        try:
+            assessment = investigate_symbol_crowding(symbol, market)
+        except Exception:
+            return CommandResult(
+                ok=False,
+                message="拥挤度数据源暂时不可用；缺失数据不会被解释为低拥挤，请稍后重试。",
+            )
+        return CommandResult(ok=True, message=render_crowding_assessment(assessment))
+
     if cleaned.lower() in {"valuation methods", "value methods", "估值方法", "估值框架"}:
         return CommandResult(ok=True, message=render_valuation_methods())
 
@@ -645,6 +681,9 @@ def handle_command(
     if cleaned in PORTFOLIO_ANALYSIS_COMMANDS:
         return _handle_portfolio_analysis()
 
+    if cleaned in PORTFOLIO_CROWDING_COMMANDS:
+        return _handle_portfolio_crowding()
+
     if cleaned in PORTFOLIO_RESEARCH_DRAFT_COMMANDS:
         return _handle_portfolio_research(output_dir=output_dir, auto_import=False)
 
@@ -796,6 +835,23 @@ def is_query_command(command: str) -> bool:
             normalized,
             flags=re.IGNORECASE,
         )
+        or (
+            re.fullmatch(
+                r"(?:拥挤度|拥挤交易|crowding)\s+(?:[A-Za-z]{1,5}\.[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\s+[A-Za-z]{1,5})",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+            is not None
+            and _parse_crowding_target(
+                re.sub(
+                    r"^(?:拥挤度|拥挤交易|crowding)\s+",
+                    "",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+            )
+            is not None
+        )
         or re.fullmatch(
             r"(?:查看股票|inspect|stock inspect)\s+\S+\s+\S+",
             normalized,
@@ -830,6 +886,7 @@ def is_query_command(command: str) -> bool:
             *SERVICE_LOG_COMMANDS,
             *PORTFOLIO_POSITION_COMMANDS,
             *PORTFOLIO_ANALYSIS_COMMANDS,
+            *PORTFOLIO_CROWDING_COMMANDS,
             *PORTFOLIO_GRAPH_COMMANDS,
             *PORTFOLIO_RESEARCH_DRAFT_COMMANDS,
             *RESEARCH_JOB_LIST_COMMANDS,
@@ -1811,6 +1868,24 @@ def _handle_portfolio_positions() -> CommandResult:
     return CommandResult(ok=True, message=_render_portfolio_positions(snapshot))
 
 
+def _handle_portfolio_crowding() -> CommandResult:
+    try:
+        snapshot = get_futu_positions()
+    except Exception:
+        return CommandResult(
+            ok=False,
+            message="当前持仓暂时不可用，无法生成持仓拥挤度报告；请稍后重试。",
+        )
+    try:
+        report = investigate_portfolio_crowding(snapshot.positions)
+        return CommandResult(ok=True, message=render_portfolio_crowding(report))
+    except Exception:
+        return CommandResult(
+            ok=False,
+            message="持仓拥挤度调查暂时无法安全完成；缺失数据不会被解释为低拥挤，请稍后重试。",
+        )
+
+
 def _handle_hk_ipos() -> CommandResult:
     try:
         snapshot = get_hk_ipo_list(include_orders=False)
@@ -2246,6 +2321,38 @@ def _parse_stock_target(value: str) -> tuple[str, str] | None:
     if re.fullmatch(r"[A-Z]{1,5}", cleaned):
         return cleaned.upper(), "US"
     return None
+
+
+def _parse_crowding_target(value: str) -> tuple[str, str] | None:
+    cleaned = value.strip()
+    market_symbol_match = re.fullmatch(
+        r"(US|HK|KR|CN|SH|SZ)\.([A-Za-z0-9._-]+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    symbol_market_match = re.fullmatch(
+        r"([A-Za-z0-9._-]+)\s+(US|HK|KR|CN|SH|SZ)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if market_symbol_match:
+        market, symbol = market_symbol_match.groups()
+    elif symbol_market_match:
+        symbol, market = symbol_market_match.groups()
+    else:
+        return None
+    try:
+        normalize_crowding_target(symbol, market)
+    except (TypeError, ValueError):
+        return None
+    return symbol.upper(), market.upper()
+
+
+def _crowding_target_error(value: str) -> str:
+    market_match = re.match(r"([A-Za-z]{1,5})\.", value.strip())
+    if market_match and market_match.group(1).upper() not in {"US", "HK", "KR", "CN", "SH", "SZ"}:
+        return "拥挤度 V1 仅支持 US/HK/KR/CN；KR/CN 只提供证据模式。"
+    return "拥挤度调查需要市场限定的股票标的，例如：拥挤度 US.NVDA 或 拥挤度 000660 KR。"
 
 
 def _parse_valuation_target(value: str) -> tuple[str, str] | None:
@@ -3911,6 +4018,8 @@ def _help_text() -> str:
 - valuation US.INTC
 - latest valuation US.INTC
 - valuation artifact evidence US.INTC
+- 持仓拥挤度
+- 拥挤度 US.NVDA
 - 决策 US.INTC
 - 决策 000660 KR
 - 分析 000660 KR
