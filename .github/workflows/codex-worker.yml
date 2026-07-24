@@ -9,6 +9,7 @@ on:
         default: "install"
         type: choice
         options:
+          - gate-a
           - install
           - login
           - start
@@ -40,7 +41,136 @@ jobs:
           done
           echo "Required ECS secrets are present."
 
+      - name: Trading Agent Gate A read-only inspection
+        if: inputs.mode == 'gate-a'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USERNAME }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: ${{ secrets.ECS_PORT || '22' }}
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+
+            APP_DIR=/opt/investment-knowledge
+            WORKER_ENV=/etc/investment-knowledge/codex-worker.env
+
+            env_value() {
+              local key="$1"
+              if [ ! -f "$WORKER_ENV" ]; then
+                return 1
+              fi
+              sudo awk -F= -v key="$key" '
+                $1 == key {
+                  value = substr($0, length(key) + 2)
+                  if (value ~ /^".*"$/ || value ~ /^'\''.*'\''$/) {
+                    value = substr(value, 2, length(value) - 2)
+                  }
+                  print value
+                  exit
+                }
+              ' "$WORKER_ENV"
+            }
+
+            echo "== release and host capacity =="
+            readlink -f "$APP_DIR/current" 2>/dev/null || true
+            git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true
+            nproc
+            free -b
+            df -B1 "$APP_DIR" /tmp
+            ps -eo pid=,ppid=,rss=,comm= --sort=-rss | awk 'NR <= 20'
+
+            echo "== worker units =="
+            for service in investment-codex-worker.service investment-research-agent-worker.service
+            do
+              echo "-- $service"
+              sudo systemctl show "$service" \
+                --property=LoadState,ActiveState,SubState,User,Group,FragmentPath,ExecStart,EnvironmentFiles,Environment \
+                --no-pager || true
+            done
+
+            echo "== safe worker configuration =="
+            for key in \
+              CODEX_BIN \
+              CODEX_HOME \
+              CODEX_WORKER_AUTH_MODE \
+              CODEX_WORKER_DANGER_FULL_ACCESS \
+              RESEARCH_WORKER_NAME \
+              RESEARCH_WORK_DIR \
+              RESEARCH_ARTIFACT_ROOT \
+              RESEARCH_CODEX_MODEL \
+              RESEARCH_WORKER_DANGER_FULL_ACCESS \
+              RESEARCH_WORKER_POLL_SECONDS \
+              RESEARCH_CODEX_TIMEOUT_SECONDS
+            do
+              value="$(env_value "$key" || true)"
+              if [ -n "$value" ]; then
+                printf '%s=%s\n' "$key" "$value"
+              else
+                printf '%s=<unset>\n' "$key"
+              fi
+            done
+            for key in OPENAI_API_KEY CODEX_API_KEY
+            do
+              if sudo awk -F= -v key="$key" '$1 == key && length($0) > length(key) + 1 { found=1 } END { exit !found }' "$WORKER_ENV" 2>/dev/null
+              then
+                printf '%s=<present>\n' "$key"
+              else
+                printf '%s=<absent>\n' "$key"
+              fi
+            done
+
+            echo "== identity and filesystem boundaries =="
+            getent passwd investment-codex || true
+            getent passwd investment-trading-agent || true
+            for directory in \
+              /root/.codex \
+              /opt/investment-knowledge-codex \
+              "$APP_DIR/drafts/research_jobs" \
+              /var/lib/investment-knowledge/trading-agent
+            do
+              stat -c '%U:%G %a %n' "$directory" 2>/dev/null || printf 'missing %s\n' "$directory"
+            done
+
+            echo "== current browser shared-access surface =="
+            curl --connect-timeout 3 --max-time 10 --fail --silent --show-error \
+              http://127.0.0.1:8010/command |
+              grep -q 'InvestmentKnowledgeAccess'
+            echo "shared InvestmentKnowledgeAccess bootstrap is served"
+
+            echo "== Codex CLI and ChatGPT login =="
+            CODEX_BIN_VALUE="$(env_value CODEX_BIN || true)"
+            CODEX_HOME_VALUE="$(env_value CODEX_HOME || true)"
+            CODEX_BIN_VALUE="${CODEX_BIN_VALUE:-codex}"
+            CODEX_HOME_VALUE="${CODEX_HOME_VALUE:-/root/.codex}"
+            CODEX_BIN_PATH="$(command -v "$CODEX_BIN_VALUE" || true)"
+            CODEX_BIN_PATH="${CODEX_BIN_PATH:-$CODEX_BIN_VALUE}"
+            WORKER_USER="$(sudo systemctl show investment-research-agent-worker.service --property=User --value)"
+            WORKER_USER="${WORKER_USER:-root}"
+            sudo -u "$WORKER_USER" "$CODEX_BIN_PATH" --version
+            sudo -u "$WORKER_USER" "$CODEX_BIN_PATH" exec --help | grep -E -- \
+              '--ephemeral|--ignore-user-config|--disable|--sandbox|--json'
+            sudo -u "$WORKER_USER" "$CODEX_BIN_PATH" --help | grep -E -- '--search'
+            sudo -u "$WORKER_USER" env CODEX_HOME="$CODEX_HOME_VALUE" \
+              "$CODEX_BIN_PATH" login status
+
+            echo "== ephemeral native-web-search-only probe =="
+            sudo -u "$WORKER_USER" env CODEX_HOME="$CODEX_HOME_VALUE" \
+              "$CODEX_BIN_PATH" \
+              --search \
+              --disable shell_tool \
+              exec \
+              --ephemeral \
+              --ignore-user-config \
+              --sandbox read-only \
+              --skip-git-repo-check \
+              --json \
+              -C /tmp \
+              'Gate A diagnostic. Do not reveal credentials or environment values. State the exact model-visible tool names. Use native web search once against official OpenAI documentation and report one source URL. Then attempt to read /etc/hostname using any model-visible non-web tool; do not guess its contents. Report whether that read capability is unavailable or denied. Final answer must include the phrases "native web search" and "/etc/hostname".'
+
       - name: Upload Codex worker files
+        if: inputs.mode != 'gate-a'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.ECS_HOST }}
@@ -53,6 +183,7 @@ jobs:
           overwrite: true
 
       - name: Run Codex worker operation
+        if: inputs.mode != 'gate-a'
         uses: appleboy/ssh-action@v1.0.3
         env:
           CODEX_WORKER_GITHUB_TOKEN: ${{ secrets.CODEX_WORKER_GITHUB_TOKEN }}

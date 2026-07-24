@@ -1,11 +1,11 @@
 # Trading Agent Workspace V1 Technical Design
 
-Status: blocked_pending_owner_scope_decision
+Status: gate_a_in_progress
 Owner: Trading Agent Workspace Feature Coordinator
 Source PRD: `docs/product/PRD-Trading-Agent-Workspace.md`
 Implementation plan: `docs/superpowers/plans/2026-07-23-trading-agent-workspace-v1.md`
 Quality route: `L3`
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Decision Summary
 
@@ -20,14 +20,14 @@ Fixed decisions:
 - expose one first-class protected browser workspace; and
 - make no cross-feature read/write, broker, Git, or deploy action.
 
-Open Product decision:
+Selected Product contract:
 
-- A: three-stage research stance; or
-- B: add simulated Trader proposal, risk review, and simulated Portfolio
-  Manager accept/modify/reject decision.
+- Choice B: evidence panel, bull/bear debate, simulated Trader proposal, risk
+  review, and simulated Portfolio Manager accept/modify/reject decision.
 
-No ECS probe or Development begins until the Owner chooses and Global PM
-accepts the revised design.
+The Owner selected Choice B and Global PM accepted the revised stage contract
+on 2026-07-24. Development remains gated only on passing non-mutating ECS
+Gate A.
 
 ## Evidence Baseline
 
@@ -363,7 +363,7 @@ inert. No ad hoc SSH restart or second deployment channel.
 
 ## Bounded Implementation Slices
 
-1. Owner choice and Gate A.
+1. Choice B is selected; complete Gate A.
 2. Vertical slice: request → snapshot → one fixture-backed workflow →
    protected result for one run.
 3. Durable lifecycle and five-slot/mixed-load scheduler.
@@ -379,6 +379,7 @@ Global PM return `TA-DESIGN-001..003` is accepted. The evidence snapshot and
 access UX corrections are incorporated; retention values are defaults.
 Independent bounded re-review found no remaining Critical or Important
 contradiction.
-Implementation remains blocked on the Owner's A/B decision and subsequent
-Global PM approval. Closure: `blocked_with_owner`. Deploy decision:
-`not_required`.
+Choice B and subsequent Global PM approval are recorded. Non-mutating ECS Gate
+A is active under this Feature Coordinator's watch path. Closure:
+`accept_and_route`. Deploy decision: `not_required` until Gate A passes and a
+verified implementation candidate exists.

@@ -1,9 +1,9 @@
 # PRD: Trading Agent Workspace
 
-Status: decision_required
+Status: ready
 Owner: Trading Agent Workspace Feature Coordinator
 Feature Registry row: `Trading Agent Workspace`
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Product Intent
 
@@ -17,7 +17,7 @@ This is a separate workflow. It is not Daily Market Brief, Weekly Review,
 Command Workbench, an existing `research_job`, or an automatic portfolio
 action.
 
-## Owner Decision Required
+## Owner Decision
 
 The original request can support two materially different V1 outcomes. Product
 must not choose silently.
@@ -27,9 +27,10 @@ must not choose silently.
 | A — Research stance only | Evidence-backed bullish, neutral, bearish, or insufficient-evidence stance | Evidence analysts, bull/bear debate, neutral risk chair | Orders, position sizing against real holdings, broker calls, and cross-feature writes |
 | B — Simulated Trader and Portfolio decision | Choice A plus a hypothetical trade proposal and a Portfolio Manager accept/modify/reject decision | Evidence analysts, bull/bear debate, simulated Trader proposal, risk review, simulated Portfolio Manager decision | Orders, broker calls, reading or changing real holdings, and all cross-feature writes |
 
-Choice B better matches the original request for the complete TradingAgents
-business flow and provides more learning value. It remains simulation only.
-The Owner must explicitly choose A or B before Gate A or Development.
+The Owner selected Choice B on 2026-07-24 and directed the coordinator to
+finish implementation, testing, regression, deployment, and independent cloud
+acceptance before returning for final user acceptance. It remains simulation
+only.
 
 ## Source And Provenance
 
@@ -264,16 +265,11 @@ Quality route: `L3`.
 release candidate exists. It becomes pending only after implementation,
 deployment readiness, and an approved protected browser session/fixture.
 
-No runtime, ECS, database, deploy, or production action is authorized by this
-document.
+No runtime, database, deploy, or production mutation is authorized before
+Gate A passes. Gate A itself is read-only ECS discovery.
 
-## Next Decision
+## Current Gate
 
-Owner chooses:
-
-- `A` — research stance only; or
-- `B` — simulated Trader proposal plus simulated Portfolio Manager decision.
-
-After that decision, Global PM reviews the corresponding stage contract. Only
-then may this Feature Coordinator run non-mutating ECS Gate A. Development
-remains prohibited until both gates pass.
+Global PM accepted the revised Choice B stage contract on 2026-07-24.
+Non-mutating ECS Gate A is now active under this Feature Coordinator's watch
+path. Development remains prohibited until Gate A passes.

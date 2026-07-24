@@ -1,16 +1,16 @@
 # Trading Agent Workspace V1 Implementation Plan
 
-Status: blocked_pending_owner_scope_decision
+Status: gate_a_in_progress
 
 **Goal:** Deliver one protected Trading Agent browser workflow using a trusted
 read-only evidence snapshot and ChatGPT-authenticated Codex CLI, with five-run
 isolation and no cross-feature or real-trading action.
 
-**Do not execute this plan** until:
+**Development begins only after:**
 
-1. Owner chooses PRD Choice A or B;
-2. Global PM approves the corresponding stage contract; and
-3. non-mutating ECS Gate A passes.
+1. [x] Owner selected PRD Choice B;
+2. [x] Global PM approved the corresponding stage contract; and
+3. [ ] non-mutating ECS Gate A passes.
 
 ## Fixed Constraints
 
@@ -30,11 +30,12 @@ isolation and no cross-feature or real-trading action.
 
 ## Task 0: Owner Choice And Gate A
 
-- [ ] Record Owner choice:
+- [x] Record Owner choice:
   - A: research stance only; or
-  - B: simulated Trader proposal plus simulated Portfolio Manager decision.
-- [ ] Update PRD/plan stage and acceptance traceability for that choice.
-- [ ] Obtain Global PM design acceptance.
+  - B: simulated Trader proposal plus simulated Portfolio Manager decision
+    (selected 2026-07-24).
+- [x] Update PRD/plan stage and acceptance traceability for that choice.
+- [x] Obtain Global PM design acceptance.
 - [ ] Inspect ECS without mutation:
   unit/ref/health/concurrency, Codex version/login/options, web-search-only tool
   inventory, canary denial, executor boundary feasibility, provider-neutral
