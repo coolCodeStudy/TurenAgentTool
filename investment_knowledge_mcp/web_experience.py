@@ -5,12 +5,18 @@ from typing import Final, Literal
 
 CANONICAL_ACCESS_KEY: Final = "investment_knowledge_access_token"
 LEGACY_ACCESS_KEYS: Final = ("command_workbench_token", "weekly_review_web_token")
-PageIdentity = Literal["daily_market_brief", "weekly_review", "command_workbench"]
+PageIdentity = Literal[
+    "daily_market_brief",
+    "weekly_review",
+    "command_workbench",
+    "ai_industry_panorama",
+]
 
 PRIMARY_DESTINATIONS: Final = (
     ("daily_market_brief", "/daily-market-brief", "每日简报"),
     ("weekly_review", "/weekly-review", "每周复盘"),
     ("command_workbench", "/command", "命令工作台"),
+    ("ai_industry_panorama", "/ai-industry-panorama", "AI 产业全景"),
 )
 
 _ACCESS_ERRORS: Final = {
@@ -70,6 +76,7 @@ def render_experience_css() -> str:
 }
 
 .experience-main {
+  box-sizing: border-box;
   min-width: 0;
   width: min(100%, 1560px);
   margin: 0 auto;

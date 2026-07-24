@@ -199,7 +199,15 @@ class WebExperienceTests(unittest.TestCase):
         html = render_primary_navigation("weekly_review")
         self.assertLess(html.index("/daily-market-brief"), html.index("/weekly-review"))
         self.assertLess(html.index("/weekly-review"), html.index("/command"))
+        self.assertLess(html.index("/command"), html.index("/ai-industry-panorama"))
         self.assertIn('href="/weekly-review" aria-current="page"', html)
+
+        panorama = render_primary_navigation("ai_industry_panorama")
+        self.assertEqual(1, panorama.count('aria-current="page"'))
+        self.assertIn(
+            'href="/ai-industry-panorama" aria-current="page"',
+            panorama,
+        )
 
     def test_access_script_uses_canonical_and_both_legacy_keys(self) -> None:
         script = render_access_session_script()
@@ -369,6 +377,8 @@ assert.equal(Object.keys(access.authorizationHeaders()).length, 0);
         self.assertIn("position: sticky", css)
         self.assertIn(".experience-brand", css)
         self.assertNotIn("grid-template-columns: 216px", css)
+        main_rule = css.split(".experience-main {", 1)[1].split("}", 1)[0]
+        self.assertIn("box-sizing: border-box", main_rule)
 
     def test_shared_workspace_css_exposes_financial_tokens_and_primitives(self) -> None:
         css = render_experience_css()

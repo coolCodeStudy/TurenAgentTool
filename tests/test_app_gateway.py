@@ -29,6 +29,18 @@ class AppGatewayRouteTableTests(unittest.TestCase):
             ("GET", "/assets/weekly-review.js"): ("weekly_review", AccessClass.PUBLIC_READ),
             ("GET", "/daily-market-brief"): ("daily_market_brief", AccessClass.PUBLIC_READ),
             ("GET", "/assets/daily-market-brief.js"): ("daily_market_brief", AccessClass.PUBLIC_READ),
+            ("GET", "/ai-industry-panorama"): (
+                "ai_industry_panorama",
+                AccessClass.PUBLIC_READ,
+            ),
+            ("GET", "/assets/ai-industry-panorama.js"): (
+                "ai_industry_panorama",
+                AccessClass.PUBLIC_READ,
+            ),
+            ("GET", "/api/ai-industry-panorama"): (
+                "ai_industry_panorama",
+                AccessClass.PUBLIC_READ,
+            ),
             ("GET", "/health"): ("gateway", AccessClass.PUBLIC_READ),
             ("GET", "/command"): ("command", AccessClass.PUBLIC_READ),
             ("GET", "/api/command-workbench/actions"): ("command", AccessClass.PUBLIC_READ),
@@ -70,6 +82,17 @@ class AppGatewayRouteTableTests(unittest.TestCase):
         self.assertEqual(route.owner, "weekly_review")
         self.assertIsNone(resolve_route("POST", "/api/candidate-insights/nope/confirm"))
         self.assertIsNone(resolve_route("POST", "/api/candidate-insights/17/delete"))
+
+    def test_panorama_has_no_post_or_protected_route(self) -> None:
+        from investment_knowledge_mcp.app_gateway import resolve_route
+
+        for path in (
+            "/ai-industry-panorama",
+            "/assets/ai-industry-panorama.js",
+            "/api/ai-industry-panorama",
+        ):
+            with self.subTest(path=path):
+                self.assertIsNone(resolve_route("POST", path))
 
 
 class _FakeHandler:
@@ -195,6 +218,90 @@ class AppGatewayDispatchTests(unittest.TestCase):
 
         self.assertEqual([("html", HTTPStatus.OK, "weekly-page")], weekly.calls)
         self.assertEqual([("html", HTTPStatus.OK, "daily-page")], daily.calls)
+
+    def test_panorama_page_asset_and_api_use_explicit_response_types(self) -> None:
+        from investment_knowledge_mcp.ai_industry_panorama.release import (
+            build_public_projection,
+            load_release,
+        )
+        from investment_knowledge_mcp.app_gateway import dispatch_get
+
+        page = _FakeHandler("/ai-industry-panorama")
+        asset = _FakeHandler("/assets/ai-industry-panorama.js")
+        api = _FakeHandler("/api/ai-industry-panorama")
+
+        dispatch_get(page)
+        dispatch_get(asset)
+        dispatch_get(api)
+
+        self.assertEqual(("html", HTTPStatus.OK), page.calls[0][:2])
+        self.assertIn("<h1>AI Industry Panorama</h1>", page.calls[0][2])
+        self.assertEqual(("javascript", HTTPStatus.OK), asset.calls[0][:2])
+        self.assertIn('const API_PATH = "/api/ai-industry-panorama";', asset.calls[0][2])
+        self.assertEqual(
+            [("json", HTTPStatus.OK, build_public_projection(load_release()))],
+            api.calls,
+        )
+
+    def test_panorama_api_does_not_touch_portfolio_knowledge_or_write_entrypoints(self) -> None:
+        from investment_knowledge_mcp.app_gateway import dispatch_get
+
+        targets = (
+            "investment_knowledge_mcp.repository.get_stock_context",
+            "investment_knowledge_mcp.repository.add_knowledge_item",
+            "investment_knowledge_mcp.repository.record_user_insight",
+            "investment_knowledge_mcp.portfolio_graph.build_portfolio_graph_queue",
+            "investment_knowledge_mcp.futu_provider.get_hk_ipo_list",
+            "investment_knowledge_mcp.daily_market_jobs.create_history_job",
+            "investment_knowledge_mcp.repository.create_coding_task",
+        )
+        patches = [
+            mock.patch(target, side_effect=AssertionError(f"unexpected call: {target}"))
+            for target in targets
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        handler = _FakeHandler("/api/ai-industry-panorama")
+        dispatch_get(handler)
+
+        self.assertEqual(("json", HTTPStatus.OK), handler.calls[0][:2])
+        self.assertTrue(handler.calls[0][2]["ok"])
+
+    def test_panorama_release_failure_is_sanitized_without_breaking_page(self) -> None:
+        from investment_knowledge_mcp.ai_industry_panorama import controller
+        from investment_knowledge_mcp.ai_industry_panorama.release import (
+            PanoramaReleaseError,
+        )
+        from investment_knowledge_mcp.app_gateway import dispatch_get
+
+        page = _FakeHandler("/ai-industry-panorama")
+        api = _FakeHandler("/api/ai-industry-panorama")
+        with mock.patch.object(
+            controller,
+            "load_release",
+            side_effect=PanoramaReleaseError("private path: /tmp/secret-release.json"),
+        ):
+            dispatch_get(page)
+            dispatch_get(api)
+
+        self.assertEqual(("html", HTTPStatus.OK), page.calls[0][:2])
+        self.assertEqual(
+            [
+                (
+                    "json",
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "ok": False,
+                        "error": "panorama_unavailable",
+                        "message": "AI Industry Panorama data is temporarily unavailable.",
+                    },
+                )
+            ],
+            api.calls,
+        )
+        self.assertNotIn("secret-release", repr(api.calls))
 
     def test_health_and_unknown_payloads_are_unchanged(self) -> None:
         from investment_knowledge_mcp.app_gateway import dispatch_get
