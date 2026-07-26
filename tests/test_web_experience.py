@@ -209,6 +209,13 @@ class WebExperienceTests(unittest.TestCase):
             panorama,
         )
 
+        earnings = render_primary_navigation("earnings_brief_studio")
+        self.assertEqual(1, earnings.count('aria-current="page"'))
+        self.assertIn(
+            'href="/earnings-brief-studio" aria-current="page"',
+            earnings,
+        )
+
     def test_access_script_uses_canonical_and_both_legacy_keys(self) -> None:
         script = render_access_session_script()
         self.assertEqual("investment_knowledge_access_token", CANONICAL_ACCESS_KEY)

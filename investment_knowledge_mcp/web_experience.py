@@ -10,6 +10,7 @@ PageIdentity = Literal[
     "weekly_review",
     "command_workbench",
     "ai_industry_panorama",
+    "earnings_brief_studio",
 ]
 
 PRIMARY_DESTINATIONS: Final = (
@@ -17,6 +18,7 @@ PRIMARY_DESTINATIONS: Final = (
     ("weekly_review", "/weekly-review", "每周复盘"),
     ("command_workbench", "/command", "命令工作台"),
     ("ai_industry_panorama", "/ai-industry-panorama", "AI 产业全景"),
+    ("earnings_brief_studio", "/earnings-brief-studio", "业绩简报"),
 )
 
 _ACCESS_ERRORS: Final = {

@@ -22,6 +22,14 @@ const publicGetContracts: PublicGetContract[] = [
   { path: "/ai-industry-panorama", contentType: /text\/html/ },
   { path: "/assets/ai-industry-panorama.js", contentType: /(?:text|application)\/javascript/ },
   { path: "/api/ai-industry-panorama", contentType: /application\/json/, json: true },
+  { path: "/earnings-brief-studio", contentType: /text\/html/ },
+  { path: "/assets/earnings-brief-studio.js", contentType: /(?:text|application)\/javascript/ },
+  { path: "/api/earnings-briefs", contentType: /application\/json/, json: true },
+  {
+    path: "/api/earnings-brief?company_id=US.AAPL&period_id=FY2025-Q1",
+    contentType: /application\/json/,
+    json: true,
+  },
 ];
 
 for (const contract of publicGetContracts) {
@@ -374,4 +382,33 @@ test("AI Industry Panorama public API exposes a reviewed, safe, two-hop release"
       expect(sensitiveQueryNames.has(name.toLowerCase())).toBe(false);
     }
   }
+});
+
+test("Earnings Brief Studio API exposes one reviewed evidence-backed release", async ({ request }) => {
+  const response = await request.get(
+    "/api/earnings-brief?company_id=US.AAPL&period_id=FY2025-Q1",
+  );
+  expect(response.status()).toBe(200);
+  const payload = await response.json();
+
+  expect(payload).toMatchObject({
+    ok: true,
+    schema_version: "earnings_brief_public.v1",
+    release: {
+      release_id: "earnings-brief:US.AAPL:FY2025-Q1:v1",
+      review_state: "published",
+      evidence_as_of: "2025-01-31",
+    },
+    brief: {
+      company: { company_id: "US.AAPL", ticker: "AAPL" },
+      reporting_period: { period_id: "FY2025-Q1" },
+    },
+  });
+  expect(payload.brief.kpis).toHaveLength(8);
+  expect(payload.brief.scenarios.map((item: { kind: string }) => item.kind)).toEqual([
+    "bull",
+    "base",
+    "bear",
+  ]);
+  expect(JSON.stringify(payload)).not.toContain("content_hash");
 });

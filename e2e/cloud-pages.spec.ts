@@ -980,3 +980,38 @@ test.describe("AI Industry Panorama public journey", () => {
     await mobileContext.close();
   });
 });
+test("Earnings Brief Studio renders and exports a long PNG", async ({ page }) => {
+  await page.goto("/earnings-brief-studio", { waitUntil: "load" });
+  await expect(page.locator("#status")).toHaveText("已载入审核版本");
+  await expect(page.locator('nav a[href="/earnings-brief-studio"]')).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByRole("heading", { name: "Fiscal 2025 Q1 业绩简报" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "01 核心业绩" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "05 前瞻情景" })).toBeVisible();
+  await expect(page.locator(".bar")).toHaveCount(2);
+  await expect(page.locator(".margin-bar")).toHaveCount(2);
+  await expect(page.locator(".mix span")).toHaveCount(5);
+  await expect(page.locator('#source-list a[href^="https://"]')).toHaveCount(2);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出 PNG" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("AAPL-FY2025-Q1-earnings-brief-v1.png");
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const png = Buffer.concat(chunks);
+  expect(png.length).toBeGreaterThan(10_000);
+  expect(png.subarray(1, 4).toString("ascii")).toBe("PNG");
+  expect(png.readUInt32BE(16)).toBe(1440);
+  expect(png.readUInt32BE(20)).toBeGreaterThan(2000);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload({ waitUntil: "load" });
+  await expect(page.locator("#status")).toHaveText("已载入审核版本");
+  expect(
+    await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});

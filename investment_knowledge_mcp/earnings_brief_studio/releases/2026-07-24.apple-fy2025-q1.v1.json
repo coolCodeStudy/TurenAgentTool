@@ -1,0 +1,218 @@
+{
+  "schema_version": "earnings_brief_release.v1",
+  "release_id": "earnings-brief:US.AAPL:FY2025-Q1:v1",
+  "review_state": "published",
+  "generated_at": "2026-07-24T10:00:00+08:00",
+  "evidence_as_of": "2025-01-31",
+  "company": {
+    "company_id": "US.AAPL",
+    "ticker": "AAPL",
+    "name": "Apple Inc.",
+    "exchange": "NASDAQ",
+    "currency": "USD"
+  },
+  "reporting_period": {
+    "period_id": "FY2025-Q1",
+    "label": "Fiscal 2025 Q1",
+    "period_end": "2024-12-28"
+  },
+  "sources": [
+    {
+      "source_id": "source:aapl:fy2025-q1:release",
+      "family": "earnings_release",
+      "tier": "issuer_ir",
+      "publisher": "Apple Inc.",
+      "document_title": "Apple reports first quarter results",
+      "url": "https://www.apple.com/newsroom/2025/01/apple-reports-first-quarter-results/",
+      "publication_date": "2025-01-30",
+      "retrieved_at": "2026-07-24",
+      "as_of": "2024-12-28",
+      "locator": "Consolidated Statements of Operations and product net sales tables",
+      "content_hash": "sha256:54d9aa2abf43171095d5b8c43b23f73c7d30fbfa171de1ef3d4ab8565747767f",
+      "review_state": "reviewed"
+    },
+    {
+      "source_id": "source:aapl:fy2025-q1:10q",
+      "family": "regulatory_filing",
+      "tier": "regulatory_filing",
+      "publisher": "U.S. Securities and Exchange Commission",
+      "document_title": "Apple Inc. Form 10-Q for quarter ended December 28, 2024",
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019325000008/aapl-20241228.htm",
+      "publication_date": "2025-01-31",
+      "retrieved_at": "2026-07-24",
+      "as_of": "2024-12-28",
+      "locator": "Financial Statements and Notes",
+      "content_hash": "sha256:ad34cfe27f9ca5dc76b724af246394d77bc469e501a3bc7b38bdd184106047b4",
+      "review_state": "reviewed"
+    }
+  ],
+  "brief": {
+    "judgment": {
+      "id": "claim:judgment",
+      "label": "Core judgment",
+      "text": "Record quarterly revenue and earnings were supported by broad installed-base engagement and Services growth, while China sales and product-mix durability remain the key validation points.",
+      "claim_kind": "analytical_inference",
+      "supporting_claim_ids": ["claim:installed-base", "claim:services-record", "metric:greater-china-sales"],
+      "evidence_state": "available",
+      "as_of": "2025-01-31",
+      "source_ids": ["source:aapl:fy2025-q1:release", "source:aapl:fy2025-q1:10q"]
+    },
+    "kpis": [
+      {
+        "id": "metric:revenue",
+        "label": "Net sales",
+        "value": "124.300",
+        "display": "$124.3bn",
+        "currency": "USD",
+        "unit": "billion",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:release"]
+      },
+      {
+        "id": "metric:net-income",
+        "label": "Net income",
+        "value": "36.330",
+        "display": "$36.3bn",
+        "currency": "USD",
+        "unit": "billion",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:release"]
+      },
+      {
+        "id": "metric:diluted-eps",
+        "label": "Diluted EPS",
+        "value": "2.40",
+        "display": "$2.40",
+        "currency": "USD",
+        "unit": "per_share",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:release"]
+      },
+      {
+        "id": "metric:gross-profit",
+        "label": "Gross profit",
+        "value": "58.275",
+        "display": "$58.3bn",
+        "currency": "USD",
+        "unit": "billion",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:10q"]
+      },
+      {
+        "id": "metric:gross-margin",
+        "label": "Gross margin",
+        "value": "46.9",
+        "display": "46.9%",
+        "currency": null,
+        "unit": "percent",
+        "formula": "metric:gross-profit / metric:revenue * 100",
+        "input_ids": ["metric:gross-profit", "metric:revenue"],
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:10q"]
+      },
+      {
+        "id": "metric:greater-china-sales",
+        "label": "Greater China sales",
+        "value": "18.513",
+        "display": "$18.5bn",
+        "currency": "USD",
+        "unit": "billion",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:10q"]
+      },
+      {
+        "id": "metric:cost-of-sales",
+        "label": "Cost of sales",
+        "value": "66.025",
+        "display": "$66.0bn",
+        "currency": "USD",
+        "unit": "billion",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:10q"]
+      },
+      {
+        "id": "metric:operating-expenses",
+        "label": "Operating expenses",
+        "value": "15.443",
+        "display": "$15.4bn",
+        "currency": "USD",
+        "unit": "billion",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:10q"]
+      }
+    ],
+    "management_signals": [
+      {
+        "id": "claim:installed-base",
+        "label": "Installed base",
+        "text": "Management said the active installed base reached an all-time high across products and geographic segments.",
+        "claim_kind": "management_claim",
+        "evidence_state": "available",
+        "as_of": "2025-01-30",
+        "source_ids": ["source:aapl:fy2025-q1:release"]
+      },
+      {
+        "id": "claim:services-record",
+        "label": "Services",
+        "text": "The issuer reported an all-time revenue record in Services.",
+        "claim_kind": "disclosed_fact",
+        "evidence_state": "available",
+        "as_of": "2024-12-28",
+        "source_ids": ["source:aapl:fy2025-q1:release"]
+      },
+      {
+        "id": "claim:guidance",
+        "label": "Forward quantitative guidance",
+        "text": "No numeric next-quarter revenue guidance is represented in this reviewed fixture.",
+        "claim_kind": "disclosed_fact",
+        "value": null,
+        "evidence_state": "not_disclosed",
+        "as_of": "2025-01-31",
+        "source_ids": ["source:aapl:fy2025-q1:release"]
+      }
+    ],
+    "financial_flow": {
+      "revenue_id": "metric:revenue",
+      "gross_profit_id": "metric:gross-profit",
+      "net_income_id": "metric:net-income",
+      "cost_of_sales_id": "metric:cost-of-sales",
+      "operating_expenses_id": "metric:operating-expenses"
+    },
+    "quarterly_trends": [
+      {"id": "trend:fy2024-q1-revenue", "label": "FY2024 Q1", "value": "119.575", "display": "$119.6bn", "unit": "billion", "evidence_state": "available", "as_of": "2023-12-30", "source_ids": ["source:aapl:fy2025-q1:10q"]},
+      {"id": "trend:fy2025-q1-revenue", "label": "FY2025 Q1", "value": "124.300", "display": "$124.3bn", "unit": "billion", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]}
+    ],
+    "gross_margin_trends": [
+      {"id": "trend:fy2024-q1-gross-margin", "label": "FY2024 Q1", "value": "45.9", "display": "45.9%", "unit": "percent", "evidence_state": "available", "as_of": "2023-12-30", "source_ids": ["source:aapl:fy2025-q1:10q"]},
+      {"id": "trend:fy2025-q1-gross-margin", "label": "FY2025 Q1", "value": "46.9", "display": "46.9%", "unit": "percent", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:10q"]}
+    ],
+    "revenue_mix": [
+      {"id": "mix:iphone", "label": "iPhone", "value": "69.138", "display": "$69.1bn", "unit": "billion", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]},
+      {"id": "mix:services", "label": "Services", "value": "26.340", "display": "$26.3bn", "unit": "billion", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]},
+      {"id": "mix:mac", "label": "Mac", "value": "8.987", "display": "$9.0bn", "unit": "billion", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]},
+      {"id": "mix:ipad", "label": "iPad", "value": "8.088", "display": "$8.1bn", "unit": "billion", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]},
+      {"id": "mix:wearables", "label": "Wearables, Home and Accessories", "value": "11.747", "display": "$11.7bn", "unit": "billion", "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]}
+    ],
+    "market_focus": [
+      {"id": "focus:china", "label": "Greater China pressure", "text": "Greater China net sales were $18.5bn; the durability of regional demand remains a central watch item.", "claim_kind": "analytical_inference", "supporting_claim_ids": ["metric:greater-china-sales"], "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:10q"]},
+      {"id": "focus:mix", "label": "Product mix", "text": "iPhone remained the largest reported sales category, keeping product-cycle and mix sensitivity visible.", "claim_kind": "analytical_inference", "supporting_claim_ids": ["mix:iphone"], "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]}
+    ],
+    "structural_signals": [
+      {"id": "structure:services", "label": "Services scale", "text": "Services represented a material and growing revenue pool alongside hardware.", "claim_kind": "analytical_inference", "supporting_claim_ids": ["mix:services", "claim:services-record"], "evidence_state": "available", "as_of": "2024-12-28", "source_ids": ["source:aapl:fy2025-q1:release"]},
+      {"id": "structure:installed-base", "label": "Installed-base reach", "text": "The reported record installed base supports recurring engagement, subject to future disclosure validation.", "claim_kind": "analytical_inference", "supporting_claim_ids": ["claim:installed-base"], "evidence_state": "available", "as_of": "2025-01-30", "source_ids": ["source:aapl:fy2025-q1:release"]}
+    ],
+    "scenarios": [
+      {"id": "scenario:bull", "kind": "bull", "label": "Bull", "summary": "Services and installed-base monetization broaden while China stabilizes.", "validation_conditions": ["Services growth remains durable", "Greater China sales stabilize", "Gross margin stays near the reviewed period level"]},
+      {"id": "scenario:base", "kind": "base", "label": "Base", "summary": "Product cycles and Services offset one another, preserving earnings quality without a major acceleration.", "validation_conditions": ["Quarterly revenue remains seasonally consistent", "Services remains a material mix contributor", "No material evidence conflict emerges"]},
+      {"id": "scenario:bear", "kind": "bear", "label": "Bear", "summary": "Regional weakness and product mix pressure outweigh Services resilience.", "validation_conditions": ["Greater China sales weaken further", "Gross margin compresses", "Installed-base claims fail to translate into reported revenue"]}
+    ]
+  }
+}

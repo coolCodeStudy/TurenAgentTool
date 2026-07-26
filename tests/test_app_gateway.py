@@ -41,6 +41,22 @@ class AppGatewayRouteTableTests(unittest.TestCase):
                 "ai_industry_panorama",
                 AccessClass.PUBLIC_READ,
             ),
+            ("GET", "/earnings-brief-studio"): (
+                "earnings_brief_studio",
+                AccessClass.PUBLIC_READ,
+            ),
+            ("GET", "/assets/earnings-brief-studio.js"): (
+                "earnings_brief_studio",
+                AccessClass.PUBLIC_READ,
+            ),
+            ("GET", "/api/earnings-briefs"): (
+                "earnings_brief_studio",
+                AccessClass.PUBLIC_READ,
+            ),
+            ("GET", "/api/earnings-brief"): (
+                "earnings_brief_studio",
+                AccessClass.PUBLIC_READ,
+            ),
             ("GET", "/health"): ("gateway", AccessClass.PUBLIC_READ),
             ("GET", "/command"): ("command", AccessClass.PUBLIC_READ),
             ("GET", "/api/command-workbench/actions"): ("command", AccessClass.PUBLIC_READ),

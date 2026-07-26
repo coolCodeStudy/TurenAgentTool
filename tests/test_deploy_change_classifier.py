@@ -276,6 +276,24 @@ class DeployContractTests(TestCase):
                     plan.reasons,
                 )
 
+    def test_earnings_brief_package_targets_only_weekly_review_web(self) -> None:
+        paths = (
+            "investment_knowledge_mcp/earnings_brief_studio/release.py",
+            "investment_knowledge_mcp/earnings_brief_studio/web.py",
+            "investment_knowledge_mcp/earnings_brief_studio/controller.py",
+            "investment_knowledge_mcp/earnings_brief_studio/releases/2026-07-24.apple-fy2025-q1.v1.json",
+        )
+
+        for path in paths:
+            with self.subTest(path=path):
+                plan = classify_paths((path,), compose_image_changed=False)
+                self.assertEqual(DeployMode.TARGETED_QUICK, plan.mode)
+                self.assertEqual(("weekly-review-web",), plan.targets)
+                self.assertEqual(
+                    (f"{path}: Earnings Brief Studio public read surface",),
+                    plan.reasons,
+                )
+
     def test_ai_panorama_mixed_paths_preserve_risk_and_control_plane_semantics(self) -> None:
         full = classify_paths(
             (

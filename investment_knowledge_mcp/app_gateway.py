@@ -23,6 +23,9 @@ from investment_knowledge_mcp.daily_market_brief_controller import (
     dispatch_daily_market_brief_get,
     dispatch_daily_market_brief_post,
 )
+from investment_knowledge_mcp.earnings_brief_studio.controller import (
+    dispatch_earnings_brief_get,
+)
 from investment_knowledge_mcp.http_access import authorize_http
 from investment_knowledge_mcp.web_access import AccessClass
 from investment_knowledge_mcp.weekly_review_controller import (
@@ -70,6 +73,15 @@ _ROUTES = (
         "ai_industry_panorama",
         AccessClass.PUBLIC_READ,
     ),
+    RouteContract("GET", "/earnings-brief-studio", "earnings_brief_studio", AccessClass.PUBLIC_READ),
+    RouteContract(
+        "GET",
+        "/assets/earnings-brief-studio.js",
+        "earnings_brief_studio",
+        AccessClass.PUBLIC_READ,
+    ),
+    RouteContract("GET", "/api/earnings-briefs", "earnings_brief_studio", AccessClass.PUBLIC_READ),
+    RouteContract("GET", "/api/earnings-brief", "earnings_brief_studio", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/health", "gateway", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/command", "command", AccessClass.PUBLIC_READ),
     RouteContract("GET", "/api/command-workbench/actions", "command", AccessClass.PUBLIC_READ),
@@ -121,6 +133,9 @@ def dispatch_get(handler: Any) -> None:
         return
     if route.owner == "ai_industry_panorama":
         dispatch_panorama_get(handler, parsed)
+        return
+    if route.owner == "earnings_brief_studio":
+        dispatch_earnings_brief_get(handler, parsed)
         return
     if parsed.path == "/health":
         handler._write_json(
