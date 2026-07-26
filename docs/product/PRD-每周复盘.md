@@ -1,5 +1,7 @@
 # PRD：本周复盘生成器
 
+> Status note (2026-07-26): The `炸裂时刻` label and its all-negative Top-3 selection are superseded by [`2026-07-26-weekly-material-drag-design.md`](../superpowers/specs/2026-07-26-weekly-material-drag-design.md). The current product section is `显著拖累`; small routine losses remain visible in the holdings table and are not exceptional events.
+
 ## 一句话定位
 
 基于富途交易记录、账户/持仓快照、市场指数、新股日历、知识库和外部信息源，自动生成一份可直接阅读的周复盘 Markdown。

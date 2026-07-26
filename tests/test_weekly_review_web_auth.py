@@ -139,6 +139,40 @@ class WeeklyReviewPublicContextTests(unittest.TestCase):
         self.assertEqual(500.0, normalized["highlights"][0]["ranking_amount_usd"])
         self.assertEqual(1_800.0, normalized["highlights"][1]["amount"])
 
+    def test_existing_report_rerenders_markdown_after_material_drag_rule_changes(self) -> None:
+        report = {
+            "summary": "# 本周复盘 2026-07-20 至 2026-07-26\n\n## 2. 炸裂时刻\n\n- stale small loss",
+            "portfolio_snapshot": {
+                "position_changes": [
+                    {
+                        "code": "US.TSLA",
+                        "name": "Tesla",
+                        "currency": "USD",
+                        "period_pl": -8.83,
+                        "pl_val_delta": -4.28,
+                        "current_pl_val": 10.02,
+                        "movement": "减仓",
+                        "confidence": "中",
+                        "start": {"market_val": 1_525.0},
+                    }
+                ]
+            },
+        }
+
+        with mock.patch.object(web.repository, "list_trade_records", return_value=[]):
+            payload = web._report_response(
+                report,
+                start=date(2026, 7, 20),
+                end=date(2026, 7, 26),
+                status="existing",
+            )
+
+        self.assertEqual([], payload["context"]["blowups"])
+        self.assertIn("## 2. 显著拖累", payload["markdown"])
+        self.assertIn("本周无显著拖累。轻微波动已保留在当前持仓的本周盈亏中。", payload["markdown"])
+        self.assertNotIn("炸裂时刻", payload["markdown"])
+        self.assertIn("炸裂时刻", report["summary"])
+
 
 class WeeklyReviewWebAuthorizationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -545,6 +579,32 @@ class WeeklyReviewPublicReadContractTests(unittest.TestCase):
         script = web.render_weekly_review_script()
         public_read = script.split("function loadReview", 1)[1].split("function generateReview", 1)[0]
         self.assertNotIn("Authorization", public_read)
+
+    def test_material_drag_empty_state_uses_precise_financial_language(self) -> None:
+        from investment_knowledge_mcp.weekly_review import render_weekly_review_markdown
+
+        html = web.render_weekly_review_workbench_html()
+        script = web.render_weekly_review_script()
+        markdown = render_weekly_review_markdown(
+            {
+                "period": {"label": "2026-07-20 至 2026-07-26"},
+                "highlights": [],
+                "blowups": [],
+                "index_summary": [],
+                "source_status": {},
+                "story": {},
+                "next_week": [],
+                "holdings_table": [],
+                "holder_attribution": [],
+                "warnings": [],
+            }
+        )
+
+        self.assertIn("2. 显著拖累", html)
+        self.assertIn("本周无显著拖累。轻微波动已保留在当前持仓的本周盈亏中。", script)
+        self.assertIn("## 2. 显著拖累", markdown)
+        self.assertIn("本周无显著拖累。轻微波动已保留在当前持仓的本周盈亏中。", markdown)
+        self.assertNotIn("炸裂时刻", html + script + markdown)
 
 
 if __name__ == "__main__":

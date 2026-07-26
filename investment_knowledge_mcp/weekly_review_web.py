@@ -33,6 +33,7 @@ from investment_knowledge_mcp.weekly_review import (
     _top_blowups,
     _top_highlights,
     build_weekly_review,
+    render_weekly_review_markdown,
     save_weekly_review_report,
 )
 from investment_knowledge_mcp.web_experience import (
@@ -886,7 +887,7 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
         </div>
       </dialog>
       <section class="workspace-section" id="highlights"><h2>1. 高光时刻</h2><div data-slot="highlights"></div></section>
-      <section class="workspace-section" id="blowups"><h2>2. 炸裂时刻</h2><div data-slot="blowups"></div></section>
+      <section class="workspace-section" id="blowups"><h2>2. 显著拖累</h2><div data-slot="blowups"></div></section>
       <section class="workspace-section" id="indexes"><h2>3. 指数</h2><div data-slot="indexes"></div></section>
       <section class="workspace-section" id="story"><h2>4. 整体故事</h2><div data-slot="story"></div></section>
       <section class="workspace-section" id="next-week"><h2>5. 下周展望</h2><div data-slot="next-week"></div></section>
@@ -1261,8 +1262,8 @@ def _render_weekly_review_workbench_html_with_inline_script() -> str:
     }}
 
     function rankedTable(items, positive) {{
-      if (!items.length) return `<div class="empty">${{positive ? "暂未识别到明显高光。" : "暂未识别到明显拖累。"}}</div>`;
-      return tableRegion(positive ? "高光明细" : "拖累明细", `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
+      if (!items.length) return `<div class="empty">${{positive ? "暂未识别到明显高光。" : "本周无显著拖累。轻微波动已保留在当前持仓的本周盈亏中。"}}</div>`;
+      return tableRegion(positive ? "高光明细" : "显著拖累明细", `<table><thead><tr><th>标的</th><th>类型</th><th class="money">金额</th><th>发生了什么</th><th>复盘问题</th></tr></thead><tbody>
         ${{items.map((item) => {{
           const amount = item.amount ?? item.pl_val_delta;
           const rankingUsd = displayableMoney(item.ranking_amount_usd);
@@ -2320,13 +2321,16 @@ def _report_response(
     context = report.get("portfolio_snapshot") if isinstance(report.get("portfolio_snapshot"), dict) else {}
     context = _with_synced_weekly_trade_records(context, start=start, end=end)
     context = _normalize_report_context(context, start=start, end=end)
+    markdown = report.get("summary") or ""
+    if isinstance(context.get("position_changes"), list):
+        markdown = render_weekly_review_markdown(context)
     return {
         "ok": True,
         "status": status,
         "already_exists": already_exists,
         "week": _week_payload(start, end),
         "context": context,
-        "markdown": report.get("summary") or "",
+        "markdown": markdown,
         "saved_report": report,
     }
 

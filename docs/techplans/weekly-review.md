@@ -1,5 +1,7 @@
 # Task Plan: 本周复盘生成器
 
+> Status note (2026-07-26): The user-facing `炸裂时刻`/all-negative-Top-3 rule is superseded by [`2026-07-26-weekly-material-drag-design.md`](../superpowers/specs/2026-07-26-weekly-material-drag-design.md). Current production language is `显著拖累`: a row requires both a material USD-equivalent loss and, when opening market value exists, a material relative weekly impact. The historical wording below remains for traceability only.
+
 ## 背景
 
 `docs/product/PRD-每周复盘.md` 定义了本周复盘产品：用户输入“本周复盘”，系统自动生成一份可直接阅读的周复盘 Markdown。

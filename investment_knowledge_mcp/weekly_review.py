@@ -36,6 +36,9 @@ DEFAULT_RANKING_FX_TO_USD = {
     "HKD": 1.0 / 7.8,
 }
 
+MIN_SIGNIFICANT_WEEKLY_DRAG_USD = 50.0
+MIN_SIGNIFICANT_WEEKLY_DRAG_RATIO = 0.01
+
 REQUIRED_INDEXES: list[dict[str, str]] = [
     {
         "code": "US.SPX",
@@ -320,7 +323,7 @@ def render_weekly_review_markdown(context: dict[str, Any]) -> str:
         "## 1. 高光时刻",
     ]
     lines.extend(_render_ranked_table(context.get("highlights") or [], positive=True))
-    lines.extend(["", "## 2. 炸裂时刻"])
+    lines.extend(["", "## 2. 显著拖累"])
     lines.extend(_render_ranked_table(context.get("blowups") or [], positive=False))
     lines.extend(["", "## 3. 指数"])
     lines.extend(_render_index_summary(context.get("index_summary") or [], context.get("source_status", {}).get("indexes")))
@@ -1364,7 +1367,7 @@ def _top_highlights(position_changes: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _top_blowups(position_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items = [item for item in position_changes if _rank_amount(item) < 0]
+    items = [item for item in position_changes if _is_significant_weekly_drag(item)]
     return [_ranked_item(item, positive=False) for item in sorted(items, key=_rank_amount)[:3]]
 
 
@@ -2139,7 +2142,11 @@ def save_weekly_review_report(context: dict[str, Any], markdown: str) -> dict[st
 
 def _render_ranked_table(items: list[dict[str, Any]], positive: bool) -> list[str]:
     if not items:
-        return ["- 暂未识别到明显高光。" if positive else "- 暂未识别到明显拖累。"]
+        return [
+            "- 暂未识别到明显高光。"
+            if positive
+            else "- 本周无显著拖累。轻微波动已保留在当前持仓的本周盈亏中。"
+        ]
     lines = [
         "| 标的 | 类型 | 金额 | 仓位变化 | 置信度 | 复盘问题 |",
         "| --- | --- | ---: | --- | --- | --- |",
@@ -2502,6 +2509,18 @@ def _rank_amount(item: dict[str, Any]) -> float:
     currency = str(item.get("currency") or "").strip().upper()
     rate = DEFAULT_RANKING_FX_TO_USD.get(currency)
     return native_amount * rate if rate is not None else 0.0
+
+
+def _is_significant_weekly_drag(item: dict[str, Any]) -> bool:
+    ranking_amount_usd = _rank_amount(item)
+    if ranking_amount_usd > -MIN_SIGNIFICANT_WEEKLY_DRAG_USD:
+        return False
+
+    start = item.get("start")
+    start_market_val = _number(start.get("market_val")) if isinstance(start, dict) else 0.0
+    if start_market_val <= 0:
+        return True
+    return abs(_native_period_amount(item)) / start_market_val >= MIN_SIGNIFICANT_WEEKLY_DRAG_RATIO
 
 
 def _native_period_amount(item: dict[str, Any]) -> float:
