@@ -1,6 +1,6 @@
 # Trading Agent Workspace V1 Implementation Plan
 
-Status: gate_a_blocked_on_github_dispatch_auth
+Status: gate_a_failed_tool_boundary
 
 **Goal:** Deliver one protected Trading Agent browser workflow using a trusted
 read-only evidence snapshot and ChatGPT-authenticated Codex CLI, with five-run
@@ -10,7 +10,7 @@ isolation and no cross-feature or real-trading action.
 
 1. [x] Owner selected PRD Choice B;
 2. [x] Global PM approved the corresponding stage contract; and
-3. [ ] non-mutating ECS Gate A passes.
+3. [x] non-mutating ECS Gate A ran and failed the model-visible tool boundary.
 
 ## Fixed Constraints
 
@@ -36,13 +36,14 @@ isolation and no cross-feature or real-trading action.
     (selected 2026-07-24).
 - [x] Update PRD/plan stage and acceptance traceability for that choice.
 - [x] Obtain Global PM design acceptance.
-- [ ] Inspect ECS without mutation:
+- [x] Inspect ECS without mutation:
   unit/ref/health/concurrency, Codex version/login/options, web-search-only tool
   inventory, canary denial, executor boundary feasibility, provider-neutral
   snapshot feasibility, host baseline, and shared browser-access config.
-- [ ] Resume Gate A after the Owner either approves in-memory use of the
-  existing local GitHub PAT for workflow dispatch/log reads (never output or
-  persist it) or signs in to GitHub in the in-app browser.
+- [x] Gate A run `30182246892` completed without mutation.
+- [ ] Resolve the failed tool boundary through an explicit Owner and Global PM
+  choice recorded in the technical design. Do not dispatch Development while
+  this item remains open.
 - [ ] If any tool/credential/snapshot boundary fails, stop
   `blocked_with_owner`; do not weaken it or start Development.
 
@@ -188,6 +189,9 @@ git diff --check
 
 `blocked_with_owner`.
 
-Required resume event: Global PM returns the Owner's explicit Choice A or B and
-accepts the revised stage contract. Until then, do not run Gate A, dispatch
-Development, change runtime code, deploy, or mutate production.
+Required resume event: Owner selects one fail-closed execution alternative
+from the technical design and Global PM accepts the amended stage/security
+contract. Gate A run `30182246892` failed the required native-Web-search-only
+model-visible inventory. Until the amended contract is approved, do not
+dispatch Development, change runtime code, bootstrap, deploy, or mutate
+production.

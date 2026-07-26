@@ -1,6 +1,6 @@
 # Trading Agent Workspace V1 Technical Design
 
-Status: gate_a_blocked_on_github_dispatch_auth
+Status: gate_a_failed_tool_boundary
 Owner: Trading Agent Workspace Feature Coordinator
 Source PRD: `docs/product/PRD-Trading-Agent-Workspace.md`
 Implementation plan: `docs/superpowers/plans/2026-07-23-trading-agent-workspace-v1.md`
@@ -373,17 +373,62 @@ inert. No ad hoc SSH restart or second deployment channel.
 
 The first usable slice precedes cleanup and release automation hardening.
 
+## Gate A Evidence: 2026-07-26
+
+Read-only GitHub Actions run `30182246892` executed from exact branch commit
+`0679cc645755eb595181dfb266870bf88bb699a3` and completed successfully without
+uploading files, changing configuration, restarting services, creating
+accounts, or changing database state.
+
+Verified:
+
+- deployed release path
+  `/opt/investment-knowledge/releases/a8299d66e1656aeab39a0704bef7cbda3a6c2628`;
+- both Codex and research worker units are active, root-owned processes;
+- legacy research concurrency is `1`, its artifact root is shared and mode
+  `755`, and the legacy Codex danger-full-access default is `true`;
+- host baseline is 2 CPUs, about 2.29 GB available memory, no swap, and about
+  24.7 GB free disk;
+- `codex-cli 0.135.0` is logged in with ChatGPT;
+- `OPENAI_API_KEY` and `CODEX_API_KEY` are absent;
+- native Web search succeeds;
+- the text canary `/etc/hostname` cannot be read through the available
+  non-Web file-image path; and
+- the current browser serves the shared `InvestmentKnowledgeAccess`
+  bootstrap.
+
+Gate A failed criterion 4. Despite `--ignore-user-config`, read-only sandbox,
+ephemeral execution, and disabled shell, the model could see ImageGen,
+`apply_patch`, plugin management, Sites, document-control, hotline, and other
+non-Web tools. A second ephemeral probe using local `codex-cli 0.146.0-alpha`
+disabled apps, plugins, ImageGen, browser/computer use, shell/unified exec,
+multi-agent, goals, hooks, remote plugins, tool suggestions, skills, and MCP
+elicitation; it still exposed core `exec`, `apply_patch`, `view_image`,
+collaboration, planning, and Web tools.
+
+The current official Codex configuration reference documents feature toggles
+and per-MCP-server `enabled_tools`/`disabled_tools`, but no positive allowlist
+for built-in tools. Therefore a CLI upgrade alone does not satisfy the approved
+native-Web-search-only inventory contract.
+
+Fail-closed alternatives require an Owner and Global PM decision:
+
+1. wait for a supported positive built-in tool allowlist;
+2. permit a dedicated no-secret, read-only-root, egress-restricted executor
+   plus supervisor rejection of every non-Web tool event, explicitly amending
+   the literal model-visible-inventory criterion; or
+3. use an API surface with an explicit `web_search`-only tool list, explicitly
+   revisiting the no-API-key/no-API-billing decision.
+
 ## Current Closure
 
 Global PM return `TA-DESIGN-001..003` is accepted. The evidence snapshot and
 access UX corrections are incorporated; retention values are defaults.
 Independent bounded re-review found no remaining Critical or Important
 contradiction.
-Choice B and subsequent Global PM approval are recorded. The verified
-branch-scoped Gate A workflow is pushed, but dispatch is blocked because the
-local GitHub CLI session is invalid and the in-app browser is signed out.
-Repository policy rejected reading a local PAT without fresh, specific Owner
-approval. Closure: `blocked_with_owner`. Exact resume action: approve in-memory
-use of the existing local GitHub PAT solely to dispatch and read this workflow,
-with no token output or persistence; alternatively sign in to GitHub in the
-in-app browser. Deploy decision: `not_required`.
+Choice B and subsequent Global PM approval are recorded. Gate A ran and failed
+the non-negotiable model-visible tool boundary. Closure:
+`blocked_with_owner`. Exact resume action: Owner selects one fail-closed
+alternative above and Global PM approves the amended execution contract.
+Development, runtime implementation, bootstrap, and deployment remain
+prohibited. Deploy decision: `not_required`.

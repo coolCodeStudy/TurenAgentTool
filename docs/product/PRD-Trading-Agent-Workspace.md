@@ -271,5 +271,8 @@ Gate A passes. Gate A itself is read-only ECS discovery.
 ## Current Gate
 
 Global PM accepted the revised Choice B stage contract on 2026-07-24.
-Non-mutating ECS Gate A is now active under this Feature Coordinator's watch
-path. Development remains prohibited until Gate A passes.
+Non-mutating ECS Gate A completed fail-closed on 2026-07-26 because the
+ChatGPT-authenticated Codex child still receives non-Web tools after documented
+feature disables. Development remains prohibited until the Owner and Global PM
+approve a revised enforceable execution boundary or the Codex product provides
+a positive built-in tool allowlist.
